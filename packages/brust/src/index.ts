@@ -1,4 +1,5 @@
 /// <reference path="./css-modules.d.ts" />
+/// <reference path="./assets.d.ts" />
 // `@brust/core`: the app-facing API.
 export { buildTime } from './build-time'
 export { cache } from './cache'

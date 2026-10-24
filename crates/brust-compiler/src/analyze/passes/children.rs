@@ -103,6 +103,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         guard_depth: 0,
         slot_depth: 0,
         spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
+        no_text: false,
         mount_once: Vec::new(),
         frozen: BTreeSet::new(),
         callable_up: BTreeSet::new(),
@@ -127,6 +128,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         fused: Vec::new(),
         fused_counts: HashMap::new(),
         holds_island: false,
+        children_no_text: false,
         provider_locs: Default::default(),
         next_owner: 0,
         native_props: Vec::new(),
@@ -261,6 +263,25 @@ pub fn contexts(
             && f == crate::analyze::hooks::WHOLE_FIELD
             && w.ctx_defaults.iter().any(|(x, _)| x == c)
     };
+    // F419: the page's own read of a scalar context (`useContext(Ctx)` in the page itself) is the default too.
+    if ctx.is_root {
+        for u in &ir.ctx_uses {
+            let Some((_, d)) = ir.ctx_defaults.iter().find(|(c, _)| c == &u.context) else {
+                continue;
+            };
+            let name = crate::ir::ctx_prop(&u.context, crate::analyze::hooks::WHOLE_FIELD);
+            if let Some(p) = ir
+                .props
+                .iter_mut()
+                .find(|p| p.name == name && p.default.is_none())
+            {
+                p.default = Some(RawExpr {
+                    loc: 0,
+                    kind: RawKind::Lit(d.clone()),
+                });
+            }
+        }
+    }
     for (c, f) in &bubbled {
         let name = crate::ir::ctx_prop(c, f);
         if !ir.props.iter().any(|p| p.name == name) {
@@ -292,6 +313,24 @@ pub fn contexts(
         if bubbled.iter().any(|(x, _)| x == c) && !ir.ctx_defaults.iter().any(|(x, _)| x == c) {
             ir.ctx_defaults.push((c.clone(), d.clone()));
         }
+    }
+    // F419 (ruling 2): the page's own read of a context with no scalar default (an object default, whose per-field defaults
+    // are not modelled) has no Provider above it either; paint nothing wrong: name it and fall back.
+    let own_unanswered = || {
+        ir.ctx_uses.iter().find(|u| {
+            !ir.ctx_defaults.iter().any(|(c, _)| c == &u.context)
+                && !bubbled.iter().any(|(c, _)| c == &u.context)
+        })
+    };
+    if ctx.is_root
+        && let Some(u) = own_unanswered()
+    {
+        diags.push(Diagnostic::fallback(
+            "context-no-provider",
+            format!("`{}` reads a context that no Provider above it provides, and its default is not a plain value", u.context),
+            0,
+            "render it inside the Provider component, or keep this component in React",
+        ));
     }
     if let Some((c, _)) = bubbled.iter().find(|(c, f)| !defaulted(c, f))
         && ctx.is_root
@@ -375,6 +414,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.build_eval_instances.extend(w.eval_instances);
     ir.folded_instances.extend(w.folded_instances);
     ir.holds_island |= w.holds_island;
+    ir.children_no_text |= w.children_no_text || children_in_no_text(&ir.template, false);
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.forwarded_ref_nulled |= w.ref_nulled;
@@ -390,6 +430,8 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
 }
 
 struct Walker<'s, 'c> {
+    /// F388 (Mellow N1): the node being read sits directly in an element whose content model takes no text.
+    no_text: bool,
     /// Foldable module `const` initializers by name (see `children`).
     module_consts: Rc<HashMap<String, RawExpr>>,
     st: &'s mut PassState,
@@ -448,6 +490,8 @@ struct Walker<'s, 'c> {
     absent: BTreeSet<String>,
     /// S2 F3: a child of this template is a React island, or holds one.
     holds_island: bool,
+    /// F388 (Mellow N1): a `{children}` of this component reaches a child that prints its children where no text can sit.
+    children_no_text: bool,
     /// S2: component instances that push a Provider frame.
     provider_locs: std::collections::BTreeSet<u32>,
     /// R34.116: the number of native Provider instances met so far (their frame owner ids).
@@ -1048,6 +1092,11 @@ fn template_has_for(n: &Node) -> bool {
 /// The `source` of a `Component` node that names a specialised clone (its `imported` is the module-cache key).
 const SPEC_SOURCE: &str = "\u{0}spec";
 
+/// F402: the `source` of a `Primitive.<tag>` component of the Radix factory that `rebase_sources` moved into a clone of
+/// another package scope. The clone cannot name the factory's package, so the node carries the module that declares the
+/// factory (the writer's scope resolved it) in `imported`, and the tag stays in `member`.
+const PRIMITIVE_SOURCE: &str = "\u{0}primitive";
+
 /// A stable 32-bit mix of the call site (module and location): the suffix of a clone's id. Ids are per call site
 /// (R34.124); equal chunks share a factory module, not an id.
 /// F238: the call site a clone's id and module-cache key name (`site`: the module and the enclosing clone's id) with a
@@ -1094,10 +1143,20 @@ fn rebase_sources(
                 ..
             } => {
                 match source {
+                    // F288: a component declared (exported or not) in the module that renders the content is named from
+                    // the clone's module by its file and local name, when it compiles without React (a native or static
+                    // child prints into the clone; there is nothing to import for it).
                     None => {
-                        return Err(format!(
-                            "<{name}> is declared in the module that renders it"
-                        ));
+                        let lookup =
+                            compile(from, &Export::Named(name.clone()), None, opts, modules);
+                        if let Some(why) = package_needs_react(&lookup, &modules.borrow(), false) {
+                            return Err(format!(
+                                "<{name}> (declared in the module that renders it) needs React: {why}"
+                            ));
+                        }
+                        *source = Some(relative_spec(to, from));
+                        *imported = Some(name.clone());
+                        member.clear();
                     }
                     Some(s) if s.starts_with("./") || s.starts_with("../") => {
                         let Some(target) = resolve(from, s, opts) else {
@@ -1109,13 +1168,23 @@ fn rebase_sources(
                         if crate::analyze::modules::package_scope(from)
                             != crate::analyze::modules::package_scope(to)
                         {
+                            // F402: `Primitive.<tag>` is the host element wherever it is written: resolved in the scope
+                            // of the module that wrote it (the clone's package cannot see the factory's package), it is
+                            // named from the clone by the module that declares the factory.
+                            if let Some(decl) = primitive_in_scope(from, s, imported, member, opts)
+                            {
+                                *source = Some(PRIMITIVE_SOURCE.to_string());
+                                *imported = Some(decl);
+                                rebase_sources(children, from, to, opts, modules)?;
+                                continue;
+                            }
                             // W1d (progress): the export is a module of the build's package sources: name that file
                             // from the clone's module instead, when it compiles without React. F306 (Radix's
                             // `Switch.Thumb`, declared beside `Switch.Root` in the clone's own module) is the case
                             // where that file is the clone's module itself.
                             let err = || {
                                 format!(
-                                    "<{name}> is imported from a package of another scope than the component it is given to"
+                                    "<{name}> is imported from a package of another scope than the component it is given to (written in {from})"
                                 )
                             };
                             let (Some(imp), Ok(entry)) = (
@@ -1158,6 +1227,36 @@ fn rebase_sources(
         }
     }
     Ok(())
+}
+
+/// F402: the module that declares the Radix `Primitive` factory, when the component `<imported>.<tag>` that the module at
+/// `from` imports from the bare specifier `spec` is one of its tags (R34.65), resolved in `from`'s own package scope.
+fn primitive_in_scope(
+    from: &str,
+    spec: &str,
+    imported: &Option<String>,
+    member: &[String],
+    opts: &crate::analyze::component::AnalyzeOptions,
+) -> Option<String> {
+    let ([tag], Some(imported)) = (member, imported.as_deref()) else {
+        return None;
+    };
+    if imported == "*" {
+        return None;
+    }
+    let entry = crate::analyze::modules::resolve_package(from, spec, opts).ok()?;
+    let there = if imported == "default" {
+        Export::Default
+    } else {
+        Export::Named(imported.to_string())
+    };
+    let (decl, Export::Named(n)) = declared_in(&entry, &there, opts) else {
+        return None;
+    };
+    crate::analyze::primitive::primitive_nodes(&decl, &n, opts)?
+        .iter()
+        .any(|t| t == tag)
+        .then_some(decl)
 }
 
 /// The relative specifier that reaches the project-relative file `target` from the module at `from`.
@@ -2397,7 +2496,7 @@ fn ir_reads_prop(ir: &ComponentIR, key: &str) -> bool {
 }
 
 /// `map` (parameter local -> the call's argument) applied to every expression of `n`.
-fn subst_params(
+pub(super) fn subst_params(
     n: &mut Node,
     map: &std::collections::HashMap<String, RawExpr>,
 ) -> Result<(), String> {
@@ -2941,6 +3040,31 @@ fn state_frame_provider(ir: &ComponentIR) -> bool {
             .all(|d| d.rule == "context-state")
 }
 
+/// F288 G7: `ir` refuses an element read (`element-value`), and every other refusal it has is one a clone of it for a
+/// call site may drop (the clone decides: a clone that still needs React keeps the call site's island).
+fn element_only(ir: &ComponentIR) -> bool {
+    !ir.specialised
+        && ir.provides.is_empty()
+        && ir
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == super::elements::ELEMENT_VALUE)
+        && ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.class == DiagClass::Fallback)
+            .all(|d| {
+                matches!(
+                    d.rule.as_str(),
+                    super::elements::ELEMENT_VALUE
+                        | "ref-in-render"
+                        | "client-function-in-job"
+                        | "jsx-const-child"
+                        | "children-read"
+                ) || super::tier::CHILD_ONLY.contains(&d.rule.as_str())
+            })
+}
+
 /// Why a component compiled from package source cannot be used as compiled (F153c): it, or a component in its
 /// subtree, renders as React (an island of a package's SOURCE would run code the React build never ran), or it
 /// failed to compile. `None` = static or native all the way down.
@@ -2965,9 +3089,19 @@ fn package_needs_react(
         if !seen.insert(ir.id.clone()) {
             continue;
         }
+        // F288: an element reader is specialised at the call site like a state-frame Provider, from a package source too:
+        // a call site that cannot keep its clone leaves a React child in that source, so the outermost package import
+        // (written in app code) keeps its published island.
         if let Tier::React { reason, .. } = &ir.tier
-            && !(state_frames && state_frame_provider(&ir))
+            && !(element_only(&ir) || (state_frames && state_frame_provider(&ir)))
         {
+            // F288 (u1): a call site whose clone failed is React because of that failure (the island it keeps is only
+            // the consequence): name the failure.
+            let reason = ir
+                .diagnostics
+                .iter()
+                .find(|d| d.rule == "specialise-unsupported")
+                .map_or(reason.as_str(), |d| d.message.as_str());
             return Some(format!(
                 "{} renders as React in its source: {reason}",
                 ir.source
@@ -2998,12 +3132,72 @@ fn react(reason: &str) -> Tier {
     }
 }
 
+/// F388 (Mellow N1): a child template whose root (through fragments and its `brust-host` wrapper) is a `left && <X/>`
+/// that keeps the else branch printing `left`. By the time the caller reads it, `left` may be a server expression, so
+/// the shape is the `&&` branch with one slot as its else.
+fn falsy_left_root(n: &Node) -> bool {
+    match n {
+        Node::Fragment(ns) => ns.iter().any(falsy_left_root),
+        Node::Element { tag, children, .. } if tag == "brust-host" => {
+            children.iter().any(falsy_left_root)
+        }
+        Node::If {
+            and: true, else_, ..
+        } => matches!(else_.as_slice(), [Node::Slot(_)]),
+        _ => false,
+    }
+}
+
+/// F388 (Mellow N1): call-site content that is (through fragments and branches) the component's own `{children}`.
+fn passes_children(n: &Node) -> bool {
+    match n {
+        Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => {
+            matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children")
+        }
+        Node::Fragment(ns) => ns.iter().any(passes_children),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(passes_children),
+        _ => false,
+    }
+}
+
+/// F388 (Mellow N1): the template prints `{children}` directly in an element that takes no text (its `brust-host` wrapper
+/// and fragments, branches and lists are transparent; a component it renders them through counts as the same element).
+fn children_in_no_text(n: &Node, no_text: bool) -> bool {
+    match n {
+        Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => {
+            no_text
+                && matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children")
+        }
+        Node::Element { tag, children, .. } => {
+            let nt = if tag == "brust-host" {
+                no_text
+            } else {
+                crate::analyze::component::NO_TEXT.contains(&tag.as_str())
+            };
+            children.iter().any(|c| children_in_no_text(c, nt))
+        }
+        Node::Component { children, .. } | Node::Fragment(children) => {
+            children.iter().any(|c| children_in_no_text(c, no_text))
+        }
+        Node::If { then, else_, .. } => then
+            .iter()
+            .chain(else_)
+            .any(|c| children_in_no_text(c, no_text)),
+        Node::For { body, .. } => body.iter().any(|c| children_in_no_text(c, no_text)),
+        _ => false,
+    }
+}
+
 impl Walker<'_, '_> {
     fn node(&mut self, n: &mut Node) {
         match n {
-            Node::Element { children, .. } | Node::Fragment(children) => {
-                children.iter_mut().for_each(|c| self.node(c))
+            Node::Element { tag, children, .. } => {
+                let saved = self.no_text;
+                self.no_text = crate::analyze::component::NO_TEXT.contains(&tag.as_str());
+                children.iter_mut().for_each(|c| self.node(c));
+                self.no_text = saved;
             }
+            Node::Fragment(children) => children.iter_mut().for_each(|c| self.node(c)),
             Node::If { then, else_, .. } => {
                 self.guard_depth += 1;
                 then.iter_mut().for_each(|c| self.node(c));
@@ -3204,7 +3398,7 @@ impl Walker<'_, '_> {
             self.no_spec.insert(loc);
             diags.push(Diagnostic::info(
                 "specialise-unsupported",
-                format!("this Provider stays a React island: {why}"),
+                format!("this component stays a React island for this call site: {why}"),
                 loc,
                 "keep the content simple (components, text, constants) to have the Provider lowered",
             ));
@@ -3302,7 +3496,15 @@ impl Walker<'_, '_> {
                 let native_prov = child.path.is_some()
                     && !self.no_spec.contains(loc)
                     && self.specialisable(&cir, self.renders.iter().any(|r| r.loc == *loc));
-                let island = !matches!(cir.tier, Tier::Static | Tier::Native) && !native_prov;
+                // F288 G7 (A1): a component that reads its children only as an element is specialised per call site like
+                // a Provider (the same `specialise`, the same key), with no frame of its own.
+                let element_spec = !native_prov
+                    && child.path.is_some()
+                    && !self.no_spec.contains(loc)
+                    && self.element_specialisable(&cir);
+                let island = !matches!(cir.tier, Tier::Static | Tier::Native)
+                    && !native_prov
+                    && !element_spec;
                 // R34.140: a `<Collection.Slot>` over a component hands it the root marker, which only a native instance's
                 // host prints; a static (hostless) component or a React island would drop it, and `getItems()` would find
                 // nothing where React finds the items (fail closed)
@@ -3600,7 +3802,7 @@ impl Walker<'_, '_> {
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
                 // B7: the body of a render prop is read where the Provider renders it, under its frame.
                 let mut render = None;
-                if owner.is_some()
+                if (owner.is_some() || element_spec)
                     && let Some(i) = self.renders.iter().position(|r| r.loc == *loc)
                 {
                     let mut rp = self.renders.remove(i);
@@ -3610,7 +3812,8 @@ impl Walker<'_, '_> {
                     render = Some(rp);
                 }
                 frames.truncate(frames.len() - pushed);
-                if let Some(o) = owner
+                // An element clone owns no frame (`usize::MAX`), as a rest clone (F298).
+                if let Some(o) = owner.or(element_spec.then_some(usize::MAX))
                     && self.spec_failure.as_ref().map(|(l, _)| *l) != Some(*loc)
                 {
                     // R34.122: the Provider and its content become one component for this call site.
@@ -3675,6 +3878,12 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// F288 G7: `cir` refuses an element read (`element-value`), and every other refusal it has is one a clone of it for a
+    /// call site may drop (the clone decides: a clone that still needs React keeps the call site's island).
+    fn element_specialisable(&self, cir: &ComponentIR) -> bool {
+        element_only(cir)
+    }
+
     /// R34.116: whether `cir` is a Provider whose frame is state-valued and a native clone of it can carry the frame.
     fn specialisable(&self, cir: &ComponentIR, render: bool) -> bool {
         // A clone already carries its content (it is what a call site names after specialising).
@@ -3716,10 +3925,14 @@ impl Walker<'_, '_> {
         // the clone's `{children}` would be empty where React renders them (`function Outer(props) { return <Prov
         // {...props} /> }`, `<Outer>hello</Outer>` printed an empty section). Refused by name: the Provider stays an
         // island and React renders it with its children.
+        // F288 S2: the function between the tags is the `children` render prop, which the clone does hold.
+        let render_children = render.as_ref().is_some_and(|r| r.key == "children");
         if content.is_empty()
-            && let Some((k, _)) = props
-                .iter()
-                .find(|(k, _)| k == crate::ir::SPREAD_KEY || k == REST_INPUT || k == "children")
+            && let Some((k, _)) = props.iter().find(|(k, _)| {
+                k == crate::ir::SPREAD_KEY
+                    || k == REST_INPUT
+                    || (k == "children" && !render_children)
+            })
         {
             return Err(if k == "children" {
                 "its children are given as the `children` prop, which the clone cannot hold".into()
@@ -3776,17 +3989,22 @@ impl Walker<'_, '_> {
         let (inputs, clone_handlers) = carry.finish();
         // An input the call site does not change on the client stays fixed in the clone.
         let fixed = self.pinned(cir, props, &inputs);
+        let react_19 = super::elements::resolves_react_19(&ctx.opts.root);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
             &export,
             key.clone(),
             ctx.opts,
             ctx.modules,
-            &mut |ir: &mut ComponentIR| {
-                if let Some(rp) = render.take() {
-                    splice_render(ir, rp)?;
+            &mut |ir: &mut ComponentIR, parsed: &crate::parse::Parsed| {
+                // F288: a component that reads its children as an element folds them for this call site first.
+                let mut content = once.take();
+                if !super::elements::fold(ir, parsed, &mut render, &mut content, react_19)? {
+                    if let Some(rp) = render.take() {
+                        splice_render(ir, rp)?;
+                    }
+                    splice_children(ir, content.unwrap_or_default())?;
                 }
-                splice_children(ir, once.take().unwrap_or_default())?;
                 for (hidden, _) in &inputs {
                     ir.props.push(crate::ir::PropDecl {
                         name: hidden.clone(),
@@ -3864,7 +4082,7 @@ impl Walker<'_, '_> {
             key.clone(),
             ctx.opts,
             ctx.modules,
-            &mut |ir: &mut ComponentIR| {
+            &mut |ir: &mut ComponentIR, _: &crate::parse::Parsed| {
                 splice_rest_children(ir, once.take().unwrap_or_default())?;
                 for (hidden, _) in &inputs {
                     ir.props.push(crate::ir::PropDecl {
@@ -4021,7 +4239,7 @@ impl Walker<'_, '_> {
             key.clone(),
             ctx.opts,
             ctx.modules,
-            &mut |ir: &mut ComponentIR| {
+            &mut |ir: &mut ComponentIR, _: &crate::parse::Parsed| {
                 let content = once.take().unwrap_or_default();
                 if is_poly {
                     splice_poly(ir, content.into_iter().next().ok_or("no child")?)?;
@@ -4625,6 +4843,12 @@ impl Walker<'_, '_> {
             let path = ir.source.clone();
             let id = ir.id.clone();
             return self.finish(name, Some(id), Some(path), Lookup::Compiled(ir), loc);
+        }
+        // F402: a `Primitive.<tag>` the rebase moved into a clone of another package scope.
+        if source == Some(PRIMITIVE_SOURCE)
+            && let (Some(decl), [tag]) = (imported, member)
+        {
+            return self.primitive_child(name, decl, tag, loc);
         }
         let Some(source) = source else {
             return self.local_child(name, loc);
@@ -5833,6 +6057,34 @@ impl Walker<'_, '_> {
             }
         };
         *tier = child.tier.clone();
+        // F388 (Mellow N1): a `left && <X/>` that prints its falsy `left` must not land in an element that takes no text
+        // (a table part, a select), across a component boundary either way: the child's root `&&` in an element of THIS
+        // template, or a `&&` given as children that the child prints in such an element of ITS template.
+        if let Some(c) = child.ir.as_deref() {
+            let at = if self.no_text && falsy_left_root(&c.template) {
+                Some(format!(
+                    "<{name}> renders `left && <X/>` at its root, here inside an element that takes no text"
+                ))
+            } else if children.iter().any(falsy_left_root) && c.children_no_text {
+                Some(format!(
+                    "<{name}> prints the `left && <X/>` given as its children inside an element that takes no text"
+                ))
+            } else {
+                None
+            };
+            // This component's own `{children}`, handed to such a child, lands there too.
+            if c.children_no_text && children.iter().any(passes_children) {
+                self.children_no_text = true;
+            }
+            if let Some(at) = at {
+                self.diagnostics.push(Diagnostic::fallback(
+                    crate::analyze::component::AND_FALSY_IN_TABLE,
+                    format!("{at} (a table part or a select), and `left` may be a number React would print there"),
+                    *loc,
+                    "test a boolean (`n > 0 && <tr/>`), or keep this component in React",
+                ));
+            }
+        }
         if !matches!(child.tier, Tier::Static | Tier::Native)
             || child.ir.as_ref().is_some_and(|c| c.holds_island)
         {
@@ -7682,8 +7934,9 @@ impl Walker<'_, '_> {
                             let yes = self.lower_nodes(then, nested, env, bytes, lists)?;
                             let no = self.lower_nodes(else_, nested, env, bytes, lists)?;
                             let mut node = json!({ MARK: "if", "k": key, "c": yes, "e": no });
-                            // `cond && <X/>`: React renders a falsy number (0) as text there.
-                            if *and {
+                            // `cond && <X/>`: React renders a falsy number (0) as text there (unless the else branch
+                            // already prints `cond`, F388).
+                            if *and && else_.is_empty() {
                                 node["a"] = json!(true);
                             }
                             out.push(node);

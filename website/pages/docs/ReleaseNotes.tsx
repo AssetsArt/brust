@@ -17,6 +17,10 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-24', title: '2.0.0-alpha.24' },
+      { id: 'alpha-23', title: '2.0.0-alpha.23' },
+      { id: 'alpha-22', title: '2.0.0-alpha.22' },
+      { id: 'alpha-21', title: '2.0.0-alpha.21' },
       { id: 'alpha-20', title: '2.0.0-alpha.20' },
       { id: 'alpha-19', title: '2.0.0-alpha.19' },
       { id: 'alpha-18', title: '2.0.0-alpha.18' },
@@ -43,6 +47,150 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-24">2.0.0-alpha.24 · 24 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.23 (git log --merges --first-parent v2.0.0-alpha.23..origin/main): #371 (F404), #372 (F386), #373 (F415, F416), #374 (F424), #375 (F423), #376 (F425), #377 (F420, F421), #378 (F418, F419), #379 (F438, CI only; one sentence in the contributor entry) and #380 (F288 phase B PR 2); the merge list is re-checked against main before the tag. F418 to F425 were found by the new server-HTML comparison (#372) */}
+      <p>A patch of wrong output and crashes, most of them found by comparing the HTML that brust serves with React&rsquo;s own render of every battery row. A local named <code>loop</code> no longer stops the server from starting, a sibling module&rsquo;s JSX constant no longer answers 500, <code>string + number</code> follows JavaScript, and a controlled <code>&lt;select&gt;</code> or <code>&lt;textarea&gt;</code>, a lazily initialised state and a page&rsquo;s own context default now paint their value on the first load.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #375 (F423; found by #372; the server did not boot); the names are from the PR description, Printer::local_var in crates/brust-compiler/src/lower/template.rs is where locals are named */}
+        <li>
+          <strong>A state or list variable named <code>loop</code>, <code>self</code>, <code>none</code>, <code>True</code> and similar no longer stops <code>brust start</code> for the whole app.</strong> A <code>useState</code>, list item or list index with such a name was written into the template as <code>{'{'}% set loop %{'}'}</code> or <code>{'{'}% for loop in … %{'}'}</code>, which the template engine refuses, so the server did not start at all. Such a name now gets another name in the template. The names covered are the engine&rsquo;s reserved words (<code>loop</code>, <code>self</code>, <code>none</code>, <code>None</code>, <code>True</code>, <code>False</code> and others) and every function brust&rsquo;s templates call. A variable named <code>not</code> also read wrongly and is fixed. Props are not affected: a prop with such a name was already refused with a message.
+        </li>
+        {/* source: PR #376 (F425; found by #372; pre-existing; the test harnesses set NODE_ENV=production, so no test caught it); installProductionJsxDev in packages/brust/src/build/server-only.ts */}
+        <li>
+          <strong>A sibling module&rsquo;s JSX constant no longer answers 500 under <code>brust start</code>.</strong> A page that imported <code>export const el = &lt;b /&gt;</code> from another module failed with <code>jsxDEV is not a function</code> when you ran <code>brust start</code> from a shell that has no <code>NODE_ENV</code>: Bun then compiles the JSX for development, and React&rsquo;s production runtime has no <code>jsxDEV</code>. Only JSX that runs when the module is imported was affected. In production mode the workers now map <code>jsxDEV</code> onto the app&rsquo;s own production JSX functions, so there is still one copy of React. <code>brust dev</code> keeps React&rsquo;s development runtime, and a static build or a Cloudflare bundle was never affected.
+        </li>
+        {/* source: PR #374 (F424; found by #372; pre-existing, HTTP 500); the new filter js_add is in crates/brust-jinja/src/lib.rs, the lowering in crates/brust-compiler/src/lower/server_expr.rs */}
+        <li>
+          <strong><code>string + number</code> in a template expression follows JavaScript and no longer answers 500.</strong> <code>tone={'{'}t + n{'}'}</code> in a list, with <code>t</code> a string and <code>n</code> an index, failed with &ldquo;tried to use + on string and number&rdquo;, because the template engine&rsquo;s <code>+</code> does not join a string and a number. A <code>+</code> whose two sides are not both known to be numbers now does what JavaScript does: it joins as text when either side is a string (<code>undefined + &apos;x&apos;</code> is <code>&apos;undefinedx&apos;</code>), and adds otherwise. Two numbers still add as before.
+        </li>
+        {/* source: PR #377 (F420, F421; found by #372); the limits are the new ledger rows F432 and F434 in the PR description; the filters selected_in and textarea_text are in crates/brust-jinja/src/lib.rs */}
+        <li>
+          <strong>A controlled <code>&lt;select&gt;</code> and <code>&lt;textarea&gt;</code> show their value on the first load.</strong> <code>&lt;select value=&quot;b&quot;&gt;</code> was written with a <code>value</code> attribute and no selected option, so the first option showed until the page loaded; <code>&lt;textarea value=&quot;hi&quot;&gt;</code> was written with a <code>value</code> attribute, which browsers ignore, so it was empty until the page loaded. They now match React: the option whose value equals the select&rsquo;s value (or its text, when it has no <code>value</code>) is <code>selected</code>, and the textarea&rsquo;s value is its text. It works for a string, a number, an array on a <code>multiple</code> select, and <code>defaultValue</code>, and for options written directly, in a <code>.map</code>, in an <code>&lt;optgroup&gt;</code> or in an inlined child component. An <code>&lt;option&gt;</code> that has no <code>value</code> and an element as a child is refused by name (<code>select-option</code>). Not covered yet: a select whose props arrive through a spread (the shadcn wrapper shape; F432), and a <code>multiple</code> select, whose picks the browser still clears when the page loads (F434).
+        </li>
+        {/* source: PR #378 (F418; found by #372); is_module_fn in crates/brust-compiler/src/lower/common.rs is the shared rule */}
+        <li>
+          <strong><code>useState(load)</code> with a module-level function paints its value.</strong> <code>const [n] = useState(load)</code>, where <code>load</code> is a function declared in the module or a <code>const</code> arrow or function expression, painted nothing on the server, because the server seeded the function itself and not its result. The server and the client now both call it. An <code>async</code> initialiser keeps its existing fallback to React.
+        </li>
+        {/* source: PR #378 (F419; found by #372); F431 and F437 are the follow-up ledger rows named in the PR description */}
+        <li>
+          <strong>A page&rsquo;s own <code>useContext</code> with no Provider paints the context&rsquo;s default.</strong> A page that read a context itself, with nothing providing it, painted nothing; the default given to <code>createContext</code> now shows. When that default is not a plain literal (an object, an array or an expression) and nothing provides the context, the component now falls back to a React island by name (<code>context-no-provider</code>) and does not paint an empty value. Still open: a page that is a React island under a layout&rsquo;s Provider paints the default and not the provided value (F437).
+        </li>
+        {/* source: PR #371 (F404; pre-existing: wrong output with no diagnostic); crates/brust-compiler/src/analyze/passes/state_children.rs. The only entry in this version that refuses something that compiled before, so it is a change and not a break: the component paints correctly as an island */}
+        <li>
+          <strong>A state whose initial value reads <code>children</code> now falls back to a React island by name.</strong> <code>const [c] = useState(children)</code> compiled as a native component and printed nothing where React prints the child. It is now refused as <code>state-from-children</code> with the component&rsquo;s file and line, and the component renders as an island, which paints correctly. This covers <code>props.children</code>, a destructured or renamed <code>children</code>, an expression over it, a lazy initialiser, an alias, the whole props object, rest props, <code>useReducer</code> and an inlined custom hook. A component that does not read <code>children</code> into state is unchanged.
+        </li>
+        {/* source: PR #373 (F415, F416; F288 phase B PR1; both pre-existing); packages/runtime-dom, the capture sink in the core */}
+        <li>
+          <strong>A conditional branch in the browser disposes its effects and refs when it closes.</strong> The effects and cleanups of an <code>x-if</code> branch (and of a replaced <code>x-for</code> row) were kept on the component, so a branch that you removed kept running: after 20 toggles, one change ran 21 text updates on detached nodes. A ref inside a removed branch also kept the detached element, where React sets it to <code>null</code>. Each branch now owns its effects and refs, and drops them before it leaves the page. The core runtime budget grows by the size of this one hook.
+        </li>
+        {/* source: PR #380 (F288 phase B PR 2); the order of attaching and detaching is from the PR description; the sentence on what stays React is from the lane's commit message */}
+        <li>
+          <strong>Radix <code>Presence</code> with an element child now compiles to native code.</strong> The checkbox and radio indicators are the case: <code>Presence</code> renders its element child while it is present, and nothing when it is not. brust now turns that into a conditional branch, and a callback ref inside a branch is attached once the branch is on the page and detached before it leaves, in React 19&rsquo;s order. A callback that changes between renders, a ref inside a list row and a component&rsquo;s <code>children</code> still render with React.
+        </li>
+        {/* source: PR #372 (F386; a test, not a change in output); scripts/battery/ssr-compare.ts, ssr-normalise.ts and ssr-allowlist.ts; PR #379 (F438) for the last sentence. For people who work on brust */}
+        <li>
+          <strong>For people who work on brust: CI now compares the HTML of every battery row with React.</strong> <code>bun scripts/battery/ssr-compare.ts --check</code> builds one app with a route for each row, starts it, and compares each row&rsquo;s served HTML with React&rsquo;s <code>renderToString</code> of the same source and props, after a normaliser whose rules are listed in its header. It fails on a difference, and on an allowlisted difference that is no longer there. It found the wrong outputs above (F418 to F425). CI also runs eight served test files that were on main but in no CI step, and a test (<code>scripts/ci-wiring.test.ts</code>) now fails when a file under <code>tests/server</code> is named neither in <code>ci.yml</code> nor in the <code>server-test</code> script.
+        </li>
+      </ul>
+
+      <h2 id="alpha-23">2.0.0-alpha.23 · 24 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.22 (git log --merges --first-parent v2.0.0-alpha.22..origin/main), written from the lane branches before the cut: #364 (F406), #365 (F407), #366 (F408), F411 (lane aac-font-preload), F413 (lane aac-island-box) and F412 (lane aac-list-first-paint, tests only, so no entry); the merge list is re-checked against main before the tag. The issues were filed by the Assets Art team (B-6 to B-11) */}
+      <p>A patch from the Assets Art team&rsquo;s second round of issues. It adds one feature: importing a font or an image file gives its served URL, so a stylesheet font can be preloaded. It fixes a list inside a list row in a native component, a lucide icon under a condition, a line break written before every native component, and a gap that a React island added in a flex or grid row.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: lane aac-font-preload (F411, Assets Art B-9; a feature); packages/brust/src/build/css.ts cssPlugin and docs/css.md "Preload a stylesheet font"; the types, the targets and the reason for not preloading every font are from the lane's READY note and docs */}
+        <li>
+          <strong>Importing a font or an image gives its served URL, so you can preload a stylesheet font.</strong> <code>import nunito from &apos;./fonts/nunito.woff2&apos;</code> is the string <code>/_brust/client/nunito-&lt;hash&gt;.woff2</code>, the same file and name that a <code>url()</code> of it in a stylesheet is rewritten to, so the file is shipped once. It works for every type brust serves from <code>client/</code>: <code>.woff2 .woff .ttf .otf .eot .png .jpg .jpeg .gif .webp .avif .svg .ico</code>. Put it in a layout as <code>&lt;link rel=&quot;preload&quot; as=&quot;font&quot; type=&quot;font/woff2&quot; crossOrigin=&quot;&quot; href={'{'}nunito{'}'} /&gt;</code> and it lands in <code>&lt;head&gt;</code>. The string is a build-time constant, so it works in a native component, in a React island, on the server, on Cloudflare Workers and in <code>--target static</code>; <code>@brust/core</code> now carries the TypeScript declarations for these imports. brust does not preload the stylesheet&rsquo;s fonts by itself, because a package such as <code>@fontsource-variable/nunito</code> has one file for each <code>unicode-range</code> subset and the browser should fetch only the subsets a page uses. See <a href="/docs/css#preload">Preload a stylesheet font</a>.
+        </li>
+        {/* source: PR #364 (F406, Assets Art B-6; pre-existing, the server HTML was right) */}
+        <li>
+          <strong>A list inside a list row in a native component works in the browser.</strong> In alpha.22 and earlier, the inner rows of <code>items.map(item =&gt; &lt;li&gt;{'{'}item.tags.map(…){'}'}&lt;/li&gt;)</code> had their text bound but were not a list. After the page loaded, every inner row was empty, rows were copied into the next outer row, and the console warned of a first-paint mismatch. The inner list is now a client list of its own, keyed by its own <code>key</code>, with the outer row&rsquo;s item in scope. It matches React on load, when you reorder it and when it reads the outer item.
+        </li>
+        {/* source: PR #365 (F407, Assets Art B-7; pre-existing); a real nested-instance is still an error and now names its cause */}
+        <li>
+          <strong>A lucide icon in a component under a condition no longer fails the build with <code>nested-instance</code>.</strong> <code>{'{'}post.interactive &amp;&amp; &lt;TryBadge /&gt;{'}'}</code>, where <code>TryBadge</code> holds an icon and no job, was refused with &ldquo;has a job&rdquo;. The first compile sees an icon as a server-rendered island, and icons become static SVG only in the final compile; the first compile&rsquo;s refusal is now a warning. A real <code>nested-instance</code> still stops the build, and its message names the cause, for example that <code>&lt;TryBadge&gt;</code> holds the server-rendered React island <code>&lt;Hand&gt;</code>, with its position.
+        </li>
+        {/* source: PR #366 (F408, Assets Art B-8; wrong output, pre-existing); crates/brust-compiler/src/lower/template.rs is where the break was written */}
+        <li>
+          <strong>No line break is written before a native component&rsquo;s root.</strong> In alpha.22 and earlier, brust wrote a line break before every native component&rsquo;s root, whatever the JSX around it, so <code>&lt;p&gt;the end.&lt;Mark /&gt; after&lt;/p&gt;</code> was built as <code>the end.</code>, a line break, then the element, and an inline native component showed a space before it. The break is gone, and JSX&rsquo;s whitespace rule applies at a native component as at any element: a line break between text and the component is dropped, and a space on the same line is kept. The HTML of a native component now equals what React&rsquo;s <code>renderToString</code> gives for its surroundings. The built <code>.jinja</code> templates also lose the line break after their header comment and after each <code>{'{'}% set %{'}'}</code> line of the preamble, so a test that pins their exact text sees the change.
+        </li>
+        {/* source: lane aac-island-box (F413, Assets Art B-11; pre-existing); crates/brust-compiler/src/lower/mod.rs island_host is the single emit site; the wording about CSS and exact-markup tests is the lead's instruction */}
+        <li>
+          <strong>A React island no longer adds a gap in a flex or grid row.</strong> In alpha.22 and earlier, <code>&lt;brust-island&gt;</code> was an element with a box, so in a row with <code>gap: 24px</code> an island that rendered nothing still counted as an item and added a second gap. Every <code>&lt;brust-island&gt;</code> now carries <code>style=&quot;display:contents&quot;</code>, as <code>&lt;brust-host&gt;</code>, <code>&lt;brust-row&gt;</code> and <code>&lt;brust-if&gt;</code> already did, so it takes no box and the layout matches the same page written with plain React. Check two things when you upgrade: CSS of yours that gave <code>brust-island</code> a box (a width, a margin, a border) no longer applies to it, and a test that compares the exact markup of an island sees the new attribute.
+        </li>
+      </ul>
+
+      <h2 id="alpha-22">2.0.0-alpha.22 · 23 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.21 (git log --merges --first-parent v2.0.0-alpha.21..origin/main): #359 (F384), #360 (elysia-rc), #361 (F399, Assets Art B-5) and #362 (F288 phase A); nothing else is merged */}
+      <p>Elysia moves from the 2 beta to the 2 release candidate, which is a breaking change for apps that use brust&rsquo;s actions. A <code>&lt;title&gt;</code>, <code>&lt;meta&gt;</code> or <code>&lt;link&gt;</code> rendered inside a page now goes into <code>&lt;head&gt;</code>, as in React 19, and the Radix <code>Presence</code> now compiles to native code.</p>
+
+      <h3>Breaking</h3>
+      <ul>
+        {/* source: PR #360 (elysia-rc; requested by the human); the peer range, the install command, extension() and the top-level wire members are from the PR description and docs/actions.md */}
+        <li>
+          <strong>Actions now need Elysia 2 release candidate 0 (<code>2.0.0-rc.0</code>) instead of the beta.</strong> <code>@brust/core</code> lists <code>elysia</code> and <code>@elysia/eden</code> as optional peers at <code>^2.0.0-rc.0</code>, so install them with <code>bun add elysia@rc @elysia/eden@rc</code>; keep one copy of Elysia in the app, because <code>mountActions</code> checks <code>instanceof Elysia</code>. Two things change for your code. An <code>HTTPError</code> subclass now sets its extra members with an <code>extension()</code> method; the <code>detail()</code> method is gone. And extra members of an error response are now top-level in the response body (<code>body.max</code>, not <code>body.detail.max</code>). Elysia rc also requires <code>typebox</code>, <code>exact-mirror</code> and <code>openapi-types</code> as peers; bun installs them with the two packages, and with another package manager you add them yourself. The create-app template, the pokedex example and the docs are updated to the same version.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #361 (F399, Assets Art B-5; pre-existing, in alpha.21 and earlier); the React 19 order, the skipped cases, the link rule, the per-route title advice and F405 are from the PR description */}
+        <li>
+          <strong>A <code>&lt;title&gt;</code>, <code>&lt;meta&gt;</code> or <code>&lt;link&gt;</code> rendered inside a page now goes into <code>&lt;head&gt;</code>.</strong> In alpha.21 and earlier it stayed in <code>&lt;body&gt;</code>, so a route could not set its own title. brust now moves it as React 19 does, in the server&rsquo;s HTML, in the adapters and in a <code>--target static</code> build: the head&rsquo;s own elements first, then the moved ones in the order they were rendered. A <code>&lt;link&gt;</code> moves only when it has a <code>rel</code> other than <code>stylesheet</code> and a non-empty <code>href</code>. Elements inside <code>svg</code>, <code>math</code>, <code>template</code> or an island, elements with an <code>itemprop</code>, and elements that carry a client binding or sit in a conditional or list stay where they are rendered. To give each route its own title, drop the <code>&lt;title&gt;</code> from the layout&rsquo;s <code>&lt;head&gt;</code>, as in React. A title that changes in the browser is not handled yet (F405).
+        </li>
+        {/* source: PR #362 (F288 phase A); the Presence behaviour, the layout-effect order and the 106 B are from the PR description; collapsible is not yet native past Presence (next wall F382), so the entry says only what Presence does */}
+        <li>
+          <strong>Radix <code>Presence</code> now compiles to native code.</strong> Before, the content of a Collapsible was an island at <code>Presence</code>. brust now compiles the published <code>@radix-ui/react-presence</code> source, with React 19&rsquo;s behaviour, including holding the content in place until <code>animationend</code> when it closes. It needs React 19: with another major version the component renders with React. Collapsible as a whole is not native yet, and Tabs content is still an island.
+        </li>
+        {/* source: PR #362 (layout effects, amended ruling 94404307; runtime +147 B gzip, budget reason: core +168 / basics -21) */}
+        <li>
+          <strong><code>useLayoutEffect</code> now runs after the DOM bindings and before <code>useEffect</code>, as in React.</strong> When an update re-runs effects, the order is: the page&rsquo;s bindings, then layout effects, then passive effects. The runtime grows by 147 bytes gzipped in total.
+        </li>
+        {/* source: PR #362 (F403, pre-existing); the PR says the caller's ref stayed null */}
+        <li>
+          <strong>A ref passed to a native child now reaches the caller.</strong> The ref a caller put on a native child&rsquo;s host element was bound by the child itself, so the caller&rsquo;s <code>ref.current</code> stayed <code>null</code>. It now holds the element.
+        </li>
+        {/* source: PR #359 (F384, collapsible wall W10; pre-existing) */}
+        <li>
+          <strong>A conditional <code>{'{'}children{'}'}</code> inside a specialised component compiles.</strong> <code>{'{'}isOpen &amp;&amp; children{'}'}</code> or <code>cond ? children : null</code> in a component that brust specialises per call site (Radix&rsquo;s <code>CollapsibleContentImpl</code> is one) was refused with a message that named an empty value. It is now a conditional slot, and the refusal, where one remains, names the value.
+        </li>
+      </ul>
+
+      <h2 id="alpha-21">2.0.0-alpha.21 · 23 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.20 (git log --merges --first-parent v2.0.0-alpha.20..origin/main): #353 (F332, tests and doc comments only: the compiler logic is unchanged, so no entry), #354 (F396), #355 (F392, F393), #356 (F394, F395) and #357 (F388): both listed here on the lead's ruling and both must be merged before the cut. F332 aside, the Assets Art issues were filed by the Assets Art team (B-1 to B-4) */}
+      <p>A patch that starts from problems found while building a production site: every full page now starts with a doctype, small fonts and images in <code>url()</code> are copied instead of inlined, a prop named <code>req</code> compiles, build errors name the right file and component, and a child component in a native list row no longer throws on load. It also fixes a wrong output: a falsy number left of <code>&amp;&amp;</code> renders as React renders it.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #355 (F392, Assets Art B-1; pre-existing, in alpha.20 and earlier); the check is in the shared render step, so the server, the adapters and a static build all get it */}
+        <li>
+          <strong>Every full page now starts with <code>&lt;!doctype html&gt;</code>.</strong> In alpha.20 and earlier, a root layout that returned <code>&lt;html&gt;</code> was sent without a doctype, because JSX cannot write one, and browsers rendered the page in quirks mode (<code>document.compatMode</code> was <code>BackCompat</code>), which changes table sizing, the line height of inline images and the height of <code>body</code>. A response whose first element, after whitespace and comments, is <code>&lt;html</code> and that has no doctype now gets one in front. It applies to <code>brust start</code>, to the adapters and to the pages <code>brust build --target static</code> writes. A page that already has a doctype, and a fragment, are unchanged.
+        </li>
+        {/* source: PR #355 (F393, Assets Art B-2; pre-existing, in alpha.20 and earlier); ?query and #fragment kept verbatim and an author-written data: URI left alone are from the PR description and its tests */}
+        <li>
+          <strong>A relative <code>url()</code> in a stylesheet is always copied, never inlined.</strong> In alpha.20 and earlier, a font or image under the bundler&rsquo;s size threshold became a <code>data:</code> URI in the CSS, so importing a package such as <code>@fontsource-variable/nunito</code> produced one large stylesheet that carried every subset, and the browser could not choose a subset by <code>unicode-range</code>. Every relative <code>url()</code> asset is now written as <code>client/&lt;name&gt;-&lt;hash&gt;.&lt;ext&gt;</code> at any size, with or without minification, and the URL is rewritten to it. A <code>?query</code> or <code>#fragment</code> on the URL (<code>?v=3</code>, <code>?#iefix</code>, an SVG font&rsquo;s <code>#id</code>) is kept. A <code>data:</code> URI you wrote yourself stays as written.
+        </li>
+        {/* source: PR #356 (F394, Assets Art B-3 part 1; pre-existing, in alpha.20 and earlier) */}
+        <li>
+          <strong>A component prop named <code>req</code>, <code>request</code>, <code>cookies</code> or <code>headers</code> now compiles.</strong> In alpha.20 and earlier, any such prop was refused with <code>request-state-in-render</code>, even for plain data such as <code>&lt;Count req=&quot;18,420&quot; /&gt;</code>. Request state is now judged by where the value comes from, not by the prop&rsquo;s name: only the props the router passes to a route component can carry it. A route page that reads <code>req</code> while rendering is still refused.
+        </li>
+        {/* source: PR #356 (F395, Assets Art B-3 part 2; pre-existing, in alpha.20 and earlier) */}
+        <li>
+          <strong>Build errors name the file and the component that cause them.</strong> In alpha.20 and earlier, an error raised inside a component imported from another file printed the page&rsquo;s file name with the other file&rsquo;s line and column, and <code>nested-instance</code> could name an unrelated sibling. Each error now names the file its line and column point into, and <code>nested-instance</code> names the component that has the job or <code>useId</code>.
+        </li>
+        {/* source: PR #354 (F396, Assets Art B-4; HIGH, pre-existing in every alpha with a row root of hidden={cond}; the server HTML was right); F397 (a literal hidden on a row root is lost on client-added rows) is open and not fixed here */}
+        <li>
+          <strong>A child component in a native list row no longer throws <code>TypeError</code> on load.</strong> In alpha.20 and earlier, a native list whose row root was <code>hidden={'{'}cond{'}'}</code> and held a child component logged <code>Cannot read properties of undefined</code> when the page loaded: the server&rsquo;s row was not adopted and was cloned again without its item. The server HTML was already right. The row now keeps the server&rsquo;s markup, the child receives its row&rsquo;s item, and clicking a button that changes <code>hidden</code> behaves as it does in React.
+        </li>
+        {/* source: PR #357 (F388, wrong output with no diagnostic, pre-existing in every alpha); the table/select fallback name and the JavaScript-disabled paint are from the PR description and its tests */}
+        <li>
+          <strong>A falsy number left of <code>&amp;&amp;</code> now renders as React renders it.</strong> In alpha.20 and earlier, <code>{'{'}n &amp;&amp; &lt;X /&gt;{'}'}</code> with <code>n = 0</code> rendered nothing where React renders <code>0</code>, with no error. When the left side is not provably a boolean, the value is now printed when it is falsy, both in the server&rsquo;s first paint (also with JavaScript disabled) and in the browser. A left side that is provably a boolean is unchanged. Inside a table or a <code>select</code>, where that markup is not allowed, a non-boolean left side is rendered with React and the build names the reason <code>and-falsy-in-table</code>.
+        </li>
+      </ul>
 
       <h2 id="alpha-20">2.0.0-alpha.20 · 17 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.19 (be29ef27): #348–#350 (f337-progress-live, toggle-group F329b, collapsible-flip F385); #346 (F329 part a) was merged before the alpha.19 tag, so it is listed under alpha.19; ledger-only commits have no entry */}

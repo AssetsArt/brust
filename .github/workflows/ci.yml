@@ -136,6 +136,7 @@ jobs:
   # The battery and the browser harness drive the real `brustc` (built in the job).
   battery:
     runs-on: ubuntu-latest
+    needs: addon
     env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +158,13 @@ jobs:
       - run: git diff --exit-code docs/react-coverage.md docs/react-coverage.json docs/plans/m1-exit-report.md
       # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
       - run: bun test scripts/battery
+      # F386: every native/static row's served first HTML equals React's renderToString (the real `brust build` + `start`, one app,
+      # a route per row); a diff or a server refusal fails unless scripts/battery/ssr-allowlist.ts explains it (wall time ~1 min).
+      - uses: actions/download-artifact@v4
+        with: { name: addon-linux-x64, path: packages/brust/native }
+      - run: bun scripts/battery/ssr-compare.ts --check
+      # F288 §3 (ruling Q1): the installed react-presence getElementRef on real React 19 elements (prod + dev) equals the fold.
+      - run: bun test scripts/f288
       - run: sccache --show-stats
         if: always()
   browser:
@@ -317,12 +325,18 @@ jobs:
       - run: bun test --timeout 120000 tests/server/presence-general.chromium.test.ts
       # F289: a hook's returned object bound whole at the call site (t.on / t.toggle): served == React, then the clicks.
       - run: bun test --timeout 120000 tests/server/hook-object-bind.chromium.test.ts
+      # F388: a falsy number left of `&&` paints as React does (0, NaN), server and client: served == React, flips.
+      - run: bun test --timeout 120000 tests/server/falsy-and.chromium.test.ts
+      # F384: `{cond && children}` / `{cond ? children : null}`, plain and in a Provider clone: served == React, toggles.
+      - run: bun test --timeout 120000 tests/server/cond-children.chromium.test.ts
       # F385: an inlined custom hook's argument is set before what reads it (template, job, chunk): served == React.
       - run: bun test --timeout 120000 tests/server/preamble-order.chromium.test.ts
       # F308: a changing key outside a list is a named refusal; the React page resets state on a key change.
       - run: bun test --timeout 120000 tests/server/live-key.chromium.test.ts
       # F369c: a handler spread into a native child's element is bound by that element (x-prop-on-*), read live.
       - run: bun test --timeout 120000 tests/server/native-spread-handler.chromium.test.ts
+      # F412: native list rows printed hidden before the shown one: served and static == React, no warning, no stray row.
+      - run: bun test --timeout 120000 tests/server/list-first-paint.chromium.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
       - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts
       # F142 PR 1: shadcn's table page built AND started, its HTML equal to React's.
@@ -338,6 +352,10 @@ jobs:
       - run: bun test --timeout 180000 tests/server/slot-owner.chromium.test.ts
       # B1: ref={fn} (a callback ref that is not a useRef binding) is called with the element at mount.
       - run: bun test --timeout 120000 tests/server/callback-ref.chromium.test.ts
+      # F288 phase A: the published @radix-ui/react-presence compiled native (function child), parity + exit animation.
+      - run: bun test --timeout 120000 tests/server/presence.chromium.test.ts
+      # F288 phase B: Presence with an element child (x-cref on an x-if branch): every toggle == React, listeners balanced.
+      - run: bun test --timeout 120000 tests/server/presence-element.chromium.test.ts
       # B5: ...rest.key spread inside an object literal (style), served == React.
       - run: bun test --timeout 120000 tests/server/rest-style.chromium.test.ts
       # B4: a never-written useRef read in the render is its first value, served == React.
@@ -398,6 +416,23 @@ jobs:
       - run: bun test --timeout 120000 tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/css.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/tailwind.chromium.test.ts
+      # F438: served tests that were on main but in no CI step. Each runs alone (each starts its own server).
+      # L16: an actions-only deployment and a page-only one on two origins, cookies and CORS.
+      - run: bun test --timeout 180000 tests/server/actions-standalone.chromium.test.ts
+      # F128: `listening on` is printed before `ready` on every boot.
+      - run: bun test --timeout 120000 tests/server/boot-order.test.ts
+      # F420/F421: a controlled select/textarea paints `selected` / its text before hydration, as React does.
+      - run: bun test --timeout 120000 tests/server/form-control-paint.chromium.test.ts
+      # F413: a hidden island between flex items adds no gap.
+      - run: bun test --timeout 120000 tests/server/island-gap.chromium.test.ts
+      # F425: a sibling module's import-time JSX element renders under a shell-started `brust start`.
+      - run: bun test --timeout 120000 tests/server/jsx-const-sibling.test.ts
+      # F396: a child given a prop built from the row item inside a native `.map` row: served == React, hydrates clean.
+      - run: bun test --timeout 120000 tests/server/map-row-props.chromium.test.ts
+      # F406: a list mapped inside a list row keeps its inner list on the client.
+      - run: bun test --timeout 120000 tests/server/nested-list.chromium.test.ts
+      # F399: <title>, <meta> and <link> rendered in a body are hoisted into <head> as React 19 does.
+      - run: bun test --timeout 120000 tests/server/title-hoist.chromium.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.
       - run: bun check -p bench
       - run: bun check -p bench/apps/next
@@ -409,3 +444,5 @@ jobs:
       - run: bun test scripts/release-check.test.ts scripts/core-cf-check.test.ts
       # F264: the generated-names fixture is generated; stale or out of step with the cargo/Chromium tables fails.
       - run: bun test scripts/gen-generated-names.test.ts
+      # F438: every tests/server/**/*.test.ts file is a step above or in the root server-test script.
+      - run: bun test scripts/ci-wiring.test.ts

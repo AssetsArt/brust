@@ -670,6 +670,8 @@ fn read_function_as(
     ir.throw_props = body.throw_props;
     ir.refs = body.refs;
     ir.sink_refs = body.sink_refs;
+    ir.render_ref_writes = body.render_ref_writes;
+    ir.callback_deps = body.callback_deps;
     ir.use_id_slots = body.id_bindings.len();
     ir.uses_collection = body.uses_collection;
     ir.children_called = reader.names.children_called.get();
@@ -697,20 +699,214 @@ fn read_function_as(
         .map(root_node)
         .unwrap_or(Node::Fragment(vec![]));
     ir.template = host_root(root, root_loc);
+    falsy_left_slots(ir);
     callback_refs(ir);
     ir.uses_outlet = has_outlet(&ir.template);
     check_printer_panic(ir);
 }
+
+/// F388 (rulings 3743aabc, 6a4a1b50): the reader gives `left && <X/>` (a side-effect-free `left`) an else branch that
+/// prints `left`, as React renders a falsy number there. That branch goes again when `left` is provably boolean (a boolean
+/// prints nothing; the branch would only add markup): a comparison, `!x`, `Boolean(x)`, a boolean literal, `&&` / `||` /
+/// `?:` of those, a derived value over them, or a state seeded with a boolean literal whose every setter call writes one
+/// (`setS(!s)`, `setS(true)`, `setS((p) => !p)`). Under an element whose content model takes no text (`<table>`,
+/// `<tbody>`, `<tr>`, `<select>`, ...) a non-boolean `left` is a named refusal (`and-falsy-in-table`): the parser would
+/// move the text out of the element, so no lowering paints what React's own markup holds there.
+fn falsy_left_slots(ir: &mut ComponentIR) {
+    let mut refused: Vec<u32> = Vec::new();
+    // Walk a copy: `provably_boolean` reads the whole IR, template included (a setter handed on as a prop).
+    let mut t = ir.template.clone();
+    falsy_walk(ir, &mut t, false, &mut refused);
+    ir.template = t;
+    for loc in refused {
+        ir.diagnostics.push(Diagnostic::fallback(
+            AND_FALSY_IN_TABLE,
+            "`left && <X/>` sits in an element that takes no text (a table part or a select), and `left` may be a number React would print there".to_string(),
+            loc,
+            "test a boolean (`n > 0 && <tr/>`), or keep this component in React",
+        ));
+    }
+}
+
+/// F388: the named refusal of a non-boolean `left && <X/>` in an element that takes no text.
+pub(crate) const AND_FALSY_IN_TABLE: &str = "and-falsy-in-table";
+
+/// F388: elements whose content model takes no text; the HTML parser moves text (or a wrapper) out of them.
+pub(crate) const NO_TEXT: &[&str] = &[
+    "table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup", "datalist",
+];
+
+/// F388: the else branch the reader gave a `left && <X/>`: exactly the slot of `left` itself.
+fn falsy_left_slot(n: &Node) -> bool {
+    matches!(n, Node::If { cond: Expr::Raw(c), else_, and: true, .. }
+        if matches!(else_.as_slice(), [Node::Slot(Expr::Raw(s))] if s == c))
+}
+
+fn falsy_walk(ir: &ComponentIR, n: &mut Node, no_text: bool, refused: &mut Vec<u32>) {
+    if falsy_left_slot(n)
+        && let Node::If {
+            cond: Expr::Raw(c),
+            else_,
+            ..
+        } = n
+    {
+        if provably_boolean(ir, c, 0) {
+            else_.clear();
+        } else if no_text {
+            refused.push(c.loc);
+            else_.clear();
+        }
+    }
+    match n {
+        Node::If { then, else_, .. } => then
+            .iter_mut()
+            .chain(else_.iter_mut())
+            .for_each(|c| falsy_walk(ir, c, no_text, refused)),
+        Node::Element { tag, children, .. } => {
+            let nt = NO_TEXT.contains(&tag.as_str());
+            children
+                .iter_mut()
+                .for_each(|c| falsy_walk(ir, c, nt, refused));
+        }
+        Node::Component { children, .. } => children
+            .iter_mut()
+            .for_each(|c| falsy_walk(ir, c, false, refused)),
+        Node::Fragment(children) => children
+            .iter_mut()
+            .for_each(|c| falsy_walk(ir, c, no_text, refused)),
+        Node::For { body, .. } => body
+            .iter_mut()
+            .for_each(|c| falsy_walk(ir, c, no_text, refused)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+    }
+}
+
+/// F388: `r` is a boolean whenever the component renders (see [`falsy_left_slots`]).
+fn provably_boolean(ir: &ComponentIR, r: &RawExpr, depth: u8) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    let b = |x: &RawExpr| provably_boolean(ir, x, depth + 1);
+    match &r.kind {
+        RawKind::Lit(Literal::Bool(_)) => true,
+        RawKind::Unary {
+            op: crate::ir::UnOp::Not,
+            ..
+        } => true,
+        RawKind::Binary { op, left, right } => match op {
+            BinOp::Eq
+            | BinOp::Ne
+            | BinOp::StrictEq
+            | BinOp::StrictNe
+            | BinOp::Lt
+            | BinOp::Le
+            | BinOp::Gt
+            | BinOp::Ge => true,
+            BinOp::And | BinOp::Or => b(left) && b(right),
+            _ => false,
+        },
+        RawKind::Cond { yes, no, .. } => b(yes) && b(no),
+        RawKind::Call { callee, args } => {
+            matches!(&callee.kind, RawKind::Ident { name, kind: IdentKind::Global } if name == "Boolean")
+                && args.len() == 1
+        }
+        RawKind::Ident { name, kind } => match kind {
+            IdentKind::State => ir.state.iter().any(|s| {
+                &s.name == name
+                    && matches!(&s.init, Expr::Raw(i) if matches!(i.kind, RawKind::Lit(Literal::Bool(_))))
+                    && s.setter
+                        .as_deref()
+                        .is_none_or(|set| setter_writes_boolean(ir, set, depth + 1))
+            }),
+            IdentKind::Local => ir.derived.iter().any(|d| {
+                &d.name == name && matches!(&d.expr, Expr::Raw(e) if b(e))
+            }),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// F388 (Mellow F1): every mention of the setter `set` anywhere in the component (handlers, effects, derived values,
+/// the template, captures of code printed as written) is a direct call `set(v)` whose `v` is provably boolean, or an
+/// updater `set((p) => v)` whose `v` is. Any other mention (passed on, stored, called in code printed as written, two
+/// arguments) may write a number, so the state is not provably boolean. Read over the component's serialised IR, so no
+/// place the setter can hide in is missed.
+fn setter_writes_boolean(ir: &ComponentIR, set: &str, depth: u8) -> bool {
+    use serde_json::Value;
+    fn walk(v: &Value, key: Option<&str>, set: &str, mentions: &mut usize, calls: &mut Vec<Value>) {
+        match v {
+            Value::String(s) if s == set && key != Some("setter") => *mentions += 1,
+            // The names an arrow captures: its body, walked too, holds the uses.
+            Value::Array(_) if key == Some("captures") => {}
+            // Source kept as text (code printed as written): any word `set` in it is a mention that is not a call.
+            Value::String(s)
+                if s != set
+                    && s.match_indices(set).any(|(i, _)| {
+                        let word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+                        !s[..i].chars().next_back().is_some_and(word)
+                            && !s[i + set.len()..].chars().next().is_some_and(word)
+                    }) =>
+            {
+                *mentions += 1
+            }
+            Value::Array(xs) => xs.iter().for_each(|x| walk(x, None, set, mentions, calls)),
+            Value::Object(m) => {
+                if let Some(c) = m.get("Call")
+                    && c.pointer("/callee/kind/Ident/name").and_then(Value::as_str) == Some(set)
+                {
+                    calls.push(c.get("args").cloned().unwrap_or(Value::Null));
+                }
+                m.iter()
+                    .for_each(|(k, x)| walk(x, Some(k), set, mentions, calls));
+            }
+            _ => {}
+        }
+    }
+    let Ok(v) = serde_json::to_value(ir) else {
+        return false;
+    };
+    let (mut mentions, mut calls) = (0, Vec::new());
+    walk(&v, None, set, &mut mentions, &mut calls);
+    // Each call mentions the setter once (its callee); anything beyond that is a mention that is not a call.
+    mentions == calls.len()
+        && calls.iter().all(|args| {
+            let Ok(mut args) = serde_json::from_value::<Vec<RawExpr>>(args.clone()) else {
+                return false;
+            };
+            if args.len() != 1 {
+                return false;
+            }
+            let arg = args.remove(0);
+            match &arg.kind {
+                RawKind::Arrow {
+                    params,
+                    body: crate::ir::ArrowBody::Expr(e),
+                    ..
+                } if params.len() <= 1 => provably_boolean(ir, e.as_ref(), depth + 1),
+                _ => provably_boolean(ir, &arg, depth + 1),
+            }
+        })
+}
+
+/// The name prefix of a branch's callback-ref cell (F288 phase B), the cell holding the callback. Only a name: the
+/// printer binds `x-cref` from [`RefDecl::callback`], since a user's own `useRef` may be spelled `$cr…` too.
+pub const CALLBACK_REF: &str = "$cr";
 
 /// B1: `ref={x}` where `x` is a function value or a ref object the component computes (a `useCallback`, a derived
 /// value, a state setter) and not a `useRef` binding (a ref handed in as a prop cannot cross from a native caller, so
 /// it stays a `ref-shape` fallback). React calls a function ref with the node at mount (and
 /// its returned cleanup, or `null`, at unmount) and sets `.current` on an object ref. Each such attribute is
 /// desugared to a synthetic `useRef` bound on the element plus a mount effect that does `setRef(x, node)`, which is
-/// what `composeRefs` itself does. A ref on an element inside a list, a conditional branch or a component's children (which
-/// may mount later or never) stays a `ref-shape` fallback. The mount effects go FIRST in `ir.effects`: React attaches
-/// refs before it runs any effect of the owner.
-fn callback_refs(ir: &mut ComponentIR) {
+/// what `composeRefs` itself does. A ref on an element inside a list or a component's children (which may mount later
+/// or never) stays a `ref-shape` fallback. The mount effects go FIRST in `ir.effects`: React attaches refs before it runs
+/// any effect of the owner.
+/// F288 phase B (G5): inside a conditional branch the element mounts and unmounts with the branch, so instead of a
+/// mount effect the ref is a cell named [`CALLBACK_REF`]`N` holding the callback, printed `x-cref`: the runtime's `x-if`
+/// attaches it when the branch is inserted and detaches it when it is removed, as React does. Only a callback that keeps
+/// its identity for the life of the instance (A2 rule 4's stable leaves) qualifies: React re-attaches a callback whose
+/// identity changes on a render, which a native branch would not follow.
+pub(crate) fn callback_refs(ir: &mut ComponentIR) {
     let callable: Vec<(String, IdentKind)> = ir
         .derived
         .iter()
@@ -729,15 +925,61 @@ fn callback_refs(ir: &mut ComponentIR) {
     let mut taken: std::collections::HashSet<String> =
         ir.refs.iter().map(|r| r.name.clone()).collect();
     taken.extend(callable.iter().map(|(n, _)| n.clone()));
-    let mut made: Vec<(String, String, IdentKind, u32)> = Vec::new();
-    fn walk(
-        n: &mut Node,
-        refs: &std::collections::HashSet<String>,
-        callable: &[(String, IdentKind)],
-        taken: &mut std::collections::HashSet<String>,
-        made: &mut Vec<(String, String, IdentKind, u32)>,
-        in_list: bool,
-    ) {
+    let steady: Vec<String> = callable
+        .iter()
+        .filter(|(n, k)| {
+            crate::analyze::passes::ref_writes::stable(
+                ir,
+                &RawExpr {
+                    loc: 0,
+                    kind: RawKind::Ident {
+                        name: n.clone(),
+                        kind: k.clone(),
+                    },
+                },
+                0,
+            )
+        })
+        .map(|(n, _)| n.clone())
+        .collect();
+    struct Cx<'a> {
+        refs: std::collections::HashSet<String>,
+        callable: &'a [(String, IdentKind)],
+        steady: &'a [String],
+        taken: std::collections::HashSet<String>,
+        made: Vec<(String, String, IdentKind, u32)>,
+        /// (cell, callback, kind, loc) of a ref in a branch
+        branch: Vec<(String, String, IdentKind, u32)>,
+    }
+    impl Cx<'_> {
+        /// The cell a `ref={name}` becomes here, `None` when it stays as written.
+        fn cell(&mut self, name: &str, loc: u32, in_list: bool, in_branch: bool) -> Option<String> {
+            if in_list || self.refs.contains(name) {
+                return None;
+            }
+            let (_, kind) = self.callable.iter().find(|(c, _)| c == name)?;
+            if in_branch && !self.steady.iter().any(|s| s == name) {
+                return None;
+            }
+            let base = if in_branch { CALLBACK_REF } else { "_rf" };
+            let mut k = self.made.len() + self.branch.len() + 1;
+            let rf = loop {
+                let rf = format!("{base}{k}");
+                if self.taken.insert(rf.clone()) {
+                    break rf;
+                }
+                k += 1;
+            };
+            let entry = (rf.clone(), name.to_string(), kind.clone(), loc);
+            if in_branch {
+                self.branch.push(entry)
+            } else {
+                self.made.push(entry)
+            }
+            Some(rf)
+        }
+    }
+    fn walk(n: &mut Node, cx: &mut Cx, in_list: bool, in_branch: bool) {
         match n {
             Node::Element {
                 loc,
@@ -747,35 +989,21 @@ fn callback_refs(ir: &mut ComponentIR) {
             } => {
                 for a in attrs.iter_mut() {
                     let Attr::Ref { name } = a else { continue };
-                    if in_list || refs.contains(name) {
-                        continue;
+                    if let Some(rf) = cx.cell(name, *loc, in_list, in_branch) {
+                        *name = rf;
                     }
-                    let Some((_, kind)) = callable.iter().find(|(c, _)| c == name) else {
-                        continue;
-                    };
-                    let mut k = made.len() + 1;
-                    let rf = loop {
-                        let rf = format!("_rf{k}");
-                        if taken.insert(rf.clone()) {
-                            break rf;
-                        }
-                        k += 1;
-                    };
-                    made.push((rf.clone(), name.clone(), kind.clone(), *loc));
-                    *name = rf;
                 }
                 children
                     .iter_mut()
-                    .for_each(|c| walk(c, refs, callable, taken, made, in_list));
+                    .for_each(|c| walk(c, cx, in_list, in_branch));
             }
-            // A branch or a component's children may mount later or not at all; the mount effect cannot follow that.
+            // A branch mounts later or not at all: its refs follow it (phase B, `x-cref`).
             Node::If { then, else_, .. } => then
                 .iter_mut()
                 .chain(else_.iter_mut())
-                .for_each(|c| walk(c, refs, callable, taken, made, true)),
-            Node::For { body, .. } => body
-                .iter_mut()
-                .for_each(|c| walk(c, refs, callable, taken, made, true)),
+                .for_each(|c| walk(c, cx, in_list, true)),
+            // A list row or a component's children may mount later or not at all; nothing follows that.
+            Node::For { body, .. } => body.iter_mut().for_each(|c| walk(c, cx, true, in_branch)),
             Node::Component {
                 loc,
                 props,
@@ -784,44 +1012,44 @@ fn callback_refs(ir: &mut ComponentIR) {
             } => {
                 // F267: `ref={cb}` on a component: the same mount effect, the ref cell is what the call site binds on
                 // the child's element (the children pass decides whether the child can take it).
-                if !in_list
-                    && let Some((_, Expr::Raw(r))) = props.iter_mut().find(|(k, _)| k == "ref")
+                if let Some((_, Expr::Raw(r))) = props.iter_mut().find(|(k, _)| k == "ref")
                     && let RawKind::Ident { name, .. } = &mut r.kind
-                    && !refs.contains(name)
-                    && let Some((_, kind)) = callable.iter().find(|(c, _)| c == name)
+                    && let Some(rf) = cx.cell(name, *loc, in_list, in_branch)
                 {
-                    let mut k = made.len() + 1;
-                    let rf = loop {
-                        let rf = format!("_rf{k}");
-                        if taken.insert(rf.clone()) {
-                            break rf;
-                        }
-                        k += 1;
-                    };
-                    made.push((rf.clone(), name.clone(), kind.clone(), *loc));
                     *name = rf;
                 }
                 children
                     .iter_mut()
-                    .for_each(|c| walk(c, refs, callable, taken, made, true))
+                    .for_each(|c| walk(c, cx, true, in_branch))
             }
             Node::Fragment(children) => children
                 .iter_mut()
-                .for_each(|c| walk(c, refs, callable, taken, made, in_list)),
+                .for_each(|c| walk(c, cx, in_list, in_branch)),
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
-    let refs: std::collections::HashSet<String> = ir.refs.iter().map(|r| r.name.clone()).collect();
+    let mut cx = Cx {
+        refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
+        callable: &callable,
+        steady: &steady,
+        taken,
+        made: Vec::new(),
+        branch: Vec::new(),
+    };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
-    walk(
-        &mut template,
-        &refs,
-        &callable,
-        &mut taken,
-        &mut made,
-        false,
-    );
+    walk(&mut template, &mut cx, false, false);
     ir.template = template;
+    let (made, branch) = (cx.made, cx.branch);
+    for (rf, x, kind, loc) in branch {
+        ir.refs.push(RefDecl {
+            name: rf,
+            init: Expr::Raw(RawExpr {
+                loc,
+                kind: RawKind::Ident { name: x, kind },
+            }),
+            callback: true,
+        });
+    }
     for (at, (rf, x, kind, loc)) in made.into_iter().enumerate() {
         // Locals of the effect that neither shadow `x` nor the ref.
         let local = |base: &str| {
@@ -846,6 +1074,7 @@ fn callback_refs(ir: &mut ComponentIR) {
                 loc,
                 kind: RawKind::Lit(Literal::Null),
             }),
+            callback: false,
         });
         ir.effects.insert(
             at,

@@ -1,6 +1,6 @@
 {
   "name": "@brust/native-linux-x64-gnu",
-  "version": "2.0.0-alpha.20",
+  "version": "2.0.0-alpha.24",
   "cpu": [
     "x64"
   ],

@@ -29,7 +29,7 @@ export async function installationLoader(): Promise<InstallationData> {
       create: codeBlock({ lang: 'sh', cwd: '~/', code: '$ bun create @brust/app@latest my-app\n$ cd my-app && bun install\n$ bun run dev' }),
       flags: codeBlock({ lang: 'sh', cwd: '~/', code: '$ bun create @brust/app@latest pokedex --template pokedex --yes\n$ bun create @brust/app@latest my-app --dir apps/web' }),
       manual: codeBlock({ lang: 'sh', cwd: '~/my-app', code: '$ bun add @brust/core react react-dom' }),
-      actions: codeBlock({ lang: 'sh', cwd: '~/my-app', code: '$ bun add elysia@2.0.0-beta.30 @elysia/eden@2.0.0-beta.6' }),
+      actions: codeBlock({ lang: 'sh', cwd: '~/my-app', code: '$ bun add elysia@rc @elysia/eden@rc' }),
     },
     starters: [
       { id: 'bulbasaur', label: 'Bulbasaur', sprite: spriteUrl(1) },

@@ -74,7 +74,7 @@ pub struct NameTable<'a> {
     /// `...rest` of a destructured props pattern (shadcn S1.2, R34.14): `rest.k` reads prop `k`
     /// (`undefined` for a named key), `{...rest}` spreads the props minus the named keys.
     rest: Option<u32>,
-    /// F327: body `const`s that hold an object literal spreading the rest or the props and are used ONLY as JSX spreads,
+    /// F327: body `const`s that hold an object literal spreading the rest and are used ONLY as JSX spreads,
     /// by symbol key: they are never values, so the rest inside is never read as one.
     spread_only: HashSet<u32>,
     /// W1d PR 3: locals that are the `...rest` object itself (`const singleProps = rest`), by symbol key.
@@ -398,7 +398,7 @@ impl<'a> NameTable<'a> {
         }
     }
 
-    /// F327: marks the body `const x = { …, ...rest }` (an object literal that spreads the rest or the whole props among
+    /// F327: marks the body `const x = { …, ...rest }` (an object literal that spreads the rest among
     /// plain entries) whose every use is `{...x}` on a JSX element: the object itself is never read as a value, so the rest
     /// inside it is not an escape (`jsx::spread_parts` expands it where it is spread).
     pub fn mark_spread_only_objects(&mut self, stmts: &[js_ast::Stmt]) {
@@ -1505,6 +1505,48 @@ fn literal_shape(e: &js_ast::Expr, depth: u32) -> bool {
 /// `Array.from` lowers to `range(...)`). A prop of that name is read as `_props.<name>` in the standalone template, so it
 /// cannot shadow them (R34.142, the roving group's `loop`).
 pub const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
+
+/// F423: names a component local (a state cell, a list item or index) must not take as a template variable.
+/// `set`/`for` refuse the first group outright (`cannot assign to reserved variable name`, so `brust start` fails
+/// for the whole app), or the name reads as a literal or an operator (`none`, `not`); the template's own names
+/// (`TEMPLATE_OWN`) and the global functions `brust-jinja` registers would be shadowed by a variable of that name.
+/// The lowering prints such a local under a mangled name (`_loop`); the chunk and the jobs keep the JS name.
+/// `jinja_reserved_covers_every_global_function` in `tests/jinja_reserved_locals.rs` keeps the function names current.
+pub const JINJA_RESERVED_LOCALS: &[&str] = &[
+    // rejected by `set`/`for`, or a literal in an expression
+    "true",
+    "false",
+    "none",
+    "True",
+    "False",
+    "None",
+    "loop",
+    "self",
+    // operators and keywords the expression parser reads before a variable
+    "and",
+    "or",
+    "not",
+    "in",
+    "is",
+    "if",
+    "else",
+    // the template's own names
+    "range",
+    "namespace",
+    "caller",
+    "dict",
+    "debug",
+    // the global functions brust-jinja registers
+    "spread_attrs",
+    "spread_children",
+    "spread_get",
+    "spread_merge",
+    "obj_assign",
+    "obj_lit",
+    "class_join",
+    "css_decls",
+    "css_attr",
+];
 
 /// Why a prop named `name` cannot be a plain template variable, as `(code, what)`; `None` = it can. A key that is not
 /// an identifier prints as an expression (`data-x` reads as a subtraction); a jinja keyword is a syntax error or the

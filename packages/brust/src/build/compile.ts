@@ -78,11 +78,12 @@ export interface Compiled {
   /** Modules the chunk imports that other chunks share (R34.124): `<name>.js` beside it. */
   clientModules?: { name: string; code: string }[]
   /** The compiler's diagnostics for this component (`dev.json`, L14). */
-  diagnostics?: { class: string; rule: string; message: string; line: number; col: number; remediation: string }[]
+  diagnostics?: { class: string; rule: string; message: string; line: number; col: number; remediation: string; file?: string | null }[]
 }
 
 type Diag = NonNullable<CompiledTree['error']>
-const where = (file: string, d: Diag) => `${file}:${d.line}:${d.col}`
+/** `file:line:col`; a finding raised in another module than the component it is reported on names that module (F395). */
+const where = (file: string, d: Diag) => `${d.file ?? file}:${d.line}:${d.col}`
 
 /** How a tree reached a component (F75). A route root's props are fixed, so after F70 it may drop
  * the row links a parent elsewhere drives; a child that no parent in its tree links may have no
@@ -234,7 +235,7 @@ export function compileApp(opts: {
       clientJsWhole: c.clientJsWhole ?? undefined,
       projectedModules: c.projectedModules?.length ? c.projectedModules : undefined,
       clientModules: c.clientModules?.length ? c.clientModules : undefined,
-      diagnostics: c.diagnostics.map((d) => ({ class: d.class, rule: d.rule, message: d.message, line: d.line, col: d.col, remediation: d.remediation })),
+      diagnostics: c.diagnostics.map((d) => ({ class: d.class, rule: d.rule, message: d.message, line: d.line, col: d.col, remediation: d.remediation, file: d.file })),
     })
   }
   // A package export has no file of its own: bare imports in its island entries resolve from a

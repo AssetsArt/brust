@@ -9,7 +9,9 @@ export default defineBehavior("input_38302085", ({ el: __el, props, effect: __ef
   const _c1 = computed(() => open())
   const _c2 = computed(() => __text(open() && "text-branch"))
   const _c3 = computed(() => list())
+  const _c3_not = computed(() => !(list()))
+  const _c4 = computed(() => __text(list()))
   const _p1 = computed(() => ({ start: n() }))
   const _p2 = computed(() => ({ start: n() * 2 }))
-  return { open, n, list, _h1, _c1, _c2, _c3, _p1, _p2 }
+  return { open, n, list, _h1, _c1, _c2, _c3, _c3_not, _c4, _p1, _p2 }
 })

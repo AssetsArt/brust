@@ -51,7 +51,7 @@ test('brust start serves a react island that imports { cache } from @brust/core 
     const r = await fetch(`${base}/`)
     const html = await r.text()
     expect(r.status).toBe(200)
-    expect(html).toMatch(/<brust-island data-id="counter_[0-9a-f]{8}"[^>]*><b>x<!-- -->:<!-- -->0<\/b><\/brust-island>/)
+    expect(html).toMatch(/<brust-island style="display:contents" data-id="counter_[0-9a-f]{8}"[^>]*><b>x<!-- -->:<!-- -->0<\/b><\/brust-island>/)
     expect(proc.exitCode).toBeNull()
     expect(err).not.toContain('exited')
   } finally {

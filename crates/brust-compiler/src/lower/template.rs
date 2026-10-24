@@ -43,8 +43,8 @@ pub enum PropBinding {
     /// `x-bind-*` member) in the parent's scope, bound where a spread lands it on an element.
     Live(String),
     /// A ref the parent bound itself on an inlined `forwardRef` child (F267): the name of the parent's ref cell, bound
-    /// as `x-ref` where the child's own `ref={forwardedRef}` is.
-    Ref(String),
+    /// as `x-ref` where the child's own `ref={forwardedRef}` is (`x-cref` when the cell is a branch's callback ref).
+    Ref(String, bool),
 }
 
 /// One piece of a call site's props, in source order (shadcn S1.2): a named prop, or a spread
@@ -140,9 +140,9 @@ impl Inline {
     }
 
     /// The parent's ref cell bound on this instance (F267).
-    pub fn ref_binding(&self) -> Option<&str> {
+    pub fn ref_binding(&self) -> Option<(&str, bool)> {
         self.segs.iter().rev().find_map(|s| match s {
-            Seg::Named(_, PropBinding::Ref(n)) => Some(n.as_str()),
+            Seg::Named(_, PropBinding::Ref(n, cb)) => Some((n.as_str(), *cb)),
             _ => None,
         })
     }
@@ -193,6 +193,57 @@ fn omit_jinja(d: &str, omit: &[String]) -> String {
     }
     let keys: Vec<String> = omit.iter().map(|k| jinja_string(k)).collect();
     format!("(({d}) | omit([{}]))", keys.join(", "))
+}
+
+/// F395: what makes the server feed a component per instance, in the words a diagnostic uses.
+fn fed_cause(ir: &ComponentIR) -> String {
+    let mut parts = Vec::new();
+    if ir.use_id_slots > 0 {
+        parts.push("calls `useId`".to_string());
+    }
+    for j in ir.jobs.iter().filter(|j| feeds_instances(j)) {
+        parts.push(match j.kind {
+            JobKind::Ssr { .. } => match j.outputs.first().and_then(|o| island_name(o)) {
+                Some(n) => format!("holds the server-rendered React island <{n}>"),
+                None => "holds a React island the server renders".to_string(),
+            },
+            JobKind::Precompute => format!(
+                "has a server job over {}",
+                if j.inputs.is_empty() {
+                    "no props".to_string()
+                } else {
+                    j.inputs
+                        .iter()
+                        .map(|i| format!("`{i}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            ),
+        });
+    }
+    parts.dedup();
+    if parts.is_empty() {
+        "has a job or `useId`".into()
+    } else {
+        parts.join(" and ")
+    }
+}
+
+/// The island an ssr job output (`_ssr_<id>`, `_ssr_<id>_<k>`) renders, as the component is written.
+fn island_name(out: &str) -> Option<String> {
+    let id = out.strip_prefix("_ssr_")?;
+    let mut parts = id.splitn(3, '_');
+    let (stem, hex) = (parts.next()?, parts.next()?);
+    Some(owner_name(&format!("{stem}_{hex}")))
+}
+
+/// A component id (`appsPanel_1a2b3c4d`) as the component is written.
+fn owner_name(id: &str) -> String {
+    let base = id.rsplit_once('_').map_or(id, |(b, _)| b);
+    let mut cs = base.chars();
+    cs.next()
+        .map(|c| c.to_uppercase().collect::<String>() + cs.as_str())
+        .unwrap_or_default()
 }
 
 pub struct TemplateOut {
@@ -248,6 +299,14 @@ pub struct Printer<'a, 'c> {
     raw_text: bool,
     /// The body of the element being opened, when it carries `dangerouslySetInnerHTML`.
     inner_html: Option<String>,
+    /// F267: the caller's ref cell this element takes (`Attr::ForwardRef`), printed after the attributes: `x-ref` on an
+    /// element the caller binds, `x-pref` on a nested host (its own instance binds it; the caller's binds `x-pref`).
+    fwd_ref: Option<(String, bool)>,
+    /// F420: printing inside a `<select>` whose value is bound to `__select`, so an `<option>` paints `selected`.
+    in_select: bool,
+    /// F420 / F421: the element being opened is a `<select>` / `<textarea>` whose `value` becomes `selected` options /
+    /// text content, so its own `value` attribute is not printed.
+    skip_value_print: bool,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -280,6 +339,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             blank: false,
             raw_text: false,
             inner_html: None,
+            fwd_ref: None,
+            in_select: false,
+            skip_value_print: false,
         })
     }
 
@@ -287,15 +349,20 @@ impl<'a, 'c> Printer<'a, 'c> {
         let ir = self.f.ir;
         if self.inline.is_none() {
             self.out
-                .push_str(&format!("{{# brust v2 · {} · do not edit #}}\n", ir.id));
+                .push_str(&format!("{{# brust v2 · {} · do not edit -#}}\n", ir.id));
         }
         self.preamble();
         let structural = self.f.structural;
         self.node(&ir.template, &structural.template, true);
+        // F395: every finding of this printer points into this component's own module.
+        let mut diagnostics = self.diagnostics;
+        for d in &mut diagnostics {
+            d.file.get_or_insert_with(|| ir.source.clone());
+        }
         TemplateOut {
             jinja: self.out,
             members: self.members,
-            diagnostics: self.diagnostics,
+            diagnostics,
         }
     }
 
@@ -314,6 +381,19 @@ impl<'a, 'c> Printer<'a, 'c> {
 
     fn suffix(&self) -> &str {
         self.inline.as_ref().map_or("", |i| i.suffix.as_str())
+    }
+
+    /// F423: the template variable a local `name` (a state cell, a list item or index) is printed as: the name with
+    /// the instance suffix an inlined child carries, and, when that is a name minijinja refuses to assign or the
+    /// template already uses (`loop`, `none`, `range`, ...: [`crate::analyze::names::JINJA_RESERVED_LOCALS`]),
+    /// `_name`, made free of the component's own names. Every read, `set` and `for` goes through here, so they agree.
+    fn local_var(&self, name: &str) -> String {
+        let full = format!("{name}{}", self.suffix());
+        if crate::analyze::names::JINJA_RESERVED_LOCALS.contains(&full.as_str()) {
+            self.jinja_free(format!("_{full}"))
+        } else {
+            full
+        }
     }
 
     /// Seed and derived `set`s in declaration order: each after the ones it reads, then by source location (F385).
@@ -340,7 +420,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 loc,
                 s.name.clone(),
                 reads(&s.init),
-                format!("{{% set {}{} = {value} %}}", s.name, self.suffix()),
+                format!("{{% set {} = {value} %}}", self.local_var(&s.name)),
             ));
         }
         for (i, d) in ir.derived.iter().enumerate() {
@@ -360,8 +440,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
         }
         for line in crate::lower::common::order_decls(decls) {
+            // No newline after a `{% set %}`: the output has no text of its own there, and a line break
+            // would reach the page as whitespace JSX drops (F408).
             self.out.push_str(&line);
-            self.out.push('\n');
         }
     }
 
@@ -446,7 +527,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     None => base,
                 })
             }
-            IdentKind::State => Some(format!("{name}{}", self.suffix())),
+            IdentKind::State => Some(self.local_var(name)),
             // An inlined child's loop variables carry the instance suffix in
             // the template, so a parent expression substituted for a prop
             // (`item.title`) is never captured by the child's own `item`.
@@ -457,9 +538,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                         f.index_used.set(true);
                     }
                 }
-                self.inline
-                    .is_some()
-                    .then(|| format!("{name}{}", self.suffix()))
+                let var = self.local_var(name);
+                (var != name).then_some(var)
             }
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
@@ -829,16 +909,39 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         let model = model_pair(attrs, &self.f);
         let mut spread_body = None;
+        // F420 / F421: react-dom paints a controlled select's value as `selected` options and a textarea's as its text.
+        let control = if as_child.is_none() && !attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
+            self.control_value(tag, attrs)
+        } else {
+            None
+        };
+        self.skip_value_print = control.is_some();
         if as_child.is_some() || attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
             let extra: &[(String, String)] = as_child.as_ref().map_or(&[], |a| &a.attrs);
-            spread_body = self.spread_open(tag, attrs, sattrs, model.as_deref(), extra, &mut open);
+            spread_body =
+                self.spread_open(*loc, tag, attrs, sattrs, model.as_deref(), extra, &mut open);
         } else {
             for (a, sa) in attrs.iter().zip(sattrs) {
                 self.attr(a, sa, tag, attrs, model.as_deref(), &mut open);
             }
         }
+        self.skip_value_print = false;
         if let Some(m) = &model {
             open.push_str(&format!(" x-model=\"{m}\""));
+        }
+        if tag == "option"
+            && self.in_select
+            && !self.blank
+            && let Some(v) = self.option_text(attrs, children)
+        {
+            open.push_str(&format!(
+                "{{% if ({v}) | selected_in(__select) %}} selected=\"\"{{% endif %}}"
+            ));
+        }
+        if let Some((n, callback)) = self.fwd_ref.take() {
+            // this element is an instance host (its `x-data` is inserted below) when it is the host root
+            let host = *host && root && self.native;
+            open.push_str(&format!(" {}=\"{n}\"", ref_directive(callback, host)));
         }
         // A lone reactive slot child puts x-text on this element (Review Focus 1).
         let lone = matches!(children.as_slice(), [Node::Slot(_)]);
@@ -847,7 +950,11 @@ impl<'a, 'c> Printer<'a, 'c> {
         let mut text_directive = None;
         let inner_html = self.inner_html.take();
         let raw_before = self.raw_text;
+        let select_before = self.in_select;
         self.raw_text = tag.eq_ignore_ascii_case("script") || tag.eq_ignore_ascii_case("style");
+        if tag == "select" && control.is_some() {
+            self.in_select = true;
+        }
         if lone {
             if let (Node::Slot(e), Some(se)) = (&children[0], schildren.first()) {
                 text_directive = self.slot(e, Some(se), true);
@@ -856,6 +963,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             self.nodes(children, schildren);
         }
         self.raw_text = raw_before;
+        self.in_select = select_before;
         std::mem::swap(&mut body, &mut self.out);
         if let Some(a) = &as_child {
             body = a.body.clone();
@@ -867,6 +975,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             // R34.15: `children` in a spread is the element's children when JSX gives none.
             body = b;
         }
+        if tag == "textarea"
+            && let Some(v) = &control
+        {
+            body = format!("{{{{ ({v}) | textarea_text | e }}}}");
+        }
         if let Some(d) = text_directive {
             open.push_str(&format!(" x-text=\"{d}\""));
         }
@@ -875,6 +988,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             let host_attrs = self.host_attrs();
             open.insert_str(tag.len() + 1, &host_attrs);
         }
+        let scoped = tag == "select" && control.is_some();
+        if scoped && let Some(v) = &control {
+            // The options read it as `__select`; `with` keeps it from reaching a later select.
+            self.out.push_str(&format!("{{% with __select = ({v}) %}}"));
+        }
         self.out.push_str(&open);
         self.out.push('>');
         if VOID.contains(&tag.as_str()) {
@@ -882,6 +1000,60 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.out.push_str(&body);
         self.out.push_str(&format!("</{tag}>"));
+        if scoped {
+            self.out.push_str("{% endwith %}");
+        }
+    }
+
+    /// F420 / F421: the jinja value of a `<select>` / `<textarea>`'s `value` (or `defaultValue`), when react-dom prints
+    /// it as `selected` options / text content instead of an attribute.
+    fn control_value(&self, tag: &str, attrs: &[Attr]) -> Option<String> {
+        if !matches!(tag, "select" | "textarea") {
+            return None;
+        }
+        let find = |want: &str| {
+            attrs.iter().find_map(|a| match a {
+                Attr::Static { name, value } if name == want => Some(jinja_string(value)),
+                Attr::Dynamic { name, value } if name == want => Some(self.value(value)),
+                _ => None,
+            })
+        };
+        find("value").or_else(|| find("defaultValue"))
+    }
+
+    /// F420: the value an `<option>` is matched by: its `value` attribute, else its text (react-dom flattens the
+    /// children to a string). A child that is not text or a slot has no known text.
+    fn option_text(&mut self, attrs: &[Attr], children: &[Node]) -> Option<String> {
+        for a in attrs {
+            match a {
+                Attr::Static { name, value } if name == "value" => {
+                    return Some(jinja_string(value));
+                }
+                Attr::Dynamic { name, value } if name == "value" => return Some(self.value(value)),
+                _ => {}
+            }
+        }
+        let mut parts = Vec::new();
+        for c in children {
+            match c {
+                Node::Text(t) => parts.push(jinja_string(t)),
+                Node::Slot(e) => parts.push(format!("({} | js_str)", self.value(e))),
+                _ => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "select-option",
+                        "an <option> inside a controlled <select> has neither a `value` nor plain text, so the server cannot tell which option the select's value picks",
+                        0,
+                        "give the <option> a value",
+                    ));
+                    return None;
+                }
+            }
+        }
+        Some(if parts.is_empty() {
+            jinja_string("")
+        } else {
+            format!("({})", parts.join(" ~ "))
+        })
     }
 
     fn host_attrs(&mut self) -> String {
@@ -1046,7 +1218,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             let v = crate::lower::server_expr::with_ordered_objects(|| self.value(value));
             open.push_str(&format!("{{{{ ({v}) | style_attr }}}}"));
         } else {
-            open.push_str(&dynamic_attr(&html, &v, tag));
+            if !(self.skip_value_print && html == "value") {
+                open.push_str(&dynamic_attr(&html, &v, tag));
+            }
         }
         if model.is_some() && (html == "value" || html == "checked") {
             return;
@@ -1083,7 +1257,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                     self.refuse(&html, tag);
                     return;
                 }
-                if value.is_empty() && empty_url_dropped(&html, tag) {
+                if self.skip_value_print && html == "value" {
+                    // F420 / F421: printed as `selected` options / text content.
+                } else if value.is_empty() && empty_url_dropped(&html, tag) {
                     // `<img src="">`: React writes nothing.
                 } else if value.is_empty() && is_boolean_attr(&html) {
                     open.push_str(&format!(" {html}"));
@@ -1114,16 +1290,17 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             Attr::Ref { name } => {
                 if self.native {
-                    open.push_str(&format!(" x-ref=\"{name}\""));
+                    let callback = self.f.ir.refs.iter().any(|r| &r.name == name && r.callback);
+                    open.push_str(&format!(" {}=\"{name}\"", ref_directive(callback, false)));
                 }
             }
             // F267: the ref the caller bound on this inlined instance lands here, in the caller's scope.
             // (A static child is printed with its own printer: the binding itself says the caller is native.)
             Attr::ForwardRef => {
                 if let Some(i) = &self.inline
-                    && let Some(n) = i.ref_binding()
+                    && let Some((n, callback)) = i.ref_binding()
                 {
-                    open.push_str(&format!(" x-ref=\"{n}\""));
+                    self.fwd_ref = Some((n.to_string(), callback));
                 }
             }
             Attr::Spread(_) => {}
@@ -1165,8 +1342,10 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// hand-written attributes; keys known only at render go through `spread_attrs` (brust-jinja,
     /// the same rules). An own attribute replaced by a later key is still printed into a scratch
     /// buffer, so the members it records keep their numbers in every instance.
+    #[allow(clippy::too_many_arguments)]
     fn spread_open(
         &mut self,
+        loc: u32,
         tag: &str,
         attrs: &[Attr],
         sattrs: &[Attr],
@@ -1227,7 +1406,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                             self.diagnostics.push(Diagnostic::warning(
                                 "reserved-attr",
                                 format!("`{k}` reaches <{tag}> through a spread: `x-` attributes are reserved for brust's runtime and are not rendered"),
-                                0,
+                                loc,
                                 "rename it (`data-x-…`) or move this component to React",
                             ));
                         } else if k == "dangerouslySetInnerHTML" {
@@ -1297,7 +1476,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
-                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(_))
+                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(..))
                 | None => None,
             }
         };
@@ -1576,6 +1755,28 @@ impl<'a, 'c> Printer<'a, 'c> {
         let attr = format!(" x-if=\"{d}\"{}", if hidden { " hidden" } else { "" });
         match (ns, ss) {
             ([n @ Node::Element { .. }], [s]) => self.element(n, s, false, Some(&attr)),
+            // F388: a branch that is one slot (the falsy left of `left && <X/>`) binds its text on the branch wrapper
+            // itself: no `<span>` that React does not render (a `false` / `undefined` left leaves an empty wrapper,
+            // which `display:contents` keeps out of the layout).
+            ([e @ Node::Slot(_)], [s]) => {
+                let Node::Slot(e) = e else { unreachable!() };
+                let mut text = String::new();
+                std::mem::swap(&mut text, &mut self.out);
+                let bound = self.slot(e, Some(s), true);
+                std::mem::swap(&mut text, &mut self.out);
+                let x_text = bound
+                    .as_ref()
+                    .map_or(String::new(), |d| format!(" x-text=\"{d}\""));
+                // Afrojack (F388 review): an inline `display:contents` beats the `[hidden]` rule, so the hidden copy holds
+                // no text (the left is truthy there; React prints nothing). x-text fills it when the branch shows; a slot
+                // nothing binds (a `{children}` markup slot) keeps its content, which the client clones on show.
+                if hidden && bound.is_some() {
+                    text.clear();
+                }
+                self.out.push_str(&format!(
+                    "<brust-if style=\"display:contents\"{attr}{x_text}>{text}</brust-if>"
+                ));
+            }
             _ => {
                 self.out
                     .push_str(&format!("<brust-if style=\"display:contents\"{attr}>"));
@@ -1630,7 +1831,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                 .is_some_and(|r| self.f.deps(r, &self.scope()).reactive())
                 || ((self.ctx.linked)(&self.f.ir.id)
                     && self.reactive(src_raw.as_ref(), source).is_some())
-                || body.iter().any(|b| needs_directives(b, &self.f, !module)));
+                || body.iter().any(|b| needs_directives(b, &self.f, !module))
+                // F406: the client creates and refills the rows of a list inside a client list from the outer row's
+                // item, so the inner list is a client list too (its text directives read the inner binding).
+                || self.frames.iter().any(|fr| fr.directive));
         let var = {
             let own = self.seeds.of(self.f.ir);
             let root = self.seeds.of(self.inst_ir);
@@ -1730,12 +1934,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                 sets.push_str(&format!("{{% set {var} = loop.index0 %}}"));
             }
             if let (Some(i), true) = (index, f.index_used.get()) {
-                sets.push_str(&format!("{{% set {i}{} = loop.index0 %}}", self.suffix()));
+                sets.push_str(&format!("{{% set {} = loop.index0 %}}", self.local_var(i)));
             }
         }
         self.out.push_str(&format!(
-            "{{% for {item}{} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
-            self.suffix()
+            "{{% for {} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
+            self.local_var(item)
         ));
     }
 
@@ -1869,7 +2073,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                     ..
                 }) = v
             {
-                segs.push(Seg::Named(pname.clone(), PropBinding::Ref(cell.clone())));
+                let callback = ir.refs.iter().any(|r| &r.name == cell && r.callback);
+                segs.push(Seg::Named(
+                    pname.clone(),
+                    PropBinding::Ref(cell.clone(), callback),
+                ));
                 continue;
             }
             let forwarded = ir.handlers.iter().find(|h| {
@@ -2001,9 +2209,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                 self.diagnostics.push(Diagnostic::error(
                     "nested-instance",
                     format!(
-                        "<{name}> has a job or useId and sits inside nested lists or an inlined component"
+                        "the React island <{name}> has per-row props and sits inside nested lists or inside <{}>, which is inlined into its callers",
+                        owner_name(&self.f.ir.id)
                     ),
-                    0,
+                    *loc,
                     "flatten the lists or render the child per row in its own component (ledger F53)",
                 ));
                 return;
@@ -2054,8 +2263,12 @@ impl<'a, 'c> Printer<'a, 'c> {
             // inside an inlined child: instances of such a grandchild would collide.
             self.diagnostics.push(Diagnostic::error(
                 "nested-instance",
-                format!("<{name}> has a job or useId and is used inside another inlined component"),
-                0,
+                format!(
+                    "<{name}> {} and is used inside <{}>, which is inlined into another component",
+                    fed_cause(child_ir),
+                    owner_name(&self.f.ir.id)
+                ),
+                *loc,
                 "use it directly in the route component (ledger F53)",
             ));
             return;
@@ -2064,8 +2277,12 @@ impl<'a, 'c> Printer<'a, 'c> {
             // S6 hands the server one array per instance, indexed by ONE list.
             self.diagnostics.push(Diagnostic::error(
                 "nested-instance",
-                format!("<{name}> has a job or useId and sits inside nested lists"),
-                0,
+                format!(
+                    "<{name}> {} and sits inside nested lists in <{}>",
+                    fed_cause(child_ir),
+                    owner_name(&self.f.ir.id)
+                ),
+                *loc,
                 "flatten the lists or render the child per row in its own component (ledger F53)",
             ));
             return;
@@ -2077,8 +2294,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             // Slot content is printed once and pasted per row: its ids/jobs would repeat.
             self.diagnostics.push(Diagnostic::error(
                 "nested-instance",
-                format!("children with a job or useId are passed to <{name}>, which repeats them in a list"),
-                0,
+                format!("children with a job or useId are passed to <{name}> in <{}>, which repeats them in a list", owner_name(&self.f.ir.id)),
+                *loc,
                 "render the child inside the repeating component (ledger F53)",
             ));
             return;
@@ -2237,6 +2454,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         };
         p.blank = self.blank;
+        p.in_select = self.in_select;
         // The inlined component numbers its fed children with this printer's counters (F164 re-base).
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
@@ -2254,6 +2472,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             None => p.node(ct, cs, true),
         }
         self.out.push_str(&p.out);
+        // F395: the child's findings point into the child's own module (the deepest printer stamped first).
+        let child_source = &child_ir.source;
+        for d in &mut p.diagnostics {
+            d.file.get_or_insert_with(|| child_source.clone());
+        }
         self.diagnostics.append(&mut p.diagnostics);
         self.instances = std::mem::take(&mut p.instances);
     }
@@ -2484,6 +2707,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         };
         p.blank = self.blank;
+        p.in_select = self.in_select;
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
         p.native = false;
@@ -2847,7 +3071,7 @@ impl Expr {
     }
 }
 
-use crate::ir::is_fed;
+use crate::ir::{feeds_instances, is_fed};
 
 /// Whether `f` holds for `n` or any node below it.
 fn contains_node(n: &Node, f: &dyn Fn(&Node) -> bool) -> bool {
@@ -2930,5 +3154,18 @@ fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
                 )
             }
         }
+    }
+}
+
+/// The directive that binds a ref cell on an element: `x-cref` for a branch's callback ref (`RefDecl::callback`, F288
+/// phase B: the runtime's `x-if` attaches it with the branch), `x-pref` for the caller's ref on a nested host, `x-ref`
+/// otherwise.
+fn ref_directive(callback: bool, host: bool) -> &'static str {
+    if callback {
+        "x-cref"
+    } else if host {
+        "x-pref"
+    } else {
+        "x-ref"
     }
 }

@@ -63,6 +63,12 @@ async function open(path: string, waitUntil: 'networkidle' | 'domcontentloaded' 
 const style = (page: Page, sel: string, prop: string) =>
   page.evaluate(([s, p]) => getComputedStyle(document.querySelector(s!)!).getPropertyValue(p!), [sel, prop])
 
+test('F392: a served full document is in standards mode, not quirks', async () => {
+  const { page, close } = await open('/', 'domcontentloaded')
+  expect(await page.evaluate(() => document.compatMode)).toBe('CSS1Compat')
+  await close()
+})
+
 test('global, layout (@import, nesting), page CSS and a module apply; the author link wins the cascade', async () => {
   const { page, errors, close } = await open('/')
   expect(await style(page, 'body', 'color')).toBe('rgb(1, 2, 3)') // [css] global

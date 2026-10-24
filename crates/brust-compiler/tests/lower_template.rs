@@ -267,7 +267,7 @@ fn lowered_jinja(name: &str) -> String {
 fn document_root_is_a_plain_host_with_escaped_title() {
     let jinja = lowered_jinja("document-root");
     assert!(
-        jinja.contains("\n<html x-data=\"input_"),
+        jinja.contains("<html x-data=\"input_"),
         "root element is the host: {jinja}"
     );
     assert!(
@@ -294,7 +294,7 @@ fn outlet_lowers_to_the_outlet_slot() {
 fn react_child_gets_the_island_host() {
     let jinja = lowered_jinja("react-child");
     assert!(
-        jinja.contains("<brust-island data-id=\"reviews_"),
+        jinja.contains("<brust-island style=\"display:contents\" data-id=\"reviews_"),
         "{jinja}"
     );
     assert!(
@@ -306,6 +306,11 @@ fn react_child_gets_the_island_host() {
         "ssr slot inside the host: {jinja}"
     );
     assert!(jinja.contains("| safe }}</brust-island>"), "{jinja}");
+    // F413: the host takes no box, so a flex/grid gap never counts it.
+    assert!(
+        jinja.contains("<brust-island style=\"display:contents\" data-id="),
+        "{jinja}"
+    );
     assert!(
         !jinja.contains("data-brust-island"),
         "old attribute name must be gone: {jinja}"
@@ -316,7 +321,7 @@ fn react_child_gets_the_island_host() {
 fn client_only_page_gets_an_empty_island_host() {
     let jinja = lowered_jinja("client-only");
     assert!(
-        jinja.contains("<brust-island data-id=\"input_")
+        jinja.contains("<brust-island style=\"display:contents\" data-id=\"input_")
             && jinja.contains("x-props='{{ _props | json_attr }}'></brust-island>"),
         "empty host: {jinja}"
     );
@@ -638,4 +643,178 @@ fn a_folded_module_const_is_escaped_like_any_literal() {
     assert!(!html.contains("</script"), "{html}");
     assert!(html.contains("a&quot;b"), "{html}");
     assert!(html.contains("&lt;/script&gt;"), "{html}");
+}
+
+/// F408: a page that renders two native `Mark`s (state + handler) with `body` as the paragraph's JSX.
+fn marks_html(body: &str) -> String {
+    let (j, _) = lower(&format!(
+        "{STATE}function Mark({{ k }}: any) {{ const [o, setO] = useState(false); return <sup onClick={{() => setO(!o)}}>{{o ? 'x' : k}}</sup> }}\nexport default function T() {{ return (\n<main>\n<p>{body}</p>\n</main>\n) }}"
+    ));
+    render(&j, serde_json::json!({}))
+}
+
+/// The element opening tag of every `<sup ...>` becomes `<sup>` so the assertions read the text around it.
+fn bare_sups(html: &str) -> String {
+    let mut out = String::new();
+    let mut rest = html;
+    while let Some(i) = rest.find("<sup ") {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let end = tail.find('>').unwrap();
+        out.push_str("<sup>");
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// F408: a line break before a native component is JSX whitespace and is dropped, as in React (`the end.<sup>2</sup>`).
+#[test]
+fn a_line_break_before_a_native_component_is_dropped() {
+    let html = marks_html("\nthe end.\n<Mark k=\"2\" />\n");
+    assert!(
+        bare_sups(&html).contains("<p>the end.<sup>2</sup></p>"),
+        "{html}"
+    );
+}
+
+/// F408: text on its own line after a native component starts right after it.
+#[test]
+fn a_line_break_after_a_native_component_is_dropped() {
+    let html = marks_html("\n<Mark k=\"2\" />\nnext words\n");
+    assert!(
+        bare_sups(&html).contains("<p><sup>2</sup>next words</p>"),
+        "{html}"
+    );
+}
+
+/// F408: two native components on consecutive lines have nothing between them.
+#[test]
+fn native_components_on_consecutive_lines_touch() {
+    let html = marks_html("\n<Mark k=\"1\" />\n<Mark k=\"2\" />\n");
+    assert!(
+        bare_sups(&html).contains("<p><sup>1</sup><sup>2</sup></p>"),
+        "{html}"
+    );
+}
+
+/// F408: a space on the same line is text and React keeps it, before and after.
+#[test]
+fn a_same_line_space_around_a_native_component_is_kept() {
+    let html = marks_html("a <Mark k=\"2\" /> b");
+    assert!(
+        bare_sups(&html).contains("<p>a <sup>2</sup> b</p>"),
+        "{html}"
+    );
+}
+
+/// F408: the template header is a comment that writes nothing, so a page's root element is the first thing it renders
+/// (React renders `<body><main>`, with no line break between).
+#[test]
+fn a_page_root_renders_with_nothing_before_it() {
+    let (j, _) = lower("export default function T() { return <main><p>x</p></main> }");
+    assert!(
+        render(&j, serde_json::json!({})).starts_with("<main"),
+        "{j}"
+    );
+    let (j, _) = lower(
+        "import { useState } from 'react'\nexport default function T() { const [n, setN] = useState(1); return <span onClick={() => setN(n + 1)}>{n}</span> }",
+    );
+    assert!(
+        render(&j, serde_json::json!({})).starts_with("<span"),
+        "{j}"
+    );
+}
+
+/// Lowers `src` and returns (jinja, precompute job).
+fn lower_job(src: &str) -> (String, String) {
+    let s = src.to_string();
+    run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            "tests/fixtures/parent-counter/T.tsx",
+            Some(s.into_bytes()),
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        let a = &tree[0].artifacts;
+        (a.jinja.clone(), a.server_ts.clone().unwrap_or_default())
+    })
+}
+
+/// F418: `useState(load)` with a module function seeds the job (and the chunk) with `load()`, the value React paints,
+/// not the function (the job used to return `const n = load`, which paints nothing).
+#[test]
+fn use_state_module_function_seeds_the_call_in_the_job_and_chunk() {
+    let src = "import { useState } from 'react'\nfunction load() { return 41 + 1 }\nexport default function C() { const [n, setN] = useState(load); return <button onClick={() => setN(n + 1)}>{n}</button> }";
+    let (_, job) = lower_job(src);
+    assert!(job.contains("const n = load()"), "{job}");
+    let (_, chunk) = lower(src);
+    assert!(chunk.contains("signal(load())"), "{chunk}");
+}
+
+/// F419: a scalar context read by the page itself, with no Provider above, is the `createContext` default.
+#[test]
+fn page_reading_a_scalar_context_without_provider_paints_the_default() {
+    let (jinja, _) = lower_job(
+        "import { useContext, createContext } from 'react'\nconst Ctx = createContext('x')\nexport default function C() { const v = useContext(Ctx); return <p>{v}</p> }",
+    );
+    assert!(jinja.contains("is defined else \"x\""), "{jinja}");
+}
+
+/// F418 (ruling 1): a module `const` arrow / function expression is a lazy initialiser too; the job seeds its call.
+#[test]
+fn use_state_module_const_function_seeds_the_call() {
+    for decl in [
+        "const load = () => 42",
+        "const load = function () { return 42 }",
+    ] {
+        let src = format!(
+            "import {{ useState }} from 'react'\n{decl}\nexport default function C() {{ const [n, setN] = useState(load); return <button onClick={{() => setN(n + 1)}}>{{n}}</button> }}"
+        );
+        let (_, job) = lower_job(&src);
+        assert!(job.contains("const n = load()"), "{decl}: {job}");
+        let (_, chunk) = lower(&src);
+        assert!(chunk.contains("signal(load())"), "{decl}: {chunk}");
+    }
+}
+
+/// F419 (ruling 2): a page reading an object-default context with no Provider is refused by name (never an empty paint);
+/// per-field object defaults are a later row.
+#[test]
+fn page_reading_an_object_context_without_provider_falls_back_by_name() {
+    for body in [
+        "const v = useContext(Ctx); return <p>{v.a}-{v.b}</p>",
+        "const { a, b } = useContext(Ctx); return <p>{a}-{b}</p>",
+    ] {
+        let src = format!(
+            "import {{ useContext, createContext }} from 'react'\nconst Ctx = createContext({{ a: 'dflt', b: 2 }})\nexport default function C() {{ {body} }}"
+        );
+        let s = src.clone();
+        let rules: Vec<String> = run_on_compiler_thread(move || {
+            let tree = compile_tree(
+                "tests/fixtures/parent-counter/T.tsx",
+                Some(s.into_bytes()),
+                &AnalyzeOptions {
+                    root: repo(),
+                    ..Default::default()
+                },
+                DEFAULT_RUNTIME_IMPORT,
+            )
+            .unwrap();
+            tree[0]
+                .ir
+                .diagnostics
+                .iter()
+                .map(|d| d.rule.clone())
+                .collect()
+        });
+        assert!(
+            rules.iter().any(|r| r == "context-no-provider"),
+            "{body}: {rules:?}"
+        );
+    }
 }

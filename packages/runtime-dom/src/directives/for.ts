@@ -4,6 +4,11 @@ type RowScope = Record<string, unknown> & { __own: Signal<number> }
 
 const SYNTAX = /^\s*([A-Za-z_$][\w$]*)\s*(?:,\s*([A-Za-z_$][\w$]*))?\s+in\s+([A-Za-z_$][\w$.]*(?::[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)?)\s+by\s+([A-Za-z_$][\w$.]*)\s*$/
 const done = new WeakSet<Element>()
+/** The comments this binder inserted: the server's own `<!--x-for-->` marker is not among them. */
+const anchors = new WeakSet<Node>()
+/** F396: the zero-row template is the element the server prints right after its `<!--x-for-->` marker. A row is not
+ * told apart by `hidden`: a row whose own root is `hidden={cond}` is server-rendered hidden and is still a row. */
+const isTemplate = (s: Element) => { const p = s.previousSibling; return p instanceof Comment && p.data === 'x-for' && !anchors.has(p) }
 
 BINDERS.push({
   match: (a) => a === 'x-for',
@@ -17,16 +22,20 @@ BINDERS.push({
     // All server-rendered siblings carrying the same x-for are rows of this list; the first is the template.
     const parent = el.parentElement!
     const siblings = Array.from(parent.children).filter((c) => c.getAttribute('x-for') === raw)
+    const templates = new Set(siblings.filter(isTemplate))
     siblings.forEach((s) => done.add(s))
     const template = el.cloneNode(true) as Element
     template.removeAttribute('x-for'); template.removeAttribute('hidden')
-    const anchor = document.createComment('x-for')
+    const anchor = document.createComment('x-for'); anchors.add(anchor)
     parent.insertBefore(anchor, el)
-    // Server-rendered rows (not the hidden zero-row template) are adopted in order on the first run.
-    const adopt = siblings.filter((s) => !s.hasAttribute('hidden'))
+    // Server-rendered rows (not the zero-row template) are adopted in order on the first run.
+    const adopt = siblings.filter((s) => !templates.has(s))
     if (!adopt.includes(el)) el.remove()
     let firstRun = true
 
+    // F415: a removed row's effects and cleanups go with it (they were bound under `inst.capture`).
+    const drops = new Map<Element, () => void>()
+    const drop = (n: Element) => { drops.get(n)?.(); drops.delete(n); n.remove() }
     let rows = new Map<unknown, Element[]>()  // key -> elements (array to tolerate duplicates)
     let order: Element[] = []
 
@@ -65,12 +74,12 @@ BINDERS.push({
           const rowScope: RowScope = { ...scope, [itemName]: item, ...(indexName ? { [indexName]: i } : {}), __own: own, __tick: computed(() => (outer ? outer() : 0) + own()) }
           ;(node as unknown as { __scope: RowScope }).__scope = rowScope
           // a row that is itself a nested host is bound by its own instance
-          if (!node.hasAttribute('x-data')) { bindElement(inst, node, rowScope); walkChildren(inst, node, rowScope) }
+          if (!node.hasAttribute('x-data')) { const n = node; drops.set(n, inst.capture(() => { bindElement(inst, n, rowScope); walkChildren(inst, n, rowScope) })) }
         }
         ;(next.get(key) ?? next.set(key, []).get(key)!).push(node)
         nextOrder.push(node)
       })
-      for (const [, pool] of rows) for (const stale of pool) stale.remove()
+      for (const [, pool] of rows) for (const stale of pool) drop(stale)
       for (const left of adopt.splice(0)) left.remove()
       firstRun = false
       // place in order after the anchor
@@ -79,6 +88,6 @@ BINDERS.push({
       rows = next; order = nextOrder
       for (const n of created) hooks.mountTree(n)   // nested hosts in new rows mount now, not on the observer's next tick
     })
-    inst.onCleanup(() => { for (const n of order) n.remove() })
+    inst.onCleanup(() => { for (const n of order) drop(n) })
   },
 })

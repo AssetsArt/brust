@@ -414,11 +414,7 @@ fn lazy_init(p: &Placer<'_>, r: &RawExpr, module_decls: &[crate::ir::ModuleDecl]
         return (**body).clone();
     }
     // F26: a module-level `function load() {…}` named as the initializer.
-    let module_fn = matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Local }
-    if module_decls.iter().any(|d| {
-        d.names == [name.as_str()]
-            && (d.source.starts_with("function ") || d.source.starts_with("async function "))
-    }));
+    let module_fn = crate::lower::common::is_module_fn(r, module_decls);
     if module_fn || p.is_function(r, 0) {
         return RawExpr {
             loc: r.loc,

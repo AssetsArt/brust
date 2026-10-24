@@ -175,7 +175,8 @@ fn a_condition_that_reads_a_prop_is_a_conditional_node() {
     assert_eq!(tree["$brust"], "if", "{tree}");
     assert_eq!(tree["k"], "$p0");
     assert_eq!(tree["c"][0]["t"], "b");
-    assert_eq!(tree["e"], serde_json::json!([]));
+    // F388: `cond && <b/>` prints a falsy `cond` (a number) in its else branch, as React does.
+    assert_eq!(tree["e"], serde_json::json!([{"$brust": "v", "k": "$p0"}]));
 }
 
 #[test]

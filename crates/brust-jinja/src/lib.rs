@@ -63,6 +63,11 @@ pub fn register(env: &mut Environment<'_>) {
         v.kind() == ValueKind::Bool && v.is_true()
     });
     env.add_filter("truthy", |v: Value| truthy(&v));
+    // F420 / F421: how react-dom prints a controlled `<select>` and `<textarea>` on the server.
+    env.add_filter("selected_in", |opt: Value, sel: Value| {
+        selected_in(&opt, &sel)
+    });
+    env.add_filter("textarea_text", |v: Value| textarea_text(&v));
     env.add_filter("url_ok", |v: Value| safe_url(&attr_string(&v)));
     env.add_filter("json_attr", json_attr);
     env.add_filter("js_mod", |a: Value, b: Value| {
@@ -71,6 +76,7 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("js_div", |a: Value, b: Value| {
         js_arith(&a, &b, |x, y| x / y)
     });
+    env.add_filter("js_add", |a: Value, b: Value| js_add(&a, &b));
     env.add_filter("str_slice", str_slice);
     env.add_filter("includes", includes);
     env.add_filter("starts_with", |s: Value, x: Value| {
@@ -188,6 +194,22 @@ fn js_arith(a: &Value, b: &Value, op: fn(f64, f64) -> f64) -> Value {
     }
 }
 
+/// JS `a + b` for operands the compiler cannot prove are both numbers (F424): a string (or an object / array, which
+/// `ToPrimitive` turns into one) on either side concatenates `String()` of both; otherwise `ToNumber` of each is added
+/// (`undefined` is `NaN`, `null` is 0, `true` is 1). jinja's own `+` errors on string + number and on `none`.
+pub fn js_add(a: &Value, b: &Value) -> Value {
+    let stringy = |v: &Value| {
+        !matches!(
+            v.kind(),
+            ValueKind::Undefined | ValueKind::None | ValueKind::Bool | ValueKind::Number
+        )
+    };
+    if stringy(a) || stringy(b) {
+        return Value::from(format!("{}{}", js_string(a), js_string(b)));
+    }
+    js_arith(a, b, |x, y| x + y)
+}
+
 /// Text of a painted value: what React (and `x-text`) shows.
 pub fn paint(v: &Value) -> String {
     match v.kind() {
@@ -231,6 +253,34 @@ pub fn attr_string(v: &Value) -> String {
         ValueKind::Number => number_of(v).map(js_number).unwrap_or_default(),
         ValueKind::Undefined | ValueKind::None => String::new(),
         _ => v.to_string(),
+    }
+}
+
+/// Whether `<option>` text `opt` is picked by the value of its `<select>` (react-dom marks it `selected`): the select's
+/// value, or any element of an array, as a string equals the option's; a `null` / `undefined` select value picks none.
+pub fn selected_in(opt: &Value, sel: &Value) -> bool {
+    let opt = js_string(opt);
+    match sel.kind() {
+        ValueKind::Undefined | ValueKind::None => false,
+        ValueKind::Seq | ValueKind::Iterable => sel
+            .try_iter()
+            .map(|mut it| it.any(|x| js_string(&x) == opt))
+            .unwrap_or(false),
+        _ => js_string(sel) == opt,
+    }
+}
+
+/// The text content of a `<textarea>` with this `value`: `String(v)` (`null` and `undefined` are empty), with the
+/// newline react-dom adds after a leading one, because the parser drops the first newline of a textarea.
+pub fn textarea_text(v: &Value) -> String {
+    let s = match v.kind() {
+        ValueKind::Undefined | ValueKind::None => String::new(),
+        _ => js_string(v),
+    };
+    if s.starts_with('\n') {
+        format!("\n{s}")
+    } else {
+        s
     }
 }
 
@@ -997,6 +1047,32 @@ mod tests {
         env.render_str(src, ctx).unwrap()
     }
 
+    /// F420: an option is picked by the select's value as a string, or by any element of an array; `null` and
+    /// `undefined` pick none.
+    #[test]
+    fn selected_in_matches_as_strings_like_react_dom() {
+        let t = |opt: Value, sel: Value| selected_in(&opt, &sel);
+        assert!(t(Value::from("b"), Value::from("b")));
+        assert!(!t(Value::from("a"), Value::from("b")));
+        assert!(t(Value::from("1"), Value::from(1)));
+        assert!(t(Value::from(1), Value::from("1")));
+        assert!(t(Value::from("c"), Value::from(vec!["a", "c"])));
+        assert!(!t(Value::from("b"), Value::from(vec!["a", "c"])));
+        assert!(!t(Value::from("undefined"), Value::UNDEFINED));
+        assert!(!t(Value::from("null"), Value::from(())));
+    }
+
+    /// F421: a textarea's text is `String(value)`, empty for `null` / `undefined`, and a leading newline gets a second.
+    #[test]
+    fn textarea_text_doubles_a_leading_newline() {
+        assert_eq!(textarea_text(&Value::from("a<b")), "a<b");
+        assert_eq!(textarea_text(&Value::from(3)), "3");
+        assert_eq!(textarea_text(&Value::UNDEFINED), "");
+        assert_eq!(textarea_text(&Value::from(())), "");
+        assert_eq!(textarea_text(&Value::from("\nx")), "\n\nx");
+        assert_eq!(textarea_text(&Value::from("x\n")), "x\n");
+    }
+
     /// W1d PR 3: `render_error` fails the whole render with a fixed message, whatever it is given, and only where it is
     /// reached (an untaken branch renders).
     #[test]
@@ -1183,6 +1259,32 @@ mod tests {
                     "{t} {n}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn js_add_follows_javascript() {
+        let ctx = || Value::from(());
+        for (expr, want) in [
+            ("'x' | js_add(0)", "x0"),
+            ("0 | js_add('x')", "0x"),
+            ("1 | js_add(2)", "3"),
+            ("'a' | js_add('b')", "ab"),
+            ("undefined | js_add('x')", "undefinedx"),
+            ("'x' | js_add(1.5)", "x1.5"),
+            ("1.5 | js_add(1.5)", "3"),
+            ("0.1 | js_add(0.2)", "0.30000000000000004"),
+            ("none | js_add(1)", "1"),
+            ("true | js_add(1)", "2"),
+            ("undefined | js_add(1)", "NaN"),
+            ("[1, 2] | js_add(1)", "1,21"),
+            ("{} | js_add('a')", "[object Object]a"),
+        ] {
+            assert_eq!(
+                render(&format!("{{{{ ({expr}) | js_string }}}}"), ctx()),
+                want,
+                "{expr}"
+            );
         }
     }
 

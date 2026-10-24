@@ -89,7 +89,10 @@ fn conditionals_lists_and_keys() {
     let Node::Element { children, .. } = n else {
         panic!()
     };
-    assert!(matches!(&children[0], Node::If { else_, .. } if else_.is_empty()));
+    // F388: `show && <li/>` prints a falsy `show` in its else branch (React renders a falsy number there).
+    assert!(
+        matches!(&children[0], Node::If { else_, and: true, .. } if matches!(else_.as_slice(), [Node::Slot(_)]))
+    );
     assert!(matches!(&children[1], Node::If { else_, .. } if !else_.is_empty()));
     let Node::For {
         item,

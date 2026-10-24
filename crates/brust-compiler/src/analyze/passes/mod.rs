@@ -7,11 +7,14 @@ pub mod build_eval;
 pub mod captures;
 pub mod children;
 pub mod deps;
+pub mod elements;
 pub mod helpers;
 pub mod icons;
 pub mod placement;
 pub mod projection;
+pub mod ref_writes;
 pub mod server_expr;
+pub mod state_children;
 pub mod stores;
 pub mod tier;
 
@@ -140,10 +143,14 @@ fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<
     icons::inline(ir, ctx);
     // F279: calls of single-return module helpers become their expression, before anything places a value.
     helpers::inline(ir);
+    // F288 G9: a render-time ref write becomes the ref's initialiser, or `ref-in-render` (before anything reads the refs).
+    ref_writes::lower(ir);
     // First: `DepsCx` reads the resolved stores.
     stores::resolve(ir, ctx);
     // Before placement: a refused render read never becomes a placed value.
     stores::check_render(ir, ctx);
+    // F404: a state seeded from `children` has no value to hold.
+    state_children::check(ir, ctx);
     // S2: context Providers hand their values to the consumers under them as hidden props, before the structural
     // snapshot and placement so every later pass reads them like any prop.
     let provider_locs = {

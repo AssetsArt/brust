@@ -134,10 +134,11 @@ fn call_sites_with_different_text_share_one_factory_module_and_keep_their_own_id
 
 #[test]
 fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
-    for (file, why) in [
-        ("gated.tsx", "children as a value"),
-        ("local.tsx", "declared in the module"),
-    ] {
+    // F288: a component of the module that renders the content is named from the clone; one that needs React is not
+    for (file, why) in [(
+        "local_react.tsx",
+        "is, or holds, a React island in the content",
+    )] {
         let all = compile(file);
         assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
         let root = &all[0];
@@ -160,6 +161,39 @@ fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
             "{file}"
         );
     }
+}
+
+#[test]
+fn a_component_declared_in_the_rendering_module_is_named_from_the_clone() {
+    // F288 (was refused "declared in the module that renders it"): the clone reads `<Local>` from local.tsx by its
+    // local name; it prints as written.
+    let all = compile("local.tsx");
+    assert_eq!(
+        clones(&all).len(),
+        1,
+        "{:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+    );
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert!(root.jinja.contains("<i>local</i>"), "{}", root.jinja);
+    assert!(!root.jinja.contains("brust-island"), "{}", root.jinja);
+}
+
+#[test]
+fn a_provider_that_prints_its_children_under_a_condition_is_specialised() {
+    // F384: `{open ? children : null}` is the children slot under a condition, not children read as a value, so the
+    // Provider's clone holds the content (it was the island it was before, `children-read`).
+    let all = compile("gated.tsx");
+    assert!(
+        !clones(&all).is_empty(),
+        "gated.tsx: the Provider is specialised"
+    );
+    assert!(
+        !all.iter()
+            .any(|i| i.ir.diagnostics.iter().any(|d| d.rule == "children-read")),
+        "gated.tsx"
+    );
 }
 
 #[test]
@@ -530,10 +564,59 @@ fn a_ref_passed_to_an_inlined_forward_ref_child_binds_on_its_element() {
     }
 }
 
+// F288 phase B (G5): a steady callback ref under a condition follows the branch: the parent's cell is printed `x-cref`
+// on the child's element, which the runtime's `x-if` attaches with the branch.
+#[test]
+fn a_callback_ref_passed_to_a_forward_ref_child_under_a_condition_binds_with_the_branch() {
+    let all = compile("fwd_cond.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert!(
+        !has(&root.ir, DiagClass::Fallback, "forwardref-ref"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    assert!(
+        root.jinja.contains("<button") && root.jinja.contains("x-cref=\"$cr"),
+        "{}",
+        root.jinja
+    );
+}
+
+// F288 phase B review F1: `x-cref` comes from the cell `callback_refs` made, never from the spelling: a user's own
+// `useRef` named `$crumb` or `$cr1` (inside or outside a branch, or handed to a forwardRef child) is still `x-ref`.
+#[test]
+fn a_user_ref_spelled_like_a_callback_ref_cell_stays_x_ref() {
+    let all = compile("fwd_crumb.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    for r in ["$crumb", "$cr1", "$crf"] {
+        assert!(
+            root.jinja.contains(&format!("x-ref=\"{r}\"")),
+            "{r}: {}",
+            root.jinja
+        );
+        assert!(
+            !root.jinja.contains(&format!("x-cref=\"{r}\"")),
+            "{r}: {}",
+            root.jinja
+        );
+    }
+    let cells: Vec<_> = root.ir.refs.iter().filter(|r| r.callback).collect();
+    assert_eq!(cells.len(), 1, "{:?}", root.ir.refs);
+    assert_ne!(cells[0].name, "$cr1");
+    assert!(
+        root.jinja
+            .contains(&format!("x-cref=\"{}\"", cells[0].name)),
+        "{}",
+        root.jinja
+    );
+}
+
 #[test]
 fn a_ref_passed_to_a_forward_ref_child_that_may_not_render_stays_react() {
-    // a callback under a condition; a child that renders its element sometimes; a spread after the ref
-    for file in ["fwd_cond.tsx", "fwd_child_cond.tsx", "fwd_spread_after.tsx"] {
+    // a child that renders its element sometimes; a spread after the ref
+    for file in ["fwd_child_cond.tsx", "fwd_spread_after.tsx"] {
         let all = compile(file);
         assert!(
             has(&all[0].ir, DiagClass::Fallback, "forwardref-ref"),

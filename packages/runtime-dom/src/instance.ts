@@ -18,6 +18,8 @@ export class Instance {
   children = new Set<Instance>()
   private disposers: Dispose[] = []
   private cleanups: Array<() => void> = []
+  /** F415: while an `x-if` branch or an `x-for` row binds, what it registers is owned by that part (`capture`). */
+  private sink: Array<() => void> | null = null
   disposed = false
   /** false until the initial bind pass finishes; the first-paint tripwire only applies before then. */
   booted = false
@@ -27,7 +29,7 @@ export class Instance {
    * first paint, linked to its parent's current value): its first bind is not a first paint, so no tripwire. */
   reseeded = false
   /** Effects the component declared while its factory ran: they start once the instance is bound (x-ref, x-on), like React's commit (F97). */
-  private pending: Array<[() => void | (() => void), Dispose?]> | null = []
+  private pending: Array<[() => void | (() => void), Dispose?, number?]> | null = []
 
   constructor(public host: HTMLElement, public name: string, public parent: Instance | null, initialProps: Record<string, unknown>) {
     this.props = signal(initialProps)
@@ -35,13 +37,15 @@ export class Instance {
     if (typeof __BRUST_DEV__ !== 'undefined' && __BRUST_DEV__) devTrack(this, true)
   }
 
-  effect(fn: () => void | (() => void)): Dispose {
-    const d = coreEffect(fn); this.disposers.push(d); return d
+  effect(fn: () => void | (() => void), tier = 0): Dispose {
+    const d = coreEffect(fn, tier); (this.sink ?? this.disposers).push(d); return d
   }
-  /** `ctx.effect`: deferred until `start()` while the factory runs, immediate afterwards. */
-  private componentEffect(fn: () => void | (() => void)): Dispose {
-    if (!this.pending) return this.effect(fn)
-    const q: [() => void | (() => void), Dispose?] = [fn]
+  /** `ctx.effect`: deferred until `start()` while the factory runs, immediate afterwards. A compiled effect re-runs after
+   * the bindings: layout (`layout` true) before passive (F288, ruling 94404307 amended). */
+  private componentEffect(fn: () => void | (() => void), layout = false): Dispose {
+    const tier = layout ? 1 : 2
+    if (!this.pending) return this.effect(fn, tier)
+    const q: [() => void | (() => void), Dispose?, number?] = [fn, undefined, tier]
     this.pending.push(q)
     return () => { q[0] = () => {}; q[1]?.() }
   }
@@ -57,12 +61,20 @@ export class Instance {
     this.pending = null
     for (const q of queue ?? []) {
       if (this.disposed) break
-      try { q[1] = this.effect(q[0]) }
+      try { q[1] = this.effect(q[0], q[2]) }
       catch (e) { console.error(`[brust] effect threw: ${this.name}`, e); this.dispose(); instances.delete(this.host); return false }
     }
     return true
   }
-  onCleanup(fn: () => void): void { this.cleanups.push(fn) }
+  onCleanup(fn: () => void): void { (this.sink ?? this.cleanups).push(fn) }
+  /** F415/F416: runs `fn` with the effects and cleanups it registers owned by the returned disposer, which an `x-if`
+   * branch or an `x-for` row runs when it is removed: its effects stop and its cleanups run (an `x-ref` lets go of the
+   * node), in the order they were registered. */
+  capture(fn: () => void): () => void {
+    const prev = this.sink; const own: Array<() => void> = (this.sink = [])
+    try { fn() } finally { this.sink = prev }
+    return () => runCleanups(own)
+  }
   ref<E extends Element = HTMLElement>(name: string, init?: unknown): { current: E | null } {
     let r = this.refs.get(name)
     // `useRef(init)`: the cell starts at `init`; an `x-ref` element replaces it when it binds (React attaches the same way).
@@ -70,7 +82,7 @@ export class Instance {
     return r as { current: E | null }
   }
   ctx(): BehaviorCtx {
-    return { el: this.host, props: this.props, effect: (fn) => this.componentEffect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init), late: this.late, items: () => collectionHooks.items(this.host) }
+    return { el: this.host, props: this.props, effect: (fn, layout) => this.componentEffect(fn, layout), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init), late: this.late, items: () => collectionHooks.items(this.host) }
   }
   init(factory: BehaviorFactory): void {
     const m = factory(this.ctx())
@@ -85,8 +97,12 @@ export class Instance {
     for (const c of Array.from(this.children)) c.dispose()
     this.parent?.children.delete(this)
     for (const d of this.disposers.splice(0)) d()
-    for (const c of this.cleanups.splice(0)) { try { c() } catch (e) { console.error('[brust] cleanup threw', e) } }
+    runCleanups(this.cleanups)
   }
+}
+
+function runCleanups(list: Array<() => void>): void {
+  for (const c of list.splice(0)) { try { c() } catch (e) { console.error('[brust] cleanup threw', e) } }
 }
 
 export const instances = new WeakMap<Element, Instance>()

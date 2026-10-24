@@ -328,7 +328,8 @@ function liveValues(instance: Record<string, unknown>): Record<string, unknown> 
 export function componentRects(id: string): DOMRect[] {
   const rects: DOMRect[] = []
   for (const e of document.querySelectorAll(`[x-data]`)) if (e.getAttribute('x-data') === id) rects.push(e.getBoundingClientRect())
-  for (const e of document.querySelectorAll('brust-island')) if (e.getAttribute('data-id') === id) rects.push(e.getBoundingClientRect())
+  // the island host is display:contents (no box of its own): its painted children carry the rects
+  for (const e of document.querySelectorAll('brust-island')) if (e.getAttribute('data-id') === id) rects.push(...[...e.children].map((c) => c.getBoundingClientRect()))
   if (rects.length) return rects
   // A chain level: the nodes between `<!--brust:id-->` and its matching `<!--/brust-->`.
   const w = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT)

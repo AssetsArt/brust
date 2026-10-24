@@ -1,5 +1,5 @@
 // `@brust/core/elysia` (M3-F E2, ruling R2): the adapter an actions app is built with. Rust owns
-// HTTP; the worker drives the app with `app.fetch(request)`. Elysia 2.0.0-beta.30's adapter is
+// HTTP; the worker drives the app with `app.fetch(request)`. Elysia 2.0.0-rc.0's adapter is
 // `{ listen?, parse, response, setup? }` (elysia/adapter/types.d.ts); `name` is brust's own tag.
 import type { ElysiaAdapter } from 'elysia/adapter'
 import { WebStandardAdapter } from 'elysia/adapter/web-standard'

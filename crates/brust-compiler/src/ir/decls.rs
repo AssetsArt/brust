@@ -136,10 +136,22 @@ pub struct Forwarded {
     pub key: String,
 }
 
+/// F288 G9 (Mellow A2): a top-level render statement `r.current = value` on a `useRef` of the component. The pass
+/// `render_ref_writes` lowers it to the ref's initialiser when the closed rule holds, else refuses it (`ref-in-render`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct RenderRefWrite {
+    pub r#ref: String,
+    pub value: RawExpr,
+    pub loc: u32,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct RefDecl {
     pub name: String,
     pub init: Expr,
+    /// F288 phase B: a branch's callback-ref cell (`callback_refs`), bound `x-cref`; its `init` is the callback.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub callback: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

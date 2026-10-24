@@ -31,6 +31,18 @@ impl JinjaCtx<'_> {
     }
 }
 
+/// A JS number as a template expression: a finite one as its literal, `NaN` and `±Infinity` (no template literal names
+/// them) as the `js_div` filter computes them, so they print as JS prints them and test as JS does.
+fn jinja_number(n: f64) -> String {
+    if n.is_nan() {
+        "(0 | js_div(0))".into()
+    } else if n.is_infinite() {
+        format!("({} | js_div(0))", if n > 0.0 { 1 } else { -1 })
+    } else {
+        brust_jinja::js_number(n)
+    }
+}
+
 pub fn to_jinja(e: &ServerExpr, ctx: &JinjaCtx<'_>) -> String {
     raw(&e.0, ctx)
 }
@@ -82,6 +94,27 @@ fn is_stringy(e: &RawExpr) -> bool {
     )
 }
 
+/// An expression that is a number whatever its inputs (a numeric literal, or the result of an arithmetic operator).
+fn is_number(e: &RawExpr) -> bool {
+    match &e.kind {
+        RawKind::Lit(Literal::Num(_)) => true,
+        RawKind::Unary {
+            op: UnOp::Neg | UnOp::Pos,
+            ..
+        } => true,
+        RawKind::Binary {
+            op: BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem,
+            ..
+        } => true,
+        RawKind::Binary {
+            op: BinOp::Add,
+            left,
+            right,
+        } => is_number(left) && is_number(right),
+        _ => false,
+    }
+}
+
 /// An operand of `~`: literals as they are, anything else through JS `String()`.
 fn concat_part(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
     if is_stringy(e) {
@@ -119,7 +152,7 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
     match &e.kind {
         RawKind::Lit(l) => match l {
             Literal::Str(s) => jinja_string(s),
-            Literal::Num(n) => brust_jinja::js_number(*n),
+            Literal::Num(n) => jinja_number(*n),
             Literal::Bool(b) => b.to_string(),
             Literal::Null => "none".into(),
             Literal::Undefined => UNDEFINED.into(),
@@ -127,6 +160,15 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
         RawKind::Ident { name, kind } => {
             if let Some(n) = (ctx.names)(name, kind) {
                 return n;
+            }
+            // F388: the globals `NaN` and `Infinity` are numbers; as template names they would be undefined (`NaN`
+            // printed nothing where React prints "NaN").
+            if matches!(kind, IdentKind::Global) {
+                match name.as_str() {
+                    "NaN" => return jinja_number(f64::NAN),
+                    "Infinity" => return jinja_number(f64::INFINITY),
+                    _ => {}
+                }
             }
             match (kind, ctx.props_prefix) {
                 (IdentKind::Prop, Some(p)) if name != "*" => format!("{p}{name}"),
@@ -169,6 +211,11 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
             match op {
                 BinOp::Add if is_stringy(left) || is_stringy(right) => {
                     format!("({} ~ {})", concat_part(left, ctx), concat_part(right, ctx))
+                }
+                // F424: jinja's `+` errors on string + number (and on `none`); JS concatenates when either side is a string.
+                // Only two operands proven numbers keep the native `+`.
+                BinOp::Add if !(is_number(left) && is_number(right)) => {
+                    format!("({l} | js_add({r}))")
                 }
                 BinOp::Nullish => {
                     format!("({l} if {l} is defined and {l} is not none else {r})")

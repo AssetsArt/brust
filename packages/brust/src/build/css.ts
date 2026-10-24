@@ -10,7 +10,7 @@
 //   absolute `/public/*` and `/_brust/*` stay as written.
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { BunPlugin } from 'bun'
 import type { FlatRoute } from '../routes'
 import { BuildError } from './errors'
@@ -110,6 +110,62 @@ const CLASS = /\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g
 /** The asset types `static_rules::is_safe_client_asset_filename` serves from `/_brust/client/` (review N1). */
 export const SERVED_ASSET_EXT = ['.woff2', '.woff', '.ttf', '.otf', '.eot', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.ico']
 
+/** F411: the served name of an asset file, `<name>-<hex10>.<ext>`: what a stylesheet's `url()` is rewritten to
+ * (`emitSourceAssets`) and what an `import` of the file gives (`cssPlugin`), so the two are one file. */
+function hashedAsset(path: string): { name: string; bytes: Uint8Array } {
+  const bytes = new Uint8Array(readFileSync(path))
+  return { name: `${safeName(basename(path, extname(path)))}-${hex(bytes)}${extname(path).toLowerCase()}`, bytes }
+}
+
+/** An asset file by extension (`SERVED_ASSET_EXT`). */
+const ASSET_FILE = /\.(?:woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|svg|ico)$/i
+
+const SOURCE_URL = /url\(\s*(["']?)([^"')]+?)\1\s*\)/g
+
+/** F393: a `url()` that is the absolute path of a file on disk (see the `loader` in `buildCss`) becomes a
+ * hashed `./<name>-<hex10>.<ext>` client asset at any size. `/public/…` and `/_brust/…` stay as written. */
+function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Array }[], suffixed: Map<string, string>): string {
+  const emit = (path: string, suffix: string) => {
+    const { name, bytes } = hashedAsset(path)
+    if (!assets.some((a) => a.name === name)) assets.push({ name, bytes })
+    return /^[^\s"'()\\]*$/.test(suffix) ? `url(./${name}${suffix})` : `url("./${name}${suffix.replace(/["\\]/g, '\\$&')}")`
+  }
+  return text.replace(SOURCE_URL, (whole, _q: string, path: string) => {
+    const abs = suffixed.get(path)
+    if (abs !== undefined) return emit(abs, path.slice(path.search(/[?#]/)))
+    const ext = extname(path).toLowerCase()
+    if (!path.startsWith('/') || !SERVED_ASSET_EXT.includes(ext) || path.startsWith('/public/') || path.startsWith('/_brust/') || !existsSync(path)) return whole
+    return emit(path, '')
+  })
+}
+
+/** F393: a `url()` asset with a `?query` / `#fragment` (`?v=3`, `?#iefix`, an SVG font's `#id`) is not given
+ * Bun's path form: a plugin-resolved specifier is printed as written. This plugin resolves such a specifier
+ * itself and records the file it names, so `emitSourceAssets` can copy it and keep the suffix verbatim. The
+ * same text naming two different files (from two importers) fails the build rather than guess. */
+function suffixPlugin(suffixed: Map<string, string>): BunPlugin {
+  return {
+    name: 'brust-css-asset-suffix',
+    setup(b) {
+      b.onResolve({ filter: /\.(?:woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|svg|ico)[?#]/i }, (a) => {
+        const at = a.path.search(/[?#]/)
+        const file = a.path.slice(0, at)
+        let abs: string
+        try {
+          abs = file.startsWith('.') || isAbsolute(file) ? resolve(dirname(a.importer), file) : Bun.resolveSync(file, dirname(a.importer))
+        } catch {
+          return undefined
+        }
+        if (!existsSync(abs)) return undefined
+        const have = suffixed.get(a.path)
+        if (have !== undefined && have !== abs) throw new BuildError('css-asset-ambiguous', `url(${a.path}) names ${have} and ${abs}; give them different specifiers`)
+        suffixed.set(a.path, abs)
+        return { path: abs }
+      })
+    },
+  }
+}
+
 /** R19.2/R19.4: builds every source stylesheet (one JS entry each) into `<dist>/client/`. `minify`
  * is off only for a development build (`brust dev`, review N3). */
 export async function buildCss(
@@ -146,6 +202,8 @@ export async function buildCss(
     writeFileSync(e, isModule(src) ? `export { default } from ${JSON.stringify(src)}\n` : `import ${JSON.stringify(src)}\n`)
     return e
   })
+  const suffixed = new Map<string, string>()
+  plugins.push(suffixPlugin(suffixed))
   const res = await Bun.build({
     entrypoints: entries,
     target: 'browser',
@@ -155,6 +213,12 @@ export async function buildCss(
     external: ['/public/*', '/_brust/*'],
     root: appRoot,
     plugins,
+    // F393, verified on Bun 1.4.4 only: its CSS bundler turns an asset under the size threshold into a `data:`
+    // URI whatever `loader: file` says, and `loader: dataurl` does the opposite (the name is inverted): it leaves
+    // the url() as the absolute path of the source file. That path is the marker `emitSourceAssets` copies and
+    // rewrites. Re-check on every Bun upgrade; the F393 tests in test/css.test.ts go red if the quirk changes.
+    // bun-types 1.4.2's `Loader` omits `dataurl`, which the runtime accepts.
+    loader: Object.fromEntries(SERVED_ASSET_EXT.map((e) => [e, 'dataurl'])) as unknown as Bun.BuildConfig['loader'],
   })
   if (!res.success) throw new BuildError('css', res.logs.map(String).join('\n'))
   // Assets a stylesheet references (fonts, images): `<name>-<hex10>.<ext>`, references rewritten.
@@ -194,6 +258,7 @@ export async function buildCss(
       `${lines.join('; ')}: brust serves only ${SERVED_ASSET_EXT.join(' ')} from /_brust/client; put the file in public/ and reference it as /public/…`,
     )
   }
+  for (const [i, t] of css) css.set(i, emitSourceAssets(t, assets, suffixed))
   for (const a of assets) writeFileSync(join(dist, 'client', a.name), a.bytes)
   for (const [i, src] of sources.entries()) {
     let text = css.get(i)
@@ -249,8 +314,11 @@ export function tailwindUse(sources: string[]): { using: string[]; imports: stri
 
 /** R19.4: the one CSS plugin of every JS build. A `.module.css` import is its class map
  * (`export default Object.freeze({…})`); any other `.css` import is an empty module, because the
- * stylesheet itself is linked by the server (R19.3), never bundled into JS. */
-export function cssPlugin(maps: Map<string, Record<string, string>>): BunPlugin {
+ * stylesheet itself is linked by the server (R19.3), never bundled into JS.
+ * F411: with `clientDir` (`<dist>/client`), an import of a served asset (`SERVED_ASSET_EXT`: a font, an image) is
+ * the string `/_brust/client/<name>-<hex10>.<ext>`, the very file a stylesheet's `url()` of it is rewritten to; the
+ * file is written there, so the URL can be preloaded (`<link rel="preload" as="font" href={font}>`). */
+export function cssPlugin(maps: Map<string, Record<string, string>>, clientDir?: string): BunPlugin {
   return {
     name: 'brust-css',
     setup(b) {
@@ -259,6 +327,16 @@ export function cssPlugin(maps: Map<string, Record<string, string>>): BunPlugin 
         const map = maps.get(real(a.path))
         if (!map) throw new Error(`${a.path} is imported by code the build did not reach from a route; import it from a route's component files`)
         return { contents: `export default Object.freeze(${JSON.stringify(map)})\n`, loader: 'js' }
+      })
+      if (clientDir === undefined) return
+      b.onLoad({ filter: ASSET_FILE }, (a) => {
+        const { name, bytes } = hashedAsset(a.path)
+        const to = join(clientDir, name)
+        if (!existsSync(to)) {
+          mkdirSync(clientDir, { recursive: true })
+          writeFileSync(to, bytes)
+        }
+        return { contents: `export default ${JSON.stringify(`/_brust/client/${name}`)}\n`, loader: 'js' }
       })
     },
   }

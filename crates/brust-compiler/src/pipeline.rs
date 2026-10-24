@@ -41,13 +41,21 @@ pub fn compile_tree(
         resolve: &resolve,
         runtime_import,
         linked: &linked,
+        // L23 / F407: lucide icons not rendered yet; the build renders them and compiles again.
+        icons_pending: !opts.icons_final && done.iter().any(|(_, ir)| !ir.icon_requests.is_empty()),
     };
     let root_rc = by_id
         .get(&root.id)
         .cloned()
         .unwrap_or_else(|| Rc::new(root));
     let mut out = vec![Lowered {
-        artifacts: locate(lower(&root_rc, &ctx)?, &root_rc, opts, root_text.as_deref()),
+        artifacts: locate(
+            lower(&root_rc, &ctx)
+                .map_err(|d| in_module(d, &root_rc, opts, root_text.as_deref()))?,
+            &root_rc,
+            opts,
+            root_text.as_deref(),
+        ),
         ir: root_rc.clone(),
     }];
     // F153c: a package component compiled from source whose import fell back to the published export's island
@@ -72,7 +80,12 @@ pub fn compile_tree(
             continue;
         }
         out.push(Lowered {
-            artifacts: locate(lower(&ir, &ctx)?, &ir, opts, None),
+            artifacts: locate(
+                lower(&ir, &ctx).map_err(|d| in_module(d, &ir, opts, None))?,
+                &ir,
+                opts,
+                None,
+            ),
             ir,
         });
     }
@@ -101,30 +114,58 @@ fn reachable_from(
     seen
 }
 
-/// Lowering diagnostics carry only a byte offset; resolve line and column from the component's source
-/// (`text` when the caller supplied it, else the file under `opts.root`).
+/// Lowering diagnostics carry only a byte offset; resolve line and column from the source the offset points into: the
+/// module the diagnostic names (`file`, an inlined component from another file, F395), else the component's own
+/// source (`text` when the caller supplied it, else the file under `opts.root`).
 fn locate(
     mut a: Artifacts,
     ir: &ComponentIR,
     opts: &AnalyzeOptions,
     text: Option<&[u8]>,
 ) -> Artifacts {
-    if a.diagnostics.iter().all(|d| d.line != 0 || d.loc == 0) {
-        return a;
-    }
-    let read: Vec<u8>;
-    let text = match text {
-        Some(t) => t,
-        None => match std::fs::read(opts.root.join(&ir.source)) {
-            Ok(b) => {
-                read = b;
-                &read
-            }
-            Err(_) => return a,
-        },
-    };
-    for d in a.diagnostics.iter_mut().filter(|d| d.line == 0) {
-        (d.line, d.col) = crate::ir::line_col(text, d.loc);
+    let mut read = HashMap::new();
+    for d in &mut a.diagnostics {
+        locate_one(d, ir, opts, text, &mut read);
     }
     a
+}
+
+type Read = HashMap<String, Option<Vec<u8>>>;
+
+fn locate_one(
+    d: &mut Diagnostic,
+    ir: &ComponentIR,
+    opts: &AnalyzeOptions,
+    text: Option<&[u8]>,
+    read: &mut Read,
+) {
+    if d.line != 0 || d.loc == 0 {
+        return;
+    }
+    let own = d.file.as_deref().is_none_or(|f| f == ir.source);
+    let found: Option<&[u8]> = match (own, text) {
+        (true, Some(t)) => Some(t),
+        _ => {
+            let file = d.file.clone().unwrap_or_else(|| ir.source.clone());
+            read.entry(file.clone())
+                .or_insert_with(|| std::fs::read(opts.root.join(&file)).ok())
+                .as_deref()
+        }
+    };
+    if let Some(t) = found {
+        (d.line, d.col) = crate::ir::line_col(t, d.loc);
+    }
+}
+
+/// F395: a lowering error names the module it was raised in (the tree error has no component to take it from), with
+/// its line and column resolved in that module.
+fn in_module(
+    mut d: Diagnostic,
+    ir: &ComponentIR,
+    opts: &AnalyzeOptions,
+    text: Option<&[u8]>,
+) -> Diagnostic {
+    d.file.get_or_insert_with(|| ir.source.clone());
+    locate_one(&mut d, ir, opts, text, &mut HashMap::new());
+    d
 }
