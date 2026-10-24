@@ -2825,6 +2825,13 @@ fn inline_hook(
         return false;
     };
     let (path, imported) = follow_reexports(opts, path, imported);
+    // F442 (W3b): Radix's own `useId`, recognised by its printed shape, is React 19's `useId` under a prefix: an id slot.
+    if crate::analyze::radix_id::is_radix_use_id(&path, &imported, opts)
+        && crate::analyze::passes::elements::resolves_react_19(&opts.root)
+    {
+        read_radix_use_id(r, out, site);
+        return true;
+    }
     // B2: the specifier the component's own module imports the hook by; only then can a name the hook's module exports
     // be imported from the same place (a hook reached through another hook's module has no specifier of the component's).
     let spec = (!m.foreign).then(|| source.clone());
@@ -2871,6 +2878,53 @@ fn inline_hook(
         }
     });
     true
+}
+
+/// F442 (W3b): a call of Radix's `useId(deterministicId?)` (`analyze/radix_id.rs`) is `deterministicId || \`radix-${id}\``
+/// over a fresh id slot (React 19's `useId`, the same slot `const id = useId()` makes), bound like any custom hook's value.
+fn read_radix_use_id(r: &mut Reader<'_, '_>, out: &mut BodyDecls, site: &Site<'_>) {
+    let vloc = site.vloc;
+    if site.call.args.len() > 1 {
+        return out.fallback(
+            "hook-shape",
+            format!("custom hook {}: more than one argument", site.hook),
+            vloc,
+            HOOK_REMEDY,
+        );
+    }
+    let mut n = out.id_bindings.len() + 1;
+    let slot = loop {
+        let name = format!("_id{n}");
+        if out.inline.taken.insert(name.clone()) {
+            break name;
+        }
+        n += 1;
+    };
+    out.uses_id = true;
+    out.id_bindings.push(slot.clone());
+    let at = |kind: RawKind| RawExpr { loc: vloc, kind };
+    let prefixed = at(RawKind::Template {
+        head: "radix-".into(),
+        parts: vec![(
+            at(RawKind::Ident {
+                name: slot,
+                kind: IdentKind::Local,
+            }),
+            String::new(),
+        )],
+    });
+    let value = match site.call.args.first() {
+        Some(a) => {
+            let given = r.expr(a);
+            at(RawKind::Binary {
+                op: crate::ir::BinOp::Or,
+                left: Box::new(given),
+                right: Box::new(prefixed),
+            })
+        }
+        None => prefixed,
+    };
+    bind_result(r, out, site, Some(value));
 }
 
 /// A package barrel (`export { useX } from "./use-x"`, the build's own P1 barrel) names the hook but does not

@@ -42,7 +42,7 @@
       "classification": "survey truth (today's rule; R34.7 removes it)",
       "measuredRows": 36,
       "analysisOnlyRows": 0,
-      "appComponents": 123,
+      "appComponents": 121,
       "libraryComponents": 167
     },
     {
@@ -109,6 +109,15 @@
       "libraryComponents": 167
     },
     {
+      "blocker": "fallback:context-state",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 17
+    },
+    {
       "blocker": "fallback:jsx-expression",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -125,15 +134,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 8,
       "libraryComponents": 27
-    },
-    {
-      "blocker": "fallback:context-state",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 2,
-      "analysisOnlyRows": 0,
-      "appComponents": 2,
-      "libraryComponents": 17
     },
     {
       "blocker": "fallback:instance-prop-path",
@@ -850,12 +850,13 @@
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 9,
+      "components": 10,
       "reactComponents": 5,
-      "jsGzipKb": 90,
+      "jsGzipKb": 111,
       "workerCalls": 1,
       "codes": [
         "context-island",
+        "context-state",
         "external-component",
         "spread-props"
       ]
@@ -1428,11 +1429,12 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 9,
+      "components": 10,
       "reactComponents": 8,
-      "jsGzipKb": 95,
+      "jsGzipKb": 112,
       "workerCalls": 1,
       "codes": [
+        "context-state",
         "external-component",
         "island-prop",
         "spread-props"
