@@ -151,6 +151,16 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         bubbled_pkg: false,
         bubbled_scoped: Vec::new(),
         ctx_defaults: Vec::new(),
+        ctx_object_defaults: Vec::new(),
+        ctx_prop_defaults: if ctx.is_root {
+            ir.props
+                .iter()
+                .filter(|p| p.name.starts_with("__ctx_"))
+                .filter_map(|p| Some((p.name.clone(), p.default.as_ref()?.json_literal_ordered()?)))
+                .collect()
+        } else {
+            Vec::new()
+        },
         foreign: Default::default(),
     }
 }
@@ -257,28 +267,51 @@ pub fn contexts(
             ir.ctx_scoped.push(c);
         }
     }
-    // R34.142: a whole-value need no Provider answers is, at the page, the context's default (React's own rule)
+    // R34.142: a whole-value need no Provider answers is, at the page, the context's default (React's own rule); F431: so
+    // is a field need of an object-default context whose literal gives that field a plain value.
+    let default_of = |scalar: &[(String, crate::ir::Literal)],
+                      object: &[crate::ir::ObjectDefault],
+                      c: &str,
+                      f: &str| {
+        if f == crate::analyze::hooks::WHOLE_FIELD {
+            scalar.iter().find(|(x, _)| x == c).map(|(_, d)| d.clone())
+        } else {
+            object
+                .iter()
+                .find(|(x, _)| x == c)
+                .and_then(|(_, fields)| fields.iter().find(|(k, _)| k == f))
+                .map(|(_, d)| d.clone())
+        }
+    };
+    let lit = |d: crate::ir::Literal| RawExpr {
+        loc: 0,
+        kind: RawKind::Lit(d),
+    };
+    // F431: a page that renders a Provider of `c` itself is transparent around its content, so a need of `c` that bubbles
+    // up to it may sit inside that Provider (which the walk cannot tell): no default answers it, the page falls back.
+    let own_provided: Vec<String> = ir.provides.iter().map(|p| p.context.clone()).collect();
     let defaulted = |c: &str, f: &str| {
         ctx.is_root
-            && f == crate::analyze::hooks::WHOLE_FIELD
-            && w.ctx_defaults.iter().any(|(x, _)| x == c)
+            && !own_provided.iter().any(|x| x == c)
+            && default_of(&w.ctx_defaults, &w.ctx_object_defaults, c, f).is_some()
     };
-    // F419: the page's own read of a scalar context (`useContext(Ctx)` in the page itself) is the default too.
+    // F419: the page's own read of a scalar context (`useContext(Ctx)` in the page itself) is the default too; F431: so is
+    // its read of a field of an object-default context (`v.a`, `const { a } = useContext(Ctx)`).
     if ctx.is_root {
         for u in &ir.ctx_uses {
-            let Some((_, d)) = ir.ctx_defaults.iter().find(|(c, _)| c == &u.context) else {
-                continue;
-            };
-            let name = crate::ir::ctx_prop(&u.context, crate::analyze::hooks::WHOLE_FIELD);
-            if let Some(p) = ir
-                .props
-                .iter_mut()
-                .find(|p| p.name == name && p.default.is_none())
-            {
-                p.default = Some(RawExpr {
-                    loc: 0,
-                    kind: RawKind::Lit(d.clone()),
-                });
+            for f in &u.fields {
+                let Some(d) = default_of(&ir.ctx_defaults, &ir.ctx_object_defaults, &u.context, f)
+                else {
+                    continue;
+                };
+                let name = crate::ir::ctx_prop(&u.context, f);
+                if let Some(p) = ir
+                    .props
+                    .iter_mut()
+                    .find(|p| p.name == name && p.default.is_none())
+                {
+                    p.default = Some(lit(d));
+                }
             }
         }
     }
@@ -289,15 +322,9 @@ pub fn contexts(
                 name: name.clone(),
                 local: name,
                 ts_type: None,
-                default: w
-                    .ctx_defaults
-                    .iter()
-                    .find(|(x, _)| x == c)
+                default: default_of(&w.ctx_defaults, &w.ctx_object_defaults, c, f)
                     .filter(|_| defaulted(c, f))
-                    .map(|(_, d)| RawExpr {
-                        loc: 0,
-                        kind: RawKind::Lit(d.clone()),
-                    }),
+                    .map(lit),
             });
         }
         match ir.ctx_uses.iter_mut().find(|u| &u.context == c) {
@@ -314,12 +341,23 @@ pub fn contexts(
             ir.ctx_defaults.push((c.clone(), d.clone()));
         }
     }
-    // F419 (ruling 2): the page's own read of a context with no scalar default (an object default, whose per-field defaults
-    // are not modelled) has no Provider above it either; paint nothing wrong: name it and fall back.
+    for o in &w.ctx_object_defaults {
+        if bubbled.iter().any(|(x, _)| x == &o.0)
+            && !ir.ctx_object_defaults.iter().any(|(x, _)| x == &o.0)
+        {
+            ir.ctx_object_defaults.push(o.clone());
+        }
+    }
+    // F419 (ruling 2): the page's own read of a context with no scalar default, and (F431) of a field its object default
+    // does not give a plain value (a nested object, a call, a field the literal does not declare), has no Provider above
+    // it either; paint nothing wrong: name it and fall back.
     let own_unanswered = || {
         ir.ctx_uses.iter().find(|u| {
             !ir.ctx_defaults.iter().any(|(c, _)| c == &u.context)
                 && !bubbled.iter().any(|(c, _)| c == &u.context)
+                && u.fields.iter().any(|f| {
+                    default_of(&ir.ctx_defaults, &ir.ctx_object_defaults, &u.context, f).is_none()
+                })
         })
     };
     if ctx.is_root
@@ -520,6 +558,11 @@ struct Walker<'s, 'c> {
     bubbled_scoped: Vec<String>,
     /// R34.142: the literal defaults of the scalar contexts the bubbled needs name.
     ctx_defaults: Vec<(String, crate::ir::Literal)>,
+    /// F431: the plain-literal fields of the object-default contexts the bubbled needs name.
+    ctx_object_defaults: Vec<crate::ir::ObjectDefault>,
+    /// F431: at the page, its hidden context props that take a context default (`contexts`): nothing passes them, so a
+    /// child instance the server feeds takes the default as a literal, not the (absent) props path.
+    ctx_prop_defaults: Vec<(String, crate::ir::OJson)>,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
     /// of its module scope in this component's jobs, the component, the names).
     foreign: std::cell::RefCell<ForeignModules>,
@@ -3442,6 +3485,17 @@ impl Walker<'_, '_> {
                                 {
                                     self.ctx_defaults.push((u.context.clone(), d.clone()));
                                 }
+                                if let Some(o) = cir
+                                    .ctx_object_defaults
+                                    .iter()
+                                    .find(|(c, _)| c == &u.context)
+                                    && !self
+                                        .ctx_object_defaults
+                                        .iter()
+                                        .any(|(c, _)| c == &u.context)
+                                {
+                                    self.ctx_object_defaults.push(o.clone());
+                                }
                                 if !bubbled.iter().any(|(c, g)| c == &u.context && g == f) {
                                     bubbled.push((u.context.clone(), f.clone()));
                                 }
@@ -6319,7 +6373,15 @@ impl Walker<'_, '_> {
                             }
                             _ => None,
                         };
-                        if let Some(p) = self.prop_path(v) {
+                        let ctx_default = self.prop_path(v).and_then(|p| {
+                            self.ctx_prop_defaults
+                                .iter()
+                                .find(|(n, _)| n == &p)
+                                .map(|(_, j)| j.clone())
+                        });
+                        if let Some(j) = ctx_default {
+                            record.literals.insert(name.clone(), j);
+                        } else if let Some(p) = self.prop_path(v) {
                             record.props.insert(name.clone(), Some(p));
                         } else if let Some(j) = lit {
                             record.literals.insert(name.clone(), j);

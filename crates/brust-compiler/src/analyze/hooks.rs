@@ -3570,6 +3570,9 @@ fn read_hook(
     for (c, d) in hnames.scalar_defaults() {
         r.names.adopt_scalar(&c, &d);
     }
+    for (c, fields) in hnames.object_defaults() {
+        r.names.adopt_object(&c, &fields);
+    }
 
     // What went wrong inside is reported at the call site, naming the hook (R0.2).
     let text = hm.parsed.text();

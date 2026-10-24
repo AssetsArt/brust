@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 57 | 37 | 14 | 6 | 0 | 0 | 0 | 0 |
-| B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
+| B Composition | 243 | 129 | 19 | 95 | 0 | 0 | 0 | 0 |
 | C Hooks | 231 | 71 | 75 | 85 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 636 | 279 | 124 | 229 | 3 | 1 | 0 | 0 |
+| **Total** | 638 | 281 | 124 | 229 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -195,7 +195,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-no-provider | a consumer with no Provider above it, at the route | react | react | ssr | ok | 4.2 | fallback:context-no-provider | S2 context-no-provider: fail closed (the default of a createContext is not read in v1) |
 | b-context-escape | a context value used as a whole | react | react | ssr | ok | 4.2 | fallback:context-shape | S2 context-escape: the consumer reads the whole object, so it is a React island; under a lowered Provider that keeps the page React (F3 context-island) |
 | b-context-scalar-value | a Provider whose value is not an object literal, for a context with a literal default | static | static | 0 | ok | 0 | — | R34.142: a context declared with a literal default is one whole value: the Provider's `value` is any expression and the consumer reads it as a value (was S2 context-value, a React island) |
-| b-context-same-name | two modules each declare their own Ctx; a consumer of B under A's Provider | react | react | ssr | ok | 4.2 | fallback:context-no-provider | Mellow F2: a context is (declaring module, name); B reads its own default in React, never A's value (context-no-provider, fail closed) |
+| b-context-same-name | two modules each declare their own Ctx; a consumer of B under A's Provider | static | static | 0 | ok | 0 | — | Mellow F2: a context is (declaring module, name); B reads its own default in React, never A's value. F431: that object default is plain, so the page paints B-default, static (was context-no-provider) |
+| b-context-object-default | a page reading fields of an object-default context with no Provider (v.a, {a, b}) | static | static | 0 | ok | 0 | — | F431: each field's plain-literal default is the hidden __ctx_ prop's default (was context-no-provider by F419); served in tests/server/ctx-object-defaults.chromium.test.ts |
+| b-context-object-default-nested | a page reading a field whose object default is not a plain value (a nested object) | react | react | ssr | ok | 4.2 | fallback:context-no-provider | F431: only plain-literal fields are carried; the page falls back by name (context-no-provider) |
 | b-context-field-quoted | a context field that is not a plain identifier ('x-y') | static | static | ssr | ok | 4.2 | — | Mellow F1 context-shape: the field is part of an identifier (__ctx_Ctx_x-y was a syntax error / a subtraction); the components are React islands now (the page stays static) |
 | b-context-island-under | an interactive consumer (useTransition) under a Provider component | react | react | ssr | ok | 4.2 | fallback:context-island | Mellow F3 context-island: a lowered Provider no longer shares a React tree with an island under it (it would read the createContext default); the page is React, as on main. Served and compared with React in scripts/shadcn/context-parity.test.ts |
 | b-context-island-beside | an island BESIDE (not under) a Provider component | static | static | ssr | ok | 4.2 | — | Mellow F3 control: an island that is not under the Provider changes nothing; the Provider still lowers (static page + one island) |
@@ -388,7 +390,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 6.1 | — | F319: a value that does not change satisfies the requirement |
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 4.9 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
 | c-clone-carry-import | a Thumb whose className calls an import, passed through a component's rest under its own Provider | static | static | precompute | ok | 4.9 | — | F305: the call of the import is computed by the page and handed to the rest clone as one input (was: the children stayed outside, the page React) |
-| c-clone-carry-import-data | the same Thumb given an imported object member | react | react | ssr | ok | 4.2 | fallback:context-no-provider, fallback:children-rest, info:rest-children-unsupported | F305 / F325: an import read as data is not computed at the call site and shipped: the children stay outside, context-no-provider |
+| c-clone-carry-import-data | the same Thumb given an imported object member | react | react | ssr | ok | 4.2 | fallback:children-rest, info:rest-children-unsupported | F305 / F325: an import read as data is not computed at the call site and shipped: the children stay outside (children-rest; F431: the object default no longer adds context-no-provider) |
 | c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | 0 | ok | 5.7 | — | F298 + F309 + F307: LiveLabel is cloned with the Thumb inside LiveRoot's rest clone; since F337 (M2 binds the carried state to its seed in the LiveLabel clone's record, M3 lifts linked-prop-precompute for it) LiveRoot's rest clone is taken and no island is left: served == React, tests/server/linked-rest-host.chromium.test.ts (was: LiveRoot a React island) |
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | 0 | ok | 4.9 | — | F324 (real fix, progress-flip): the children reach the button through the rest in React; the clone puts the call site's content into the one element that spreads the rest (explicit children win in React; this Provider writes none), so the markup carries them and no island is needed (was: refused to an island after the alpha.16 silent drop) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 4.9 | — | F324: nothing to drop, so the clone is still taken |
