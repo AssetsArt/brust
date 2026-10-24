@@ -437,6 +437,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/nested-list.chromium.test.ts
       # F399: <title>, <meta> and <link> rendered in a body are hoisted into <head> as React 19 does.
       - run: bun test --timeout 120000 tests/server/title-hoist.chromium.test.ts
+      # F442 W3b: Radix's own useId (react-id) is an id slot with the radix- prefix; served ids share as React's do.
+      - run: bun test --timeout 120000 tests/server/radix-id.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.
       - run: bun check -p bench
       - run: bun check -p bench/apps/next

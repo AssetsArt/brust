@@ -632,7 +632,7 @@ fn walk_raw(e: &RawExpr, f: &mut dyn FnMut(&RawExpr)) {
 
 /// Whether the project resolves React 19 (the element shape §3 models): `node_modules/react` from `root` up, else the
 /// versions in bun's isolated store under `root`. Unknown counts as not 19.
-pub(super) fn resolves_react_19(root: &std::path::Path) -> bool {
+pub(crate) fn resolves_react_19(root: &std::path::Path) -> bool {
     let major = |p: &std::path::Path| -> Option<u64> {
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(p).ok()?).ok()?;
         v["version"].as_str()?.split('.').next()?.parse().ok()

@@ -1639,3 +1639,25 @@ fn a_row_value_of_a_state_list_into_a_frozen_prop_refuses() {
         all[0].ir.diagnostics
     );
 }
+
+#[test]
+fn a_frame_field_that_is_a_template_over_a_use_id_value_is_carried_by_a_native_clone() {
+    // F442: Radix Tabs' `baseId` is `radix-${id}`: a derived template over an id slot is a member of the Provider's own
+    // instance, so the call site specialises it (it used to keep the island: `calls_nothing` knew no template).
+    let all = compile("ctx_id_template.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    let c = clones(&all);
+    assert_eq!(
+        c.len(),
+        1,
+        "{:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+    );
+    assert!(
+        matches!(c[0].ir.tier, Tier::Native),
+        "{:?}",
+        c[0].ir.diagnostics
+    );
+    assert!(!root.jinja.contains("brust-island"), "{}", root.jinja);
+}
