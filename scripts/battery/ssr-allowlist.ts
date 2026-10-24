@@ -8,5 +8,4 @@ export const ALLOWED: Record<string, Allowed> = {
   'a-select-controlled': { row: 'F420', why: 'a controlled <select> paints value="a" and no selected option' },
   'a-textarea-controlled': { row: 'F421', why: 'a controlled <textarea> paints a value attribute, not its text' },
   'b-spread-alias-known': { row: 'F422', why: 'className + class spread: React keeps both (the first wins in the browser), brust paints the last' },
-  'c-context-field-named-loop': { row: 'F423', why: 'a useState local named loop becomes {% set loop %}: brust start refuses to boot' },
 }
