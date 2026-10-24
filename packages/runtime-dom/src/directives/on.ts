@@ -10,13 +10,17 @@ const SYNTHETIC: PropertyDescriptorMap = {
   isPersistent: { value: () => true },
   nativeEvent: { get(this: Event) { return this } },
 }
+/** Gives a DOM event the React members (once). Shared with `x-prop-on-*`. */
+export function reactEvent(e: Event): void {
+  if (!('isPropagationStopped' in e)) Object.defineProperties(e, SYNTHETIC)
+}
 BINDERS.push({
   match: (a) => a.startsWith('x-on-'),
   bind: ({ inst, el, attr, raw, scope }) => {
     const event = attr.slice('x-on-'.length)
     const p = parsed(inst, attr, raw); if (!p) return
     const handler = (e: Event) => {
-      if (!('isPropagationStopped' in e)) Object.defineProperties(e, SYNTHETIC)
+      reactEvent(e)
       const fn = member(inst, p, attr)
       if (typeof fn !== 'function') return
       const args = p.bindings.map((b) => scope[b])

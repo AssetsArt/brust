@@ -106,6 +106,8 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("project", project::project); // F71, filters/project.rs
     // shadcn S1.2 (R34.15 b): props spread onto an element, keys unknown at compile time.
     env.add_function("spread_attrs", spread::spread_attrs);
+    env.add_function("spread_attrs_control", spread::spread_attrs_control);
+    env.add_function("spread_control_value", spread::spread_control_value);
     env.add_function("spread_children", spread::spread_children);
     env.add_function("spread_get", spread::spread_get);
     env.add_function("spread_merge", spread::spread_merge);

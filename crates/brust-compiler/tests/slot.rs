@@ -88,7 +88,7 @@ fn render(jinja: &str) -> String {
 
 fn page(body: &str) -> String {
     format!(
-        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nimport Carrier from './Carrier'\nimport Carrier2 from './Carrier2'\nimport CarrierIf from './CarrierIf'\nimport CarrierTwo from './CarrierTwo'\nimport CarrierPath from './CarrierPath'\nimport CarrierNamed from './CarrierNamed'\nimport CarrierOver from './CarrierOver'\nimport CarrierLoop from './CarrierLoop'\nimport CarrierBag from './CarrierBag'\nimport CarrierKids from './CarrierKids'\nimport CarrierEm from './CarrierEm'\nimport CarrierFlagRead from './CarrierFlagRead'\nexport default function P() {{ return <main>{body}</main> }}"
+        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport ItemLike from './ItemLike'\nimport Pressable from './Pressable'\nimport ItemMouse from './ItemMouse'\nimport ReadsKey from './ReadsKey'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nimport Carrier from './Carrier'\nimport Carrier2 from './Carrier2'\nimport CarrierIf from './CarrierIf'\nimport CarrierTwo from './CarrierTwo'\nimport CarrierPath from './CarrierPath'\nimport CarrierNamed from './CarrierNamed'\nimport CarrierOver from './CarrierOver'\nimport CarrierLoop from './CarrierLoop'\nimport CarrierBag from './CarrierBag'\nimport CarrierKids from './CarrierKids'\nimport CarrierEm from './CarrierEm'\nimport CarrierFlagRead from './CarrierFlagRead'\nexport default function P() {{ return <main>{body}</main> }}"
     )
 }
 
@@ -518,4 +518,133 @@ fn a_component_that_may_not_carry_the_flag_is_not_polymorphic() {
         "import Carrier from './Carrier'\nexport default function P(props: any) { return <main><Carrier {...props.attrs}>x</Carrier></main> }",
     );
     assert!(react_with(&o, "slot-dynamic"), "{:?}", o.diags);
+}
+
+#[test]
+fn a_native_parent_with_as_child_over_a_host_element_is_cloned_with_the_child() {
+    // F369b step A: the parent has state and a handler on its polymorphic element; the call's one child becomes the
+    // content of a host clone, whose own polymorphic element is the child.
+    let o = lower(
+        "P.tsx",
+        &page("<ItemLike asChild><a href=\"/x\">go</a></ItemLike>"),
+    );
+    assert!(!react_with(&o, "slot-native"), "{:?}", o.diags);
+    assert!(!matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+}
+
+#[test]
+fn a_native_parent_clone_refuses_what_the_merge_cannot_join() {
+    // F369b: a class or style on the child would be joined with the element's, a handler or text/expression child is
+    // not a plain host element: each keeps the caller on React with the original refusal.
+    for body in [
+        "<ItemLike asChild><a className=\"c\">x</a></ItemLike>",
+        "<ItemLike asChild><a style={{ color: 'red' }}>x</a></ItemLike>",
+        "<ItemLike asChild><a onClick={() => {}}>x</a></ItemLike>",
+        "<ItemLike asChild>text</ItemLike>",
+        "<ItemLike asChild><a>x</a><b>y</b></ItemLike>",
+    ] {
+        let o = lower("P.tsx", &page(body));
+        assert!(
+            matches!(o.tier, Tier::React { .. }),
+            "{body}: {:?}",
+            o.diags
+        );
+    }
+}
+
+fn native_page(body: &str) -> String {
+    format!(
+        "import {{ useState }} from 'react'\nimport Pressable from './Pressable'\nimport ReadsKey from './ReadsKey'\nimport ItemMouse from './ItemMouse'\nexport default function P() {{ const [c, setC] = useState(0); return <main>{body}<b>{{c}}</b></main> }}"
+    )
+}
+
+#[test]
+fn a_handler_landing_in_a_native_childs_rest_is_bound_by_its_element() {
+    // F369c: `onMouseDown` reaches Pressable's <button> through `{...props}`; the element binds the prop itself and the
+    // function travels in the linked props.
+    let o = lower(
+        "P.tsx",
+        &native_page("<Pressable id=\"p\" onMouseDown={() => setC(c + 1)}>go</Pressable>"),
+    );
+    assert!(!matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+    assert!(
+        o.jinja.contains("x-prop-on-mousedown=\"onMouseDown\""),
+        "{}",
+        o.jinja
+    );
+    assert!(o.jinja.contains("x-props-bind"), "{}", o.jinja);
+}
+
+#[test]
+fn a_handler_the_native_child_binds_on_the_same_event_keeps_react() {
+    // The child's own onClick and the caller's would both run: the order is not proven, so the caller stays on React.
+    let o = lower(
+        "P.tsx",
+        &native_page("<Pressable onClick={() => setC(c + 1)}>go</Pressable>"),
+    );
+    assert!(react_with(&o, "spread-handler"), "{:?}", o.diags);
+}
+
+#[test]
+fn a_handler_the_native_child_also_reads_by_name_keeps_react() {
+    let o = lower(
+        "P.tsx",
+        &native_page("<ReadsKey onMouseDown={() => setC(c + 1)} />"),
+    );
+    assert!(react_with(&o, "spread-handler"), "{:?}", o.diags);
+}
+
+#[test]
+fn a_handler_that_is_not_an_allowed_event_keeps_react() {
+    // `onScroll` is a plain [a-z0-9]+ event, `onCompositionStart`-style names are too, but a capture handler is never bound.
+    let o = lower(
+        "P.tsx",
+        &native_page("<Pressable onMouseDownCapture={() => setC(c + 1)}>go</Pressable>"),
+    );
+    assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+}
+
+#[test]
+fn a_native_parent_with_as_child_over_a_native_component_is_cloned_with_the_child() {
+    // F369b step B on F369c: the element's handler reaches the child component as a prop and its element binds it.
+    let o = lower(
+        "P.tsx",
+        &page("<ItemMouse asChild><Pressable id=\"p\">go</Pressable></ItemMouse>"),
+    );
+    assert!(!matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+    assert!(o.jinja.contains("x-prop-on-mousedown"), "{}", o.jinja);
+}
+
+#[test]
+fn a_native_parent_handler_on_the_childs_own_event_keeps_react() {
+    // ItemLike binds click and Pressable binds click: not proven, so React.
+    let o = lower(
+        "P.tsx",
+        &page("<ItemLike asChild><Pressable id=\"p\">go</Pressable></ItemLike>"),
+    );
+    assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+}
+
+#[test]
+fn an_event_react_has_no_prop_for_keeps_react() {
+    // `onPick` passes handler_key_ok (a plain event name) but React never listens to a `pick` event.
+    let o = lower(
+        "P.tsx",
+        &native_page("<Pressable onPick={() => setC(c + 1)}>go</Pressable>"),
+    );
+    assert!(react_with(&o, "spread-handler"), "{:?}", o.diags);
+}
+
+#[test]
+fn an_on_change_through_a_native_childs_rest_listens_to_input_on_a_text_field() {
+    // Mellow F1: every handler path maps React's `onChange` on a text field to the DOM `input` event.
+    let src = "import { useState } from 'react'\nimport Field from './Field'\nexport default function P() { const [v, setV] = useState(''); return <main><Field onChange={(e: any) => setV(e.target.value)} /><b>{v}</b></main> }";
+    let o = lower("P.tsx", src);
+    assert!(!matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+    assert!(
+        o.jinja.contains("x-prop-on-input=\"onChange\""),
+        "{}",
+        o.jinja
+    );
+    assert!(!o.jinja.contains("x-prop-on-change"), "{}", o.jinja);
 }

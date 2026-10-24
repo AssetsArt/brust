@@ -170,6 +170,26 @@ pub fn spread_attrs(segs: Rest<Value>) -> String {
         .collect()
 }
 
+/// F432: `spread_attrs` for a `<select>` / `<textarea>` whose `value` (or `defaultValue`) is printed as `selected` options /
+/// text content: the same merge and print, with no `value` attribute.
+pub fn spread_attrs_control(segs: Rest<Value>) -> String {
+    merge_attrs(&segs)
+        .iter()
+        .filter(|(k, _)| attr_key(k) != "value")
+        .map(|(k, v)| render_attr(k, v))
+        .collect()
+}
+
+/// F432: the value a controlled `<select>` / `<textarea>` paints: the merged `value` / `defaultValue` of the same
+/// segments `spread_attrs_control` prints, undefined when none has it.
+pub fn spread_control_value(segs: Rest<Value>) -> Value {
+    merge_attrs(&segs)
+        .into_iter()
+        .find(|(k, _)| attr_key(k) == "value")
+        .map(|(_, v)| v)
+        .unwrap_or(Value::UNDEFINED)
+}
+
 /// `spread_children(v)`: see the module docs.
 pub fn spread_children(v: Value) -> String {
     match v.kind() {

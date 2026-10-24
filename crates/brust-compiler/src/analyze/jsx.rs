@@ -1641,17 +1641,48 @@ pub(crate) fn event_name(attr: &str) -> Option<String> {
     if !rest.starts_with(|c: char| c.is_ascii_uppercase()) {
         return None;
     }
+    // The events React has a prop for are named by the one table, read in both directions (`react_event_prop`).
+    let bare = attr.strip_suffix("Capture").unwrap_or(attr);
+    if let Some((_, dom)) = REACT_EVENTS.iter().find(|(prop, _)| *prop == bare) {
+        return Some((*dom).to_string());
+    }
+    // Any other `on[A-Z]*` is the lowercase event of that name (what a static child's element has always bound).
     let base = rest.strip_suffix("Capture").unwrap_or(rest);
-    Some(
-        match base {
-            "DoubleClick" => "dblclick",
-            // React's focus events bubble: they are focusin / focusout.
-            "Focus" => "focusin",
-            "Blur" => "focusout",
-            other => return Some(other.to_ascii_lowercase()),
-        }
-        .to_string(),
-    )
+    Some(base.to_ascii_lowercase())
+}
+
+/// The events React has a prop for, as (React prop, DOM event): the ONE table, read by `event_name` (prop to event) and
+/// `react_event_prop` (event to prop). React's focus events bubble, so `onFocus`/`onBlur` are focusin / focusout.
+const REACT_EVENTS: &[(&str, &str)] = &[
+    ("onClick", "click"),
+    ("onDoubleClick", "dblclick"),
+    ("onContextMenu", "contextmenu"),
+    ("onMouseDown", "mousedown"),
+    ("onMouseUp", "mouseup"),
+    ("onMouseMove", "mousemove"),
+    ("onMouseEnter", "mouseenter"),
+    ("onMouseLeave", "mouseleave"),
+    ("onMouseOver", "mouseover"),
+    ("onMouseOut", "mouseout"),
+    ("onKeyDown", "keydown"),
+    ("onKeyUp", "keyup"),
+    ("onFocus", "focusin"),
+    ("onBlur", "focusout"),
+    ("onInput", "input"),
+    ("onChange", "change"),
+    ("onPointerDown", "pointerdown"),
+    ("onPointerUp", "pointerup"),
+    ("onPointerMove", "pointermove"),
+    ("onPointerEnter", "pointerenter"),
+    ("onPointerLeave", "pointerleave"),
+];
+
+/// The React prop of a DOM event name from the table (`event_name`'s inverse), `None` for one React has no prop for.
+pub(crate) fn react_event_prop(dom: &str) -> Option<&'static str> {
+    REACT_EVENTS
+        .iter()
+        .find(|(_, d)| *d == dom)
+        .map(|(prop, _)| *prop)
 }
 
 /// A handler bound to a local name (a `useCallback` or a local function) keeps

@@ -1,3 +1,4 @@
+import { reactEvent } from './on'
 import { BINDERS, parsed, read, warnOnce } from '../core-api'
 import { BOOLEAN, OVERLOADED, STRINGIFY } from '../attr-kinds'
 import type { Instance } from '../instance'
@@ -11,6 +12,8 @@ function writeAttr(inst: Instance, attr: string, el: Element, name: string, v: u
   // setAttribute: `className` is a getter-only SVGAnimatedString on SVG elements (F96a).
   // F311: undefined/null removes `class` (React does; `className=""` keeps an empty one), and an empty `style` is no attribute (the first paint omits it)
   if (name === 'class') { if (v == null) el.removeAttribute('class'); else el.setAttribute('class', `${v}`); return }
+  // F434: a multiple select is bound to an array, one pick per option (`null`/`undefined` leave the picks alone, as React does)
+  if (name === 'value' && el instanceof HTMLSelectElement && el.multiple) { if (v != null) { const vs = ([] as unknown[]).concat(v).map(String); for (const o of el.options) o.selected = vs.includes(o.value) } return }
   if (name === 'value' && 'value' in el) { (el as HTMLInputElement).value = v == null ? '' : String(v); return }
   // React passes every attribute of a custom element (a tag with `-`) through as given: `true` is ``, `false` omits it.
   const custom = el.localName.includes('-')
@@ -54,6 +57,20 @@ BINDERS.push({
   match: (a) => a.startsWith('x-prop-'),
   bind: ({ inst, el, attr, raw }) => {
     const name = attr.slice('x-prop-'.length)
+    // F369c: `x-prop-on-<event>="<prop key>"` calls the instance's prop (a function a caller handed through the child's rest)
+    // with the event, reading it at call time so a prop that changes is the one that runs. The event is `[a-z0-9]+`.
+    if (name.startsWith('on-')) {
+      const event = name.slice(3)
+      if (!raw || !/^[a-z0-9]+$/.test(event)) { warnOnce(`pb:${inst.name}:${name}`, `${attr} in ${inst.name} refused`); return }
+      const handler = (e: Event) => {
+        reactEvent(e)
+        const ps = inst.props(); const fn = Object.hasOwn(ps, raw) ? ps[raw] : undefined
+        if (typeof fn === 'function') (fn as (e: Event) => void)(e)
+      }
+      el.addEventListener(event, handler)
+      inst.onCleanup(() => el.removeEventListener(event, handler))
+      return
+    }
     if (!name || !raw || name.startsWith('on') || name.startsWith('x-') || PROP_REFUSED.has(name)) {
       warnOnce(`pb:${inst.name}:${name}`, `${attr} in ${inst.name} refused`); return
     }

@@ -42,6 +42,9 @@ pub enum PropBinding {
     /// A live value the parent bound itself (2b-handlers): the finished attribute text (server print and
     /// `x-bind-*` member) in the parent's scope, bound where a spread lands it on an element.
     Live(String),
+    /// F369c: a handler prop of a NATIVE instance that the element it lands on binds itself (`x-prop-on-<event>="<key>"`):
+    /// the React key. The event is chosen where the element is known (React's `onChange` is `input` on a text field).
+    PropHandler(String),
     /// A ref the parent bound itself on an inlined `forwardRef` child (F267): the name of the parent's ref cell, bound
     /// as `x-ref` where the child's own `ref={forwardedRef}` is (`x-cref` when the cell is a branch's callback ref).
     Ref(String, bool),
@@ -304,9 +307,14 @@ pub struct Printer<'a, 'c> {
     fwd_ref: Option<(String, bool)>,
     /// F420: printing inside a `<select>` whose value is bound to `__select`, so an `<option>` paints `selected`.
     in_select: bool,
+    /// F432: printing the children a component call hands down as markup. The component may place them inside a
+    /// controlled `<select>` (the shadcn wrapper `<select {...props}/>`), whose value the options then read as `__select`.
+    component_children: u32,
     /// F420 / F421: the element being opened is a `<select>` / `<textarea>` whose `value` becomes `selected` options /
     /// text content, so its own `value` attribute is not printed.
     skip_value_print: bool,
+    /// F432: the value expression `spread_open` found for a `<select>` / `<textarea>` with a spread, for `element` to paint.
+    spread_control: Option<String>,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -341,7 +349,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             inner_html: None,
             fwd_ref: None,
             in_select: false,
+            component_children: 0,
             skip_value_print: false,
+            spread_control: None,
         })
     }
 
@@ -925,16 +935,19 @@ impl<'a, 'c> Printer<'a, 'c> {
         let model = model_pair(attrs, &self.f);
         let mut spread_body = None;
         // F420 / F421: react-dom paints a controlled select's value as `selected` options and a textarea's as its text.
-        let control = if as_child.is_none() && !attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
-            self.control_value(tag, attrs)
-        } else {
+        let spreads = as_child.is_some() || attrs.iter().any(|a| matches!(a, Attr::Spread(_)));
+        let mut control = if spreads {
             None
+        } else {
+            self.control_value(tag, attrs)
         };
         self.skip_value_print = control.is_some();
-        if as_child.is_some() || attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
+        if spreads {
             let extra: &[(String, String)] = as_child.as_ref().map_or(&[], |a| &a.attrs);
+            self.spread_control = None;
             spread_body =
                 self.spread_open(*loc, tag, attrs, sattrs, model.as_deref(), extra, &mut open);
+            control = self.spread_control.take();
         } else {
             for (a, sa) in attrs.iter().zip(sattrs) {
                 self.attr(a, sa, tag, attrs, model.as_deref(), &mut open);
@@ -945,7 +958,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             open.push_str(&format!(" x-model=\"{m}\""));
         }
         if tag == "option"
-            && self.in_select
+            && (self.in_select || self.component_children > 0)
             && !self.blank
             && let Some(v) = self.option_text(attrs, children)
         {
@@ -993,7 +1006,15 @@ impl<'a, 'c> Printer<'a, 'c> {
         if tag == "textarea"
             && let Some(v) = &control
         {
-            body = format!("{{{{ ({v}) | textarea_text | e }}}}");
+            let text = "{{ __text | textarea_text | e }}";
+            // React paints the children of a textarea whose value is null or undefined (a spread may carry no value)
+            body = if body.is_empty() {
+                format!("{{% with __text = ({v}) %}}{text}{{% endwith %}}")
+            } else {
+                format!(
+                    "{{% with __text = ({v}) %}}{{% if __text is undefined or __text is none %}}{body}{{% else %}}{text}{{% endif %}}{{% endwith %}}"
+                )
+            };
         }
         if let Some(d) = text_directive {
             open.push_str(&format!(" x-text=\"{d}\""));
@@ -1053,6 +1074,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             match c {
                 Node::Text(t) => parts.push(jinja_string(t)),
                 Node::Slot(e) => parts.push(format!("({} | js_str)", self.value(e))),
+                // children handed to a component may never reach a select: only inside one is this an error
+                _ if !self.in_select => return None,
                 _ => {
                     self.diagnostics.push(Diagnostic::error(
                         "select-option",
@@ -1376,6 +1399,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             Handler(String, String),
             /// A live value the parent bound itself: the React key and the finished attribute text.
             Live(String, String),
+            /// F369c: a handler prop the element binds itself (`x-prop-on-*`): the React key.
+            PropHandler(String),
         }
         // Attributes merge on the HTML attribute they print as (review F1): `className` and
         // `class`, `htmlFor` and `for`, `tabIndex` and `tabindex` are one key, so a later alias wins.
@@ -1385,7 +1410,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                     Attr::Static { name, .. } | Attr::Dynamic { name, .. } => Some(name.clone()),
                     _ => None,
                 },
-                It::Bound(k, _) | It::Handler(k, _) | It::Live(k, _) => Some(k.clone()),
+                It::Bound(k, _) | It::Handler(k, _) | It::Live(k, _) | It::PropHandler(k) => {
+                    Some(k.clone())
+                }
                 It::Runtime(_) => None,
             }
         };
@@ -1410,6 +1437,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                             items.push(It::Handler(k, d));
                         } else if let PropBinding::Live(text) = b {
                             items.push(It::Live(k, text));
+                        } else if let PropBinding::PropHandler(key) = b {
+                            items.push(It::PropHandler(key));
                         } else if k == "key"
                             || k == "ref"
                             || (k.starts_with("on")
@@ -1491,7 +1520,12 @@ impl<'a, 'c> Printer<'a, 'c> {
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
-                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(..))
+                Some(
+                    PropBinding::Handler(_)
+                    | PropBinding::Live(_)
+                    | PropBinding::PropHandler(_)
+                    | PropBinding::Ref(..),
+                )
                 | None => None,
             }
         };
@@ -1500,6 +1534,43 @@ impl<'a, 'c> Printer<'a, 'c> {
             Some(p) => items.split_at(p + 1),
             None => items.split_at(0),
         };
+        // F432: a `<select>` / `<textarea>` paints its value as `selected` options / text content, as the direct shape does
+        // (F420, F421): the value an own attribute or a known prop after the last runtime spread gives, else the merged
+        // `value` of the keys known only at render. The attribute itself is not printed.
+        let controlled = matches!(tag, "select" | "textarea") && extra.is_empty();
+        let tail_value = controlled
+            .then(|| {
+                tail.iter().rev().find_map(|it| match it {
+                    It::Own(i) => match &attrs[*i] {
+                        Attr::Static { name, value }
+                            if brust_jinja::spread::attr_key(name) == "value" =>
+                        {
+                            Some(Some(jinja_string(value)))
+                        }
+                        Attr::Dynamic { name, value }
+                            if brust_jinja::spread::attr_key(name) == "value" =>
+                        {
+                            Some(Some(self.value(value)))
+                        }
+                        _ => None,
+                    },
+                    It::Bound(k, b) if brust_jinja::spread::attr_key(k) == "value" => {
+                        Some(match b {
+                            PropBinding::Expr(e) => Some(e.clone()),
+                            _ => None,
+                        })
+                    }
+                    // a live value the parent bound prints its own attribute: left as it is
+                    It::Live(k, _) if brust_jinja::spread::attr_key(k) == "value" => Some(None),
+                    _ => None,
+                })
+            })
+            .flatten();
+        // `Some(None)`: the tail has a value this cannot paint, so the attribute prints as before
+        let spread_value = controlled && tail_value.is_none() && last_runtime.is_some();
+        let paint_tail = matches!(tail_value, Some(Some(_)));
+        let mut control = tail_value.flatten();
+        self.skip_value_print = paint_tail || spread_value;
         // Keys the tail sets: they win over everything before.
         let mut tail_keys: Vec<String> = tail.iter().filter_map(key_of).collect();
         tail_keys.dedup();
@@ -1569,6 +1640,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                     // The component's own rest cannot carry the key (`shadowed_props`), so the live value is final.
                     It::Live(k, text) if !overridden(k) => open.push_str(text),
                     It::Live(..) => {}
+                    It::PropHandler(k) if !overridden(k) => {
+                        self.prop_handler_attr(k, tag, attrs, open)
+                    }
+                    It::PropHandler(..) => {}
                     It::Runtime(d) => segs.push(if tail_names.is_empty() {
                         d.clone()
                     } else {
@@ -1578,7 +1653,15 @@ impl<'a, 'c> Printer<'a, 'c> {
                     }),
                 }
             }
-            open.push_str(&format!("{{{{ spread_attrs({}) }}}}", segs.join(", ")));
+            if spread_value {
+                control = Some(format!("spread_control_value({})", segs.join(", ")));
+            }
+            let print = if control.is_some() {
+                "spread_attrs_control"
+            } else {
+                "spread_attrs"
+            };
+            open.push_str(&format!("{{{{ {print}({}) }}}}", segs.join(", ")));
         }
         // Compile-time part: JS object semantics over the tail (the whole list when every key is known).
         let mut order: Vec<(Option<String>, usize)> = Vec::new();
@@ -1610,9 +1693,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
                 It::Handler(k, d) => self.handler_attr(k, d, tag, attrs, open),
                 It::Live(_, text) => open.push_str(text),
+                It::PropHandler(k) => self.prop_handler_attr(k, tag, attrs, open),
                 It::Bound(..) | It::Runtime(_) => {}
             }
         }
+        self.spread_control = control;
         children_body
     }
 
@@ -1628,6 +1713,19 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         let ev = dom_event(&event, tag, attrs);
         open.push_str(&format!(" x-on-{ev}=\"{d}\""));
+    }
+
+    /// F369c: `x-prop-on-<event>="<key>"` for a handler prop of the native instance this element belongs to; the event is
+    /// the one every handler path binds (`dom_event`: React's `onChange` on a text field is `input`).
+    fn prop_handler_attr(&mut self, k: &str, tag: &str, attrs: &[Attr], open: &mut String) {
+        if !crate::analyze::passes::children::handler_key_ok(k) || k.contains('"') {
+            return;
+        }
+        let Some(event) = crate::analyze::jsx::event_name(k) else {
+            return;
+        };
+        let ev = dom_event(&event, tag, attrs);
+        open.push_str(&format!(" x-prop-on-{ev}=\"{k}\""));
     }
 
     /// F329b: the directive that keeps a live prop of the NATIVE instance this element belongs to in step with it:
@@ -1668,6 +1766,10 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         if is_refused_attr(&html) {
             self.refuse(&html, tag);
+            return;
+        }
+        if self.skip_value_print && html == "value" {
+            // F432: painted as `selected` options / text content
             return;
         }
         if html == "style" {
@@ -2127,8 +2229,27 @@ impl<'a, 'c> Printer<'a, 'c> {
                     continue;
                 }
             }
-            if matches!(v, Expr::ClientOnly { .. }) {
+            if matches!(v, Expr::ClientOnly { .. })
+                || (ir
+                    .live_props
+                    .iter()
+                    .any(|f| f.loc == *loc && &f.key == pname)
+                    && crate::analyze::passes::children::handler_key_ok(pname))
+            {
                 client_only.push(pname.clone());
+                // F369c: a handler a native child's element binds itself: `x-prop-on-<event>="<key>"` on that element, the
+                // function itself travelling in the linked props like any function prop.
+                if ir
+                    .live_props
+                    .iter()
+                    .any(|f| f.loc == *loc && &f.key == pname)
+                    && crate::analyze::passes::children::handler_key_ok(pname)
+                {
+                    segs.push(Seg::Named(
+                        pname.clone(),
+                        PropBinding::PropHandler(pname.clone()),
+                    ));
+                }
                 continue;
             }
             // a `style` object keeps its source order (F296 C3), like a style written on the element
@@ -2335,7 +2456,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         if as_child.is_none() && !children.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
+            self.component_children += 1;
             self.nodes(children, schildren);
+            self.component_children -= 1;
             std::mem::swap(&mut saved, &mut self.out);
             segs.push(Seg::Named("children".into(), PropBinding::Markup(saved)));
         }
@@ -2594,7 +2717,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         if !kids.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
+            self.component_children += 1;
             self.nodes(kids, skids);
+            self.component_children -= 1;
             std::mem::swap(&mut saved, &mut self.out);
             segs.push(Seg::Named("children".into(), PropBinding::Markup(saved)));
         }
