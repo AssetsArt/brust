@@ -22,7 +22,7 @@ afterAll(async () => {
     p.kill('SIGINT')
     if ((await Promise.race([p.exited, Bun.sleep(5000).then(() => undefined)])) === undefined) { p.kill('SIGKILL'); await p.exited }
   }
-  for (const v of ['layout', 'nested', 'child', 'alias', 'hook', 'barrel', 'barrel2', 'helper', 'assets', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
+  for (const v of ['layout', 'nested', 'child', 'alias', 'hook', 'barrel', 'barrel2', 'helper', 'assets', 'dotted', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
 })
 
 test('a context declared in the layout is refused for the island page, by name', () => {
@@ -114,6 +114,12 @@ test('control: a context no layout provides still paints its default, like React
   expect(build('none').exitCode).toBe(0)
   expect(await serve('none')).toContain('<p data-testid="v">dflt</p>')
 }, 60_000)
+
+test('a dotted basename (./theme.context -> theme.context.tsx) is judged on the resolved file and refused', () => {
+  const b = build('dotted')
+  expect(b.exitCode).not.toBe(0)
+  expect(b.stderr.toString()).toContain('imports ./theme.context')
+})
 
 test('an island page importing a stylesheet and JSON (script specifiers only are followed) builds and serves what React renders', async () => {
   const b = build('assets')
