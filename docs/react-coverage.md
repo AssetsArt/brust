@@ -8,12 +8,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
+| A JSX basics | 55 | 36 | 13 | 6 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
 | C Hooks | 230 | 71 | 74 | 85 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 632 | 278 | 122 | 228 | 3 | 1 | 0 | 0 |
+| **Total** | 633 | 278 | 122 | 229 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -46,6 +46,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | 0 | — | spec §6.2: N literal ≤ 1024 |
 | a-state-text | state text with a click handler | native | native | 0 | ok | 4.9 | — | spec §4.3 useState |
 | a-state-cond | state-driven conditional | native | native | 0 | ok | 5.2 | — | spec §4.3 useState; §7.1 x-if |
+| a-state-from-children | state seeded from children | react | react | ssr | ok | 4.2 | fallback:state-from-children | F404: children is markup the caller passes, not a value a state can hold; refused by name (state-from-children) |
 | a-state-list | state list with append | native | native | 0 | ok | 6.0 | — | spec §4.3 useState; §7.1 x-for |
 | a-style-undefined | style={c ? {…} : undefined} (F36) | static | static | 0 | ok | 0 | — | the attribute is omitted when undefined, as React does |
 | a-inner-html | dangerouslySetInnerHTML on a host element | static | static | 0 | ok | 0 | — | raw HTML sink (html_raw), React contract: the author sanitises |
