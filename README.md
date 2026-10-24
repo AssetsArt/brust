@@ -36,6 +36,11 @@ bun run dev
 
 Runs on Bun with a Rust server, or on Cloudflare Workers. `brust build --target static` writes plain files for any static host.
 
+## Built with brust
+
+- [assetsart.com](https://assetsart.com): Assets Art, the serverless cloud platform from the team behind brust
+- [brust.dev](https://brust.dev): this project's own website and docs
+
 ## Contributing
 
 Rust `nightly-2026-09-15` (`rust-toolchain.toml`) and Bun 1.4.x.

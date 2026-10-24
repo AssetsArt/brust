@@ -19,6 +19,7 @@ export default function SiteHeader({ version }: { version: string }) {
         <nav className="ml-auto flex items-center gap-5 text-[15px] max-narrow:gap-4" aria-label="Site">
           <NavLink href="/docs">Docs</NavLink>
           <NavLink href="/docs/cookbook/hello-world">Cookbook</NavLink>
+          <NavLink href="/llms.txt">llms.txt</NavLink>
           <NavLink href="https://github.com/AssetsArt/brust">GitHub</NavLink>
         </nav>
       </header>
