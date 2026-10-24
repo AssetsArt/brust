@@ -208,7 +208,7 @@ fn words<'a>(s: &'a str, w: &'a str) -> impl Iterator<Item = usize> + 'a {
 }
 
 /// Rule 4: `e` is built only from stable leaves.
-fn stable(ir: &ComponentIR, e: &RawExpr, depth: u8) -> bool {
+pub(crate) fn stable(ir: &ComponentIR, e: &RawExpr, depth: u8) -> bool {
     if depth > 8 {
         return false;
     }

@@ -346,6 +346,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/callback-ref.chromium.test.ts
       # F288 phase A: the published @radix-ui/react-presence compiled native (function child), parity + exit animation.
       - run: bun test --timeout 120000 tests/server/presence.chromium.test.ts
+      # F288 phase B: Presence with an element child (x-cref on an x-if branch): every toggle == React, listeners balanced.
+      - run: bun test --timeout 120000 tests/server/presence-element.chromium.test.ts
       # B5: ...rest.key spread inside an object literal (style), served == React.
       - run: bun test --timeout 120000 tests/server/rest-style.chromium.test.ts
       # B4: a never-written useRef read in the render is its first value, served == React.

@@ -137,19 +137,64 @@ fn a_function_child_is_folded_and_the_page_is_native() {
 }
 
 #[test]
-fn an_element_child_waits_for_phase_b() {
-    // `Children.only(children)`: the child is mounted only while present (`x-if`), which needs G5 (phase B).
+fn an_element_child_mounts_with_presence_and_takes_the_composed_ref_as_x_cref() {
+    // Phase B (S1): `Children.only(children)`; with an element child `forceMount` is false, so Presence renders
+    // `isPresent ? cloneElement(child, { ref }) : null`: a branch whose element takes the composed callback ref, which
+    // the runtime's `x-if` attaches with the branch (`x-cref`).
     let dir = project("s1", 19);
-    let o = compile(
-        &dir,
-        &page("<Presence present={open}><Impl present={open}>body</Impl></Presence>"),
-    );
-    assert!(
-        o.clones.is_empty(),
-        "{:?}",
-        o.clones.iter().map(|c| &c.0).collect::<Vec<_>>()
-    );
-    assert!(o.jinja.contains("brust-island"), "{}", o.jinja);
+    let page = page("<Presence present={open}><Impl present={open}>body</Impl></Presence>");
+    std::fs::write(dir.join("page.tsx"), &page).unwrap();
+    let (tier, rules, page_jinja, clones) = run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            "page.tsx",
+            Some(page.into_bytes()),
+            &AnalyzeOptions {
+                root: dir,
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        let clones: Vec<(String, Tier, String, Vec<String>)> = tree
+            .iter()
+            .filter(|c| c.ir.id.contains("presence") && c.ir.specialised)
+            .map(|c| {
+                (
+                    c.ir.id.clone(),
+                    c.ir.tier.clone(),
+                    c.artifacts.jinja.clone(),
+                    c.ir.refs.iter().map(|r| r.name.clone()).collect(),
+                )
+            })
+            .collect();
+        (
+            tree[0].ir.tier.clone(),
+            tree[0]
+                .ir
+                .diagnostics
+                .iter()
+                .map(|d| format!("{}: {}", d.rule, d.message))
+                .collect::<Vec<_>>(),
+            tree[0].artifacts.jinja.clone(),
+            clones,
+        )
+    });
+    assert!(matches!(tier, Tier::Native), "{tier:?} {rules:?}");
+    assert!(!page_jinja.contains("brust-island"), "{page_jinja}");
+    let [(id, clone_tier, jinja, refs)] = &clones[..] else {
+        panic!(
+            "one Presence clone: {:?}",
+            clones.iter().map(|c| &c.0).collect::<Vec<_>>()
+        )
+    };
+    assert!(matches!(clone_tier, Tier::Native), "{id} {clone_tier:?}");
+    assert!(jinja.contains("x-if="), "{jinja}");
+    let cell = refs
+        .iter()
+        .find(|r| r.starts_with("$cr"))
+        .unwrap_or_else(|| panic!("a callback-ref cell: {refs:?}"));
+    assert!(jinja.contains(&format!("x-cref=\"{cell}\"")), "{jinja}");
+    assert!(jinja.contains("data-present="), "{jinja}");
 }
 
 #[test]

@@ -905,10 +905,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         if let Some(n) = self.fwd_ref.take() {
             // this element is an instance host (its `x-data` is inserted below) when it is the host root
             let host = *host && root && self.native;
-            open.push_str(&format!(
-                " {}=\"{n}\"",
-                if host { "x-pref" } else { "x-ref" }
-            ));
+            open.push_str(&format!(" {}=\"{n}\"", ref_directive(&n, host)));
         }
         // A lone reactive slot child puts x-text on this element (Review Focus 1).
         let lone = matches!(children.as_slice(), [Node::Slot(_)]);
@@ -1184,7 +1181,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             Attr::Ref { name } => {
                 if self.native {
-                    open.push_str(&format!(" x-ref=\"{name}\""));
+                    open.push_str(&format!(" {}=\"{name}\"", ref_directive(name, false)));
                 }
             }
             // F267: the ref the caller bound on this inlined instance lands here, in the caller's scope.
@@ -3021,5 +3018,17 @@ fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
                 )
             }
         }
+    }
+}
+
+/// The directive that binds the ref cell `name` on an element: `x-cref` for a branch's callback ref (F288 phase B, the
+/// runtime's `x-if` attaches it with the branch), `x-pref` for the caller's ref on a nested host, `x-ref` otherwise.
+fn ref_directive(name: &str, host: bool) -> &'static str {
+    if name.starts_with(crate::analyze::component::CALLBACK_REF) {
+        "x-cref"
+    } else if host {
+        "x-pref"
+    } else {
+        "x-ref"
     }
 }

@@ -740,12 +740,61 @@ fn a_ref_that_is_not_a_function_value_or_ref_object_stays_a_fallback() {
     }
 }
 
+// F288 phase B (G5): a callback ref in a branch is a cell holding the callback, printed `x-cref` (the runtime's `x-if`
+// attaches it with the branch), when the callback keeps its identity for the life of the instance.
 #[test]
-fn a_callback_ref_under_a_conditional_stays_a_fallback() {
-    let a = ir(&format!(
-        "{PRE}export default function F() {{ const cb = useCallback((n: any) => {{}}, []); const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}>{{n > 0 && <input ref={{cb}} />}}</div> }}"
-    ));
-    assert!(a.refs.is_empty() && a.effects.is_empty(), "{:?}", a.effects);
+fn a_steady_callback_ref_under_a_conditional_is_a_branch_cell() {
+    for (decls, cb) in [
+        ("const cb = useCallback((n: any) => {}, [])", "cb"),
+        ("const [node, setNode] = useState<any>(null)", "setNode"),
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F() {{ {decls}; const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}>{{n > 0 && <input ref={{{cb}}} />}}</div> }}"
+        ));
+        assert!(a.effects.is_empty(), "{cb}: {:?}", a.effects);
+        let cell = a
+            .refs
+            .iter()
+            .find(|r| r.name == "$cr1")
+            .unwrap_or_else(|| panic!("{cb}: {:?}", a.refs));
+        assert!(
+            matches!(&cell.init, Expr::Raw(r) if matches!(&r.kind, RawKind::Ident { name, .. } if name == cb)),
+            "{cb}: {:?}",
+            cell.init
+        );
+        assert!(
+            !a.diagnostics.iter().any(|d| d.rule == "ref-shape"),
+            "{cb}: {:?}",
+            a.diagnostics
+        );
+    }
+}
+
+#[test]
+fn a_callback_ref_under_a_conditional_that_may_change_or_sits_in_a_row_stays_a_fallback() {
+    for (decls, body) in [
+        // React re-attaches a callback whose identity changes on a render: a branch would not follow it
+        (
+            "const cb = useCallback((x: any) => {}, [n])",
+            "{n > 0 && <input ref={cb} />}",
+        ),
+        ("function cb(x: any) {}", "{n > 0 && <input ref={cb} />}"),
+        // a row inside the branch
+        (
+            "const cb = useCallback((x: any) => {}, [])",
+            "{n > 0 && <ul>{[1, 2].map((x) => <li key={x} ref={cb}>{x}</li>)}</ul>}",
+        ),
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F() {{ const [n, setN] = useState(0); {decls}; return <div onClick={{() => setN(n + 1)}}>{body}</div> }}"
+        ));
+        assert!(
+            a.refs.is_empty() && a.effects.is_empty(),
+            "{decls} {body}: {:?} {:?}",
+            a.refs,
+            a.effects
+        );
+    }
 }
 
 #[test]

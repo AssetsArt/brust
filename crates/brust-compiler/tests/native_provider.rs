@@ -564,10 +564,29 @@ fn a_ref_passed_to_an_inlined_forward_ref_child_binds_on_its_element() {
     }
 }
 
+// F288 phase B (G5): a steady callback ref under a condition follows the branch: the parent's cell is printed `x-cref`
+// on the child's element, which the runtime's `x-if` attaches with the branch.
+#[test]
+fn a_callback_ref_passed_to_a_forward_ref_child_under_a_condition_binds_with_the_branch() {
+    let all = compile("fwd_cond.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert!(
+        !has(&root.ir, DiagClass::Fallback, "forwardref-ref"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    assert!(
+        root.jinja.contains("<button") && root.jinja.contains("x-cref=\"$cr"),
+        "{}",
+        root.jinja
+    );
+}
+
 #[test]
 fn a_ref_passed_to_a_forward_ref_child_that_may_not_render_stays_react() {
-    // a callback under a condition; a child that renders its element sometimes; a spread after the ref
-    for file in ["fwd_cond.tsx", "fwd_child_cond.tsx", "fwd_spread_after.tsx"] {
+    // a child that renders its element sometimes; a spread after the ref
+    for file in ["fwd_child_cond.tsx", "fwd_spread_after.tsx"] {
         let all = compile(file);
         assert!(
             has(&all[0].ir, DiagClass::Fallback, "forwardref-ref"),
