@@ -1264,12 +1264,42 @@ fn flag_selects_slot(poly: &crate::ir::PolyTag, props: &[(String, Expr)]) -> boo
     flag != poly.negate
 }
 
-/// F369b: puts the ONE host element `child` where the component's polymorphic element is (React's Slot: the child
-/// element takes the polymorphic element's place, its attributes merged over the element's, its own children kept).
-/// The component is no longer polymorphic afterwards (the flag is settled), so its call site resolves nothing. Refused,
-/// and the call site keeps its `slot-native` refusal, when: the polymorphic element is not unique, its only child is
-/// not the component's `{children}`, the child is not a host element with plain attributes, or the merge would join
-/// a class or a style (a later row, Mellow F1).
+/// The React prop of a DOM event name the compiler reads from (`jsx::event_name`'s inverse), `None` for one it does not know.
+fn event_prop(event: &str) -> Option<&'static str> {
+    Some(match event {
+        "click" => "onClick",
+        "dblclick" => "onDoubleClick",
+        "contextmenu" => "onContextMenu",
+        "mousedown" => "onMouseDown",
+        "mouseup" => "onMouseUp",
+        "mousemove" => "onMouseMove",
+        "mouseenter" => "onMouseEnter",
+        "mouseleave" => "onMouseLeave",
+        "mouseover" => "onMouseOver",
+        "mouseout" => "onMouseOut",
+        "keydown" => "onKeyDown",
+        "keyup" => "onKeyUp",
+        "focusin" => "onFocus",
+        "focusout" => "onBlur",
+        "input" => "onInput",
+        "change" => "onChange",
+        "pointerdown" => "onPointerDown",
+        "pointerup" => "onPointerUp",
+        "pointermove" => "onPointerMove",
+        "pointerenter" => "onPointerEnter",
+        "pointerleave" => "onPointerLeave",
+        _ => return None,
+    })
+}
+
+/// F369b: puts the ONE `child` (a host element or a component call) where the component's polymorphic element is
+/// (React's Slot: the child takes the element's place, the element's attributes merged under its own props, its own
+/// children kept). A component child is given the element's attributes as PROPS (the element's handlers as `on*` props,
+/// its collection marker as the collection-item prop). The component is no longer polymorphic afterwards (the flag is
+/// settled), so its call site resolves nothing. Refused, and the call site keeps its `slot-native` refusal, when: the
+/// polymorphic element is not unique, its only child is not the component's `{children}`, the child is neither a host
+/// element with plain attributes nor a plain component call, the element carries a ref, or the merge would join a
+/// class, a style or a handler (a later row, Mellow F1).
 fn splice_poly(ir: &mut ComponentIR, child: Node) -> Result<(), String> {
     fn count(n: &Node) -> usize {
         match n {
@@ -1292,7 +1322,59 @@ fn splice_poly(ir: &mut ComponentIR, child: Node) -> Result<(), String> {
         let k = name.to_ascii_lowercase();
         if k == "classname" { "class".into() } else { k }
     }
-    fn put(n: &mut Node, child: &mut Option<Node>) -> Result<(), String> {
+    fn is_class_or_style(k: &str) -> bool {
+        k == "style" || k == "class"
+    }
+    /// The element's attributes as the props of a component call.
+    fn as_props(
+        attrs: &[Attr],
+        handlers: &[crate::ir::HandlerDecl],
+        used: &mut Vec<String>,
+    ) -> Result<Vec<(String, Expr)>, String> {
+        let mut out = Vec::new();
+        for a in attrs {
+            match a {
+                Attr::Static { name, value } if !value.is_empty() => out.push((
+                    name.clone(),
+                    Expr::Raw(RawExpr {
+                        loc: 0,
+                        kind: RawKind::Lit(crate::ir::Literal::Str(value.clone())),
+                    }),
+                )),
+                Attr::Static { .. } => {
+                    return Err("an attribute of the element has an empty value".into());
+                }
+                Attr::Dynamic { name, value } => out.push((name.clone(), value.clone())),
+                Attr::Spread(e) => out.push((crate::ir::SPREAD_KEY.to_string(), e.clone())),
+                Attr::CollectionItem { data } => {
+                    out.push((crate::ir::COLLECTION_ITEM_PROP.to_string(), data.clone()));
+                }
+                Attr::Event { event, handler } => {
+                    let prop = event_prop(event).ok_or_else(|| {
+                        format!(
+                            "the element's `{event}` handler has no React prop the compiler knows"
+                        )
+                    })?;
+                    let h = handlers
+                        .iter()
+                        .find(|h| &h.name == handler)
+                        .ok_or("a handler of the element is not declared")?;
+                    used.push(handler.clone());
+                    out.push((prop.to_string(), Expr::Raw(h.body.clone())));
+                }
+                Attr::Ref { .. } | Attr::ForwardRef | Attr::InnerHtml { .. } => {
+                    return Err("the element carries a ref or raw markup".into());
+                }
+            }
+        }
+        Ok(out)
+    }
+    fn put(
+        n: &mut Node,
+        child: &mut Option<Node>,
+        handlers: &[crate::ir::HandlerDecl],
+        used: &mut Vec<String>,
+    ) -> Result<(), String> {
         match n {
             Node::Element {
                 poly: true,
@@ -1307,65 +1389,137 @@ fn splice_poly(ir: &mut ComponentIR, child: Node) -> Result<(), String> {
                             .into(),
                     );
                 }
-                let Some(Node::Element {
-                    tag: ctag,
-                    attrs: cattrs,
-                    children: ckids,
-                    poly: false,
-                    ..
-                }) = child.take()
-                else {
-                    return Err("the child is not a host element".into());
-                };
-                if matches!(ctag.as_str(), "style" | "script") {
-                    return Err(format!("the child is a <{ctag}> element"));
-                }
                 let spreads = attrs.iter().any(|a| matches!(a, Attr::Spread(_)));
-                let mut keys = Vec::new();
-                for a in &cattrs {
-                    let (Attr::Static { name, .. } | Attr::Dynamic { name, .. }) = a else {
-                        return Err(
-                            "the child has a handler, a ref, a spread or another directive".into(),
-                        );
-                    };
-                    let k = merge_key(name);
-                    if k == "style" || (k == "class" && (spreads || attrs.iter().any(|o| {
+                let has_class = |attrs: &[Attr]| {
+                    attrs.iter().any(|o| {
                         matches!(o, Attr::Static { name, .. } | Attr::Dynamic { name, .. } if merge_key(name) == "class")
-                    }))) {
-                        return Err("a class or style of the child would be joined with the element's".into());
+                    })
+                };
+                match child.take() {
+                    Some(Node::Element {
+                        tag: ctag,
+                        attrs: cattrs,
+                        children: ckids,
+                        poly: false,
+                        ..
+                    }) => {
+                        if matches!(ctag.as_str(), "style" | "script") {
+                            return Err(format!("the child is a <{ctag}> element"));
+                        }
+                        let mut keys = Vec::new();
+                        for a in &cattrs {
+                            let (Attr::Static { name, .. } | Attr::Dynamic { name, .. }) = a else {
+                                return Err(
+                                    "the child has a handler, a ref, a spread or another directive"
+                                        .into(),
+                                );
+                            };
+                            let k = merge_key(name);
+                            if k == "style" || (k == "class" && (spreads || has_class(attrs))) {
+                                return Err("a class or style of the child would be joined with the element's".into());
+                            }
+                            keys.push(k);
+                        }
+                        // The child's props win over the element's (`mergeProps(slotProps, childProps)`).
+                        attrs.retain(|a| match a {
+                            Attr::Static { name, .. } | Attr::Dynamic { name, .. } => {
+                                !keys.contains(&merge_key(name))
+                            }
+                            _ => true,
+                        });
+                        attrs.extend(cattrs);
+                        *children = ckids;
+                        *tag = ctag;
+                        if let Node::Element { poly, .. } = n {
+                            *poly = false;
+                        }
+                        Ok(())
                     }
-                    keys.push(k);
-                }
-                // The child's props win over the element's (`mergeProps(slotProps, childProps)`).
-                attrs.retain(|a| match a {
-                    Attr::Static { name, .. } | Attr::Dynamic { name, .. } => {
-                        !keys.contains(&merge_key(name))
+                    Some(Node::Component {
+                        loc,
+                        name,
+                        source,
+                        imported,
+                        member,
+                        props: cprops,
+                        children: ckids,
+                        link,
+                        tier,
+                        forwarded_ref,
+                    }) => {
+                        if link.is_some() || forwarded_ref {
+                            return Err("the child component is linked or takes a ref".into());
+                        }
+                        let mut mine = as_props(attrs, handlers, used)?;
+                        let mut ckeys = Vec::new();
+                        for (k, _) in &cprops {
+                            if k == crate::ir::SPREAD_KEY || k == "ref" || k == "key" {
+                                return Err(
+                                    "the child component is given a spread, a ref or a key".into(),
+                                );
+                            }
+                            let mk = merge_key(k);
+                            if is_class_or_style(&mk)
+                                && (spreads || mine.iter().any(|(o, _)| merge_key(o) == mk))
+                            {
+                                return Err("a class or style of the child would be joined with the element's".into());
+                            }
+                            if event_prop_of(k) && mine.iter().any(|(o, _)| o == k) {
+                                return Err(
+                                    "a handler of the child would be composed with the element's"
+                                        .into(),
+                                );
+                            }
+                            ckeys.push(mk);
+                        }
+                        mine.retain(|(k, _)| {
+                            k == crate::ir::SPREAD_KEY || !ckeys.contains(&merge_key(k))
+                        });
+                        mine.extend(cprops);
+                        *n = Node::Component {
+                            loc,
+                            name,
+                            source,
+                            imported,
+                            member,
+                            props: mine,
+                            children: ckids,
+                            link: None,
+                            tier,
+                            forwarded_ref: false,
+                        };
+                        Ok(())
                     }
-                    _ => true,
-                });
-                attrs.extend(cattrs);
-                *children = ckids;
-                *tag = ctag;
-                if let Node::Element { poly, .. } = n {
-                    *poly = false;
+                    _ => Err("the child is not a host element or a component call".into()),
                 }
-                Ok(())
             }
             Node::Element { children, .. }
             | Node::Component { children, .. }
-            | Node::Fragment(children) => children.iter_mut().try_for_each(|c| put(c, child)),
+            | Node::Fragment(children) => children
+                .iter_mut()
+                .try_for_each(|c| put(c, child, handlers, used)),
             Node::If { then, else_, .. } => then
                 .iter_mut()
                 .chain(else_.iter_mut())
-                .try_for_each(|c| put(c, child)),
-            Node::For { body, .. } => body.iter_mut().try_for_each(|c| put(c, child)),
+                .try_for_each(|c| put(c, child, handlers, used)),
+            Node::For { body, .. } => body
+                .iter_mut()
+                .try_for_each(|c| put(c, child, handlers, used)),
             Node::Text(_) | Node::Slot(_) | Node::Outlet => Ok(()),
         }
+    }
+    /// Whether a prop key is an `on*` handler prop.
+    fn event_prop_of(k: &str) -> bool {
+        k.len() > 2 && k.starts_with("on") && k[2..].starts_with(|c: char| c.is_ascii_uppercase())
     }
     if count(&ir.template) != 1 {
         return Err("the component has no single polymorphic element".into());
     }
-    put(&mut ir.template, &mut Some(child))?;
+    let mut used = Vec::new();
+    let handlers = ir.handlers.clone();
+    put(&mut ir.template, &mut Some(child), &handlers, &mut used)?;
+    // A handler that became a prop of the child is no longer one of this component's own.
+    ir.handlers.retain(|h| !used.contains(&h.name));
     ir.poly = None;
     Ok(())
 }
@@ -3802,7 +3956,9 @@ impl Walker<'_, '_> {
         // F369b: a polymorphic parent given its flag: the call's one child takes the polymorphic element's place.
         let poly_child = match &cir.poly {
             Some(p) if flag_selects_slot(p, props) => match content {
-                [only @ Node::Element { .. }] => Some(only.clone()),
+                [only @ (Node::Element { poly: false, .. } | Node::Component { .. })] => {
+                    Some(only.clone())
+                }
                 _ => {
                     return Err(
                         "the flag selects the child, which is not exactly one host element".into(),
@@ -6736,8 +6892,10 @@ impl Walker<'_, '_> {
             });
         if !matches!(child.tier, Tier::Static) && !owned_consumer {
             // Not inside a Provider's clone, and not a consumer of a frame: those keep the Q5 limits (A1).
-            if matches!(children, [Node::Element { poly: false, .. }])
-                && !self.ctx.specialised
+            if matches!(
+                children,
+                [Node::Element { poly: false, .. } | Node::Component { .. }]
+            ) && !self.ctx.specialised
                 && !props.iter().any(|(k, _)| is_frame(k))
             {
                 self.want_host_poly(loc, child);

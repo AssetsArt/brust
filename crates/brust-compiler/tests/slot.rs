@@ -88,7 +88,7 @@ fn render(jinja: &str) -> String {
 
 fn page(body: &str) -> String {
     format!(
-        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport ItemLike from './ItemLike'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nimport Carrier from './Carrier'\nimport Carrier2 from './Carrier2'\nimport CarrierIf from './CarrierIf'\nimport CarrierTwo from './CarrierTwo'\nimport CarrierPath from './CarrierPath'\nimport CarrierNamed from './CarrierNamed'\nimport CarrierOver from './CarrierOver'\nimport CarrierLoop from './CarrierLoop'\nimport CarrierBag from './CarrierBag'\nimport CarrierKids from './CarrierKids'\nimport CarrierEm from './CarrierEm'\nimport CarrierFlagRead from './CarrierFlagRead'\nexport default function P() {{ return <main>{body}</main> }}"
+        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport ItemLike from './ItemLike'\nimport Pressable from './Pressable'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nimport Carrier from './Carrier'\nimport Carrier2 from './Carrier2'\nimport CarrierIf from './CarrierIf'\nimport CarrierTwo from './CarrierTwo'\nimport CarrierPath from './CarrierPath'\nimport CarrierNamed from './CarrierNamed'\nimport CarrierOver from './CarrierOver'\nimport CarrierLoop from './CarrierLoop'\nimport CarrierBag from './CarrierBag'\nimport CarrierKids from './CarrierKids'\nimport CarrierEm from './CarrierEm'\nimport CarrierFlagRead from './CarrierFlagRead'\nexport default function P() {{ return <main>{body}</main> }}"
     )
 }
 
@@ -550,4 +550,17 @@ fn a_native_parent_clone_refuses_what_the_merge_cannot_join() {
             o.diags
         );
     }
+}
+
+#[test]
+fn a_native_parent_handler_cannot_reach_a_native_component_child_yet() {
+    // F369b step B (wall, pending a ruling): the clone hands the element's `onClick` to the child component as a prop,
+    // but a handler prop that lands in a NATIVE child's spread has no binding (`forward_handlers` binds it only on a
+    // static child's element), so the caller keeps its React island and says why.
+    let o = lower(
+        "P.tsx",
+        &page("<ItemLike asChild><Pressable id=\"p\">go</Pressable></ItemLike>"),
+    );
+    assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+    assert!(react_with(&o, "slot-native"), "{:?}", o.diags);
 }
