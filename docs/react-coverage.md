@@ -8,12 +8,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
+| A JSX basics | 55 | 36 | 14 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
 | C Hooks | 230 | 71 | 74 | 85 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 632 | 278 | 122 | 228 | 3 | 1 | 0 | 0 |
+| **Total** | 633 | 278 | 123 | 228 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -45,6 +45,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-array-from | Array.from range list | static | static | precompute | ok | 0 | — | spec §6.2: the Array.from(xs, fn) callback form is a keyed list like .map (F40) |
 | a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | 0 | — | spec §6.2: N literal ≤ 1024 |
 | a-state-text | state text with a click handler | native | native | 0 | ok | 4.9 | — | spec §4.3 useState |
+| a-state-named-loop | state and list item named like template names (loop, none) | native | native | 0 | ok | 4.9 | — | F423: a local that minijinja refuses as a variable name (loop, self, none, ...) is printed under a mangled template name; the server boots and paints as React |
 | a-state-cond | state-driven conditional | native | native | 0 | ok | 5.2 | — | spec §4.3 useState; §7.1 x-if |
 | a-state-list | state list with append | native | native | 0 | ok | 6.0 | — | spec §4.3 useState; §7.1 x-for |
 | a-style-undefined | style={c ? {…} : undefined} (F36) | static | static | 0 | ok | 0 | — | the attribute is omitted when undefined, as React does |
