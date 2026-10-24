@@ -2,8 +2,8 @@
 // `compileTree` (analysis + lowering of its whole tree). `Err` = build error; fallback and
 // warning diagnostics are logged; `outlet-outside-layout` is raised here (contract 5).
 // A component several trees reach keeps one compile, chosen by role, not by route order (F75).
-import { realpathSync } from 'node:fs'
-import { relative, sep } from 'node:path'
+import { readFileSync, realpathSync } from 'node:fs'
+import { dirname, relative, sep } from 'node:path'
 import { type CompiledComponent, type CompiledTree, compileTree, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
@@ -253,5 +253,152 @@ export function compileApp(opts: {
         `${route.Component!.name || rootId} renders <Outlet/> but route ${routeId} has no children`,
       )
   }
+  checkLayoutContexts(leaves, compiled, routeComponent)
   return { compiled, routeComponent }
+}
+
+/** Script modules only (`.ts/.tsx/.js/.jsx/.mjs/.cjs/.mts/.cts`), judged on the RESOLVED file (a dotted basename like `./theme.context`
+ * resolves to theme.context.tsx; a stylesheet, JSON or asset resolves to itself): those never read a context. */
+const SCRIPT = /\.[cm]?[jt]sx?$/
+
+let importScanner: InstanceType<typeof Bun.Transpiler> | undefined
+/** The module specifiers `file` imports or re-exports (`undefined`: unreadable or unparsable). */
+function moduleSpecs(file: string): string[] | undefined {
+  try {
+    importScanner ??= new Bun.Transpiler({ loader: 'tsx' })
+    return importScanner.scanImports(readFileSync(file, 'utf8')).map((i) => i.path)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * F437 (module-level rule): whether the island `file` imports ANY binding (a hook, the context, a helper) from a module that
+ * declares a context a layout above provides, directly or through re-exporting modules (followed transitively, each app file
+ * once). A relative specifier that cannot be resolved, or a barrel that cannot be read, is refused too.
+ */
+function importsProvidedModule(
+  file: string,
+  provided: { file: string; layout: string; contexts: string[] }[],
+): { spec: string; via?: string; hit: { file: string; layout: string; contexts: string[] } } | undefined {
+  const real = (f: string) => {
+    try {
+      return realpathSync(f)
+    } catch {
+      return f
+    }
+  }
+  const resolve = (spec: string, from: string) => {
+    try {
+      return real(Bun.resolveSync(spec, dirname(from)))
+    } catch {
+      return undefined
+    }
+  }
+  const unfollowable = { file: '', layout: '(unresolved re-export)', contexts: ['?'] }
+  type Hit = { file: string; layout: string; contexts: string[] }
+  // The app modules `from` imports or re-exports, followed transitively (a barrel behind barrels) with a visited set.
+  const reach = (from: string, visited: Set<string>): { hit: Hit; via: string } | undefined => {
+    const specs = moduleSpecs(from)
+    if (specs === undefined) return { hit: unfollowable, via: from }
+    for (const spec of specs) {
+      const target = resolve(spec, from)
+      if (target === undefined) {
+        if (spec.startsWith('.')) return { hit: unfollowable, via: from }
+        continue
+      }
+      if (!SCRIPT.test(target)) continue
+      const hit = provided.find((p) => p.file === target)
+      if (hit) return { hit, via: from }
+      if (target.includes(`${sep}node_modules${sep}`) || visited.has(target)) continue
+      visited.add(target)
+      const deeper = reach(target, visited)
+      if (deeper) return deeper
+    }
+    return undefined
+  }
+  for (const spec of moduleSpecs(file) ?? []) {
+    const target = resolve(spec, file)
+    if (target === undefined) {
+      if (spec.startsWith('.')) return { spec, hit: unfollowable }
+      continue
+    }
+    if (!SCRIPT.test(target)) continue
+    const direct = provided.find((p) => p.file === target)
+    if (direct) return { spec, hit: direct }
+    if (target.includes(`${sep}node_modules${sep}`)) continue
+    const found = reach(target, new Set([file, target]))
+    if (found) return { spec, via: relative(dirname(file), target), hit: found.hit }
+  }
+  return undefined
+}
+
+/**
+ * F437: a component the compiler refused to lower because it reads a context imported from another module
+ * (`useContext(Ctx)`, `ir.foreign_ctx_reads`) ships as a React island, and an island's SSR and `hydrateRoot` render it
+ * alone, without the Providers a layout above its route renders: it would paint the `createContext` default where React
+ * paints the layout's value. Refused here, by name, conservatively: a Provider anywhere in the layout's compiled tree
+ * (`ir.provides` of the layout or of any component it renders) declared in a file counts as providing every context that
+ * file declares, so a read of ANY binding imported from that file is refused (an alias, `export { A as B }`, a re-export of
+ * the file's own context cannot slip by). A context nobody provides still reads its default, which is React's own answer.
+ * Native resolution of an imported context is F439.
+ */
+function checkLayoutContexts(leaves: FlatRoute[], compiled: Map<string, Compiled>, routeComponent: Map<string, string>): void {
+  const real = (f: string) => {
+    try {
+      return realpathSync(f)
+    } catch {
+      return f
+    }
+  }
+  for (const leaf of leaves) {
+    const provided: { file: string; layout: string; contexts: string[] }[] = []
+    for (const id of leaf.chainIds) {
+      const rootId = routeComponent.get(id)
+      const root = rootId === undefined ? undefined : compiled.get(rootId)
+      if (!root) continue
+      // The tree of this route's component: the layouts above it provided `provided` so far.
+      if (provided.length > 0) {
+        const stack = [root.id]
+        const done = new Set<string>()
+        while (stack.length > 0) {
+          const c = compiled.get(stack.pop()!)
+          if (!c || done.has(c.id)) continue
+          done.add(c.id)
+          for (const [src, name] of (c.ir.foreign_ctx_reads ?? []) as [string, string][]) {
+            let from: string
+            try {
+              from = real(Bun.resolveSync(src, dirname(c.file)))
+            } catch {
+              continue
+            }
+            const hit = provided.find((p) => p.file === from)
+            if (hit)
+              throw new BuildError(
+                'island-layout-context',
+                `${c.ir.source} reads the context \`${name}\` (useContext) that the layout ${hit.layout} provides, but this component renders as a React island, and an island does not see its layout's Provider (it would paint the createContext default). Workaround: pass the value to the page through its loader (a prop), or render the Provider inside this component's own tree. Native resolution of an imported context is F439.`,
+              )
+          }
+          const viaModule = c.ir.tier && typeof c.ir.tier === 'object' && 'React' in c.ir.tier ? importsProvidedModule(c.file, provided) : undefined
+          if (viaModule)
+            throw new BuildError(
+              'island-layout-context',
+              `${c.ir.source} renders as a React island and imports ${viaModule.spec}${viaModule.via ? ` (through ${viaModule.via})` : ''}, a module that declares the context \`${viaModule.hit.contexts.join('`, `')}\` which the layout ${viaModule.hit.layout} provides: an island does not see its layout's Provider (it would paint the createContext default), and a hook or helper of that module may read it. Workaround: pass the value to the page through its loader (a prop), or render the Provider inside this component's own tree. Native resolution of an imported context is F439.`,
+            )
+          for (const ch of (c.ir.children ?? []) as { id: string | null }[]) if (ch.id) stack.push(ch.id)
+        }
+      }
+      // Every Provider the layout's compiled tree renders (the layout itself or a component it calls), by declaring file.
+      const stack = [root.id]
+      const done = new Set<string>()
+      while (stack.length > 0) {
+        const c = compiled.get(stack.pop()!)
+        if (!c || done.has(c.id)) continue
+        done.add(c.id)
+        if ((c.ir.provides ?? []).length > 0)
+          provided.push({ file: real(c.file), layout: root.ir.source, contexts: (c.ir.provides as { context: string }[]).map((p) => p.context.replace(/_m[0-9a-f]{8}$/, '')) })
+        for (const ch of (c.ir.children ?? []) as { id: string | null }[]) if (ch.id) stack.push(ch.id)
+      }
+    }
+  }
 }

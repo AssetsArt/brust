@@ -152,6 +152,8 @@ pub struct NameTable<'a> {
     ctx_fields: std::cell::RefCell<Vec<(String, String)>>,
     /// Where a context local is used as a bare value (not `context.field`): brust cannot narrow it (fail closed).
     pub ctx_escape: std::cell::Cell<Option<u32>>,
+    /// F437: `useContext(X)` of an imported `X` (import source, imported name), see `ComponentIR::foreign_ctx_reads`.
+    pub foreign_ctx_reads: std::cell::RefCell<Vec<(String, String)>>,
     /// F289: `const t = useHook()` where the hook returns an object literal: symbol key → its members, read one by one
     /// (`t.key`), like a destructuring. The object itself is not a value in the chunk.
     hook_objects: HashMap<u32, Vec<(String, crate::ir::RawExpr)>>,
@@ -518,6 +520,7 @@ impl<'a> NameTable<'a> {
             hook_object_escape: std::cell::Cell::new(None),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
             ctx_escape: std::cell::Cell::new(None),
+            foreign_ctx_reads: Default::default(),
             ctx_scoped: std::cell::RefCell::new(Vec::new()),
             scope_tokens: std::cell::RefCell::new(HashSet::new()),
             scope_token_escape: std::cell::Cell::new(None),
