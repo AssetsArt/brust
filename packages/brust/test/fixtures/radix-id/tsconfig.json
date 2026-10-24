@@ -1,0 +1,9 @@
+{
+  // comments and trailing commas are fine: the build reads this with a JSONC parser
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": { "@/*": ["./*"], },
+  },
+}

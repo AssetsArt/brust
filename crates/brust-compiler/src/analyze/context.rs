@@ -31,6 +31,9 @@ pub struct Contexts {
     /// R34.142: the contexts declared with a literal, non-object default (`createContext(undefined)`): their value is one
     /// whole value (a `value` field), and without a Provider it is that default. By context name.
     pub scalar: Vec<(String, crate::ir::Literal)>,
+    /// F431: the contexts declared with an object literal default (`createContext({ a: 'x', b: 2 })`): each field whose
+    /// value is a plain literal, with that literal (a field of any other value is left out). By context name.
+    pub object: Vec<crate::ir::ObjectDefault>,
 }
 
 impl Contexts {
@@ -95,18 +98,35 @@ pub fn scan(table: &NameTable<'_>, ast: &js_ast::Ast<'_>) -> Contexts {
                         let name = table.local_name(id.r#ref);
                         out.providers.insert(table.key_of(id.r#ref), name.clone());
                         out.react.insert(table.key_of(id.r#ref), name.clone());
-                        let default = match call.args.first().map(|a| &a.data) {
-                            None | Some(E::EUndefined(_)) => Some(crate::ir::Literal::Undefined),
-                            Some(E::ENull(_)) => Some(crate::ir::Literal::Null),
-                            Some(E::EBoolean(b)) => Some(crate::ir::Literal::Bool(b.value)),
-                            Some(E::ENumber(n)) => Some(crate::ir::Literal::Num(n.value())),
-                            Some(E::EString(s)) => {
-                                Some(crate::ir::Literal::Str(crate::analyze::expr::estring(s)))
+                        match call.args.first().map(|a| &a.data) {
+                            None => out.scalar.push((name, crate::ir::Literal::Undefined)),
+                            Some(E::EObject(o)) => {
+                                // a spread, accessor or computed key may set any field: none is known then
+                                let plain = o.properties.iter().all(|p| {
+                                    matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                                        && !p.flags.contains(js_ast::flags::Property::IsComputed)
+                                });
+                                let mut fields: Vec<(String, crate::ir::Literal)> = Vec::new();
+                                for p in o.properties.iter().filter(|_| plain) {
+                                    let Some(E::EString(k)) = p.key.as_ref().map(|k| &k.data)
+                                    else {
+                                        continue;
+                                    };
+                                    let k = crate::analyze::expr::estring(k);
+                                    // a later key wins; a field of any other value is left out
+                                    fields.retain(|(f, _)| f != &k);
+                                    if let Some(v) = p.value.as_ref().and_then(|v| literal(&v.data))
+                                    {
+                                        fields.push((k, v));
+                                    }
+                                }
+                                out.object.push((name, fields));
                             }
-                            _ => None,
-                        };
-                        if let Some(d) = default {
-                            out.scalar.push((name, d));
+                            Some(d) => {
+                                if let Some(d) = literal(d) {
+                                    out.scalar.push((name, d));
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -115,6 +135,18 @@ pub fn scan(table: &NameTable<'_>, ast: &js_ast::Ast<'_>) -> Contexts {
         }
     }
     out
+}
+
+/// A plain literal (`undefined`, `null`, a boolean, a number, a string).
+fn literal(e: &E) -> Option<crate::ir::Literal> {
+    Some(match e {
+        E::EUndefined(_) => crate::ir::Literal::Undefined,
+        E::ENull(_) => crate::ir::Literal::Null,
+        E::EBoolean(b) => crate::ir::Literal::Bool(b.value),
+        E::ENumber(n) => crate::ir::Literal::Num(n.value()),
+        E::EString(s) => crate::ir::Literal::Str(crate::analyze::expr::estring(s)),
+        _ => return None,
+    })
 }
 
 /// Why one of this component's Provider values cannot be expressed in the scope that renders it (state, a setter, a
@@ -281,6 +313,8 @@ fn calls_nothing(ir: &crate::ir::ComponentIR, e: &crate::ir::RawExpr) -> bool {
         }
         // an array of such values (`useMemo(() => (value ? [value] : []), [value])`, Radix `ToggleGroupImplSingle`)
         RawKind::Array(xs) => xs.iter().all(|x| calls_nothing(ir, x)),
+        // F442: a template over such values (Radix `useId`'s `radix-${id}`)
+        RawKind::Template { parts, .. } => parts.iter().all(|(p, _)| calls_nothing(ir, p)),
         _ => false,
     }
 }

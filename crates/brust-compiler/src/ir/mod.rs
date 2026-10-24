@@ -239,6 +239,9 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
+/// F431: an object-default context and its plain-literal fields (`createContext({ a: 'x' })`).
+pub type ObjectDefault = (String, Vec<(String, Literal)>);
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ComponentIR {
     pub id: String,
@@ -360,6 +363,11 @@ pub struct ComponentIR {
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ctx_defaults: Vec<(String, Literal)>,
+    /// F431: the plain-literal fields of each object-default context (`createContext({ a: 'x' })`) this component reads
+    /// or passes on: with no Provider above the page, a field's value is that literal. A field of another value (or one
+    /// the literal does not declare) is absent: the page falls back for it (`context-no-provider`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctx_object_defaults: Vec<ObjectDefault>,
     /// F437: `useContext(X)` reads of a context imported from another module, which this component does not lower (the
     /// hook is `hook-unsupported`): (import source as written, imported name). The build compares them with the Providers
     /// a layout above the route renders: the island's SSR and `hydrateRoot` do not see those.
@@ -608,6 +616,7 @@ impl ComponentIR {
             render_ref_writes: Vec::new(),
             callback_deps: Vec::new(),
             ctx_defaults: Vec::new(),
+            ctx_object_defaults: Vec::new(),
             foreign_ctx_reads: Vec::new(),
             plain_fns: Vec::new(),
             client_plain_fns: Vec::new(),

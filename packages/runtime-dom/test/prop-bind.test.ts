@@ -53,3 +53,32 @@ test('x-prop-*: every step of true/false/null/string/number on aria-* and role, 
   for (const [val, aria, role] of steps) { v.set(val); expect([i.getAttribute('aria-checked'), i.getAttribute('role')]).toEqual([aria, role]) }
   expect(i.hasAttribute('title')).toBe(false)
 })
+
+// F369c: x-prop-on-<event>="<prop key>" calls the instance's prop at event time (the CURRENT value), with a React-shaped event.
+test('x-prop-on-*: the handler prop is read when the event fires, so a swapped prop is the one that runs', () => {
+  const calls: string[] = []
+  const fn = signal<unknown>((e: Event) => { calls.push(`a:${(e as unknown as { isPropagationStopped: () => boolean }).isPropagationStopped()}`) })
+  defineBehavior('prop_parent4', () => ({ _p1: computed(() => ({ onMouseDown: fn() })) }))
+  defineBehavior('prop_child4', () => ({}))
+  document.body.innerHTML = `<div x-data="prop_parent4"><div x-data="prop_child4" x-props-bind="_p1"><button id="b" x-prop-on-mousedown="onMouseDown"></button></div></div>`
+  mount()
+  const b = document.getElementById('b')!
+  b.dispatchEvent(new Event('mousedown', { bubbles: true }))
+  expect(calls).toEqual(['a:false'])
+  fn.set(() => calls.push('b'))
+  b.dispatchEvent(new Event('mousedown', { bubbles: true }))
+  expect(calls).toEqual(['a:false', 'b'])
+  fn.set(undefined) // not a function: nothing runs, nothing throws
+  b.dispatchEvent(new Event('mousedown', { bubbles: true }))
+  expect(calls.length).toBe(2)
+})
+
+test('x-prop-on-*: an event name outside [a-z0-9]+ is refused and binds nothing', () => {
+  let n = 0
+  defineBehavior('prop_parent5', () => ({ _p1: computed(() => ({ h: () => { n++ } })) }))
+  defineBehavior('prop_child5', () => ({}))
+  document.body.innerHTML = `<div x-data="prop_parent5"><div x-data="prop_child5" x-props-bind="_p1"><button id="b" x-prop-on-click-x="h" x-prop-on-="h"></button></div></div>`
+  mount()
+  document.getElementById('b')!.dispatchEvent(new Event('click-x', { bubbles: true }))
+  expect(n).toBe(0)
+})

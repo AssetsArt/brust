@@ -79,7 +79,7 @@ pub fn primitive_nodes(path: &str, export: &str, opts: &AnalyzeOptions) -> Optio
 }
 
 /// The local name `export` is declared under: `export const X`, or `export { X as export }`.
-fn exported_local(ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
+pub(crate) fn exported_local(ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
             match &stmt.data {
@@ -199,7 +199,7 @@ fn tokens(js: &str) -> Vec<String> {
 
 /// Whether `printed` is `shape` with each `$name` of the shape bound to one local name (consistently, and no two
 /// `$`-names to the same local).
-fn matches_shape(printed: &str, shape: &str) -> bool {
+pub(crate) fn matches_shape(printed: &str, shape: &str) -> bool {
     let (p, s) = (tokens(printed), tokens(shape));
     if p.len() != s.len() {
         return false;
