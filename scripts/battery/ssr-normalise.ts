@@ -7,10 +7,15 @@
 //      (all `display:contents`: no box, no content of their own)
 //   3. brust's own attributes are dropped: every `x-*` directive/prop attribute and every `data-brust-*`
 //   4. attributes are sorted by name; a boolean attribute is `name=""`; entity references in values/text are decoded
-//   5. text is whitespace-collapsed, adjacent text nodes merge (after rule 1), a whitespace-only text node is dropped
+//   5. adjacent text nodes merge (after rule 1); a run of ASCII whitespace collapses to ONE space, NOT trimmed (a dropped JSX space
+//      is a real wrong paint); a whitespace-only text node is dropped only when it contains a newline (formatting, JSX never
+//      emits it); `&nbsp;` decodes to U+00A0 and is never collapsed with an ASCII space
 //   6. void elements carry no closing token
-//   7. an element that is `hidden` AND carries an `x-*` directive is brust's client-toggled copy (`x-if`, `x-show`): its subtree is
-//      dropped (React never paints the false branch)
+//   7. an element with a `hidden` attribute AND one of `x-if`, `x-else-if`, `x-else`, `x-show` (parsed attributes, not the raw tag
+//      text) is brust's client-toggled copy: its subtree is dropped (React never paints the false branch). A bound `hidden` row
+//      (`x-bind-hidden`) or a class named `hidden` is content and is compared
+//   7b. an `x-for` element with `hidden` and no `x-bind-hidden` is the list's zero-row template (the prototype the client clones
+//      for the first row): dropped. An authored `hidden={cond}` row keeps `x-bind-hidden` and is compared (F412 / F396 shape)
 //   8. <title>, <meta>, <link>, <script> are dropped with their content: document-level in both (React 19 hoists them in
 //      renderToString, the server hoists them into <head>, F399) and the runtime's own scripts follow the body
 //  10. the route envelope's `params` and `path` props, when a row spreads them onto an element, are dropped (React stringifies the
@@ -35,12 +40,20 @@ export function decode(s: string): string {
 
 const isBrustAttr = (name: string): boolean => name.startsWith('x-') || name.startsWith('data-brust-')
 
-function attrs(raw: string): string {
+/** The attributes of a tag's raw text, as parsed name/value pairs (names lower-cased, values entity-decoded). */
+function parseAttrs(raw: string): [string, string][] {
   const out: [string, string][] = []
-  for (const m of raw.matchAll(/([^\s=/>"']+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
-    const name = m[1]!.toLowerCase()
+  for (const m of raw.matchAll(/([^\s=/>"']+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) out.push([m[1]!.toLowerCase(), decode(m[2] ?? m[3] ?? m[4] ?? '')])
+  return out
+}
+
+const TOGGLES = new Set(['x-if', 'x-else-if', 'x-else', 'x-show'])
+
+function attrs(list: [string, string][]): string {
+  const out: [string, string][] = []
+  for (const [name, value] of list) {
     if (isBrustAttr(name) || name === 'params' || name === 'path') continue
-    let v = decode(m[2] ?? m[3] ?? m[4] ?? '')
+    let v = value
     if (name === 'action' && REACT_FORM_PLACEHOLDER.test(v)) continue
     if (name === 'class') v = v.replace(/\s+/g, ' ').trim()
     out.push([name, v])
@@ -48,7 +61,6 @@ function attrs(raw: string): string {
   out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
   return out.map(([n, v]) => ` ${n}=${JSON.stringify(v)}`).join('')
 }
-
 
 /** The comparable token list of an HTML fragment. */
 export function normalise(html: string): string[] {
@@ -58,8 +70,9 @@ export function normalise(html: string): string[] {
   const spans: boolean[] = [] // open <span>s: true = a text-binding wrapper that was unwrapped
   let skip = 0 // depth inside a dropped subtree (rules 7, 8)
   const flush = () => {
-    const t = decode(text).replace(/\s+/g, ' ').trim()
-    if (t) tokens.push(JSON.stringify(t))
+    const t = decode(text).replace(/[ \t\n\r\f]+/g, ' ')
+    // formatting whitespace (a newline in a whitespace-only node) is not content; a lone space between inline elements is
+    if (t !== '' && !(t.trim() === '' && /\n/.test(decode(text)))) tokens.push(JSON.stringify(t))
     text = ''
   }
   for (const m of body.matchAll(/<(\/?)([a-zA-Z][\w-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>|([^<]+|<)/g)) {
@@ -76,13 +89,15 @@ export function normalise(html: string): string[] {
       continue
     }
     if (skip > 0) { if (!VOID.has(name) && !selfClosed) skip++; continue }
-    const dropped = DOCUMENT_LEVEL.has(name) || (/(^|\s)hidden(\s|=|$|\/)/.test(raw) && /(^|\s)x-[\w-]+/.test(raw))
+    const list = parseAttrs(raw)
+    const has = (a: string) => list.some(([n]) => n === a)
+    const dropped = DOCUMENT_LEVEL.has(name) || (has('hidden') && (list.some(([n]) => TOGGLES.has(n)) || (has('x-for') && !has('x-bind-hidden'))))
     if (dropped) { if (!VOID.has(name) && !selfClosed) skip = 1; continue }
     if (WRAPPERS.has(name)) continue
-    if (name === 'span' && attrs(raw) === '') { spans.push(true); continue }
+    if (name === 'span' && attrs(list) === '') { spans.push(true); continue }
     if (name === 'span') spans.push(false)
     flush()
-    tokens.push(`<${name}${attrs(raw)}>`)
+    tokens.push(`<${name}${attrs(list)}>`)
   }
   flush()
   return renumberIds(tokens)

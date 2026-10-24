@@ -34,3 +34,27 @@ test('useId values are compared by identity, not spelling', () => {
 test('React\'s form action placeholder drops', () => {
   same(`<form>x</form>`, `<form action="javascript:throw new Error('React form unexpectedly submitted.')">x</form>`)
 })
+
+test('inline whitespace is content: a dropped JSX space differs, formatting newlines do not', () => {
+  differ(`<p>Hello<b>x</b></p>`, `<p>Hello <b>x</b></p>`)
+  differ(`<p><b>a</b><i>b</i></p>`, `<p><b>a</b> <i>b</i></p>`)
+  differ(`<p>a b</p>`, `<p>a  b </p>`)
+  same(`<p>a   b</p>`, `<p>a b</p>`)
+  same(`<ul>\n  <li>a</li>\n</ul>`, `<ul><li>a</li></ul>`)
+})
+
+test('&nbsp; stays distinct from an ASCII space', () => {
+  differ(`<p>a&nbsp;b</p>`, `<p>a b</p>`)
+  same(`<p>a&nbsp;b</p>`, `<p>a\u00a0b</p>`)
+})
+
+test('only a toggle copy (hidden + x-if / x-else-if / x-else / x-show) is dropped; bound hidden and class names are content', () => {
+  same(`<div><p hidden x-else>b</p><p x-show="c" hidden>c</p></div>`, `<div></div>`)
+  // the zero-row template of a list is brust's; an authored hidden={cond} row keeps x-bind-hidden and is content
+  same(`<ul><!--x-for--><li x-for="l in _l1" hidden x-text="_c1:l"></li></ul>`, `<ul></ul>`)
+  differ(`<ul><li x-for="r in rs" hidden x-bind-hidden="_b1">read</li></ul>`, `<ul></ul>`)
+  // the F412 / F396 shape: an authored bound hidden row
+  same(`<ul><li x-for="r in rs" hidden x-bind-hidden="_b1">read</li></ul>`, `<ul><li hidden="">read</li></ul>`)
+  same(`<div class="flex hidden md:block" x-on-click="_h1">t</div>`, `<div class="flex hidden md:block">t</div>`)
+  same(`<div class="a x-axis" x-on-click="_h1">t</div>`, `<div class="a x-axis">t</div>`)
+})
