@@ -49,7 +49,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-24">2.0.0-alpha.24 · 24 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.23 (git log --merges --first-parent v2.0.0-alpha.23..origin/main): #371 (F404), #372 (F386), #373 (F415, F416), #374 (F424), #375 (F423), #376 (F425), #377 (F420, F421) and #378 (F418, F419); the merge list is re-checked against main before the tag. F418 to F425 were found by the new server-HTML comparison (#372) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.23 (git log --merges --first-parent v2.0.0-alpha.23..origin/main): #371 (F404), #372 (F386), #373 (F415, F416), #374 (F424), #375 (F423), #376 (F425), #377 (F420, F421) and #378 (F418, F419), plus F288 phase B PR 2 (lane f288-phase-b-pr2) once it merges; the merge list is re-checked against main before the tag. F418 to F425 were found by the new server-HTML comparison (#372) */}
       <p>A patch of wrong output and crashes, most of them found by comparing the HTML that brust serves with React&rsquo;s own render of every battery row. A local named <code>loop</code> no longer stops the server from starting, a sibling module&rsquo;s JSX constant no longer answers 500, <code>string + number</code> follows JavaScript, and a controlled <code>&lt;select&gt;</code> or <code>&lt;textarea&gt;</code>, a lazily initialised state and a page&rsquo;s own context default now paint their value on the first load.</p>
 
       <h3>Changes</h3>
@@ -85,6 +85,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #373 (F415, F416; F288 phase B PR1; both pre-existing); packages/runtime-dom, the capture sink in the core */}
         <li>
           <strong>A conditional branch in the browser disposes its effects and refs when it closes.</strong> The effects and cleanups of an <code>x-if</code> branch (and of a replaced <code>x-for</code> row) were kept on the component, so a branch that you removed kept running: after 20 toggles, one change ran 21 text updates on detached nodes. A ref inside a removed branch also kept the detached element, where React sets it to <code>null</code>. Each branch now owns its effects and refs, and drops them before it leaves the page. The core runtime budget grows by the size of this one hook.
+        </li>
+        {/* source: lane f288-phase-b-pr2 (F288 phase B PR 2; not merged when this was written, the lead's ruling is that it merges before the cut: commit 0ce2e7f4 and its review fix fae9c96a; the sentence on what stays React is from the commit message). Re-check that the PR is in the merge list above before the tag */}
+        <li>
+          <strong>Radix <code>Presence</code> with an element child now compiles to native code.</strong> The checkbox and radio indicators are the case: <code>Presence</code> renders its element child while it is present, and nothing when it is not. brust now turns that into a conditional branch, and a callback ref inside a branch is attached once the branch is on the page and detached before it leaves, in React 19&rsquo;s order. A callback that changes between renders, a ref inside a list row and a component&rsquo;s <code>children</code> still render with React.
         </li>
         {/* source: PR #372 (F386; a test, not a change in output); scripts/battery/ssr-compare.ts, ssr-normalise.ts and ssr-allowlist.ts. For people who work on brust */}
         <li>
