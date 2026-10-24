@@ -2,7 +2,7 @@
 // `compileTree` (analysis + lowering of its whole tree). `Err` = build error; fallback and
 // warning diagnostics are logged; `outlet-outside-layout` is raised here (contract 5).
 // A component several trees reach keeps one compile, chosen by role, not by route order (F75).
-import { realpathSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, sep } from 'node:path'
 import { type CompiledComponent, type CompiledTree, compileTree, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
@@ -257,6 +257,67 @@ export function compileApp(opts: {
   return { compiled, routeComponent }
 }
 
+let importScanner: InstanceType<typeof Bun.Transpiler> | undefined
+/** The module specifiers `file` imports or re-exports (`undefined`: unreadable or unparsable). */
+function moduleSpecs(file: string): string[] | undefined {
+  try {
+    importScanner ??= new Bun.Transpiler({ loader: 'tsx' })
+    return importScanner.scanImports(readFileSync(file, 'utf8')).map((i) => i.path)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * F437 (module-level rule): whether the island `file` imports ANY binding (a hook, the context, a helper) from a module that
+ * declares a context a layout above provides, directly or through one re-exporting module (an app file that is not the
+ * provided module itself). A relative specifier that cannot be resolved, or a barrel that cannot be read, is refused too.
+ */
+function importsProvidedModule(
+  file: string,
+  provided: { file: string; layout: string; contexts: string[] }[],
+): { spec: string; via?: string; hit: { file: string; layout: string; contexts: string[] } } | undefined {
+  const real = (f: string) => {
+    try {
+      return realpathSync(f)
+    } catch {
+      return f
+    }
+  }
+  const resolve = (spec: string, from: string) => {
+    try {
+      return real(Bun.resolveSync(spec, dirname(from)))
+    } catch {
+      return undefined
+    }
+  }
+  const unfollowable = { file: '', layout: '(unresolved re-export)', contexts: ['?'] }
+  const specs = moduleSpecs(file)
+  for (const spec of specs ?? []) {
+    const target = resolve(spec, file)
+    if (target === undefined) {
+      if (spec.startsWith('.')) return { spec, hit: unfollowable }
+      continue
+    }
+    const direct = provided.find((p) => p.file === target)
+    if (direct) return { spec, hit: direct }
+    if (target.includes(`${sep}node_modules${sep}`)) continue
+    // One hop: a module this one imports that itself imports (re-exports) a provided module.
+    const hop = moduleSpecs(target)
+    if (hop === undefined) return { spec, via: target, hit: unfollowable }
+    for (const inner of hop) {
+      const innerTarget = resolve(inner, target)
+      if (innerTarget === undefined) {
+        if (inner.startsWith('.')) return { spec, via: target, hit: unfollowable }
+        continue
+      }
+      const hit = provided.find((p) => p.file === innerTarget)
+      if (hit) return { spec, via: relative(dirname(file), target), hit }
+    }
+  }
+  return undefined
+}
+
 /**
  * F437: a component the compiler refused to lower because it reads a context imported from another module
  * (`useContext(Ctx)`, `ir.foreign_ctx_reads`) ships as a React island, and an island's SSR and `hydrateRoot` render it
@@ -276,7 +337,7 @@ function checkLayoutContexts(leaves: FlatRoute[], compiled: Map<string, Compiled
     }
   }
   for (const leaf of leaves) {
-    const provided: { file: string; layout: string }[] = []
+    const provided: { file: string; layout: string; contexts: string[] }[] = []
     for (const id of leaf.chainIds) {
       const rootId = routeComponent.get(id)
       const root = rootId === undefined ? undefined : compiled.get(rootId)
@@ -303,6 +364,12 @@ function checkLayoutContexts(leaves: FlatRoute[], compiled: Map<string, Compiled
                 `${c.ir.source} reads the context \`${name}\` (useContext) that the layout ${hit.layout} provides, but this component renders as a React island, and an island does not see its layout's Provider (it would paint the createContext default). Workaround: pass the value to the page through its loader (a prop), or render the Provider inside this component's own tree. Native resolution of an imported context is F439.`,
               )
           }
+          const viaModule = c.ir.tier && typeof c.ir.tier === 'object' && 'React' in c.ir.tier ? importsProvidedModule(c.file, provided) : undefined
+          if (viaModule)
+            throw new BuildError(
+              'island-layout-context',
+              `${c.ir.source} renders as a React island and imports ${viaModule.spec}${viaModule.via ? ` (through ${viaModule.via})` : ''}, a module that declares the context \`${viaModule.hit.contexts.join('`, `')}\` which the layout ${viaModule.hit.layout} provides: an island does not see its layout's Provider (it would paint the createContext default), and a hook or helper of that module may read it. Workaround: pass the value to the page through its loader (a prop), or render the Provider inside this component's own tree. Native resolution of an imported context is F439.`,
+            )
           for (const ch of (c.ir.children ?? []) as { id: string | null }[]) if (ch.id) stack.push(ch.id)
         }
       }
@@ -313,7 +380,8 @@ function checkLayoutContexts(leaves: FlatRoute[], compiled: Map<string, Compiled
         const c = compiled.get(stack.pop()!)
         if (!c || done.has(c.id)) continue
         done.add(c.id)
-        if ((c.ir.provides ?? []).length > 0) provided.push({ file: real(c.file), layout: root.ir.source })
+        if ((c.ir.provides ?? []).length > 0)
+          provided.push({ file: real(c.file), layout: root.ir.source, contexts: (c.ir.provides as { context: string }[]).map((p) => p.context.replace(/_m[0-9a-f]{8}$/, '')) })
         for (const ch of (c.ir.children ?? []) as { id: string | null }[]) if (ch.id) stack.push(ch.id)
       }
     }

@@ -22,7 +22,7 @@ afterAll(async () => {
     p.kill('SIGINT')
     if ((await Promise.race([p.exited, Bun.sleep(5000).then(() => undefined)])) === undefined) { p.kill('SIGKILL'); await p.exited }
   }
-  for (const v of ['layout', 'nested', 'child', 'alias', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
+  for (const v of ['layout', 'nested', 'child', 'alias', 'hook', 'barrel', 'helper', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
 })
 
 test('a context declared in the layout is refused for the island page, by name', () => {
@@ -48,6 +48,26 @@ test('a context re-exported under another name (export { Ctx as Theme }) is stil
   const b = build('alias')
   expect(b.exitCode).not.toBe(0)
   expect(b.stderr.toString()).toContain('island-layout-context Page.tsx reads the context `Theme`')
+})
+
+test('a custom hook of the context module (useTheme) is refused: the module declares a context a layout provides', () => {
+  const b = build('hook')
+  expect(b.exitCode).not.toBe(0)
+  const e = b.stderr.toString()
+  expect(e).toContain('island-layout-context Page.tsx renders as a React island and imports ./theme')
+  expect(e).toContain('declares the context `Ctx` which the layout Layout.tsx provides')
+})
+
+test('a re-export barrel (index.ts: export * from ./theme) is followed one hop', () => {
+  const b = build('barrel')
+  expect(b.exitCode).not.toBe(0)
+  expect(b.stderr.toString()).toContain('imports ./index (through index.ts)')
+})
+
+test('an island page importing only a non-context helper from the context module is refused too (conservative by design)', () => {
+  const b = build('helper')
+  expect(b.exitCode).not.toBe(0)
+  expect(b.stderr.toString()).toContain('island-layout-context Page.tsx renders as a React island and imports ./theme')
 })
 
 test('the error gives the workaround and names F439', () => {
