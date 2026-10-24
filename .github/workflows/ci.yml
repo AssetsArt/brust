@@ -321,6 +321,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/preamble-order.chromium.test.ts
       # F308: a changing key outside a list is a named refusal; the React page resets state on a key change.
       - run: bun test --timeout 120000 tests/server/live-key.chromium.test.ts
+      # F369c: a handler spread into a native child's element is bound by that element (x-prop-on-*), read live.
+      - run: bun test --timeout 120000 tests/server/native-spread-handler.chromium.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
       - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts
       # F142 PR 1: shadcn's table page built AND started, its HTML equal to React's.

@@ -1904,8 +1904,28 @@ impl<'a, 'c> Printer<'a, 'c> {
                     continue;
                 }
             }
-            if matches!(v, Expr::ClientOnly { .. }) {
+            if matches!(v, Expr::ClientOnly { .. })
+                || (ir
+                    .live_props
+                    .iter()
+                    .any(|f| f.loc == *loc && &f.key == pname)
+                    && crate::analyze::passes::children::handler_key_ok(pname))
+            {
                 client_only.push(pname.clone());
+                // F369c: a handler a native child's element binds itself: `x-prop-on-<event>="<key>"` on that element, the
+                // function itself travelling in the linked props like any function prop.
+                if ir
+                    .live_props
+                    .iter()
+                    .any(|f| f.loc == *loc && &f.key == pname)
+                    && crate::analyze::passes::children::handler_key_ok(pname)
+                    && let Some(ev) = crate::analyze::jsx::event_name(pname)
+                {
+                    segs.push(Seg::Named(
+                        pname.clone(),
+                        PropBinding::Live(format!(" x-prop-on-{ev}=\"{pname}\"")),
+                    ));
+                }
                 continue;
             }
             // a `style` object keeps its source order (F296 C3), like a style written on the element

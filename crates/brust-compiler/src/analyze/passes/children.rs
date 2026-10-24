@@ -7966,6 +7966,18 @@ impl Walker<'_, '_> {
             let why = if k.ends_with("Capture") {
                 Some("listens in the capture phase, which directives do not support".to_string())
             } else if !matches!(child.tier, Tier::Static) {
+                // F369c: a handler that lands on the ONE element a NATIVE child's rest reaches is bound by that element
+                // itself (`x-prop-on-<event>="<key>"`, read live from the instance's props); anything it cannot honour
+                // keeps the refusal.
+                if !spread_after(k) && self.native_handler_ok(k, props, child) {
+                    if !self.live_props.iter().any(|f| f.loc == loc && &f.key == k) {
+                        self.live_props.push(crate::ir::Forwarded {
+                            loc,
+                            key: k.clone(),
+                        });
+                    }
+                    continue;
+                }
                 Some(format!(
                     "<{name}> is not static (a handler can be bound only on a static child's element)"
                 ))
@@ -8101,6 +8113,95 @@ impl Walker<'_, '_> {
                 loc,
                 "render `{children}` only, or keep the component interactive with React",
             ));
+        }
+    }
+
+    /// F369c: whether the handler prop `k` of a call of a NATIVE child can be bound by the element it lands on
+    /// (`x-prop-on-<event>="<key>"`, printed in the template per call site; the binder calls the prop's CURRENT value).
+    /// Fails closed, each on its own: the child is not native or has a job / a rest as data; the event is not one the
+    /// `x-on-*` binder accepts (`handler_key_ok`, the allowlist `forward_handlers` uses) or is a capture one; the child
+    /// reads the key by name or passes it to another component; the key is given twice; the call sits in a list; the rest
+    /// does not reach exactly ONE element through static components only; or that path binds a handler of the same event
+    /// itself (the order of the two is not proven, so the caller stays on React).
+    fn native_handler_ok(&mut self, k: &str, props: &[(String, Expr)], child: &Child) -> bool {
+        if !matches!(child.tier, Tier::Native)
+            || child.fed
+            || child.prop_precompute
+            || child.rest_as_data
+            || !self.loop_scope.is_empty()
+            || k.ends_with("Capture")
+            || !handler_key_ok(k)
+            || props.iter().filter(|(o, _)| o == k).count() != 1
+        {
+            return false;
+        }
+        let Some(event) = crate::analyze::jsx::event_name(k) else {
+            return false;
+        };
+        // Only an event React itself has a prop for: an unknown `onPick` is no DOM event React ever listens to, and a
+        // listener for it would fire on a custom event React ignores.
+        if event_prop(&event) != Some(k) {
+            return false;
+        }
+        let Some(ir) = child.ir.clone() else {
+            return false;
+        };
+        let sink = HandlerSink::of(&ir);
+        if sink.reads.as_ref().is_none_or(|r| r.contains(k)) {
+            return false;
+        }
+        self.rest_reaches_one_element(&ir, 4) && !self.rest_path_binds_event(&ir, &event, 4)
+    }
+
+    /// F369c: whether `ir`, or a static component its whole rest is handed to, binds a handler of `event` on an element
+    /// of its own.
+    fn rest_path_binds_event(&mut self, ir: &ComponentIR, event: &str, depth: u32) -> bool {
+        fn binds(n: &Node, event: &str) -> bool {
+            match n {
+                Node::Element {
+                    attrs, children, ..
+                } => {
+                    attrs
+                        .iter()
+                        .any(|a| matches!(a, Attr::Event { event: e, .. } if e == event))
+                        || children.iter().any(|c| binds(c, event))
+                }
+                Node::Component { children, .. } | Node::Fragment(children) => {
+                    children.iter().any(|c| binds(c, event))
+                }
+                Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| binds(c, event)),
+                Node::For { body, .. } => body.iter().any(|c| binds(c, event)),
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+            }
+        }
+        // a handler hoisted from a prop of a static child (`<Prim onClick>`) is bound on that child's element
+        if binds(&ir.template, event)
+            || ir.handlers.iter().any(|h| {
+                h.forwarded.as_ref().is_some_and(|f| {
+                    crate::analyze::jsx::event_name(&f.key).is_none_or(|e| e == event)
+                })
+            })
+        {
+            return true;
+        }
+        if depth == 0 {
+            return true;
+        }
+        match whole_rest_site(&ir.template) {
+            Some(Some((cname, source, imported, member, cloc))) => {
+                let cc = self.resolve_child(
+                    &cname,
+                    source.as_deref(),
+                    imported.as_deref(),
+                    &member,
+                    cloc,
+                );
+                cc.ir
+                    .clone()
+                    .is_none_or(|inner| self.rest_path_binds_event(&inner, event, depth - 1))
+            }
+            Some(None) => false,
+            None => true,
         }
     }
 
@@ -8280,6 +8381,12 @@ impl Walker<'_, '_> {
                             key: k.clone(),
                         });
                     }
+                    continue;
+                }
+                // F369c: a handler a native child's element binds itself (`live_props`, set by `forward_handlers`).
+                if crate::analyze::jsx::event_name(k).is_some()
+                    && self.live_props.iter().any(|f| f.loc == loc && &f.key == k)
+                {
                     continue;
                 }
                 if function && crate::analyze::jsx::event_name(k).is_none() {
