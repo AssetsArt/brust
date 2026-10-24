@@ -77,6 +77,21 @@ pub fn register(env: &mut Environment<'_>) {
         js_arith(&a, &b, |x, y| x / y)
     });
     env.add_filter("js_add", |a: Value, b: Value| js_add(&a, &b));
+    env.add_filter("js_sub", |a: Value, b: Value| {
+        js_arith(&a, &b, |x, y| x - y)
+    });
+    env.add_filter("js_mul", |a: Value, b: Value| {
+        js_arith(&a, &b, |x, y| x * y)
+    });
+    env.add_filter("js_neg", |a: Value| {
+        js_arith(&a, &Value::from(0), |x, _| -x)
+    });
+    env.add_filter("js_num", |a: Value| js_arith(&a, &Value::from(0), |x, _| x));
+    env.add_filter("js_cmp", |a: Value, b: Value, op: String| {
+        js_cmp(&a, &b, &op)
+    });
+    env.add_filter("js_eq", |a: Value, b: Value| js_loose_eq(&a, &b));
+    env.add_filter("js_seq", |a: Value, b: Value| js_strict_eq(&a, &b));
     env.add_filter("str_slice", str_slice);
     env.add_filter("includes", includes);
     env.add_filter("starts_with", |s: Value, x: Value| {
@@ -163,23 +178,51 @@ fn style_pairs(v: &Value) -> Vec<(String, Value)> {
         .collect()
 }
 
-/// JS `ToNumber` for the operands of `%` and `/`.
+/// JS `ToNumber` for the operands of the arithmetic operators and `<` / `>`: `undefined` is `NaN`, `null` is 0, a boolean
+/// 0 / 1, a string its numeric literal (blank is 0; `Infinity`, `0x` / `0o` / `0b` forms; anything else `NaN`), an
+/// object or array `ToNumber` of its string.
 fn js_to_number(v: &Value) -> f64 {
     match v.kind() {
         ValueKind::Bool => f64::from(u8::from(v.is_true())),
         ValueKind::None => 0.0,
+        ValueKind::Undefined => f64::NAN,
         ValueKind::Number => number_of(v).unwrap_or(f64::NAN),
-        ValueKind::String => {
-            let t = v.to_string();
-            let t = t.trim();
-            if t.is_empty() {
-                0.0
-            } else {
-                t.parse().unwrap_or(f64::NAN)
-            }
-        }
+        ValueKind::String => string_to_number(&v.to_string()),
+        ValueKind::Seq | ValueKind::Iterable | ValueKind::Map => string_to_number(&js_string(v)),
         _ => f64::NAN,
     }
+}
+
+fn string_to_number(s: &str) -> f64 {
+    let t = s.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}');
+    if t.is_empty() {
+        return 0.0;
+    }
+    match t {
+        "Infinity" | "+Infinity" => return f64::INFINITY,
+        "-Infinity" => return f64::NEG_INFINITY,
+        _ => {}
+    }
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(digits) = t.strip_prefix(prefix) {
+            return u64::from_str_radix(digits, radix).map_or(f64::NAN, |n| n as f64);
+        }
+    }
+    // Rust also parses `inf`, `nan` and `infinity`; JS does not.
+    if !t
+        .bytes()
+        .all(|c| c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'+' | b'-'))
+    {
+        return f64::NAN;
+    }
+    t.parse().unwrap_or(f64::NAN)
 }
 
 /// `%` and `/` with JS semantics (minijinja 3 follows Jinja2: floored
@@ -210,6 +253,76 @@ pub fn js_add(a: &Value, b: &Value) -> Value {
         return Value::from(format!("{}{}", js_string(a), js_string(b)));
     }
     js_arith(a, b, |x, y| x + y)
+}
+
+/// `ToPrimitive` for the operators: an object or array is its string.
+fn js_primitive(v: &Value) -> Value {
+    match v.kind() {
+        ValueKind::Seq | ValueKind::Iterable | ValueKind::Map => Value::from(js_string(v)),
+        _ => v.clone(),
+    }
+}
+
+/// JS `a < b`, `a <= b`, `a > b`, `a >= b` (`op` is the operator): two strings compare by UTF-16 code unit, anything
+/// else by `ToNumber` of each (`NaN` is false for all four).
+pub fn js_cmp(a: &Value, b: &Value, op: &str) -> bool {
+    use std::cmp::Ordering;
+    let (a, b) = (js_primitive(a), js_primitive(b));
+    let ord = if a.kind() == ValueKind::String && b.kind() == ValueKind::String {
+        a.to_string()
+            .encode_utf16()
+            .cmp(b.to_string().encode_utf16())
+    } else {
+        match js_to_number(&a).partial_cmp(&js_to_number(&b)) {
+            Some(o) => o,
+            None => return false,
+        }
+    };
+    match op {
+        "<" => ord == Ordering::Less,
+        "<=" => ord != Ordering::Greater,
+        ">" => ord == Ordering::Greater,
+        _ => ord != Ordering::Less,
+    }
+}
+
+fn is_nullish(v: &Value) -> bool {
+    matches!(v.kind(), ValueKind::Undefined | ValueKind::None)
+}
+
+fn is_container(v: &Value) -> bool {
+    matches!(
+        v.kind(),
+        ValueKind::Seq | ValueKind::Iterable | ValueKind::Map
+    )
+}
+
+/// JS `a === b`. Two arrays or objects are never equal here (JS compares identity, which a template cannot see).
+pub fn js_strict_eq(a: &Value, b: &Value) -> bool {
+    match (a.kind(), b.kind()) {
+        (ValueKind::Undefined, ValueKind::Undefined) | (ValueKind::None, ValueKind::None) => true,
+        (ValueKind::Bool, ValueKind::Bool) => a.is_true() == b.is_true(),
+        (ValueKind::Number, ValueKind::Number) => number_of(a) == number_of(b),
+        (ValueKind::String, ValueKind::String) => a.to_string() == b.to_string(),
+        _ => false,
+    }
+}
+
+/// JS `a == b`: `null` and `undefined` equal each other and nothing else; a boolean is its number; a number and a string
+/// compare as numbers; an object or array is its string against a primitive; two objects are never equal here.
+pub fn js_loose_eq(a: &Value, b: &Value) -> bool {
+    if is_nullish(a) || is_nullish(b) {
+        return is_nullish(a) && is_nullish(b);
+    }
+    if is_container(a) && is_container(b) {
+        return false;
+    }
+    let (a, b) = (js_primitive(a), js_primitive(b));
+    match (a.kind(), b.kind()) {
+        (ValueKind::String, ValueKind::String) => a.to_string() == b.to_string(),
+        (ValueKind::Bool, ValueKind::Bool) => a.is_true() == b.is_true(),
+        _ => js_to_number(&a) == js_to_number(&b),
+    }
 }
 
 /// Text of a painted value: what React (and `x-text`) shows.

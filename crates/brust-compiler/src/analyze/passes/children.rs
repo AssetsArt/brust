@@ -8766,7 +8766,7 @@ impl Walker<'_, '_> {
         Some(crate::lower::server_expr::to_jinja(
             se,
             &crate::lower::server_expr::JinjaCtx {
-                in_loop: None,
+                loop_indexes: &[],
                 props_prefix: Some("__props."),
                 names: &names,
             },
