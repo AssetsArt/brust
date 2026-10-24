@@ -836,8 +836,8 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 12,
-      "reactComponents": 2,
+      "components": 14,
+      "reactComponents": 1,
       "jsGzipKb": 92,
       "workerCalls": 1,
       "codes": [
