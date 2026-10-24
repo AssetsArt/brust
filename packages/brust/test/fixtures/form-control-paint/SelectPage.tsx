@@ -15,11 +15,12 @@ export default function SelectPage() {
         <option value="c">C</option>
       </select>
       <p data-testid="one-echo">{one}</p>
-      <select data-testid="many" multiple value={many} onChange={() => setMany(['b'])}>
+      <select data-testid="many" multiple value={many} onChange={(e) => setMany(Array.from(e.target.selectedOptions, (o) => o.value))}>
         <option value="a">A</option>
         <option value="b">B</option>
         <option value="c">C</option>
       </select>
+      <p data-testid="many-echo">{many.join(',')}</p>
       <select data-testid="num" value={n} onChange={(e) => setN(Number(e.target.value))}>
         {[1, 2, 3].map((k) => (
           <option key={k} value={k}>{`n${k}`}</option>
