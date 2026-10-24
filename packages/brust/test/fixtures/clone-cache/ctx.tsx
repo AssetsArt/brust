@@ -38,3 +38,27 @@ export function OnlyOn({ label = 'o' }: { label?: string }) {
 export function Outer(props: { id: string; children?: React.ReactNode }) {
   return <Prov {...props} />
 }
+// F372: a native K Provider the content writes itself (inside Prov's content): nearer than Frame inside Prov.
+export function KP({ id, v, children }: { id: string; v: number; children?: React.ReactNode }) {
+  const [n, setN] = useState(v)
+  return (
+    <K.Provider value={n}>
+      <span data-testid={`kp${id}`} data-kp={n} onClick={() => setN(n + 1)}>
+        {children}
+      </span>
+    </K.Provider>
+  )
+}
+// F372 R1: Frame BESIDE {children}: the content reads the call site's K (none here: the default 0), not Frame's.
+export function Beside({ id, children }: { id: string; children?: React.ReactNode }) {
+  const [on, setOn] = useState(false)
+  return (
+    <On.Provider value={on}>
+      <button type="button" data-testid={`t${id}`} onClick={() => setOn(!on)}>t</button>
+      <Frame id={id}>
+        <b>inner</b>
+      </Frame>
+      {children}
+    </On.Provider>
+  )
+}

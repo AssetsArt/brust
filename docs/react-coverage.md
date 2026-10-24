@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 62 | 40 | 16 | 6 | 0 | 0 | 0 | 0 |
 | B Composition | 245 | 129 | 20 | 96 | 0 | 0 | 0 | 0 |
-| C Hooks | 231 | 71 | 75 | 85 | 0 | 0 | 0 | 0 |
+| C Hooks | 237 | 76 | 75 | 86 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 645 | 284 | 127 | 230 | 3 | 1 | 0 | 0 |
+| **Total** | 651 | 289 | 127 | 231 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -398,6 +398,12 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 5.1 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
 | c-clone-carry-import | a Thumb whose className calls an import, passed through a component's rest under its own Provider | static | static | precompute | ok | 5.1 | — | F305: the call of the import is computed by the page and handed to the rest clone as one input (was: the children stayed outside, the page React) |
 | c-clone-carry-import-data | the same Thumb given an imported object member | react | react | ssr | ok | 4.2 | fallback:children-rest, info:rest-children-unsupported | F305 / F325: an import read as data is not computed at the call site and shipped: the children stay outside (children-rest; F431: the object default no longer adds context-no-provider) |
+| c-provider-inner-frame | content reading a context a Provider INSIDE the native Provider provides around its children | static | static | 0 | ok | 5.1 | — | F372 (was F371 specialise-unsupported): a shadow frame leaves the consumer to the clone, where the inner Frame fills it by position; served in tests/server/clone-cache.chromium.test.ts (two, pdiv, outerk) |
+| c-provider-inner-frame-own | the same, with the content wrapped in its own Provider of that context | static | static | 0 | ok | 5.1 | — | F372 over-refusal: the content's own Provider pushes a real frame above the shadow, so it is nearer (React: KP's value); served (ownkp) |
+| c-provider-inner-frame-beside | content beside (not inside) the Provider the native Provider renders | static | static | ssr | ok | 5.8 | info:specialise-unsupported | F372 R1: the clone would still need the context the call site no longer hands it: specialise-unsupported by name, Beside stays an island in the static page; served (beside) |
+| c-rest-provider-text | a wrapper spreading its props into a native Provider, given text children | static | static | 0 | ok | 5.8 | — | F375 (a): F298's rest clone is also made when the rest lands on a native Provider, so the children print inside it (F374 kept the wrapper an island); served (rest_text) |
+| c-rest-provider-empty | the same wrapper called with no children and no spread | static | static | 0 | ok | 5.8 | — | F375 (b): the rest provably carries no children (rest_childless), so the Provider is specialised with none (#345 made it an island); served (rest_empty) |
+| c-rest-provider-spread | the same wrapper given a spread at the call site | react | react | ssr | ok | 5.8 | fallback:spread-props, fallback:island-prop | F375 (b) negative: a spread may carry children, so the F374 refusal stays |
 | c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | 0 | ok | 5.8 | — | F298 + F309 + F307: LiveLabel is cloned with the Thumb inside LiveRoot's rest clone; since F337 (M2 binds the carried state to its seed in the LiveLabel clone's record, M3 lifts linked-prop-precompute for it) LiveRoot's rest clone is taken and no island is left: served == React, tests/server/linked-rest-host.chromium.test.ts (was: LiveRoot a React island) |
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | 0 | ok | 5.1 | — | F324 (real fix, progress-flip): the children reach the button through the rest in React; the clone puts the call site's content into the one element that spreads the rest (explicit children win in React; this Provider writes none), so the markup carries them and no island is needed (was: refused to an island after the alpha.16 silent drop) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 5.1 | — | F324: nothing to drop, so the clone is still taken |

@@ -273,6 +273,10 @@ pub struct ComponentIR {
     /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rest_clone_of: Option<String>,
+    /// F375: a rest clone made for a call site that passes no children, no spread and no `children` prop: its rest
+    /// provably carries no children, so the Provider it spreads its rest into may be specialised with none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rest_childless: bool,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
@@ -586,6 +590,7 @@ impl ComponentIR {
             specialised: false,
             reads_request_prop: false,
             rest_clone_of: None,
+            rest_childless: false,
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,

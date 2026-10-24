@@ -1,10 +1,12 @@
 // F238 in real Chromium, against React hydrating the same page in the same browser. A native Provider (Frame) called
 // inside another one's template (Prov) around its {children} is specialised per clone of Prov with THAT clone's content
-// (two_on); content reading Frame's own context keeps Prov an island (two: before, it printed the context default);
+// (two_on); content reading Frame's own context (two, pdiv, outerk under an outer K, ownkp under its own K Provider) is
+// native since F372 and reads the nearest Provider as React does (before F371 it printed the default; F371 kept Prov an
+// island); content beside the inner Provider (beside, F372 R1) keeps the Provider an island;
 // content holding a Frame call at the very offset of Prov's own Frame call nests as in React when it is a clone
 // where it is written (same_loc3) and keeps Prov an island when it is still a React island there (same_loc, F3). Every
-// observable value equals React after each click. F374: children a wrapper hands on to Prov in a spread (rest_text,
-// rest_k) keep the wrapper a React island; rest_on (content reading Prov's own context) clones the wrapper (F298).
+// observable value equals React after each click. F375: children a wrapper hands on to Prov in a spread (rest_text, rest_k)
+// and no children at all (rest_empty) clone the wrapper (F298 widened), native; rest_on clones it as before.
 // Run alone: `bun test --timeout 120000 tests/server/clone-cache.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
@@ -80,22 +82,23 @@ async function run(page: string, react: boolean, clicks: string[]): Promise<{ lo
   return { log, errors }
 }
 
-test('two_on and same_loc3 are native (no island); same_loc (F3) and two (a Provider inside Prov) keep Prov an island', async () => {
-  for (const page of ['two_on', 'same_loc3']) expect(await (await fetch(`${base}/${page}`)).text()).not.toContain('brust-island')
-  for (const page of ['same_loc', 'two']) expect(await (await fetch(`${base}/${page}`)).text()).toContain('<brust-island style="display:contents" data-id="prov_')
+test('two_on, same_loc3 and the F372 pages are native (no island); same_loc (F3) keeps Prov an island, beside (R1) Beside', async () => {
+  for (const page of ['two_on', 'same_loc3', 'two', 'pdiv', 'outerk', 'ownkp']) expect(await (await fetch(`${base}/${page}`)).text()).not.toContain('brust-island')
+  expect(await (await fetch(`${base}/same_loc`)).text()).toContain('<brust-island style="display:contents" data-id="prov_')
+  expect(await (await fetch(`${base}/beside`)).text()).toContain('<brust-island style="display:contents" data-id="beside_')
 })
 
-// F374: children reaching the Provider through a wrapper's props spread: the wrapper stays a React island (refused by
-// name), never the Provider printed without them; content reading Prov's own context still clones the wrapper (F298).
-test('rest_text and rest_k keep the wrapper an island with its children; rest_on is native', async () => {
+// F374/F375: children reaching the Provider through a wrapper's props spread are printed inside it (a rest clone of the
+// wrapper), never dropped; with no children the Provider is specialised with none; rest_on clones the wrapper (F298).
+test('rest_text, rest_k, rest_empty and rest_on are native, with their children inside Prov', async () => {
   const text = await (await fetch(`${base}/rest_text`)).text()
-  expect(text).toContain('<brust-island style="display:contents" data-id="outer_')
+  expect(text).not.toContain('brust-island')
   expect(text).toContain('hello')
   expect(text).toContain('para')
   const k = await (await fetch(`${base}/rest_k`)).text()
-  expect(k).toContain('<brust-island style="display:contents" data-id="outer_')
+  expect(k).not.toContain('brust-island')
   expect(k).toContain('AAA')
-  expect(await (await fetch(`${base}/rest_on`)).text()).not.toContain('brust-island')
+  for (const page of ['rest_on', 'rest_empty']) expect(await (await fetch(`${base}/${page}`)).text()).not.toContain('brust-island')
 })
 
 const CLICKS: Record<string, string[]> = {
@@ -106,6 +109,11 @@ const CLICKS: Record<string, string[]> = {
   rest_on: ['t1', 'f1', 't1'],
   same_loc: ['t1', 'fin', 'f1', 't1'],
   same_loc3: ['t1', 'fin', 'f1', 'fin', 't1'],
+  pdiv: ['t1', 'f1', 'f1', 't1'],
+  outerk: ['fo', 't1', 'f1', 'fo', 'f1'],
+  ownkp: ['t1', 'f1', 'kp1', 'kp1', 'f1'],
+  beside: ['t1', 'f1', 't1'],
+  rest_empty: ['t1', 't1'], // the empty section has no box to click
 }
 
 for (const page of Object.keys(CLICKS)) {

@@ -6,6 +6,11 @@ import P_rest_k from './p_rest_k'
 import P_rest_on from './p_rest_on'
 import P_same_loc from './p_same_loc'
 import P_same_loc3 from './p_same_loc3'
+import P_pdiv from './p_pdiv'
+import P_outerk from './p_outerk'
+import P_ownkp from './p_ownkp'
+import P_beside from './p_beside'
+import P_rest_empty from './p_rest_empty'
 export const routes = defineRoutes([
   { path: '/two', Component: P_two },
   { path: '/two_on', Component: P_two_on },
@@ -14,4 +19,9 @@ export const routes = defineRoutes([
   { path: '/rest_on', Component: P_rest_on },
   { path: '/same_loc', Component: P_same_loc },
   { path: '/same_loc3', Component: P_same_loc3 },
+  { path: '/pdiv', Component: P_pdiv },
+  { path: '/outerk', Component: P_outerk },
+  { path: '/ownkp', Component: P_ownkp },
+  { path: '/beside', Component: P_beside },
+  { path: '/rest_empty', Component: P_rest_empty },
 ])
