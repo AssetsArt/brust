@@ -4,8 +4,10 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { createElement } from 'react'
-import { renderToString } from 'react-dom/server'
 import Seeded from './fixtures/state-from-children/Seeded'
+
+const server = (await import('react-dom/server')) as unknown as { renderToString(el: unknown): string }
+const renderToString = server.renderToString
 
 const app = join(import.meta.dir, 'fixtures/state-from-children')
 const bin = join(import.meta.dir, '../bin/brust')
