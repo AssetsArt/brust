@@ -356,6 +356,11 @@ pub struct ComponentIR {
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ctx_defaults: Vec<(String, Literal)>,
+    /// F437: `useContext(X)` reads of a context imported from another module, which this component does not lower (the
+    /// hook is `hook-unsupported`): (import source as written, imported name). The build compares them with the Providers
+    /// a layout above the route renders: the island's SSR and `hydrateRoot` do not see those.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub foreign_ctx_reads: Vec<(String, String)>,
     /// F174: module functions proven to return a primitive (`analyze::plain_fn`), callable under a lowered Provider.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plain_fns: Vec<String>,
@@ -598,6 +603,7 @@ impl ComponentIR {
             render_ref_writes: Vec::new(),
             callback_deps: Vec::new(),
             ctx_defaults: Vec::new(),
+            foreign_ctx_reads: Vec::new(),
             plain_fns: Vec::new(),
             client_plain_fns: Vec::new(),
             props_slots_recomputable: false,
