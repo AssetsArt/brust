@@ -21,7 +21,7 @@
     "pagesWithNoWorker": 23,
     "jsGzipKb": {
       "min": 0,
-      "median": 87,
+      "median": 88,
       "max": 240
     },
     "libraries": {
@@ -852,7 +852,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 5,
-      "jsGzipKb": 89,
+      "jsGzipKb": 90,
       "workerCalls": 1,
       "codes": [
         "context-island",
@@ -1062,7 +1062,7 @@
       "islands": 1,
       "components": 6,
       "reactComponents": 3,
-      "jsGzipKb": 87,
+      "jsGzipKb": 88,
       "workerCalls": 1,
       "codes": [
         "body-shape",
@@ -1326,7 +1326,7 @@
       "islands": 1,
       "components": 31,
       "reactComponents": 14,
-      "jsGzipKb": 117,
+      "jsGzipKb": 118,
       "workerCalls": 1,
       "codes": [
         "client-function-in-job",
