@@ -18,6 +18,8 @@ export class Instance {
   children = new Set<Instance>()
   private disposers: Dispose[] = []
   private cleanups: Array<() => void> = []
+  /** F415: while an `x-if` branch or an `x-for` row binds, what it registers is owned by that part (`capture`). */
+  private sink: Array<() => void> | null = null
   disposed = false
   /** false until the initial bind pass finishes; the first-paint tripwire only applies before then. */
   booted = false
@@ -36,7 +38,7 @@ export class Instance {
   }
 
   effect(fn: () => void | (() => void), tier = 0): Dispose {
-    const d = coreEffect(fn, tier); this.disposers.push(d); return d
+    const d = coreEffect(fn, tier); (this.sink ?? this.disposers).push(d); return d
   }
   /** `ctx.effect`: deferred until `start()` while the factory runs, immediate afterwards. A compiled effect re-runs after
    * the bindings: layout (`layout` true) before passive (F288, ruling 94404307 amended). */
@@ -64,7 +66,15 @@ export class Instance {
     }
     return true
   }
-  onCleanup(fn: () => void): void { this.cleanups.push(fn) }
+  onCleanup(fn: () => void): void { (this.sink ?? this.cleanups).push(fn) }
+  /** F415/F416: runs `fn` with the effects and cleanups it registers owned by the returned disposer, which an `x-if`
+   * branch or an `x-for` row runs when it is removed: its effects stop and its cleanups run (an `x-ref` lets go of the
+   * node), in the order they were registered. */
+  capture(fn: () => void): () => void {
+    const prev = this.sink; const own: Array<() => void> = (this.sink = [])
+    try { fn() } finally { this.sink = prev }
+    return () => runCleanups(own)
+  }
   ref<E extends Element = HTMLElement>(name: string, init?: unknown): { current: E | null } {
     let r = this.refs.get(name)
     // `useRef(init)`: the cell starts at `init`; an `x-ref` element replaces it when it binds (React attaches the same way).
@@ -87,8 +97,12 @@ export class Instance {
     for (const c of Array.from(this.children)) c.dispose()
     this.parent?.children.delete(this)
     for (const d of this.disposers.splice(0)) d()
-    for (const c of this.cleanups.splice(0)) { try { c() } catch (e) { console.error('[brust] cleanup threw', e) } }
+    runCleanups(this.cleanups)
   }
+}
+
+function runCleanups(list: Array<() => void>): void {
+  for (const c of list.splice(0)) { try { c() } catch (e) { console.error('[brust] cleanup threw', e) } }
 }
 
 export const instances = new WeakMap<Element, Instance>()
