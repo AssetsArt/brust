@@ -1506,6 +1506,48 @@ fn literal_shape(e: &js_ast::Expr, depth: u32) -> bool {
 /// cannot shadow them (R34.142, the roving group's `loop`).
 pub const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
 
+/// F423: names a component local (a state cell, a list item or index) must not take as a template variable.
+/// `set`/`for` refuse the first group outright (`cannot assign to reserved variable name`, so `brust start` fails
+/// for the whole app), or the name reads as a literal or an operator (`none`, `not`); the template's own names
+/// (`TEMPLATE_OWN`) and the global functions `brust-jinja` registers would be shadowed by a variable of that name.
+/// The lowering prints such a local under a mangled name (`_loop`); the chunk and the jobs keep the JS name.
+/// `jinja_reserved_covers_every_global_function` in `tests/jinja_reserved_locals.rs` keeps the function names current.
+pub const JINJA_RESERVED_LOCALS: &[&str] = &[
+    // rejected by `set`/`for`, or a literal in an expression
+    "true",
+    "false",
+    "none",
+    "True",
+    "False",
+    "None",
+    "loop",
+    "self",
+    // operators and keywords the expression parser reads before a variable
+    "and",
+    "or",
+    "not",
+    "in",
+    "is",
+    "if",
+    "else",
+    // the template's own names
+    "range",
+    "namespace",
+    "caller",
+    "dict",
+    "debug",
+    // the global functions brust-jinja registers
+    "spread_attrs",
+    "spread_children",
+    "spread_get",
+    "spread_merge",
+    "obj_assign",
+    "obj_lit",
+    "class_join",
+    "css_decls",
+    "css_attr",
+];
+
 /// Why a prop named `name` cannot be a plain template variable, as `(code, what)`; `None` = it can. A key that is not
 /// an identifier prints as an expression (`data-x` reads as a subtraction); a jinja keyword is a syntax error or the
 /// wrong value. The template's own names (`TEMPLATE_OWN`) are fine: they print through `_props`.
