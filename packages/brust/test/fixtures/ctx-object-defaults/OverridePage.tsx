@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useContext } from 'react'
 
-const Ctx = createContext({ a: 'dflt', b: 2, on: false })
+// `b` is optional: OnlyA's value sets it undefined (React then paints undefined, not the default)
+const Ctx = createContext<{ a: string; b?: number; on: boolean }>({ a: 'dflt', b: 2, on: false })
 
 function Show({ id }: { id: string }) {
   const { a, b } = useContext(Ctx)
