@@ -53,6 +53,7 @@ test('only a toggle copy (hidden + x-if / x-else-if / x-else / x-show) is droppe
   // the zero-row template of a list is brust's; an authored hidden={cond} row keeps x-bind-hidden and is content
   same(`<ul><!--x-for--><li x-for="l in _l1" hidden x-text="_c1:l"></li></ul>`, `<ul></ul>`)
   differ(`<ul><li x-for="r in rs" hidden x-bind-hidden="_b1">read</li></ul>`, `<ul></ul>`)
+  differ(`<ul><!--x-for--><li x-for="l in _l1" hidden x-bind-hidden="_b">r</li><li x-for="l in _l1" hidden>x</li></ul>`, `<ul></ul>`)
   // the F412 / F396 shape: an authored bound hidden row
   same(`<ul><li x-for="r in rs" hidden x-bind-hidden="_b1">read</li></ul>`, `<ul><li hidden="">read</li></ul>`)
   same(`<div class="flex hidden md:block" x-on-click="_h1">t</div>`, `<div class="flex hidden md:block">t</div>`)

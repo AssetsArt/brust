@@ -14,8 +14,9 @@
 //   7. an element with a `hidden` attribute AND one of `x-if`, `x-else-if`, `x-else`, `x-show` (parsed attributes, not the raw tag
 //      text) is brust's client-toggled copy: its subtree is dropped (React never paints the false branch). A bound `hidden` row
 //      (`x-bind-hidden`) or a class named `hidden` is content and is compared
-//   7b. an `x-for` element with `hidden` and no `x-bind-hidden` is the list's zero-row template (the prototype the client clones
-//      for the first row): dropped. An authored `hidden={cond}` row keeps `x-bind-hidden` and is compared (F412 / F396 shape)
+//   7b. the element right after a `<!--x-for-->` marker, when it is `x-for` + `hidden`, is the list's zero-row template (the prototype
+//      the client clones for the first row): dropped. Any other hidden row, authored `hidden={cond}` (F412 / F396 shape) included, is
+//      compared
 //   8. <title>, <meta>, <link>, <script> are dropped with their content: document-level in both (React 19 hoists them in
 //      renderToString, the server hoists them into <head>, F399) and the runtime's own scripts follow the body
 //  10. the route envelope's `params` and `path` props, when a row spreads them onto an element, are dropped (React stringifies the
@@ -64,7 +65,8 @@ function attrs(list: [string, string][]): string {
 
 /** The comparable token list of an HTML fragment. */
 export function normalise(html: string): string[] {
-  const body = html.replace(/<!--[\s\S]*?-->/g, '')
+  // the marker only matters as the position of the zero-row template (rule 7b): carry it on that element, then drop comments
+  const body = html.replace(/<!--x-for-->(\s*)<([a-zA-Z][\w-]*)/g, '<$2 data-brust-xfor-template').replace(/<!--[\s\S]*?-->/g, '')
   const tokens: string[] = []
   let text = ''
   const spans: boolean[] = [] // open <span>s: true = a text-binding wrapper that was unwrapped
@@ -91,7 +93,7 @@ export function normalise(html: string): string[] {
     if (skip > 0) { if (!VOID.has(name) && !selfClosed) skip++; continue }
     const list = parseAttrs(raw)
     const has = (a: string) => list.some(([n]) => n === a)
-    const dropped = DOCUMENT_LEVEL.has(name) || (has('hidden') && (list.some(([n]) => TOGGLES.has(n)) || (has('x-for') && !has('x-bind-hidden'))))
+    const dropped = DOCUMENT_LEVEL.has(name) || (has('hidden') && (list.some(([n]) => TOGGLES.has(n)) || (has('x-for') && has('data-brust-xfor-template'))))
     if (dropped) { if (!VOID.has(name) && !selfClosed) skip = 1; continue }
     if (WRAPPERS.has(name)) continue
     if (name === 'span' && attrs(list) === '') { spans.push(true); continue }
