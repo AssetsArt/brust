@@ -68,13 +68,31 @@ pub fn is_function_raw(r: &RawExpr) -> bool {
     }
 }
 
-/// F418: `r` names a module-level `function load() {…}` (a lazy `useState(load)` initializer React calls).
+/// F418: `r` names a module-level function (a lazy `useState(load)` initializer React calls): `function load() {…}`, or a
+/// `const load = () => …` / `const load = function () {…}`. An async one is not (it returns a promise; it falls back elsewhere).
 pub fn is_module_fn(r: &RawExpr, module_decls: &[crate::ir::ModuleDecl]) -> bool {
-    matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Local }
-    if module_decls.iter().any(|d| {
+    let RawKind::Ident {
+        name,
+        kind: IdentKind::Local,
+    } = &r.kind
+    else {
+        return false;
+    };
+    module_decls.iter().any(|d| {
         d.names == [name.as_str()]
-            && (d.source.starts_with("function ") || d.source.starts_with("async function "))
-    }))
+            && (d.source.starts_with("function ")
+                || d.source.starts_with("async function ")
+                || d.consts.iter().any(|c| {
+                    &c.name == name
+                        && match &c.value.kind {
+                            RawKind::Arrow { .. } => true,
+                            RawKind::Opaque { why, .. } => {
+                                why == "EFunction" && !d.source.contains("= async")
+                            }
+                            _ => false,
+                        }
+                }))
+    })
 }
 
 impl<'a> Facts<'a> {

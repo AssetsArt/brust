@@ -764,3 +764,57 @@ fn page_reading_a_scalar_context_without_provider_paints_the_default() {
     );
     assert!(jinja.contains("is defined else \"x\""), "{jinja}");
 }
+
+/// F418 (ruling 1): a module `const` arrow / function expression is a lazy initialiser too; the job seeds its call.
+#[test]
+fn use_state_module_const_function_seeds_the_call() {
+    for decl in [
+        "const load = () => 42",
+        "const load = function () { return 42 }",
+    ] {
+        let src = format!(
+            "import {{ useState }} from 'react'\n{decl}\nexport default function C() {{ const [n, setN] = useState(load); return <button onClick={{() => setN(n + 1)}}>{{n}}</button> }}"
+        );
+        let (_, job) = lower_job(&src);
+        assert!(job.contains("const n = load()"), "{decl}: {job}");
+        let (_, chunk) = lower(&src);
+        assert!(chunk.contains("signal(load())"), "{decl}: {chunk}");
+    }
+}
+
+/// F419 (ruling 2): a page reading an object-default context with no Provider is refused by name (never an empty paint);
+/// per-field object defaults are a later row.
+#[test]
+fn page_reading_an_object_context_without_provider_falls_back_by_name() {
+    for body in [
+        "const v = useContext(Ctx); return <p>{v.a}-{v.b}</p>",
+        "const { a, b } = useContext(Ctx); return <p>{a}-{b}</p>",
+    ] {
+        let src = format!(
+            "import {{ useContext, createContext }} from 'react'\nconst Ctx = createContext({{ a: 'dflt', b: 2 }})\nexport default function C() {{ {body} }}"
+        );
+        let s = src.clone();
+        let rules: Vec<String> = run_on_compiler_thread(move || {
+            let tree = compile_tree(
+                "tests/fixtures/parent-counter/T.tsx",
+                Some(s.into_bytes()),
+                &AnalyzeOptions {
+                    root: repo(),
+                    ..Default::default()
+                },
+                DEFAULT_RUNTIME_IMPORT,
+            )
+            .unwrap();
+            tree[0]
+                .ir
+                .diagnostics
+                .iter()
+                .map(|d| d.rule.clone())
+                .collect()
+        });
+        assert!(
+            rules.iter().any(|r| r == "context-no-provider"),
+            "{body}: {rules:?}"
+        );
+    }
+}

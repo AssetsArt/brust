@@ -314,6 +314,24 @@ pub fn contexts(
             ir.ctx_defaults.push((c.clone(), d.clone()));
         }
     }
+    // F419 (ruling 2): the page's own read of a context with no scalar default (an object default, whose per-field defaults
+    // are not modelled) has no Provider above it either; paint nothing wrong: name it and fall back.
+    let own_unanswered = || {
+        ir.ctx_uses.iter().find(|u| {
+            !ir.ctx_defaults.iter().any(|(c, _)| c == &u.context)
+                && !bubbled.iter().any(|(c, _)| c == &u.context)
+        })
+    };
+    if ctx.is_root
+        && let Some(u) = own_unanswered()
+    {
+        diags.push(Diagnostic::fallback(
+            "context-no-provider",
+            format!("`{}` reads a context that no Provider above it provides, and its default is not a plain value", u.context),
+            0,
+            "render it inside the Provider component, or keep this component in React",
+        ));
+    }
     if let Some((c, _)) = bubbled.iter().find(|(c, f)| !defaulted(c, f))
         && ctx.is_root
     {
