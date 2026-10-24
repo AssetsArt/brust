@@ -783,7 +783,7 @@ fn read_stmts(
             }
             S::SReturn(ret) => {
                 if let Some(v) = &ret.value {
-                    hoist_ids(v, r, out);
+                    hoist_ids(v, r, out, m);
                 }
                 returned = Some(ret.value.map(|v| {
                     // R34.143: `return useSyncExternalStore(...)` of the hydration shape is the hook's one state
@@ -1348,11 +1348,12 @@ fn reducer_hook(
 /// prints in its place. The hooks are the ones whose result is one named value (`useId`, `useCallback`, `useMemo`,
 /// `useRef`). A call in a conditional, short-circuited or looped position, or inside a function, is left alone, and
 /// `nested_hooks` refuses it (`hook-in-expression`).
-fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) {
+fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls, m: Module<'_, '_>) {
     let mut found = Vec::new();
     unconditional_calls(value, &mut found);
     for call in found {
         let Some(hook) = react_hook_name(call, r.names) else {
+            hoist_custom(call, r, out, m);
             continue;
         };
         if !matches!(
@@ -1401,6 +1402,52 @@ fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) 
             false,
         );
         r.hoisted_calls.insert(addr, name);
+    }
+}
+
+/// F442 (W3, F379): an unconditional call of a CUSTOM hook in the returned JSX (`baseId={useId()}` with Radix's `useId` of
+/// `@radix-ui/react-id`) is the same call as `const x = useHook(…)` before the return: the hook is inlined where the
+/// statements are read (after the statement-level hooks, in the order the JSX evaluates its calls) and its one returned
+/// value is bound to a generated local that the reader prints in the call's place. A call the reader cannot inline, or one
+/// in a conditional, short-circuited, looped or callback position, is left alone and refused as before.
+fn hoist_custom(
+    call: &js_ast::E::Call,
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+) {
+    let addr = call_addr(call);
+    if out.classified_hooks.contains(&addr) || r.hoisted_calls.contains_key(&addr) {
+        return;
+    }
+    let Some((hook, false)) = hook_target(&call.target, r.names) else {
+        return;
+    };
+    if is_use_store(&call.target, r.names) {
+        return;
+    }
+    let mut n = 1;
+    let name = loop {
+        let name = format!("hoist{n}_{}", clean_name(&hook));
+        if out.inline.taken.insert(name.clone()) {
+            break name;
+        }
+        n += 1;
+    };
+    let site = Site {
+        hook: &hook,
+        call,
+        binding: None,
+        vloc: loc_of_call(call),
+        prior: &[],
+        hoist: Some(&name),
+    };
+    // classified first: a refusal inside the hook is named there, not again as a call inside an expression
+    out.classified_hooks.insert(addr);
+    if inline_hook(r, out, m, &site) {
+        r.hoisted_calls.insert(addr, name);
+    } else {
+        out.classified_hooks.remove(&addr);
     }
 }
 
@@ -2269,6 +2316,7 @@ fn read_decl(
                 binding: Some(&decl.binding),
                 vloc,
                 prior,
+                hoist: None,
             };
             if inline_hook(r, out, m, &site) {
                 return;
@@ -2595,6 +2643,7 @@ fn read_expr_stmt(
             binding: None,
             vloc,
             prior: &[],
+            hoist: None,
         };
         if inline_hook(r, out, m, &site) {
             return;
@@ -2692,6 +2741,8 @@ struct Site<'s> {
     vloc: u32,
     /// The caller's statements before this one.
     prior: &'s [js_ast::Stmt],
+    /// F442 (W3): a call hoisted out of the returned JSX: the generated local its one returned value is bound to.
+    hoist: Option<&'s str>,
 }
 
 const HOOK_REMEDY: &str = "keep custom hooks to const declarations, React hooks brust supports and one final return, or move this component to React";
@@ -4002,6 +4053,23 @@ fn bind_result(
             "return one value, or an array or object literal the call site destructures",
         )
     };
+    // F442 (W3): a call hoisted out of the returned JSX binds its one value to the generated local.
+    if let Some(name) = site.hoist {
+        let value = returned.unwrap_or_else(|| undefined_at(vloc));
+        if matches!(value.kind, RawKind::Object(_) | RawKind::Array(_)) {
+            return shape(
+                out,
+                format!(
+                    "custom hook {hook} is called inside an expression and returns an object or array"
+                ),
+            );
+        }
+        out.derived.push(DerivedDecl {
+            name: name.to_string(),
+            expr: Expr::Raw(value),
+        });
+        return;
+    }
     let Some(binding) = site.binding else {
         if returned.as_ref().is_some_and(|v| !inert(v)) {
             shape(
