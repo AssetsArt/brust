@@ -19,7 +19,7 @@ git diff $PREV origin/main -- docs/shadcn-coverage.md         # page tiers and K
 
 - Docs-only commits on main (plans, ledger) are not user-facing, so leave them out.
 - Test-only PRs get no entry unless users notice the effect.
-- The ledger (`docs/plans/m1a-followups.md`) explains the F-numbers that PR bodies cite.
+- The ledger (`/Users/detoro/code/brust/.internal/plans/m1a-followups.md`, local and lead-owned) explains the F-numbers that PR bodies cite.
 
 ## 2. Verify every claim before you write it
 

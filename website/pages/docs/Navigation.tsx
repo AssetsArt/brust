@@ -1,6 +1,6 @@
 // Navigation — links swap the page in place, the one rule, what is swapped, opt-outs, prefetch and the page cache, the brust:nav:* events, the progress
-// bar, page transitions, navigate().
-// Source of truth: docs/navigation.md and docs/design/2026-10-25-spa-navigation-design.md. This page is static: the docs site you are reading navigates this way.
+// bar, page transitions, navigate(), the navigation store.
+// Source of truth: docs/navigation.md and the SPA navigation design. This page is static: the docs site you are reading navigates this way.
 import CodeBlock from '../../components/CodeBlock'
 import Lead from '../../components/docs/Lead'
 import Note from '../../components/docs/Note'
@@ -9,7 +9,7 @@ import type { TocItem } from '../../lib/nav'
 
 export interface NavigationData {
   toc: TocItem[]
-  blocks: Record<'tag' | 'bar' | 'barCss' | 'go' | 'persist' | 'clear' | 'color' | 'vt', CodeBlockData>
+  blocks: Record<'tag' | 'line' | 'lineCss' | 'bar' | 'barCss' | 'spinner' | 'go' | 'persist' | 'clear' | 'color' | 'vt', CodeBlockData>
 }
 
 const TAG = `<script type="module" src="/_brust/client/nav-3f9c1a07b2.js"
@@ -22,10 +22,32 @@ document.addEventListener('brust:nav:error', (e) => {
   if (!e.detail.swapped) report(e.detail.error)
 })`
 
+const LINE = `import { navigation } from '@brust/core/navigation'
+import { useStore } from '@brust/core/store/react'
+
+export default function LoadingLine() {
+  const nav = useStore(navigation)
+  return <div className="line" data-state={nav.state} />
+}`
+
+const LINE_CSS = `.line { transform: scaleX(0); transform-origin: left; }
+.line[data-state="loading"] {
+  transform: scaleX(.8);
+  transition: transform 8s cubic-bezier(.1, .8, .2, 1) .15s;
+}`
+
 const BAR_CSS = `.bar { transform: scaleX(0); transform-origin: left; }
 html[data-brust-loading] .bar {
   transform: scaleX(.8);
-  transition: transform 8s cubic-bezier(.1, .8, .2, 1);
+  transition: transform 8s cubic-bezier(.1, .8, .2, 1) .15s;
+}`
+
+const SPINNER = `import { navigation } from '@brust/core/navigation'
+import { useStore } from '@brust/core/store/react'
+
+export default function NavSpinner() {
+  const nav = useStore(navigation)
+  return <div hidden={nav.state !== 'loading'}>Loading {nav.to}…</div>
 }`
 
 const GO = `import { navigate } from '@brust/core'
@@ -57,12 +79,16 @@ export async function navigationLoader(): Promise<NavigationData> {
       { id: 'progress', title: 'The progress bar' },
       { id: 'transitions', title: 'Page transitions' },
       { id: 'navigate', title: 'navigate()' },
+      { id: 'navigation-store', title: 'The navigation store' },
       { id: 'stores', title: 'Stores and islands' },
     ],
     blocks: {
       tag: codeBlock({ lang: 'text', file: 'view-source', code: TAG }),
+      line: codeBlock({ lang: 'tsx', file: 'LoadingLine.tsx', code: LINE }),
+      lineCss: codeBlock({ lang: 'text', file: 'app.css', code: LINE_CSS }),
       bar: codeBlock({ lang: 'ts', file: 'bar.ts', code: BAR }),
       barCss: codeBlock({ lang: 'text', file: 'app.css', code: BAR_CSS }),
+      spinner: codeBlock({ lang: 'tsx', file: 'NavSpinner.tsx', code: SPINNER }),
       go: codeBlock({ lang: 'ts', file: 'Search.tsx', code: GO }),
       persist: codeBlock({ lang: 'text', file: 'Layout.tsx', code: PERSIST }),
       clear: codeBlock({ lang: 'ts', file: 'cart.ts', code: CLEAR }),
@@ -191,6 +217,11 @@ export default function Navigation({ blocks }: NavigationData) {
           <b>Never cached</b>: a response with <code>Cache-Control: no-store</code>, any status of 400 or more, and a response that is not a brust page of this build. A page that must never be stale sends <code>no-store</code>.
         </li>
         <li>
+          <b>Only <code>no-store</code> keeps a page out.</b> <code>private</code>, <code>no-cache</code>, <code>max-age=0</code> and <code>must-revalidate</code> do not: many hosts send <code>public, max-age=0, must-revalidate</code> on every page,
+          and such a page is cached for its 5 minutes. A page that must never be shown from memory, such as an authenticated or sensitive one, sends <code>Cache-Control: no-store</code>. A logout through <code>@brust/core/client</code> already
+          clears the cache; any other logout calls <code>clearNavigationCache()</code>.
+        </li>
+        <li>
           It holds at most 32 pages, the least recently used going first, keyed by the URL without its <code>#hash</code>. <code>&lt;html data-brust-cache="60"&gt;</code> sets the freshness in seconds, and <code>0</code> turns it off.
         </li>
       </ul>
@@ -294,10 +325,18 @@ export default function Navigation({ blocks }: NavigationData) {
       </p>
       <CodeBlock code={blocks.color.code} lang={blocks.color.lang} file={blocks.color.file} html={blocks.color.html} />
       <p>
-        To build your own indicator, set <code>data-brust-progress="off"</code> on <code>&lt;html&gt;</code> and use the events:
+        To build your own indicator, set <code>data-brust-progress="off"</code> on <code>&lt;html&gt;</code> and read the <a href="#navigation-store">navigation store</a> in a component, with no <code>addEventListener</code>. This site's loading
+        line is made this way:
       </p>
+      <CodeBlock code={blocks.line.code} lang={blocks.line.lang} file={blocks.line.file} html={blocks.line.html} />
+      <CodeBlock code={blocks.lineCss.code} lang={blocks.lineCss.lang} file={blocks.lineCss.file} html={blocks.lineCss.html} />
+      <p>
+        Put it in the layout. It reads <code>state</code>, which is <code>idle</code> in every page's server markup, so the layout renders the same on each page and is kept across navigations. The <code>.15s</code> delay keeps the line still on a
+        navigation that is quick, such as one served from the cache.
+      </p>
+      <p>The store is fed by the four events above. With no component to put a store in, a plain script can listen to them directly:</p>
       <CodeBlock code={blocks.bar.code} lang={blocks.bar.lang} file={blocks.bar.file} html={blocks.bar.html} />
-      <p>Or CSS alone, with no JavaScript:</p>
+      <p>Or CSS alone, with no JavaScript and no component:</p>
       <CodeBlock code={blocks.barCss.code} lang={blocks.barCss.lang} file={blocks.barCss.file} html={blocks.barCss.html} />
 
       <h2 id="transitions">Page transitions</h2>
@@ -330,6 +369,104 @@ export default function Navigation({ blocks }: NavigationData) {
       <p>
         <code>@brust/core</code> also exports <code>clearNavigationCache()</code> and the types <code>NavigateOptions</code>, <code>NavTrigger</code>, <code>NavLoadDetail</code>, <code>NavSuccessDetail</code> and <code>NavErrorDetail</code>.
       </p>
+
+      <h2 id="navigation-store">The navigation store</h2>
+      <p>
+        The events are the low-level contract. For a component, brust ships one built-in store that mirrors them, so you read navigation state the way you read any other store:
+      </p>
+      <CodeBlock code={blocks.spinner.code} lang={blocks.spinner.lang} file={blocks.spinner.file} html={blocks.spinner.html} />
+      <p>
+        It works in a native component and in a React island, and the first paint matches: the server renders <code>state: 'idle'</code> and <code>url</code> as the request's path and query, so hydration finds the markup it expects.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Type</th>
+            <th>Meaning</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <code>state</code>
+            </td>
+            <td>
+              <code>'idle' | 'loading'</code>
+            </td>
+            <td>
+              <code>'loading'</code> from <code>brust:nav:load</code> until <code>success</code> or <code>error</code>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>url</code>
+            </td>
+            <td>
+              <code>string</code>
+            </td>
+            <td>Path and query of the page on screen. Updated at <code>success</code>, and at <code>error</code> when the error page was swapped in</td>
+          </tr>
+          <tr>
+            <td>
+              <code>to</code>
+            </td>
+            <td>
+              <code>string | null</code>
+            </td>
+            <td>Path and query being loaded, else <code>null</code></td>
+          </tr>
+          <tr>
+            <td>
+              <code>trigger</code>
+            </td>
+            <td>
+              <code>'link' | 'navigate' | 'popstate' | null</code>
+            </td>
+            <td>Of the current or last navigation</td>
+          </tr>
+          <tr>
+            <td>
+              <code>status</code>
+            </td>
+            <td>
+              <code>number | null</code>
+            </td>
+            <td>HTTP status of the last navigation</td>
+          </tr>
+          <tr>
+            <td>
+              <code>error</code>
+            </td>
+            <td>
+              <code>string | null</code>
+            </td>
+            <td>The message of the last failed navigation, cleared at the next <code>load</code>. A swapped 404 reads <code>HTTP 404</code></td>
+          </tr>
+          <tr>
+            <td>
+              <code>id</code>
+            </td>
+            <td>
+              <code>number</code>
+            </td>
+            <td>The last navigation id (<code>0</code> before any)</td>
+          </tr>
+        </tbody>
+      </table>
+      <ul>
+        <li>
+          It is a normal store: <code>navigation.state.subscribe(...)</code> works in a plain script and <code>navigation.snapshot()</code> gives plain values. Do not write it; the next event overwrites a write.
+        </li>
+        <li>
+          <code>navigation</code> is a reserved store name. A <code>defineStore('navigation', …)</code> of your own that a component reads is a build error (<code>store-name-reserved</code>).
+        </li>
+        <li>
+          A component that reads <code>url</code> depends on the URL, so a layout that reads it renders different markup on every page and is replaced on every navigation instead of kept. Read <code>to</code> and <code>state</code> in a layout, and{' '}
+          <code>url</code> where a page-level component is fine.
+        </li>
+        <li>The module listens for the events once, when the first chunk that imports it loads. A navigation that is already loading at that moment shows <code>idle</code> until its <code>success</code>.</li>
+      </ul>
 
       <h2 id="stores">Stores and islands</h2>
       <Note tag="Exception">

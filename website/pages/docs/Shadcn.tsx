@@ -97,13 +97,13 @@ export default function Shadcn({ summary, pinned, blockers, rows, blocks }: Shad
       <Lead>
         shadcn/ui copies its components into your project, so brust compiles them like your own code. Most of the markup becomes static or native; what needs Radix&rsquo;s behaviour stays a React island, and the build says which.
       </Lead>
-      {/* source: docs/transcripts/shadcn-setup-guide.md (L35, R38.1) */}
+      {/* source: website/test/fixtures/shadcn-transcripts/shadcn-setup-guide.md (L35, R38.1) */}
       <p>
         New to it? <a href="/docs/guides/shadcn-setup">Set up shadcn/ui</a> takes a fresh project to a page with a card, a button and a dialog.
       </p>
 
       <h2 id="compiles">What compiles</h2>
-      {/* source: docs/plans/2026-10-13-shadcn.md R34.14–R34.19 (rest props, spread), R34.21–R34.27 (constant children), R34.28–R34.34 (asChild), R34.35–R34.41 (member tags), R34.49–R34.55 (constant lists and conditions), R34.63–R34.64 (forwardRef); the release notes list the pull requests */}
+      {/* source: shadcn plan R34.14–R34.19 (rest props, spread), R34.21–R34.27 (constant children), R34.28–R34.34 (asChild), R34.35–R34.41 (member tags), R34.49–R34.55 (constant lists and conditions), R34.63–R34.64 (forwardRef); the release notes list the pull requests */}
       <ul>
         <li><strong>Rest props and spread.</strong> <code>{'{'} className, ...props {'}'}</code> in the signature and <code>{'{'}...props{'}'}</code> on an element, with handlers that come through the spread.</li>
         <li><strong><code>asChild</code> and <code>Slot</code>.</strong> Decided where the component is used, as below.</li>
@@ -116,7 +116,7 @@ export default function Shadcn({ summary, pinned, blockers, rows, blocks }: Shad
       <CodeBlock code={blocks.member.code} lang={blocks.member.lang} cwd={blocks.member.cwd} html={blocks.member.html} />
 
       <h2 id="islands">What stays an island</h2>
-      {/* source: docs/shadcn-coverage.json blockers (external-component, island-children, hook-unsupported, island-prop), docs/plans/2026-10-13-shadcn.md R34.5 */}
+      {/* source: docs/shadcn-coverage.json blockers (external-component, island-children, hook-unsupported, island-prop), shadcn plan R34.5 */}
       <p>
         The Radix primitives themselves (dialogs, menus, tabs, selects) use React context, refs, portals and focus management, which brust does not lower yet, so each one is a React island of the package&rsquo;s own export. Components that wrap a React library
         (a chart, a calendar, a carousel, a command palette) are islands too. A function or a value that changes with state passed to an island makes the component that passes it render with React, and the build reports it as <code>island-prop</code>.

@@ -31,6 +31,7 @@
     "./cache-adapter/conformance": "./src/cache-adapter/conformance.ts",
     "./store": "./src/store/index.ts",
     "./store/react": "./src/store/react.ts",
+    "./navigation": "./src/navigation.ts",
     "./elysia": "./src/actions/elysia.ts",
     "./client": "./src/actions/client.ts",
     "./native": "./native/index.js"

@@ -102,10 +102,24 @@ export interface ManifestJson {
 
 /** F165 (R40.1): whether any request can call a worker. Workers answer four kinds of call
  * (worker.ts): `loader`, `jobs` (precompute and SSR), `fetch` (the local actions app) and `cache`
- * (the adapter). Only the jobs a request can plan count (`reachedJobs`, F183). */
+ * (the adapter). Only the jobs a request can plan count (`reachedJobs`, F183); a store read counts too (`readsStores`). */
 export function needsWorkers(m: Pick<ManifestJson, 'routes' | 'components' | 'actions' | 'cache'>): boolean {
   const planned = [...reachedJobs(m).planned].some((id) => (m.components[id]?.jobs.length ?? 0) > 0)
-  return planned || m.routes.some((r) => r.loaders.length > 0) || m.actions !== null || m.cache !== undefined
+  return planned || m.routes.some((r) => r.loaders.length > 0) || readsStores(m) || m.actions !== null || m.cache !== undefined
+}
+
+/** A route whose chain reads a store (its components, their children and job targets, transitively) gets a loader call
+ * from brust-core even with no loader of its own: the worker builds the `__store` snapshot (pipeline.rs `reads_store`).
+ * Without a pool that call answers 503. */
+function readsStores(m: Pick<ManifestJson, 'routes' | 'components'>): boolean {
+  const seen = new Set<string>()
+  const reads = (id: string): boolean => {
+    if (seen.has(id)) return false
+    seen.add(id)
+    const c = m.components[id]
+    return !!c && (c.stores.length > 0 || c.children.some((k) => reads(k.id)) || c.jobs.some((j) => j.target !== undefined && reads(j.target)))
+  }
+  return m.routes.some((r) => r.chain.some(reads))
 }
 
 /** F183: the jobs a request can call, as brust-core plans them (`collect_jobs`, pipeline.rs): every job of each

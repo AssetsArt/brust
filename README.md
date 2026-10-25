@@ -50,6 +50,6 @@ cargo test --workspace --exclude bun_react_compiler
 cd packages/brust && bun run build:debug && bun test
 ```
 
-Design notes live in [`docs/design/`](docs/design/), work plans in [`docs/plans/`](docs/plans/). The 0.1.x line (`brustjs` on npm) is kept on the [`v01x`](https://github.com/AssetsArt/brust/tree/v01x) branch.
+The 0.1.x line (`brustjs` on npm) is kept on the [`v01x`](https://github.com/AssetsArt/brust/tree/v01x) branch.
 
 [MIT](LICENSE) © Assets Art

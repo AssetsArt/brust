@@ -173,7 +173,7 @@ export default function IconsAndPackages({ blocks }: PackagesData) {
       <p>A provider whose props change at run time is not applied: its icons stay islands, and the build says so.</p>
 
       <h2 id="fallbacks">When an icon stays an island</h2>
-      {/* source: lane/lucide-native @1071c202 icons.rs:127-135 (icon-provider-dynamic), :181-190 (icon-dynamic-prop), build-icons.ts:64-66 (icon-render: the icon could not be rendered); the whole-icon choice is deferred, ledger row F126 (docs/plans/m1a-followups.md) */}
+      {/* source: lane/lucide-native @1071c202 icons.rs:127-135 (icon-provider-dynamic), :181-190 (icon-dynamic-prop), build-icons.ts:64-66 (icon-render: the icon could not be rendered); the whole-icon choice is deferred, ledger row F126 */}
       <CodeBlock code={blocks.fallbackWarn.code} lang={blocks.fallbackWarn.lang} cwd={blocks.fallbackWarn.cwd} html={blocks.fallbackWarn.html} />
       <TableWrap>
         <table>
@@ -219,7 +219,7 @@ export default function IconsAndPackages({ blocks }: PackagesData) {
       </TableWrap>
 
       <h2 id="versions">Versions</h2>
-      {/* source: lane/lucide-native @1071c202 packages/brust/package.json (lucide-react 1.55.0 is the version the tests pin); docs/plans/2026-10-13-gaps-round.md §L23 R23.1 (whatever lucide-react the app installs, no copy in brust) */}
+      {/* source: lane/lucide-native @1071c202 packages/brust/package.json (lucide-react 1.55.0 is the version the tests pin); gaps round L23 R23.1 (whatever lucide-react the app installs, no copy in brust) */}
       <Note tag="Tested with">
         brust has no copy of lucide-react: the icons come from the version your project installs, so new icons and options appear as soon as you upgrade. The tests run against lucide-react 1.55.0, including <code>nonScalingStroke</code>,
         an alias import and <code>LucideProvider</code>.

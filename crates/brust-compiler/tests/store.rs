@@ -1621,3 +1621,75 @@ fn fed_child_without_store_has_no_store_key() {
         ir.instances[0]
     );
 }
+
+// --- F461: the built-in `navigation` store (`@brust/core/navigation`) is a package module the reader cannot open. ---
+
+#[test]
+fn builtin_navigation_store() {
+    let (ir, jinja, c) = lower_tree(&[(
+        "C.tsx",
+        "import { useStore } from '@brust/core/store/react'\nimport { navigation } from '@brust/core/navigation'\nexport default function C() { const nav = useStore(navigation); return <p hidden={nav.state !== 'loading'}>{nav.url} {nav.to}</p> }",
+    )]);
+    let r = ir.stores[0].resolved.as_ref().expect("resolved");
+    assert_eq!(r.name, "navigation", "{:?}", ir.diagnostics);
+    assert_eq!(r.module, "@brust/core/navigation");
+    assert_eq!(
+        r.signals,
+        ["error", "id", "state", "status", "to", "trigger", "url"]
+    );
+    assert!(matches!(ir.tier, Tier::Native { .. }), "{:?}", ir.tier);
+    assert!(
+        rules(&ir).iter().all(|r| !r.starts_with("store-")),
+        "{:?}",
+        ir.diagnostics
+    );
+    // The first paint reads the request's snapshot; the chunk reads the live store from the package module.
+    assert!(jinja.contains("__store.navigation.url"), "{jinja}");
+    assert!(c.contains("from \"@brust/core/navigation\""), "{c}");
+    assert!(c.contains("navigation.url()"), "{c}");
+}
+
+#[test]
+fn builtin_navigation_store_read_through_a_namespace() {
+    let ir = analyze_tree(&[(
+        "C.tsx",
+        "import { useStore } from '@brust/core/store/react'\nimport * as n from '@brust/core/navigation'\nexport default function C() { const s = useStore(n.navigation); return <p>{s.state}</p> }",
+    )]);
+    let r = ir.stores[0].resolved.as_ref().expect("resolved");
+    assert_eq!(r.module, "@brust/core/navigation", "{:?}", ir.diagnostics);
+}
+
+#[test]
+fn builtin_navigation_store_is_read_only_in_render() {
+    let ir = analyze_tree(&[(
+        "C.tsx",
+        "import { useStore } from '@brust/core/store/react'\nimport { navigation } from '@brust/core/navigation'\nexport default function C() {\n  const n = navigation.state.set('loading')\n  const s = useStore(navigation)\n  return <p>{s.state}</p>\n}",
+    )]);
+    assert!(
+        rules(&ir).contains(&"store-write-in-render"),
+        "{:?}",
+        ir.diagnostics
+    );
+}
+
+#[test]
+fn user_store_named_navigation_is_reserved() {
+    let ir = analyze_tree(&[
+        (
+            "nav.ts",
+            "import { defineStore, signal } from 'brust/store'\nexport const nav = defineStore('navigation', () => ({ open: signal(false) }))\n",
+        ),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { nav } from './nav'\nexport default function C() { const s = useStore(nav); return <p>{s.open}</p> }",
+        ),
+    ]);
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "store-name-reserved")
+        .unwrap_or_else(|| panic!("{:?}", ir.diagnostics));
+    assert_eq!(d.class, DiagClass::Error);
+    assert!(format!("{d:?}").contains("@brust/core/navigation"), "{d:?}");
+    assert!(d.message.contains("nav.ts"), "{d:?}");
+}

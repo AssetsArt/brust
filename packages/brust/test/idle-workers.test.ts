@@ -24,6 +24,17 @@ test('any one source of worker calls needs the pool', () => {
   expect(needsWorkers({ ...staticApp(), cache: { adapter: 'memory' } as M['cache'] })).toBe(true)
 })
 
+test('F461: a route that reads a store needs the pool even with no loader or job (brust-core asks the worker for the snapshot)', () => {
+  const stored = (stores: string[], jobs: unknown[] = [], children: string[] = []) => ({ ...comp(jobs, children), stores })
+  const withStores = (components: unknown): M => ({ ...staticApp(), components } as unknown as M)
+  expect(needsWorkers(withStores({ c: stored(['@brust/core/navigation']) }))).toBe(true)
+  // through a child, and through the target of a job
+  expect(needsWorkers(withStores({ c: stored([], [], ['kid']), kid: stored(['s.ts']) }))).toBe(true)
+  expect(needsWorkers(withStores({ c: stored([], [{ id: 'j', kind: 'ssr', target: 'isl' }]), isl: stored(['s.ts']) }))).toBe(true)
+  // a store only a component no route renders reads does not count
+  expect(needsWorkers(withStores({ c: stored([]), other: stored(['s.ts']) }))).toBe(false)
+})
+
 test('F183: a job no route plans needs no worker (a child of a child, or a component no route renders)', () => {
   const components = { c: comp([], ['kid']), kid: comp([], ['grandkid']), grandkid: comp([{ id: 'j', kind: 'precompute' }]), other: comp([{ id: 'j', kind: 'ssr', target: 'other' }]) }
   expect(needsWorkers({ ...staticApp(), components } as unknown as M)).toBe(false)

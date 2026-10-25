@@ -16,7 +16,7 @@ import type { RuntimeSizes } from './runtime-sizes.ts'
 const repo = resolve(import.meta.dir, '../..')
 export const REPORT = join(repo, 'docs/react-coverage.md')
 export const REPORT_JSON = join(repo, 'docs/react-coverage.json')
-export const EXIT_REPORT = join(repo, 'docs/plans/m1-exit-report.md')
+export const EXIT_REPORT = join(repo, 'docs/reports/m1-exit-report.md')
 
 /** `ok` = `--emit all` succeeded; `refused` = an `Error` diagnostic refused the build by design; `failed` = anything else (crash, panic, signal). */
 export type Build = 'ok' | 'refused' | 'failed'
@@ -254,6 +254,6 @@ if (import.meta.main) {
   if (!process.argv.includes('--check')) { writeFileSync(REPORT, report); writeFileSync(REPORT_JSON, renderJson(results)); writeFileSync(EXIT_REPORT, renderExitReport(results)) }
   const bad = results.filter((r) => r.warn)
   for (const r of bad) console.error(`⚠ ${r.row.id}: expected ${r.row.expect}${r.row.jobs !== undefined ? ` (${r.row.jobs} jobs)` : ''}${r.row.buildEval !== undefined ? ` (${r.row.buildEval} build-eval)` : ''}, observed ${r.observed} (${r.jobs.length} jobs, ${r.buildEval} build-eval${r.evalWhy.length ? `: ${r.evalWhy.join('; ')}` : ''}) ${r.diagnostics.join(',')}`)
-  console.log(`[battery] ${results.length} rows, ${bad.length} unexplained ⚠${process.argv.includes('--check') ? '' : ' -> docs/react-coverage.md, docs/react-coverage.json, docs/plans/m1-exit-report.md'}`)
+  console.log(`[battery] ${results.length} rows, ${bad.length} unexplained ⚠${process.argv.includes('--check') ? '' : ' -> docs/react-coverage.md, docs/react-coverage.json, docs/reports/m1-exit-report.md'}`)
   process.exit(bad.length ? 1 : 0)
 }
