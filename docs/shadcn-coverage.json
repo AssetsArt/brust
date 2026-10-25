@@ -1237,7 +1237,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 5,
-      "jsGzipKb": 98,
+      "jsGzipKb": 99,
       "workerCalls": 1,
       "codes": [
         "external-component",
