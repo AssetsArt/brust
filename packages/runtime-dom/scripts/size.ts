@@ -20,21 +20,23 @@ export async function bundle(entry: string, coreExternal: boolean): Promise<stri
 }
 const gz = (s: string) => gzipSync(s, { level: 9 }).length
 
-export interface Sizes { core: number; features: Record<string, number> }
+export interface Sizes { core: number; features: Record<string, number>; nav: number }
 export async function measure(): Promise<Sizes> {
   // The browser entry of the core also mounts the document; the measured core is that plus its API.
   const core = gz((await bundle('core.ts', false)) + 'mount(document.documentElement)')
   const features: Record<string, number> = {}
   for (const f of FEATURES) features[f] = gz(await bundle(`features/${f}.ts`, true))
-  return { core, features }
+  // The SPA navigation asset (design 2026-10-25 §5.8): standalone, its own file on every full document.
+  const nav = gz(await bundle('nav/index.ts', false))
+  return { core, features, nav }
 }
 
-export interface Budget { core: number; features: Record<string, number>; reason: string }
+export interface Budget { core: number; features: Record<string, number>; nav?: number; reason: string }
 
 if (import.meta.main) {
   const s = await measure()
   const b = JSON.parse(readFileSync(BUDGET_FILE, 'utf8')) as Budget
-  const rows = [['core', s.core, b.core] as const, ...Object.entries(s.features).map(([f, n]) => [f, n, b.features[f] ?? 0] as const)]
+  const rows = [['core', s.core, b.core] as const, ...Object.entries(s.features).map(([f, n]) => [f, n, b.features[f] ?? 0] as const), ['nav', s.nav, b.nav ?? 0] as const]
   let bad = 0
   for (const [name, n, max] of rows) {
     const over = n > max
