@@ -14,3 +14,6 @@ export interface NavErrorDetail extends NavLoadDetail { status?: number; error?:
 export function navigate(_url: string, _opts?: NavigateOptions): Promise<void> {
   throw new Error('navigate is browser-only (call it from a component or island running in the browser)')
 }
+
+/** The page cache lives in the browser: nothing to clear on the server. */
+export function clearNavigationCache(): void {}

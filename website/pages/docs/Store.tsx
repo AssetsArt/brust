@@ -124,9 +124,17 @@ export default function Store({ blocks, candidates }: StoreData) {
           <code>Map</code>, <code>Set</code> and <code>Date</code> serialize to <code>{'{}'}</code>, a <code>BigInt</code> throws, functions and <code>undefined</code> are dropped.
         </li>
         <li>
+          An island that renders a <code>computed</code> of a store, on a page reached by a navigation, hydrates that computed with the value it had on the first page (the seed tag carries signals only), so it can mismatch the server markup. Render
+          the signals and derive in the component.
+        </li>
+        <li>
           A store that is already live keeps its client value across a <a href="/docs/navigation">navigation</a>. The new page's snapshot only seeds a store the tab has not used yet.
         </li>
       </ul>
+      <p>
+        brust ships one store of its own, <code>navigation</code>, fed by the <a href="/docs/navigation#navigation-store">navigation events</a> (<code>state</code>, <code>url</code>, <code>to</code>, <code>trigger</code>, <code>status</code>,{' '}
+        <code>error</code>, <code>id</code>). Import the handle from <code>@brust/core/navigation</code> and read it through <code>useStore</code> like any other store, in a native component or an island. The name is reserved.
+      </p>
       <Note>
         A cached page carries its store snapshot. Do not cache pages that paint per-user store data, such as a team seeded from the reader's cookie.
       </Note>

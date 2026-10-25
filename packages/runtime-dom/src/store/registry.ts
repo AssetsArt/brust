@@ -14,6 +14,8 @@ export interface StoreInstanceRecord {
   snap: { value: Record<string, unknown>; version: number } | null
   /** Browser only: the snapshot the SSR HTML was rendered from (script seed applied, nothing written since). Islands hydrate against it (G13). */
   ssr?: Record<string, unknown>
+  /** Browser only: the seed tag `ssr` was read from (`null` when the page carried none). */
+  ssrSeed?: Element | null
   handle?: { serialize(): Record<string, unknown> }
 }
 
@@ -76,10 +78,28 @@ export function resolveRecord(
     const made = (rec = reg[name] = create(false))
     const el = seedScript(name)
     if (el) seed(rec, parseStoreScript(el))
+    rec.ssrSeed = el
     // Identity-stable: the same object stays `rec.snap` until the first write.
     rec.ssr = untracked(() => computeSnapshot(made)) // a first access inside an effect must not subscribe it
   }
   return rec
+}
+
+const tagSnapshots = new WeakMap<Element, Record<string, unknown>>()
+
+/**
+ * The snapshot an island hydrating NOW must render from: the seed tag of the document it came from. A live store keeps
+ * `rec.ssr` from the first page (§5.5 of the SPA design), so an island on a page navigated to would otherwise hydrate
+ * against the first page's values. Keys the tag does not carry (computeds) keep the first snapshot's value.
+ */
+export function ssrSnapshotOf(name: string, rec: StoreInstanceRecord): Record<string, unknown> | undefined {
+  const base = rec.ssr
+  if (!base || typeof document === 'undefined') return base
+  const el = seedScript(name)
+  if (!el || el === rec.ssrSeed) return base
+  let snap = tagSnapshots.get(el)
+  if (!snap) tagSnapshots.set(el, (snap = { ...base, ...parseStoreScript(el) }))
+  return snap
 }
 
 /** Apply a navigation-payload snapshot to live client stores. Reserved for the SPA wave (D9): no callers yet. */

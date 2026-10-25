@@ -105,3 +105,24 @@ test('applyStoreSnapshot refreshes the ssr snapshot (R11.1)', () => {
   applyStoreSnapshot({ 'rt-ssr-nav': { n: 7 } })
   expect(ssr().n).toBe(7)
 })
+
+test('an island on a page swapped in later hydrates against that page\'s seed tag, not the first page\'s (F461)', () => {
+  const s = defineStore('rt-ssr-swap', () => {
+    const url = signal('/')
+    return { url, upper: computed(() => url().toUpperCase()) }
+  })
+  seeded('rt-ssr-swap', { url: '/a' })
+  const ssr = (s as unknown as Record<symbol, () => { url: string; upper: string }>)[Symbol.for('brust.ssrSnapshot')]!
+  const first = ssr()
+  expect(first).toEqual({ url: '/a', upper: '/A' })
+  // A navigation: page B's body (and its tag) replaces page A's; the store is live and keeps its client value.
+  s.url.set('/client')
+  document.body.innerHTML = '<script type="application/json" data-brust-store="rt-ssr-swap">{"url":"/b"}</script>'
+  const second = ssr()
+  expect(second.url).toBe('/b')
+  expect(ssr()).toBe(second) // identity-stable for React
+  expect(s.snapshot().url).toBe('/client') // the live value is untouched
+  // The same tag read again is the same snapshot; a page without a tag falls back to the first one.
+  document.body.innerHTML = ''
+  expect(ssr()).toBe(first)
+})

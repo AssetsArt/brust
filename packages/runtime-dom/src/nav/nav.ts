@@ -4,14 +4,20 @@
 import { applyHead, classicScripts, planHead, runScripts, swapBody } from './swap'
 
 type Trigger = 'link' | 'navigate' | 'popstate'
-export interface NavBridge { navigate(url: string, opts?: { replace?: boolean }): Promise<void> }
+export interface NavBridge { navigate(url: string, opts?: { replace?: boolean }): Promise<void>; clearCache(): void }
 /** How a module script of the new page is loaded; tests swap it. */
 export type Load = (url: string) => Promise<unknown>
 
 const KEY = Symbol.for('brust.nav')
 const LOADING = 'data-brust-loading'
 const NAV = 'script[data-brust-nav]'
-const sameDoc = (a: string, b: string) => a.split('#')[0] === b.split('#')[0]
+const noHash = (u: string) => u.split('#')[0]!
+const sameDoc = (a: string, b: string) => noHash(a) === noHash(b)
+/** A fetched document as the cache holds it (§10.1). `no`: never kept (`no-store`, a status of 400 or more). */
+interface Got { status: number; url: string; type: string; text: string; no: boolean }
+type VT = { skipTransition(): void; updateCallbackDone: Promise<void> }
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
+const BAR = 'data-brust-bar'
 
 /** Boot once per tab. Returns a stop function (tests). */
 export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => void {
@@ -45,13 +51,56 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
     t ? t.scrollIntoView() : scrollTo(0, 0)
   }
 
-  // ---- prefetch on intent (§5.2): one response per URL, held 15 s, used once ----
-  const held = new Map<string, [Promise<Response>, number]>()
-  const take = (u: string) => {
-    const e = held.get(u)
-    held.delete(u)
-    return e && e[1] > Date.now() ? e[0] : undefined
+  // ---- the page cache (§10.1): an LRU of 32 documents by URL without its hash, filled by prefetches and navigations,
+  // fresh for 5 minutes (`data-brust-cache` seconds), any age for back/forward; a fetch in flight (at: Infinity) is shared
+  const cache = new Map<string, [Promise<Got>, number]>()
+  const ttl = () => { const s = html.getAttribute('data-brust-cache'); return s == null || isNaN(+s) ? 3e5 : +s * 1e3 }
+  const get = (u: string, any?: boolean, init?: RequestInit): Promise<Got> => {
+    const k = noHash(u)
+    let e = cache.get(k)
+    cache.delete(k)
+    if (!e || !(any || Date.now() - e[1] < ttl())) {
+      const p = fetch(k, init).then(async (r) => ({ status: r.status, url: r.url, type: r.headers.get('content-type') ?? '', text: await r.text(), no: r.status >= 400 || /no-store/i.test(r.headers.get('cache-control') ?? '') }))
+      const f = (e = [p, Infinity])
+      const drop = () => cache.get(k) === f && cache.delete(k)
+      p.then((g) => (g.no || !ttl() ? drop() : (f[1] = Date.now())), drop)
+    }
+    cache.set(k, e)
+    if (cache.size > 32) cache.delete(cache.keys().next().value!)
+    return e[0]
   }
+
+  // ---- the progress bar (§10.2): only for a navigation still loading 150 ms after `load`; outside <body>, so no swap
+  // removes it, and its <style> is runtime-added, so the head reconcile keeps it ----
+  let bar: Element | undefined
+  let css: HTMLStyleElement | undefined
+  let wait: ReturnType<typeof setTimeout> | undefined
+  const progress = (on?: boolean) => {
+    clearTimeout(wait)
+    if (on) {
+      if (!bar && html.getAttribute('data-brust-progress') !== 'off') wait = setTimeout(() => {
+        if (!css) {
+          ;(css = document.createElement('style')).textContent =
+            `div[${BAR}]{position:fixed;z-index:2147483647;top:0;left:0;width:100%;height:3px;pointer-events:none;background:var(--brust-progress-color,#2f7cf6);transform-origin:0;transform:scaleX(0);animation:brust-bar 8s cubic-bezier(.1,.7,.3,1) forwards}` +
+            `div[${BAR}=done]{animation:none;transform:none;opacity:0;transition:transform .2s,opacity .3s .2s}@keyframes brust-bar{to{transform:scaleX(.9)}}` +
+            `@media (prefers-reduced-motion:reduce){div[${BAR}]{animation:none;transform:scaleX(.9)}}`
+          css.setAttribute(BAR, '')
+        }
+        if (!css.isConnected) document.head.append(css)
+        html.append((bar = document.createElement('div')))
+        bar.setAttribute(BAR, '')
+      }, 150)
+    } else if (bar) {
+      const b = bar
+      bar = undefined
+      b.setAttribute(BAR, 'done')
+      setTimeout(() => b.remove(), reduced() ? 0 : 500)
+    }
+  }
+
+  // the head elements that came from the server (there at boot, or inserted from a fetched document): the only ones the
+  // head reconcile may remove (§3 step 5)
+  const served = new WeakSet<Element>(document.head.children)
 
   /** The URL a link navigates to, or null when the click (or a prefetch) is left to the browser (§5.1). */
   const target = (t: EventTarget | null): [Element, string] | null => {
@@ -68,28 +117,27 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
     const l = target(t)
     const c = (navigator as { connection?: { saveData?: boolean; effectiveType?: string } }).connection
     if (!l || l[0].closest('[data-brust-prefetch="false"]') || c?.saveData || /2g/.test(c?.effectiveType ?? '')) return
-    const u = l[1]
-    if ((held.get(u)?.[1] ?? 0) > Date.now()) return
-    const p = fetch(u, { priority: 'low' } as RequestInit)
-    p.catch(() => {})
-    held.set(u, [p, Date.now() + 15e3])
+    get(l[1], false, { priority: 'low' } as RequestInit).catch(() => {})
   }
 
-  // ---- one navigation (§3); a newer one aborts it and it fires nothing more ----
-  let active: AbortController | null = null
+  // ---- one navigation (§3); a newer one supersedes it (and skips its transition) and it fires nothing more ----
+  let active = 0
+  let vt: VT | undefined
   const go = async (req: string, trigger: Trigger, id: number, replace: boolean, pop?: string): Promise<void> => {
-    active?.abort()
-    const c = (active = new AbortController())
-    const live = () => c === active
+    vt?.skipTransition()
+    const me = ++active
+    const live = () => me === active
     const from = shown
     let url = req
     let status = 0
     let pushed = false
     const added: Element[] = []
     html.setAttribute(LOADING, '')
+    progress(true)
     fire('load', { id, url, from, trigger })
     try {
-      const res = await (take(req) ?? fetch(req, { signal: c.signal }))
+      // not aborted when superseded: the response still fills the cache
+      const res = await get(req, trigger === 'popstate')
       if (!live()) return
       status = res.status
       // the final URL (after redirects); a fetch drops the fragment, which a redirect without one keeps
@@ -98,8 +146,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       if (fin.origin !== location.origin) throw new Error('cross-origin')
       fin.hash ||= new URL(req).hash
       url = fin.href
-      const doc = /html/.test(res.headers.get('content-type') ?? '') ? new DOMParser().parseFromString(await res.text(), 'text/html') : null
-      if (!live()) return
+      const doc = /html/.test(res.type) ? new DOMParser().parseFromString(res.text, 'text/html') : null
       if (doc?.querySelector(NAV)?.getAttribute('data-brust-build') !== build) throw new Error(`not a brust page of this build`)
 
       // §3 step 4: everything the new page needs before it is shown. The store tags first, ahead of the old ones (a
@@ -120,28 +167,70 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       if (!live()) return
 
       // §3 step 5: swap (one task, nothing painted in between), then history and scroll
-      for (const [e, m] of plan.sheets) m == null ? e.removeAttribute('media') : e.setAttribute('media', m)
-      pos.set(cur, [scrollX, scrollY])
-      const fresh = applyHead(plan)
-      const [body, whole] = swapBody(doc, LOADING)
-      added.length = 0
-      if (trigger === 'popstate') cur = pop || tag()
-      else if (replace) history.replaceState({ ...history.state, brust: cur }, '', url)
-      else history.pushState({ brust: (cur = stamp + n++) }, '', url)
-      pushed = true
-      shown = location.href
-      land(url, pos.get(pop!))
-      // the head scripts new to it run; after a whole-body swap (<html> and <body> attributes replaced) every one runs
-      // again, as on a full load (a theme script setting <html class>), but a data-brust-once one only if it is new
-      const head = whole ? [...document.head.children].filter((e) => !e.hasAttribute('data-brust-once') || fresh.includes(e)) : fresh
-      await runScripts([...classicScripts(head), ...body])
+      let fresh: Element[] = []
+      let body: HTMLScriptElement[] = []
+      let whole = false
+      const swap = () => {
+        if (!live()) return
+        for (const [e, m] of plan.sheets) m == null ? e.removeAttribute('media') : e.setAttribute('media', m)
+        pos.set(cur, [scrollX, scrollY])
+        for (const e of added) served.add(e)
+        fresh = applyHead(plan, (e) => served.has(e))
+        for (const e of fresh) served.add(e)
+        ;[body, whole] = swapBody(doc, LOADING)
+        added.length = 0
+        if (trigger === 'popstate') cur = pop || tag()
+        else if (replace) history.replaceState({ ...history.state, brust: cur }, '', url)
+        else history.pushState({ brust: (cur = stamp + n++) }, '', url)
+        pushed = true
+        shown = location.href
+        land(url, pos.get(pop!))
+      }
+      // §10.3: the swap inside a view transition (a root cross-fade). Everything slow is done by now. The first 8 images of
+      // the new page that are not lazy and not on screen already are preloaded (the same candidate: srcset, sizes,
+      // crossorigin and referrerpolicy copied) and get 100 ms in all to decode, so none pops in after the fade. `swap`
+      // runs once: a throw from it rejects updateCallbackDone and takes the error path; a throw from startViewTransition
+      // itself is a direct swap.
+      const start = (document as { startViewTransition?: (u: () => void) => VT }).startViewTransition
+      let t: VT | undefined
+      if (start && html.getAttribute('data-brust-transition') !== 'off' && !reduced()) {
+        const abs = (u: string | null) => (u ? new URL(u, url).href : '')
+        const onScreen = new Set([...document.querySelectorAll('img')].flatMap((i) => [i.src, i.currentSrc]).filter(Boolean))
+        await Promise.race([
+          new Promise((r) => setTimeout(r, 100)),
+          Promise.all([...doc.querySelectorAll('img')]
+            .filter((i) => i.getAttribute('loading') !== 'lazy' && (i.hasAttribute('src') || i.hasAttribute('srcset')) && !onScreen.has(abs(i.getAttribute('src'))))
+            .slice(0, 8)
+            .map((i) => {
+              const m = new Image()
+              for (const a of ['crossorigin', 'referrerpolicy', 'sizes']) if (i.hasAttribute(a)) m.setAttribute(a, i.getAttribute(a)!)
+              const set = i.getAttribute('srcset')
+              if (set) m.srcset = set.replace(/(^|,)(\s*)([^\s,]+)/g, (_, c, w, u) => c + w + abs(u))
+              if (i.hasAttribute('src')) m.src = abs(i.getAttribute('src'))
+              return m.decode().catch(() => {})
+            })),
+        ])
+        if (!live()) return
+        try { vt = t = start.call(document, swap) } catch {}
+      }
+      t ? await t.updateCallbackDone : swap()
+      if (!live()) return
+      // the head scripts new to it run; after a whole-body swap (<html> and <body> attributes replaced) every one the
+      // server sent runs again, as on a full load (a theme script setting <html class>), but a data-brust-once one only
+      // if it is new, and one a component added at runtime never (a loader such as Stripe.js must not run twice). A
+      // re-created script is the server's too, so the next reconcile still removes it.
+      const head = whole ? [...document.head.children].filter((e) => served.has(e) && (!e.hasAttribute('data-brust-once') || fresh.includes(e))) : fresh
+      await runScripts([...classicScripts(head), ...body], (s) => served.add(s))
       if (!live()) return
       html.removeAttribute(LOADING)
+      progress()
       if (status < 400) fire('success', { id, url, from, trigger, status })
       else fire('error', { id, url, from, trigger, status, error: undefined, swapped: true })
     } catch (error) {
       if (!live()) return
       html.removeAttribute(LOADING)
+      progress()
+      cache.delete(noHash(req))
       // nothing could be swapped: the default action is a full load of the URL (cancelable)
       if (fire('error', { id, url, from, trigger, status, error, swapped: false }, true)) location[pushed || trigger === 'popstate' ? 'replace' : 'assign'](url)
     } finally {
@@ -156,12 +245,14 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
     location[o?.replace ? 'replace' : 'assign'](url)
     return Promise.resolve()
   }
-  g[KEY] = { navigate }
+  g[KEY] = { navigate, clearCache: () => cache.clear() }
 
   on(document, 'click', (e: MouseEvent) => {
     if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
     const l = target(e.target)
     if (!l) return
+    // the click navigates now: a hover intent still pending would refetch a page the cache does not keep
+    clearTimeout(hover)
     const id = ++seq
     if (!fire('click', { id, url: l[1], from: shown, link: l[0] }, true)) return
     e.preventDefault()

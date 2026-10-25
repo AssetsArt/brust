@@ -157,13 +157,18 @@ Every UI surface then updates because they all read `team`. See [Actions](./acti
 - `Map`, `Set` and `Date` serialize to `{}`. A `BigInt` throws at serialization and names the store and the key. Functions and `undefined` are dropped.
 - The snapshot size is unbounded: put page-level state in a store, not a large dataset.
 - A store module's top-level code can run more than once in a worker, so keep store modules free of side effects. The pokedex keeps sqlite out of `stores/team.ts` for that reason.
+- An island that renders a `computed` of a store, on a page reached by an SPA navigation, hydrates that computed with the value it had on the first page (the seed tag carries signals only), so it can mismatch the server markup. Render the signals and derive in the component.
 - A store that is already live keeps its client value across an SPA navigation. The new page's snapshot only seeds a store the tab has not used yet; it never overwrites a live one. See [Navigation](./navigation.md).
 
-## 10. Example
+## 10. The built-in `navigation` store
+
+brust ships one store of its own, `navigation`, fed by the SPA navigation events (`state`, `url`, `to`, `trigger`, `status`, `error`, `id`). Import the handle from `@brust/core/navigation` and read it through `useStore` like any other store, in a native component or an island. The name is reserved. See [Navigation](./navigation.md#9-the-navigation-store).
+
+## 11. Example
 
 - `examples/pokedex`: `stores/team.ts`, `components/AddToTeamButton.tsx` (native), `components/TeamBuilder.tsx` (island), the layout loader in `lib/loaders.ts`, `actions.ts` and `lib/team-client.ts`.
 - `/unified` (`pages/UnifiedPage.tsx`): a React island counter, a native counter and a read-only native node on the store `unified`. `/unified?start=5` seeds the first paint with 5.
 
-## 11. Next
+## 12. Next
 
 Mutate server state from the client with typed endpoints: [Actions](./actions.md).
