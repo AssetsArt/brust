@@ -282,6 +282,8 @@ export interface RuntimeAssets {
   store: string
   /** Feature module name → file; every module is built, a route links the ones its components need. */
   features: Record<string, string>
+  /** F453: the standalone SPA-navigation module (`nav-<hex>.js`); imports nothing from the core, so a page that loads no runtime still has it. */
+  nav: string
 }
 
 /** `dist/client/runtime-<hex>.js` (the core; client chunks import `signal`, `defineBehavior`, … from this URL), then
@@ -306,8 +308,11 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<Runti
     write(file, `import ${JSON.stringify(join(dir, 'features', n))}\nexport * from ${JSON.stringify(join(dir, 'features', n))}\n`)
     return file
   })
+  // F453: `nav` is its own entry (it imports nothing from the core), named `nav-<hex>.js`.
+  const navEntry = join(dist, '.stage', 'nav.ts')
+  write(navEntry, `import ${JSON.stringify(join(dir, 'nav', 'index.ts'))}\n`)
   const built = await browserBuild(dist, 'runtime features', ctx, {
-    entrypoints: entries,
+    entrypoints: [...entries, navEntry],
     plugins: [
       {
         name: 'brust-runtime-core-external',
@@ -318,7 +323,7 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<Runti
   })
   const features: Record<string, string> = {}
   for (const n of RUNTIME_FEATURES) features[n] = built.get(`rt-${n}`)!
-  return { core, store: built.get('rt-store')!, features }
+  return { core, store: built.get('rt-store')!, features, nav: built.get('nav')! }
 }
 
 /** One entry chunk per component with client JS (`<id>-<hex>.js`), split: a module two chunks

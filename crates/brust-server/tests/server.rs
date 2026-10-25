@@ -624,7 +624,7 @@ fn layout_and_page_inlining_same_child_keep_their_own_slots() {
     let (st, h1, b1) = get(&s, "/nested", &[]);
     assert_eq!(st, 200, "{b1}");
     assert_eq!(
-        b1,
+        unmarked(&b1),
         "<div>L[MOVE x@brust-r8-twinLayout_l1.moveCard_d4_1-1]<p>P[MOVE y@brust-r8-twinLeaf_p1.moveCard_d4_1-1]</p></div>"
     );
     assert_eq!(
@@ -776,4 +776,56 @@ fn page_gzip_only_at_16k_and_above_at_level_1() {
         assert_eq!(gunzip(&gz), identity, "{path}");
         assert_eq!(gz, gzip_l1(&identity), "{path}: level 1");
     }
+}
+
+/// F453: a manifest with `assets.nav` puts the `nav` tag, first among the body-end scripts, on every full document
+/// (the all-static home page too) and on no fragment. `data-brust-root` is the root layout's `<id>:<hash>`, the same
+/// for two pages under that layout (the child is left out of the shell hash), and a HIT replays the same bytes.
+#[test]
+fn nav_tag_is_on_a_static_full_document_and_not_on_a_fragment() {
+    let dist = temp_dist(|m| {
+        m["assets"]["nav"] = json!("client/nav-0123456789.js");
+        m["assets"]["build"] = json!("0b1c2d3e4f5a6b7c");
+        m["routes"].as_array_mut().unwrap().push(
+            json!({"id": "r9", "pattern": "/frag", "chain": ["notFoundPage_f6"], "loaders": [],
+            "cache": null, "catch_all": false}),
+        );
+    });
+    let s = boot_in(FakeBun::new(default_loader, default_jobs), dist.path());
+    let nav = |body: &str| -> String {
+        let i = body.find("data-brust-nav").expect("nav tag");
+        let from = body[..i].rfind("<script").unwrap();
+        body[from..body[i..].find("</script>").unwrap() + i].to_string()
+    };
+    let (st, _, home) = get(&s, "/", &[]);
+    assert_eq!(st, 200, "{home}");
+    let tag = nav(&home);
+    assert!(
+        tag.starts_with("<script type=\"module\" src=\"/_brust/client/nav-0123456789.js\" data-brust-nav data-brust-build=\"0b1c2d3e4f5a6b7c\" data-brust-root=\"appLayout_a1:"),
+        "{tag}"
+    );
+    assert_eq!(home.matches("data-brust-nav").count(), 1);
+    assert!(
+        !home.contains("src=\"/_brust/client/runtime-"),
+        "the home page is all static, no runtime: {home}"
+    );
+    assert!(
+        home.find("data-brust-nav").unwrap() < home.rfind("</body>").unwrap(),
+        "{home}"
+    );
+    // Another page under the same root layout: same root mark.
+    let (_, _, other) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(
+        nav(&other).split("data-brust-root=").nth(1),
+        tag.split("data-brust-root=").nth(1)
+    );
+    // The fragment (no <body>) has no tag; the catch-all 404 is a full document and has one.
+    let (_, _, frag) = get(&s, "/frag", &[]);
+    assert!(!frag.contains("data-brust-nav"), "{frag}");
+    let (st, _, nf) = get(&s, "/nope", &[]);
+    assert_eq!(st, 404);
+    assert!(nf.contains("data-brust-nav"), "{nf}");
+    // A second request is a cache HIT or a fresh render: the same bytes.
+    let (_, _, again) = get(&s, "/", &[]);
+    assert_eq!(again, home);
 }

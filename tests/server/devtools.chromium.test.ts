@@ -246,33 +246,40 @@ test('hovering a static chain level highlights it on the page (chain markers via
   await shadow(page, '.ind').click()
   await shadow(page, '[role=tab]:has-text("Components")').click()
   const trace = await page.evaluate(() => JSON.parse(document.getElementById('__brust_trace')?.textContent ?? 'null'))
-  const layoutId = trace.route.chain[0] as string
-  // the expected box: the Range between the layout's markers, computed independently in the page
+  // The root (layout) is carried on the nav tag and spans the document; the page level is a `brust-l` comment pair.
+  const [rootId, levelId] = trace.route.chain as string[]
+  // the expected box: the Range between the level's markers, computed independently in the page
   const expected = await page.evaluate((id) => {
     const w = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT)
     let open: Comment | null = null
-    let depth = 0
     for (let n = w.nextNode() as Comment | null; n; n = w.nextNode() as Comment | null) {
       const v = n.nodeValue ?? ''
-      if (!open) { if (v === `brust:${id}`) { open = n; depth = 1 } continue }
-      if (v.startsWith('brust:')) depth++
-      else if (v === '/brust' && --depth === 0) {
+      if (!open) { if (v.startsWith(`brust-l:${id}:`)) open = n; continue }
+      if (v === `/brust-l:${id}`) {
         const r = document.createRange(); r.setStartAfter(open); r.setEndBefore(n)
         const b = r.getBoundingClientRect()
         return { left: b.left, top: b.top, width: b.width, height: b.height }
       }
     }
     return null
-  }, layoutId)
+  }, levelId as string)
   expect(expected).not.toBeNull()
+  expect(await page.evaluate((id) => document.querySelector('script[data-brust-nav]')?.getAttribute('data-brust-root')?.startsWith(`${id}:`), rootId as string)).toBe(true)
   expect(await shadow(page, '.hl').isHidden()).toBe(true)
-  await shadow(page, `.node[data-component="${layoutId}"]`).hover()
+  await shadow(page, `.node[data-component="${levelId}"]`).hover()
   await shadow(page, '.hl').waitFor({ state: 'visible' })
   const box = await shadow(page, '.hl').boundingBox()
   expect(Math.abs((box?.width ?? 0) - (expected?.width ?? -1))).toBeLessThan(6) // + the 2px border each side
   expect(Math.abs((box?.height ?? 0) - (expected?.height ?? -1))).toBeLessThan(6)
   await page.mouse.move(2, 2)
   await shadow(page, '.hl').waitFor({ state: 'hidden' })
+  // the root level has no comment pair: its box is the document's
+  await shadow(page, `.node[data-component="${rootId}"]`).hover()
+  await shadow(page, '.hl').waitFor({ state: 'visible' })
+  const rbox = await shadow(page, '.hl').boundingBox()
+  const doc = await page.evaluate(() => ({ w: document.documentElement.getBoundingClientRect().width, h: document.documentElement.getBoundingClientRect().height }))
+  expect(Math.abs((rbox?.width ?? 0) - doc.w)).toBeLessThan(6)
+  expect(Math.abs((rbox?.height ?? 0) - doc.h)).toBeLessThan(6)
   await page.close()
 }, 60_000)
 

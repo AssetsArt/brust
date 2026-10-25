@@ -109,12 +109,14 @@ test('/type-chart: one loader call and no job call on the first request (every j
   expect(c.loader_calls).toBe(a.loader_calls); expect(c.job_calls).toBe(a.job_calls)
 })
 
-test('catch-all is a static document: 404, 0 Bun calls on the first request, no script tag at all; public files served', async () => {
+test('catch-all is a static document: 404, 0 Bun calls on the first request, no runtime script (only the nav tag); public files served', async () => {
   const b = await srv.stats()
   const { r, html } = await get('/nope/really')
   expect(r.status).toBe(404)
   expect(html).toContain('<title>Not found · PokéDex</title>')
-  expect(html).not.toContain('<script')
+  // F453: the only script of an all-static page is the nav module, so a click on its links still navigates in place.
+  expect([...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1])).toEqual([expect.stringMatching(/^\/_brust\/client\/nav-[0-9a-f]{10}\.js$/)])
+  expect(html.match(/<script/g)).toHaveLength(1)
   expect(html).not.toContain('brust-island')
   expect(await srv.stats()).toMatchObject({ loader_calls: b.loader_calls, job_calls: b.job_calls })
   const fav = await fetch(`${srv.base}/public/favicon.svg`)

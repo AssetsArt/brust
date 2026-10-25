@@ -137,7 +137,7 @@ test('a client-sent token header does nothing: only the proxy has the token', as
   expect(await r.text()).toContain('id="__brust_trace"') // the proxy added its own, from its own token
 })
 
-test('dev DOM: chain levels are wrapped in <!--brust:id--> markers, native instances are on __brustDev, hydration and clicks still work', async () => {
+test('dev DOM: inner chain levels are wrapped in <!--brust-l:id:hash--> markers and the root is on the nav tag, native instances are on __brustDev, hydration and clicks still work', async () => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on('console', (m) => {
@@ -150,11 +150,16 @@ test('dev DOM: chain levels are wrapped in <!--brust:id--> markers, native insta
   const markers = await page.evaluate(() => {
     const out: string[] = []
     const w = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT)
-    for (let n = w.nextNode(); n; n = w.nextNode()) if ((n.nodeValue ?? '').startsWith('brust:')) out.push((n.nodeValue as string).slice(6))
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const v = n.nodeValue ?? ''
+      if (v.startsWith('brust-l:')) out.push(v.slice(8, v.lastIndexOf(':')))
+    }
     return out
   })
-  expect(markers).toEqual(t.route.chain.filter((id: string) => markers.includes(id)))
-  expect(markers.length).toBeGreaterThan(0)
+  // The root level is carried on the nav tag (data-brust-root = id:hash), every inner level by a comment pair.
+  const root = await page.evaluate(() => document.querySelector('script[data-brust-nav]')?.getAttribute('data-brust-root') ?? '')
+  expect([root.slice(0, root.lastIndexOf(':')), ...markers]).toEqual(t.route.chain.filter((id: string) => id === root.slice(0, root.lastIndexOf(':')) || markers.includes(id)))
+  expect(root).not.toBe('') // /counter is a one-level chain: the root is its only level, so no comment pair
   await eventually(async () => (await page.evaluate(() => (window as unknown as { __brustDev?: { instances: Set<unknown> } }).__brustDev?.instances.size ?? 0)) > 0, 'a live instance on __brustDev')
   const names = await page.evaluate(() => [...((window as unknown as { __brustDev: { instances: Set<{ name: string; host: Element }> } }).__brustDev.instances)].map((i) => `${i.name}:${i.host.getAttribute('x-data')}`))
   expect(names.length).toBeGreaterThan(0)
@@ -178,7 +183,7 @@ test('a react island page: no marker inside <brust-island>, it hydrates with no 
     let n = 0
     for (const isl of document.querySelectorAll('brust-island')) {
       const w = document.createTreeWalker(isl, NodeFilter.SHOW_COMMENT)
-      for (let c = w.nextNode(); c; c = w.nextNode()) if ((c.nodeValue ?? '').startsWith('brust:')) n++
+      for (let c = w.nextNode(); c; c = w.nextNode()) if ((c.nodeValue ?? '').startsWith('brust-l:')) n++
     }
     return n
   })
@@ -230,7 +235,7 @@ test('dev.json: component -> file, tier, react reason, diagnostics; its tiers eq
   rmSync(prod, { recursive: true, force: true })
 }, 120_000)
 
-test('a document with a doctype stays in standards mode with the dev markers (compatMode CSS1Compat); a layout without one gets one (F392); a non-document control stays BackCompat', async () => {
+test('a document with a doctype stays in standards mode with the level markers (compatMode CSS1Compat); a layout without one gets one (F392); a non-document control stays BackCompat', async () => {
   const out = join(app, '.doctype-out')
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out, '--dev'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.exitCode, b.stderr.toString()).toBe(0)
@@ -266,8 +271,9 @@ test('a document with a doctype stays in standards mode with the dev markers (co
       await page.goto(`${s.url}/counter`, { waitUntil: 'domcontentloaded' })
       const r = await page.evaluate(() => {
         const w = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT)
-        let markers = 0
-        for (let n = w.nextNode(); n; n = w.nextNode()) if ((n.nodeValue ?? '').startsWith('brust:')) markers++
+        // F453: no comment ahead of the doctype either; the root level's mark is the nav tag's data-brust-root.
+        let markers = document.querySelector('script[data-brust-nav][data-brust-root]') ? 1 : 0
+        for (let n = w.nextNode(); n; n = w.nextNode()) if ((n.nodeValue ?? '').startsWith('brust-l:')) markers++
         return { compat: document.compatMode, markers, doctype: document.doctype?.name ?? null, firstNode: document.childNodes[0]?.nodeType ?? 0 }
       })
       await page.close()
@@ -279,8 +285,8 @@ test('a document with a doctype stays in standards mode with the dev markers (co
   try {
     const withDoctype = await mode(`<!doctype html>${original}`)
     expect(withDoctype).toEqual({ compat: 'CSS1Compat', markers: withDoctype.markers, doctype: 'html', firstNode: 10 }) // the doctype is the document's FIRST node (10), no marker before it
-    expect(withDoctype.markers).toBeGreaterThan(0) // the markers are there, after the doctype
-    // F392: a root layout with no doctype of its own gets one, in front of the dev marker
+    expect(withDoctype.markers).toBeGreaterThan(0) // the root mark is there (on the nav tag)
+    // F392: a root layout with no doctype of its own gets one, in front of everything
     const bare = await mode(original)
     expect(bare).toEqual({ compat: 'CSS1Compat', markers: bare.markers, doctype: 'html', firstNode: 10 })
     // the control: a document that is not a full document (an element ahead of `<html>`) gets no doctype and is quirks,

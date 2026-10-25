@@ -76,7 +76,8 @@ for (const [name, path] of Object.entries(routes)) {
 // F408: brust writes no text of its own around a page's root element. The template header used to end in a line break, so
 // `<body>` was followed by "\n" and then `<main>` where React renders `<body><main>`.
 test('served and static HTML put the page root right after <body>, as React renders it', async () => {
-  const after = (html: string) => html.match(/<body[^>]*>([\s\S]{0,12})/)?.[1]
+  // F453: the level markers are brust's own comments (never compared with React).
+  const after = (html: string) => html.replace(/<!--\/?brust-l:[^>]*-->/g, '').match(/<body[^>]*>([\s\S]{0,12})/)?.[1]
   for (const [name, path] of Object.entries(routes)) {
     const file = path === '/' ? 'index.html' : `${path.slice(1)}.html`
     const react = after(`<!doctype html>${renderPage(name)}`)

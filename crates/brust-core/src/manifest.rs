@@ -221,6 +221,13 @@ pub struct Assets {
     /// L33: feature module name → `client/<file>`. Absent in an older manifest (no component lists a feature).
     #[serde(default)]
     pub features: BTreeMap<String, String>,
+    /// F453: the standalone SPA-navigation module (`client/nav-<hex>.js`). Absent in an older manifest: no `nav` tag.
+    #[serde(default)]
+    pub nav: Option<String>,
+    /// F453: the build id the `nav` tag carries (`data-brust-build`): a digest of the manifest, so it changes
+    /// whenever `brust build` produces different output. Absent in an older manifest.
+    #[serde(default)]
+    pub build: Option<String>,
 }
 
 /// A validated manifest plus every component's template source, read once.

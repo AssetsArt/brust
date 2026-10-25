@@ -80,6 +80,7 @@ test('layout: one file per page, 404.html, assets at their URL paths, _headers/_
   expect(all.filter((f) => f.endsWith('.html'))).toEqual(['404.html', 'docs.html', 'docs/intro.html', 'index.html', 'poke/100%.html', 'poke/pikachu.html', 'poke/ไทย.html', 'reads.html'])
   expect(all.filter((f) => !f.endsWith('.html')).map((f) => f.replace(/-[0-9a-f]{10}\.js$/, '.js'))).toEqual([
     '_brust/client/layout_255371d6.js',
+    '_brust/client/nav.js',
     '_brust/client/react-counter_f1dc72be.js',
     '_brust/client/rt-basics.js',
     '_brust/client/rt-collection.js',
@@ -114,6 +115,13 @@ test('layout: one file per page, 404.html, assets at their URL paths, _headers/_
 test('R9.5: a loader reading the request warns and the page is the no-cookie one', () => {
   expect(buildLog).toContain('[brust] warning ssg-request-read route r8 (/reads) reads req.cookies["theme"] (at /reads)')
   expect(readFileSync(join(out, 'reads.html'), 'utf8')).toContain('<p class="theme">none</p>')
+})
+
+test('F453: --target static keeps the nav tag and the level markers (a comment-stripping host would break layout keeping)', () => {
+  const doc = readFileSync(join(out, 'docs/intro.html'), 'utf8')
+  expect(doc).toMatch(/<script type="module" src="\/_brust\/client\/nav-[0-9a-f]{10}\.js" data-brust-nav data-brust-build="[0-9a-f]{16}" data-brust-root="[^":]+:[0-9a-f]{16}"><\/script>/)
+  expect(doc).toMatch(/<!--brust-l:[^:>]+:[0-9a-f]{16}-->[\s\S]*<!--\/brust-l:[^>]+-->/)
+  for (const f of ['404.html', 'index.html', 'docs.html', 'reads.html']) expect([f, readFileSync(join(out, f), 'utf8').includes('data-brust-nav')]).toEqual([f, true])
 })
 
 test('F392: every written page starts with <!doctype html> exactly once (a root layout returning <html> writes none itself)', () => {
