@@ -3,6 +3,7 @@
 // `worker.ts` re-exports everything here, so existing importers are unchanged.
 import { installServerResolver, type StoreSnapshot } from './store/core-adapter'
 import { collectSnapshot, getServerInstance, runInStoreContext, touchStores } from './store/server-context'
+import { NAVIGATION_MODULE } from './store/builtin'
 import { type FlatRoute, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type Verdict } from './routes'
 
 installServerResolver(getServerInstance)
@@ -236,7 +237,11 @@ export function makeHandlers(opts: {
         const merged: Record<string, unknown> = Object.create(null)
         try {
           const touch = storeIdx.get(req.routeId)
-          if (touch) touchStores(touch, storeTable)
+          if (touch) {
+            touchStores(touch, storeTable)
+            // The built-in `navigation` store (design §11) paints the request's path + search on first paint.
+            if (touch.includes(NAVIGATION_MODULE)) (storeTable[NAVIGATION_MODULE] as { navigation?: { hydrate(s: object): void } } | undefined)?.navigation?.hydrate({ url: req.req.url })
+          }
           for (const node of leaf.chain) {
             if (!node.loader) continue
             let r: unknown

@@ -439,6 +439,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/title-hoist.chromium.test.ts
       # F454: SPA navigation equals a full load (served and static), events, opt-outs, prefetch, the layout matrix.
       - run: bun test --timeout 300000 tests/server/spa-nav.chromium.test.ts
+      # F461: the built-in navigation store (useStore(navigation)) in a native reader and islands, served and static.
+      - run: bun test --timeout 300000 tests/server/nav-store.chromium.test.ts
       # F442 W3b: Radix's own useId (react-id) is an id slot with the radix- prefix; served ids share as React's do.
       - run: bun test --timeout 120000 tests/server/radix-id.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.

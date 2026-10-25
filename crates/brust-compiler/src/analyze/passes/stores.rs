@@ -1,13 +1,16 @@
 //! Stores pass (M3-F D7): resolves each `useStore` handle to the `defineStore('<name>', …)` it
 //! names, through the handle's import (`analyze/stores.rs`). An unresolved handle is a
 //! `store-name-unresolved` fallback (the tier pass then makes the component React); the same
-//! name defined by two modules in one compile is a `store-name-duplicate` warning; a read whose
+//! name defined by two modules in one compile is a `store-name-duplicate` warning, and a user store named
+//! `navigation` (the built-in's reserved name, `analyze/stores.rs`) a `store-name-reserved` error; a read whose
 //! job-input path falls back to the coarse `__store` (R3) is a `store-name-dotted` warning.
 //! [`check_render`] then refuses store writes, handle reads and non-signal keys in render (R1).
 use super::PassCtx;
 use super::deps::{STORE_INPUT, store_input};
 use crate::analyze::modules::resolve as resolve_module;
-use crate::analyze::stores::{exports_a_store, read_store_export};
+use crate::analyze::stores::{
+    NAVIGATION_SOURCE, builtin_store, exports_a_store, read_store_export,
+};
 use crate::ir::{
     ArrowBody, Attr, ComponentIR, Diagnostic, Expr, IdentKind, Node, RawExpr, RawKind, ServerExpr,
     StoreRef, StoreUse, Tier,
@@ -27,6 +30,17 @@ pub fn resolve(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
         };
         match store_of(source, export, ctx) {
             Ok(r) => {
+                if r.name == "navigation" && r.module != NAVIGATION_SOURCE {
+                    diags.push(Diagnostic::error(
+                        "store-name-reserved",
+                        format!(
+                            "useStore({}): the store name 'navigation' is reserved for the built-in navigation store ({NAVIGATION_SOURCE}), and {} defines another",
+                            u.handle, r.module
+                        ),
+                        u.loc,
+                        "rename the store, or read the built-in one: import { navigation } from '@brust/core/navigation'",
+                    ));
+                }
                 let mut modules = ctx.modules.borrow_mut();
                 match modules.store_names.get(&r.name) {
                     Some(other) if *other != r.module => diags.push(Diagnostic::warning(
@@ -250,11 +264,15 @@ pub fn check_jobs(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
     let Some((local, source)) = imports.iter().find_map(|(local, source, imported)| {
         let hit = match imported.as_str() {
             "*" => {
-                is_relative(source)
-                    && resolve_module(ctx.path, source, ctx.opts)
-                        .is_some_and(|p| exports_a_store(&p, ctx.opts, ctx.modules))
+                source == NAVIGATION_SOURCE
+                    || (is_relative(source)
+                        && resolve_module(ctx.path, source, ctx.opts)
+                            .is_some_and(|p| exports_a_store(&p, ctx.opts, ctx.modules)))
             }
-            export => is_relative(source) && is_store_handle(source, export, ctx),
+            export => {
+                builtin_store(source, export).is_some()
+                    || (is_relative(source) && is_store_handle(source, export, ctx))
+            }
         };
         hit.then_some((local, source))
     }) else {
@@ -283,8 +301,9 @@ fn is_relative(source: &str) -> bool {
 /// `true` when `(source, export)` names a `defineStore` handle (relative imports only; a
 /// package or alias handle is a known gap).
 fn is_store_handle(source: &str, export: &str, ctx: &PassCtx<'_>) -> bool {
-    resolve_module(ctx.path, source, ctx.opts)
-        .is_some_and(|p| read_store_export(&p, export, ctx.opts, ctx.modules).is_ok())
+    builtin_store(source, export).is_some()
+        || resolve_module(ctx.path, source, ctx.opts)
+            .is_some_and(|p| read_store_export(&p, export, ctx.opts, ctx.modules).is_ok())
 }
 
 /// `cart` → `(source, "cart")`; `stores.cart` of a namespace import → `(source, "cart")`.
@@ -586,6 +605,9 @@ fn store_of(source: &str, export: &str, ctx: &PassCtx<'_>) -> Result<StoreRef, U
         reason: "the store is defined in the component's own module".into(),
         own_module: true,
     };
+    if let Some(r) = builtin_store(source, export) {
+        return Ok(r);
+    }
     if !crate::analyze::modules::is_relative_spec(source) {
         return Err(err(format!(
             "the handle is imported from the package {source}"

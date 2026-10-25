@@ -18,6 +18,7 @@ import { isServerOnlyMarker, serverOnlyEmptyPlugin } from './server-only'
 import { RUNTIME_FEATURES } from './features'
 import { RELATIVE_SPEC, type ResolveTarget, resolveNative } from './esm-resolve'
 import { packageDirOf } from './pkg-src'
+import { BUILTIN_STORE_MODULES } from '../store/builtin'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 /** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). `brust dev` builds set
@@ -741,6 +742,10 @@ export async function buildJobs(
   const entries: string[] = []
   const storePaths = [...new Set(stores)].sort()
   for (const [i, p] of storePaths.entries()) {
+    if (BUILTIN_STORE_MODULES.includes(p)) {
+      imports.push(`import * as S${i} from ${JSON.stringify(p)}`) // a package module, external in jobs.js
+      continue
+    }
     if (isAbsolute(p) || p.split('/').includes('..') || !isFile(resolve(appRoot, p))) {
       throw new BuildError('store-module', `store module ${p} is not a file inside the app (${appRoot})`)
     }
