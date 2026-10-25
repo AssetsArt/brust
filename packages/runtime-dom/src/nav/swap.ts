@@ -48,11 +48,14 @@ export function planHead(next: Element[]): HeadPlan {
   return { want, fixed, sheets }
 }
 
-/** Make the head's element children exactly `plan.want`, moving no fixed element. Returns the elements new to it. */
-export function applyHead({ want, fixed }: HeadPlan): Element[] {
+/**
+ * Make the head's element children `plan.want`, moving no fixed element. An old element not wanted is removed only if
+ * `served` says it came from the server: one a live component added at runtime stays. Returns the elements new to it.
+ */
+export function applyHead({ want, fixed }: HeadPlan, served: (el: Element) => boolean = () => true): Element[] {
   const head = document.head
   const keep = new Set(want)
-  for (const el of [...head.children]) if (!keep.has(el)) el.remove()
+  for (const el of [...head.children]) if (!keep.has(el) && served(el)) el.remove()
   const fresh: Element[] = []
   let prev: Element | null = null
   for (let el of want) {

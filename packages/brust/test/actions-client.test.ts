@@ -149,3 +149,25 @@ describe('client types', () => {
     expect(typeof never).toBe('function')
   })
 })
+
+describe('SPA navigation page cache (design §10.1)', () => {
+  test('a non-GET call that gets a response clears it; a GET does not; no nav module: nothing happens', async () => {
+    const KEY = Symbol.for('brust.nav')
+    let cleared = 0
+    const api = client<App>({ fetch: stub([]) })
+    await api.team.post({ id: '1', name: 'a' })
+    ;(globalThis as Record<symbol, unknown>)[KEY] = { clearCache: () => cleared++ }
+    try {
+      await api.hello.get()
+      expect(cleared).toBe(0)
+      const r = await api.team.post({ id: '1', name: 'a' })
+      expect(r.status).toBe(200)
+      expect(cleared).toBe(1)
+      const failing = client<App>({ fetch: (async () => { throw new TypeError('offline') }) as unknown as typeof fetch })
+      await failing.team.post({ id: '1', name: 'a' })
+      expect(cleared).toBe(1) // no response: nothing changed on the server
+    } finally {
+      delete (globalThis as Record<symbol, unknown>)[KEY]
+    }
+  })
+})

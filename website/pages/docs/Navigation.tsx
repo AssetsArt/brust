@@ -1,4 +1,5 @@
-// Navigation — links swap the page in place, the one rule, what is swapped, opt-outs, prefetch, the brust:nav:* events, a preloader, navigate().
+// Navigation — links swap the page in place, the one rule, what is swapped, opt-outs, prefetch and the page cache, the brust:nav:* events, the progress
+// bar, page transitions, navigate().
 // Source of truth: docs/navigation.md and docs/design/2026-10-25-spa-navigation-design.md. This page is static: the docs site you are reading navigates this way.
 import CodeBlock from '../../components/CodeBlock'
 import Lead from '../../components/docs/Lead'
@@ -8,7 +9,7 @@ import type { TocItem } from '../../lib/nav'
 
 export interface NavigationData {
   toc: TocItem[]
-  blocks: Record<'tag' | 'bar' | 'barCss' | 'go' | 'persist', CodeBlockData>
+  blocks: Record<'tag' | 'bar' | 'barCss' | 'go' | 'persist' | 'clear' | 'color' | 'vt', CodeBlockData>
 }
 
 const TAG = `<script type="module" src="/_brust/client/nav-3f9c1a07b2.js"
@@ -34,6 +35,16 @@ await navigate('/search?q=brust', { replace: true })   // replace the current on
 
 const PERSIST = `<audio data-brust-persist="player" src="/public/live.mp3" controls></audio>`
 
+const CLEAR = `import { clearNavigationCache } from '@brust/core'
+
+await fetch('/api/cart', { method: 'POST', body })
+clearNavigationCache()`
+
+const COLOR = `:root { --brust-progress-color: var(--accent); }`
+
+const VT = `::view-transition-old(root),
+::view-transition-new(root) { animation-duration: 150ms; }`
+
 export async function navigationLoader(): Promise<NavigationData> {
   return {
     toc: [
@@ -41,9 +52,10 @@ export async function navigationLoader(): Promise<NavigationData> {
       { id: 'swap', title: 'What is swapped' },
       { id: 'clicks', title: 'Which clicks navigate' },
       { id: 'opt-outs', title: 'Opt-outs' },
-      { id: 'prefetch', title: 'Prefetch' },
+      { id: 'prefetch', title: 'Prefetch and the cache' },
       { id: 'events', title: 'Events' },
-      { id: 'preloader', title: 'A preloader' },
+      { id: 'progress', title: 'The progress bar' },
+      { id: 'transitions', title: 'Page transitions' },
       { id: 'navigate', title: 'navigate()' },
       { id: 'stores', title: 'Stores and islands' },
     ],
@@ -53,6 +65,9 @@ export async function navigationLoader(): Promise<NavigationData> {
       barCss: codeBlock({ lang: 'text', file: 'app.css', code: BAR_CSS }),
       go: codeBlock({ lang: 'ts', file: 'Search.tsx', code: GO }),
       persist: codeBlock({ lang: 'text', file: 'Layout.tsx', code: PERSIST }),
+      clear: codeBlock({ lang: 'ts', file: 'cart.ts', code: CLEAR }),
+      color: codeBlock({ lang: 'text', file: 'app.css', code: COLOR }),
+      vt: codeBlock({ lang: 'text', file: 'app.css', code: VT }),
     },
   }
 }
@@ -86,7 +101,7 @@ export default function Navigation({ blocks }: NavigationData) {
           the whole body is replaced, and the attributes of <code>&lt;html&gt;</code> and <code>&lt;body&gt;</code> follow the new page.
         </li>
         <li>
-          <b>Scroll</b>: the new page scrolls to its <code>#hash</code> target or to the top. Back and forward restore the position the entry had. A link to the URL already on screen re-fetches it without a new history entry.
+          <b>Scroll</b>: the new page scrolls to its <code>#hash</code> target or to the top. Back and forward restore the position the entry had. A link to the URL already on screen loads it again, from the page cache while it is fresh, without a new history entry.
         </li>
       </ul>
 
@@ -133,6 +148,24 @@ export default function Navigation({ blocks }: NavigationData) {
             </td>
             <td>On a classic <code>&lt;script&gt;</code>: it runs on the first load of the tab only, as an analytics loader should.</td>
           </tr>
+          <tr>
+            <td>
+              <code>data-brust-cache="&lt;seconds&gt;"</code>
+            </td>
+            <td>On <code>&lt;html&gt;</code>: how long a fetched page stays fresh in the page cache (default 300). <code>0</code> turns the cache off.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>data-brust-progress="off"</code>
+            </td>
+            <td>On <code>&lt;html&gt;</code>: no progress bar.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>data-brust-transition="off"</code>
+            </td>
+            <td>On <code>&lt;html&gt;</code>: no page transition.</td>
+          </tr>
         </tbody>
       </table>
       <CodeBlock code={blocks.persist.code} lang={blocks.persist.lang} file={blocks.persist.file} html={blocks.persist.html} />
@@ -141,10 +174,33 @@ export default function Navigation({ blocks }: NavigationData) {
         script that sets <code>&lt;html class&gt;</code> correct. A script in a layout that was kept does not run again.
       </p>
 
-      <h2 id="prefetch">Prefetch</h2>
+      <h2 id="prefetch">Prefetch and the page cache</h2>
       <p>
-        brust fetches a link's page when you show intent: after 65 ms of hover, on focus, or at once on <code>touchstart</code>. The click then uses that response, which is held for 15 seconds and used once. Prefetch is off when the browser asks to
-        save data or is on a <code>2g</code> connection, and for the opt-outs above. A prefetch fires no events.
+        brust fetches a link's page when you show intent: after 65 ms of hover, on focus, or at once on <code>touchstart</code>. Prefetch is off when the browser asks to save data or is on a <code>2g</code> connection, and for the opt-outs above. A
+        prefetch fires no events.
+      </p>
+      <p>Every fetched page, prefetched or navigated to, goes into a page cache in memory, one per tab:</p>
+      <ul>
+        <li>
+          <b>Fresh for 5 minutes.</b> While a page is fresh, hovering its link again fetches nothing, and a click or <code>navigate()</code> shows it with zero requests. After that it is fetched again.
+        </li>
+        <li>
+          <b>Back and forward</b> show the cached page at any age, as the browser's back-forward cache does. A click during a prefetch waits for that same request.
+        </li>
+        <li>
+          <b>Never cached</b>: a response with <code>Cache-Control: no-store</code>, any status of 400 or more, and a response that is not a brust page of this build. A page that must never be stale sends <code>no-store</code>.
+        </li>
+        <li>
+          It holds at most 32 pages, the least recently used going first, keyed by the URL without its <code>#hash</code>. <code>&lt;html data-brust-cache="60"&gt;</code> sets the freshness in seconds, and <code>0</code> turns it off.
+        </li>
+      </ul>
+      <p>
+        <b>Mutations clear it.</b> A call through <code>@brust/core/client</code> with any method other than <code>GET</code> or <code>HEAD</code> clears the whole cache once it gets a response, so a page read after a mutation is never one from
+        before it. If you change data another way, clear it yourself:
+      </p>
+      <CodeBlock code={blocks.clear.code} lang={blocks.clear.lang} file={blocks.clear.file} html={blocks.clear.html} />
+      <p>
+        A navigation served from the cache fires the same events, and it ends within the same task, so <code>data-brust-loading</code> is never painted.
       </p>
 
       <h2 id="events">Events</h2>
@@ -211,7 +267,11 @@ export default function Navigation({ blocks }: NavigationData) {
           the end of a navigation with its start.
         </li>
         <li>
-          The order is <code>click</code> (link clicks only), <code>load</code>, then exactly one of <code>success</code> or <code>error</code>. A newer navigation aborts the one in flight, and the aborted one fires nothing more.
+          The order is <code>click</code> (link clicks only), <code>load</code>, then exactly one of <code>success</code> or <code>error</code>. A newer navigation supersedes the one in flight, and the superseded one fires nothing more. Its
+          request still finishes and goes into the page cache.
+        </li>
+        <li>
+          <code>success</code> fires when the new page is in the DOM, not when a page transition finishes animating.
         </li>
         <li>
           <code>error</code> has two cases. If the server answered with a brust page and a status of 400 or more, such as a <code>notFound()</code> 404, that page is swapped in as a full load would show it: <code>swapped</code> is{' '}
@@ -226,11 +286,38 @@ export default function Navigation({ blocks }: NavigationData) {
         While a navigation loads, <code>&lt;html&gt;</code> carries <code>data-brust-loading</code>: set at <code>load</code>, removed at <code>success</code> or <code>error</code>.
       </p>
 
-      <h2 id="preloader">A preloader</h2>
-      <p>With the events:</p>
+      <h2 id="progress">The progress bar</h2>
+      <p>
+        A thin line along the top of the viewport while the next page loads. It appears only when a navigation is still loading 150 ms after <code>load</code>, so a cached page or a fast server never shows it. It moves on its own toward about 90%,
+        runs to the end at <code>success</code> or <code>error</code>, and fades out. With <code>prefers-reduced-motion: reduce</code> it shows without the movement or the fade. Set its colour with <code>--brust-progress-color</code>:
+      </p>
+      <CodeBlock code={blocks.color.code} lang={blocks.color.lang} file={blocks.color.file} html={blocks.color.html} />
+      <p>
+        To build your own indicator, set <code>data-brust-progress="off"</code> on <code>&lt;html&gt;</code> and use the events:
+      </p>
       <CodeBlock code={blocks.bar.code} lang={blocks.bar.lang} file={blocks.bar.file} html={blocks.bar.html} />
-      <p>Or in CSS alone, with no JavaScript:</p>
+      <p>Or CSS alone, with no JavaScript:</p>
       <CodeBlock code={blocks.barCss.code} lang={blocks.barCss.lang} file={blocks.barCss.file} html={blocks.barCss.html} />
+
+      <h2 id="transitions">Page transitions</h2>
+      <p>
+        When the browser has the View Transitions API, the swap runs inside a view transition: the browser's own cross-fade of the whole page, opacity only, about 250 ms. Pixels that are the same in both pages, such as a header or sidebar that
+        stays, do not visibly change, so only the content that changed fades. Nothing slides or scales.
+      </p>
+      <ul>
+        <li>Everything slow happens first: the fetch, the new page's scripts and stylesheets. The old page is frozen for about one frame, never for a network wait.</li>
+        <li>
+          The eager images of the new page get up to 100 ms to decode before the fade starts, so a hero image does not pop in after it. Mark images below the fold <code>loading="lazy"</code>: those are not waited for.
+        </li>
+        <li>Back and forward fade the same way. A navigation started during a transition skips it and lands on the newer page.</li>
+        <li>
+          With <code>prefers-reduced-motion: reduce</code>, without the API, or with <code>data-brust-transition="off"</code> on <code>&lt;html&gt;</code>, the page swaps at once.
+        </li>
+      </ul>
+      <p>
+        Customise it with the standard <code>::view-transition-*</code> CSS, or give your own elements a <code>view-transition-name</code>:
+      </p>
+      <CodeBlock code={blocks.vt.code} lang={blocks.vt.lang} file={blocks.vt.file} html={blocks.vt.html} />
 
       <h2 id="navigate">navigate()</h2>
       <CodeBlock code={blocks.go.code} lang={blocks.go.lang} file={blocks.go.file} html={blocks.go.html} />
@@ -240,7 +327,7 @@ export default function Navigation({ blocks }: NavigationData) {
         <code>replace: true</code>.
       </p>
       <p>
-        <code>@brust/core</code> also exports the types <code>NavigateOptions</code>, <code>NavTrigger</code>, <code>NavLoadDetail</code>, <code>NavSuccessDetail</code> and <code>NavErrorDetail</code>.
+        <code>@brust/core</code> also exports <code>clearNavigationCache()</code> and the types <code>NavigateOptions</code>, <code>NavTrigger</code>, <code>NavLoadDetail</code>, <code>NavSuccessDetail</code> and <code>NavErrorDetail</code>.
       </p>
 
       <h2 id="stores">Stores and islands</h2>

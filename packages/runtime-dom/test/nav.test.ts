@@ -178,7 +178,7 @@ test('classicScripts picks the scripts a full load runs: not modules, not JSON',
 type Ev = [string, Record<string, unknown>, boolean]
 let stop = () => {}
 let events: Ev[] = []
-let pages: Record<string, { status?: number; html: string; type?: string } | Error> = {}
+let pages: Record<string, { status?: number; html: string; type?: string; headers?: Record<string, string> } | Error> = {}
 let fetched: string[] = []
 let loaded: string[] = []
 const realFetch = globalThis.fetch
@@ -195,7 +195,7 @@ beforeEach(() => {
     const p = pages[new URL(String(u)).pathname]
     if (!p) throw new TypeError('network down')
     if (p instanceof Error) throw p
-    return new Response(p.html, { status: p.status ?? 200, headers: { 'content-type': p.type ?? 'text/html; charset=utf-8' } })
+    return new Response(p.html, { status: p.status ?? 200, headers: { 'content-type': p.type ?? 'text/html; charset=utf-8', ...p.headers } })
   }) as typeof fetch
   for (const n of ['click', 'load', 'success', 'error'])
     document.addEventListener('brust:nav:' + n, record, { signal: (listen = new AbortController()).signal })
@@ -348,7 +348,7 @@ test('clicks left to the browser: modifiers, other buttons, target, download, da
   expect(location.pathname).toBe('/a')
 })
 
-test('a link to the URL on screen re-fetches and replaces the entry', async () => {
+test('a link to the URL on screen (not cached: the first load) fetches it and replaces the entry', async () => {
   start()
   pages['/a'] = { html: doc(app('1', 'a2')) }
   $('#to-b')!.setAttribute('href', '/a')
@@ -535,4 +535,274 @@ test('boot does nothing on a page without a nav tag, and only once', () => {
   const again = boot()
   again()
   expect((globalThis as Record<symbol, unknown>)[Symbol.for('brust.nav')]).toBeDefined()
+})
+
+// ---- wave 2 (design §10): the page cache, the progress bar, view transitions --------------------------------
+
+const bridge = () => (globalThis as unknown as Record<symbol, NavBridge>)[Symbol.for('brust.nav')]!
+const focus = (el: Element) => el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+
+test('the cache: a prefetch serves later hovers and the click at any time in 5 minutes, then it is fetched again', async () => {
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')) }
+  const now = spyOn(Date, 'now')
+  let t = 1e12
+  now.mockImplementation(() => t)
+  const a = $('#to-b')!
+  focus(a)
+  await settle()
+  focus(a) // hover again: no new request
+  t += 16e3 // alpha.26 held a prefetch for 15 s only
+  click(a)
+  await settle()
+  expect(fetched).toEqual(['http://localhost/b'])
+  expect(names()).toEqual(['click', 'load', 'success'])
+  // the same contract on a hit: loading set at load, cleared at success
+  expect(events.map((e) => e[2])).toEqual([false, true, false])
+  t += 5 * 60e3 // stale: dropped on read
+  focus(a)
+  expect(fetched).toEqual(['http://localhost/b', 'http://localhost/b'])
+  now.mockRestore()
+})
+
+test('the cache: navigations fill it; back/forward use an entry at any age; the hash is not part of the key', async () => {
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')) }
+  pages['/a'] = { html: doc(app('1', 'a')) }
+  const now = spyOn(Date, 'now')
+  let t = 1e12
+  now.mockImplementation(() => t)
+  await bridge().navigate('/b')
+  await bridge().navigate('/a#x')
+  expect(fetched).toEqual(['http://localhost/b', 'http://localhost/a'])
+  t += 60 * 60e3
+  history.back()
+  await settle()
+  expect(location.pathname).toBe('/b')
+  expect($('#m')!.textContent).toBe('b')
+  expect(fetched.length).toBe(2) // back after an hour: still the cached page
+  await bridge().navigate('/b') // a forward navigation to the same stale entry fetches
+  expect(fetched.length).toBe(3)
+  now.mockRestore()
+})
+
+test('never cached: no-store, a status of 400 or more, another build; data-brust-cache="0" only shares in-flight fetches', async () => {
+  const assign = spyOn(location, 'assign').mockImplementation(() => {})
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')), headers: { 'cache-control': 'private, no-store' } }
+  pages['/nf'] = { status: 404, html: doc(app('1', 'nf')) }
+  pages['/old'] = { html: doc({ ...app('1', 'old'), build: 'b0' }) }
+  for (const u of ['/b', '/b', '/nf', '/nf', '/old', '/old']) await bridge().navigate(u)
+  expect(fetched.map((u) => new URL(u).pathname)).toEqual(['/b', '/b', '/nf', '/nf', '/old', '/old'])
+  stop()
+  fetched = []
+  start({ ...app('1', 'a'), html: ' data-brust-cache="0"' })
+  document.documentElement.setAttribute('data-brust-cache', '0')
+  pages['/b'] = { html: doc({ ...app('1', 'b'), html: ' data-brust-cache="0"' }) }
+  focus($('#to-b')!)
+  click($('#to-b')!) // during the prefetch: the same request
+  await settle()
+  expect(fetched).toEqual(['http://localhost/b'])
+  await bridge().navigate('/b')
+  expect(fetched).toEqual(['http://localhost/b', 'http://localhost/b'])
+  assign.mockRestore()
+})
+
+test('clearCache() empties it; the LRU holds 32 documents', async () => {
+  start()
+  for (let i = 0; i < 34; i++) pages['/p' + i] = { html: doc(app('1', 'p' + i)) }
+  pages['/b'] = { html: doc(app('1', 'b')) }
+  focus($('#to-b')!)
+  await settle()
+  bridge().clearCache()
+  click($('#to-b')!)
+  await settle()
+  expect(fetched).toEqual(['http://localhost/b', 'http://localhost/b'])
+  fetched = []
+  for (let i = 0; i < 33; i++) await bridge().navigate('/p' + i) // /b and /p0 fall out
+  await bridge().navigate('/p1')
+  await bridge().navigate('/p0')
+  expect(fetched.length).toBe(34)
+})
+
+test('the progress bar: only after 150 ms of loading, outside <body>, done at success; off and cache hits never show it', async () => {
+  start()
+  let release!: () => void
+  pages['/b'] = { html: doc(app('1', 'b')) }
+  const f = globalThis.fetch
+  globalThis.fetch = (async (u: string, init?: RequestInit) => {
+    if (String(u).endsWith('/b')) await new Promise<void>((r) => (release = r))
+    return f(u, init)
+  }) as typeof fetch
+  click($('#to-b')!)
+  await new Promise((r) => setTimeout(r, 100))
+  expect($('div[data-brust-bar]')).toBeNull()
+  await new Promise((r) => setTimeout(r, 80))
+  const bar = $('div[data-brust-bar]')!
+  expect(bar.parentNode).toBe(document.documentElement)
+  expect(document.head.querySelector('style[data-brust-bar]')!.textContent).toContain('--brust-progress-color')
+  release()
+  await settle()
+  expect(names()).toEqual(['click', 'load', 'success'])
+  expect(bar.getAttribute('data-brust-bar')).toBe('done')
+  // the runtime-added <style> survives the head reconcile of the next navigation
+  globalThis.fetch = f
+  pages['/c'] = { html: doc(app('1', 'c')) }
+  await bridge().navigate('/c')
+  expect(document.head.querySelector('style[data-brust-bar]')).not.toBeNull()
+  await new Promise((r) => setTimeout(r, 520))
+  expect(bar.isConnected).toBe(false)
+  // a cache hit: never shown
+  await bridge().navigate('/b')
+  await new Promise((r) => setTimeout(r, 170))
+  expect($('div[data-brust-bar]')).toBeNull()
+  // off
+  document.documentElement.setAttribute('data-brust-progress', 'off')
+  globalThis.fetch = (async (u: string, init?: RequestInit) => { await new Promise((r) => setTimeout(r, 200)); return f(u, init) }) as typeof fetch
+  pages['/d'] = { html: doc(app('1', 'd')) }
+  const done = bridge().navigate('/d')
+  await new Promise((r) => setTimeout(r, 170))
+  expect($('div[data-brust-bar]')).toBeNull()
+  await done
+  globalThis.fetch = f
+})
+
+test('applyHead removes only what the server sent; a head element a component added at runtime stays', async () => {
+  start({ ...app('1', 'a'), head: '<style id="s1">a{}</style>' })
+  const css = document.createElement('style')
+  css.id = 'runtime'
+  document.head.append(css)
+  pages['/b'] = { html: doc({ ...app('1', 'b'), head: '<style id="s2">b{}</style>' }) }
+  pages['/c'] = { html: doc({ ...app('1', 'c'), head: '<style id="s3">c{}</style>' }) }
+  await bridge().navigate('/b')
+  expect([...document.head.children].map((e) => e.id)).toEqual(['s2', 'runtime'])
+  await bridge().navigate('/c') // what nav inserted is the server's too
+  expect([...document.head.children].map((e) => e.id)).toEqual(['s3', 'runtime'])
+})
+
+// The real API calls `update` asynchronously (after the old snapshot): a stub that calls it inline would pass for an
+// implementation that never awaits it.
+function transitions(fail?: 'start') {
+  const calls: { skipped: boolean; ran: number }[] = []
+  const d = document as unknown as { startViewTransition?: (u: () => void) => unknown }
+  d.startViewTransition = (update: () => void) => {
+    if (fail === 'start') throw new Error('InvalidStateError')
+    const c = { skipped: false, ran: 0 }
+    calls.push(c)
+    const updateCallbackDone = new Promise<void>((res, rej) => setTimeout(() => { c.ran++; try { update(); res() } catch (e) { rej(e) } }, 5))
+    return { updateCallbackDone, skipTransition: () => { c.skipped = true } }
+  }
+  return { calls, restore: () => delete d.startViewTransition }
+}
+
+test('view transitions: one per navigation, the swap inside it, success after updateCallbackDone; back uses it too', async () => {
+  const vt = transitions()
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')) }
+  pages['/a'] = { html: doc(app('1', 'a')) }
+  const seen: string[] = []
+  document.addEventListener('brust:nav:success', () => seen.push($('#m')!.textContent!), { once: true })
+  click($('#to-b')!)
+  await settle()
+  expect(vt.calls.map((c) => c.ran)).toEqual([1])
+  expect(seen).toEqual(['b'])
+  expect(location.pathname).toBe('/b')
+  history.back()
+  await settle()
+  expect(vt.calls.length).toBe(2)
+  expect($('#m')!.textContent).toBe('a')
+  vt.restore()
+})
+
+test('view transitions: not with reduced motion or data-brust-transition="off"; a throw from startViewTransition is a direct swap', async () => {
+  let vt = transitions()
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')) }
+  pages['/c'] = { html: doc(app('1', 'c')) }
+  const mm = spyOn(window, 'matchMedia').mockImplementation(((q: string) => ({ matches: /reduce/.test(q) })) as unknown as typeof matchMedia)
+  await bridge().navigate('/b')
+  mm.mockRestore()
+  document.documentElement.setAttribute('data-brust-transition', 'off')
+  await bridge().navigate('/c')
+  document.documentElement.removeAttribute('data-brust-transition')
+  expect(vt.calls).toEqual([])
+  expect($('#m')!.textContent).toBe('c')
+  vt.restore()
+  vt = transitions('start')
+  await bridge().navigate('/b')
+  expect($('#m')!.textContent).toBe('b')
+  expect(names().filter((n) => n === 'success').length).toBe(3)
+  vt.restore()
+})
+
+test('view transitions: a throw inside the swap takes the error path once; a newer navigation skips the running one', async () => {
+  const assign = spyOn(location, 'replace').mockImplementation(() => {})
+  const vt = transitions()
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')) }
+  pages['/c'] = { html: doc(app('1', 'c')) }
+  // a newer navigation while the first transition waits for its update: skipped, and the page is the newer one
+  const first = bridge().navigate('/b')
+  await new Promise((r) => setTimeout(r, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  const second = bridge().navigate('/c')
+  await Promise.all([first, second])
+  await settle()
+  expect(vt.calls[0]!.skipped).toBe(true)
+  expect($('#m')!.textContent).toBe('c')
+  expect(location.pathname).toBe('/c')
+  expect(names()).toEqual(['load', 'load', 'success'])
+  // a swap that throws: updateCallbackDone rejects, the error is the swap's, nothing ran twice
+  events = []
+  const sp = spyOn(window, 'scrollTo').mockImplementation(() => { throw new Error('boom') })
+  await bridge().navigate('/b')
+  await settle()
+  sp.mockRestore()
+  expect(names()).toEqual(['load', 'error'])
+  expect((events[1]![1].error as Error).message).toBe('boom')
+  expect(vt.calls.at(-1)!.ran).toBe(1)
+  vt.restore()
+  assign.mockRestore()
+})
+
+test('view transitions: the first 8 new eager images are preloaded (srcset, sizes, crossorigin copied), 100 ms in all', async () => {
+  const vt = transitions()
+  const d = document as unknown as { startViewTransition: (u: () => void) => unknown }
+  const real = d.startViewTransition
+  let at = 0
+  d.startViewTransition = (u) => { at = performance.now(); return real(u) }
+  const decoded: HTMLImageElement[] = []
+  const dec = spyOn(HTMLImageElement.prototype, 'decode').mockImplementation(function (this: HTMLImageElement) {
+    decoded.push(this)
+    return new Promise(() => {}) // never: the 100 ms cap starts the transition
+  })
+  start({ ...app('1', 'a', '<img src="/logo.png">') })
+  const imgs = Array.from({ length: 9 }, (_, i) => `<img src="img/${i}.png">`).join('')
+  pages['/docs/b'] = {
+    html: doc(app('1', 'b', `<img src="/logo.png"><img loading="lazy" src="/far.png"><img srcset="hero-1x.png 1x, /hero-2x.png 2x" sizes="50vw" crossorigin="anonymous" referrerpolicy="no-referrer">${imgs}`)),
+  }
+  const t0 = performance.now()
+  await bridge().navigate('/docs/b')
+  // the one already on screen and the lazy one are skipped; of the rest only the first 8, so img/7.png and img/8.png not
+  const src = (i: HTMLImageElement) => (i.getAttribute('src') ? new URL(i.src).pathname : '')
+  expect(decoded.map(src)).toEqual(['', ...Array.from({ length: 7 }, (_, i) => `/docs/img/${i}.png`)])
+  const hero = decoded[0]!
+  // relative URLs resolve against the new page, not the one on screen
+  expect(hero.getAttribute('srcset')).toBe('http://localhost/docs/hero-1x.png 1x, http://localhost/hero-2x.png 2x')
+  expect([hero.getAttribute('sizes'), hero.getAttribute('crossorigin'), hero.getAttribute('referrerpolicy')]).toEqual(['50vw', 'anonymous', 'no-referrer'])
+  expect(at - t0).toBeGreaterThanOrEqual(95)
+  expect(at - t0).toBeLessThan(400)
+  expect($('#m')!.textContent).toBe('b')
+  dec.mockRestore()
+  vt.restore()
+})
+
+test('a click cancels the pending hover intent: a page the cache never keeps is fetched once', async () => {
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')), headers: { 'cache-control': 'no-store' } }
+  const a = $('#to-b')!
+  a.dispatchEvent(new PointerEvent('pointerenter'))
+  click(a)
+  await new Promise((r) => setTimeout(r, 90))
+  expect(fetched).toEqual(['http://localhost/b'])
 })
