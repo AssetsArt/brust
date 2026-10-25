@@ -528,3 +528,47 @@ Requested by the human after using alpha.26 on brust.dev:
 - A content-only transition by default (naming the swapped region). A level swap replaces a
   range of nodes, not one element, so there is no single region to name. The root cross-fade
   already leaves identical pixels still. Apps that want more can name their own elements.
+
+## 11. Navigation as a store (human request, 2026-10-25)
+
+"Add events that are easy to use with Store." The four DOM events stay the low-level contract. On
+top of them, brust ships one built-in store, so a component reads the navigation state the same way
+it reads any other store, with no `addEventListener`:
+
+```tsx
+import { navigation } from '@brust/core/navigation'
+import { useStore } from '@brust/core/store/react'
+
+export default function NavSpinner() {
+  const nav = useStore(navigation)
+  return <div hidden={nav.state !== 'loading'}>Loading {nav.to}…</div>
+}
+```
+
+- `navigation = defineStore('navigation', …)`, exported from a new entry `@brust/core/navigation`
+  (browser-safe and React-free, like `@brust/core/store`). Its signals:
+
+  | key | type | meaning |
+  |---|---|---|
+  | `state` | `'idle' \| 'loading'` | `'loading'` from `brust:nav:load` until `success`/`error` |
+  | `url` | `string` | path + search of the page on screen (updated at `success`, and at `error` when `swapped`) |
+  | `to` | `string \| null` | path + search being loaded, else `null` |
+  | `trigger` | `'link' \| 'navigate' \| 'popstate' \| null` | of the current or last navigation |
+  | `status` | `number \| null` | HTTP status of the last navigation |
+  | `error` | `string \| null` | message of the last failed navigation, cleared at the next `load` |
+  | `id` | `number` | the last navigation id (0 before any) |
+
+- **Browser.** The `@brust/core/navigation` module subscribes to the `brust:nav:*` events once, at
+  import, and `batch`-sets the signals. On import it seeds `url` from `location` and `state:
+  'idle'`. The `nav` module stays standalone and knows nothing about stores.
+- **Server.** A component that reads the store paints `state: 'idle'` and `url` = the request's
+  path + search, so the first paint is right and hydration matches. The framework seeds that
+  value per request. A layout that reads `url` is URL-dependent, so its hash changes per page
+  (§5.9); this is correct.
+- It is a normal store: `navigation.state.subscribe(...)` works in plain scripts, and
+  `navigation.snapshot()` gives plain values. App code should not write it; a write is
+  overwritten by the next event.
+- Name: `navigation` is reserved. A user `defineStore('navigation', …)` is a build error that
+  names the built-in.
+- Rejected: a separate `useNavigation()` hook. `useStore(navigation)` is the one store API and works
+  in native components and React islands alike; a second API would need its own compiler support.
