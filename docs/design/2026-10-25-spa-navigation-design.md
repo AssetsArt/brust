@@ -428,3 +428,96 @@ on; a new server endpoint or per-target code.
   layouts, keeping them is a separate design.
 - The dev server's reload WebSocket (`/_brust/dev`) must survive a navigation. If its client script
   is in the body, it is re-run on every navigation; make sure that does not open a second socket.
+
+## 10. Wave 2 (human feedback on alpha.26, 2026-10-25): cache, progress bar, page transitions
+
+Requested by the human after using alpha.26 on brust.dev:
+
+- (bug) "Hover loads it (network shows it), but the click has to wait for a new load." The alpha.26
+  prefetch is held for 15 s and used once, so a click after 15 s, a second click, or a back to the
+  page fetches again.
+- (bug) "Hover again and it loads again every time. Is there no client cache?"
+- (add) A thin loading line along the top while waiting for the next page.
+- (add) Smooth page transitions that do not flicker. The swap itself does not flicker today; the
+  transition must not introduce any.
+
+### 10.1 Client page cache (replaces §5.2's "held for up to 15 s and used at most once")
+
+- One in-memory LRU of fetched documents per tab, with at most 32 entries. It holds the response
+  text plus `status` and the final URL. It is filled by prefetches AND by navigations, including
+  the current page's own HTML once it was fetched. The key is the URL without its `#hash`.
+- **Fresh for 5 minutes** after it was fetched. A fresh entry serves a hover (no new prefetch), a
+  click, and `navigate()` with zero requests. A stale entry is dropped on read and the page is
+  fetched again.
+- **Back/forward use an entry at any age** (bfcache-like). With no entry, they fetch.
+- An in-flight prefetch is shared: a click during it awaits the same request (as in alpha.26).
+- Never cached: a response with `Cache-Control: no-store`, any response with a status ≥ 400, and
+  a response that failed the build check (§5.4). The server keeps control: a dynamic page that must
+  never be stale sends `no-store`.
+- `<html data-brust-cache="<seconds>">` overrides the 5 minutes; `0` turns caching off and only
+  shares in-flight prefetches.
+- **Mutations clear it.** The `nav` bridge gains `clearCache()`
+  (`globalThis[Symbol.for('brust.nav')]`). `@brust/core/client`
+  (`packages/brust/src/actions/client.ts`) calls it after every non-GET action call that gets a
+  response, so a page read after a mutation is never served from before it. It is also exported
+  as `clearNavigationCache()` from `@brust/core` (browser + server entries; it is a no-op on the
+  server) for apps that mutate another way.
+- A cache hit still fires `click → load → success` (same contract, same `id` rules). With no await
+  in between, `data-brust-loading` is set and cleared in the same task, so nothing paints.
+
+### 10.2 Progress bar (built in, on by default)
+
+- A 2-3 px line fixed along the top of the viewport. It appears only when a navigation is still
+  loading **150 ms** after `load`, so cache hits and fast pages never show it. It moves forward on
+  its own toward about 90% ("trickle"), and on `success`/`error` it runs to 100% and fades out.
+- One element appended to `document.documentElement` (outside `<body>`, so neither a level swap
+  nor a whole-body swap removes it), styled by one `<style>` the module adds to the head once
+  (runtime-added, so §3 step 5 keeps it).
+- The colour is `var(--brust-progress-color, #2f7cf6)`, so an app sets the variable. brust.dev
+  sets its own accent.
+- With `prefers-reduced-motion: reduce` it shows without the trickle animation or the fade.
+- Opt-out: `<html data-brust-progress="off">`.
+
+### 10.3 Page transitions (View Transitions API, on by default)
+
+- When `document.startViewTransition` exists and the user does not prefer reduced motion, the swap
+  block of §3 step 5 (head apply, body or level swap, persist, history, scroll) runs inside
+  `startViewTransition(update)`. Without the API, or with reduced motion, the swap runs exactly as
+  in alpha.26.
+- Default look: the browser's own root cross-fade (opacity only; about 250 ms). Pixels that are the
+  same in both pages, such as a kept header or sidebar, do not visibly change, so only the changed
+  content fades. No translate and no scale: a sliding page was the 0.1.x complaint (memory
+  `view-transitions-feature`). Apps customise with the standard `::view-transition-*` CSS.
+- Opt-out: `<html data-brust-transition="off">`.
+- **No-flicker rules** (each one needs a test):
+  1. Everything slow happens BEFORE `startViewTransition`: fetch, build check, store tags,
+     module imports, stylesheets placed and awaited (§3 step 4). The update callback is
+     synchronous DOM work only, so the frozen old snapshot is held for one frame, not for a
+     network wait.
+  2. New `<img>` elements in the swapped content that are in the viewport are given up to 100 ms
+     to `decode()` before the transition starts (`Promise.race` with a timeout), so a hero image
+     does not pop in after the fade. Off-screen images are not awaited.
+  3. `update` runs EXACTLY once. A synchronous throw from `startViewTransition` itself means a
+     direct swap. If `updateCallbackDone` rejects, the swap threw: propagate it to the §4 `error`
+     path, never swallow it, never run it again.
+  4. After awaiting `updateCallbackDone`, check that the navigation was not superseded before
+     firing `success`. A new navigation that starts during a transition calls
+     `skipTransition()` on the running one first.
+  5. `success` fires when the DOM swap is done (inside `updateCallbackDone`), not when the
+     animation finishes. The progress bar completes at the same moment.
+  6. Back/forward use the same path.
+- Test stubs must call `update` ASYNCHRONOUSLY, as the real API does, or a test passes for an
+  implementation that never awaits it (memory `view-transitions-feature`).
+
+### 10.4 Rejected
+
+- Relying on the HTTP cache for prefetch (Astro). brust pages usually send no `Cache-Control`, and
+  the browser's heuristics would make results vary by browser. The human asked for a predictable
+  client cache.
+- An unlimited-age cache, as in 0.1.x for forward navigations. Stale data after 5 minutes is the
+  limit; back/forward is the only path that ignores age.
+- Opt-in transitions and progress bar. The human asked for them; both are one attribute away from
+  off.
+- A content-only transition by default (naming the swapped region). A level swap replaces a
+  range of nodes, not one element, so there is no single region to name. The root cross-fade
+  already leaves identical pixels still. Apps that want more can name their own elements.
