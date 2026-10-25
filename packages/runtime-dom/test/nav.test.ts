@@ -291,6 +291,24 @@ test('nothing swappable (network, another build, not HTML, a failed import) is e
   assign.mockRestore()
 })
 
+test('a response redirected to another origin is never parsed: error { swapped: false } and a full load', async () => {
+  start()
+  const assign = spyOn(location, 'assign').mockImplementation(() => {})
+  globalThis.fetch = (async () => {
+    const r = new Response(doc({ ...app('1', 'evil'), tail: '<script type="module" src="/_brust/evil.js"></script>' }), { headers: { 'content-type': 'text/html' } })
+    Object.defineProperty(r, 'url', { value: 'https://evil.example/b' })
+    return r
+  }) as unknown as typeof fetch
+  click($('#to-b')!)
+  await settle()
+  expect(names()).toEqual(['click', 'load', 'error'])
+  expect(events[2]![1]).toMatchObject({ swapped: false })
+  expect(loaded).toEqual([])
+  expect($('#m')!.textContent).toBe('a')
+  expect(assign).toHaveBeenCalled()
+  assign.mockRestore()
+})
+
 test('preventDefault on the error event cancels the full load', async () => {
   start()
   const assign = spyOn(location, 'assign').mockImplementation(() => {})

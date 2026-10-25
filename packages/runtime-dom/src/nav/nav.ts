@@ -94,6 +94,8 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       status = res.status
       // the final URL (after redirects); a fetch drops the fragment, which a redirect without one keeps
       const fin = new URL(res.url || req)
+      // a redirect that left this origin (an open redirect to a CORS-readable page) is never parsed: a full load
+      if (fin.origin !== location.origin) throw new Error('cross-origin')
       fin.hash ||= new URL(req).hash
       url = fin.href
       const doc = /html/.test(res.headers.get('content-type') ?? '') ? new DOMParser().parseFromString(await res.text(), 'text/html') : null
