@@ -134,7 +134,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       // the head scripts new to it run; after a whole-body swap (<html> and <body> attributes replaced) every one runs
       // again, as on a full load (a theme script setting <html class>), but a data-brust-once one only if it is new
       const head = whole ? [...document.head.children].filter((e) => !e.hasAttribute('data-brust-once') || fresh.includes(e)) : fresh
-      await runScripts(classicScripts([...head, ...body]))
+      await runScripts([...classicScripts(head), ...body])
       if (!live()) return
       html.removeAttribute(LOADING)
       if (status < 400) fire('success', { id, url, from, trigger, status })

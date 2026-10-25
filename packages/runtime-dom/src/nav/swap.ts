@@ -94,10 +94,11 @@ function tail(body: HTMLElement): ChildNode[] | null {
 
 /**
  * Swap the body to `doc`'s (§5.9): from the first level that changed, or the whole body (with the attributes of
- * `<html>` and `<body>`) when the root changed or a chain cannot be trusted. Returns the inserted nodes, and true for a
- * whole-body swap.
+ * `<html>` and `<body>`) when the root changed or a chain cannot be trusted. Returns the classic scripts of the new
+ * nodes, taken before the persisted elements go in (a live one's scripts already ran: they never run again), and true
+ * for a whole-body swap.
  */
-export function swapBody(doc: Document, loading: string): [Node[], boolean] {
+export function swapBody(doc: Document, loading: string): [HTMLScriptElement[], boolean] {
   const body = document.body
   const a = readChain(document)
   const b = readChain(doc)
@@ -107,21 +108,25 @@ export function swapBody(doc: Document, loading: string): [Node[], boolean] {
   if (i && ta && tb) {
     const old = between(a![i]!)
     const next = between(b![i]!)
+    const run = classicScripts([...next, ...tb])
     const keep = persist(old)
+    // focus resets as on a full load, also when the focused element sits in a kept level
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
     for (const n of old.slice(1)) n.remove()
     old[0]!.replaceWith(...next)
     keep(next)
     for (const n of ta) n.remove()
     body.append(...tb)
-    return [[...next, ...tb], false]
+    return [run, false]
   }
   copyAttrs(document.documentElement, doc.documentElement, loading)
   copyAttrs(body, doc.body)
   const next = [...doc.body.childNodes]
+  const run = classicScripts(next)
   const keep = persist([...body.childNodes])
   body.replaceChildren(...next)
   keep(next)
-  return [next, true]
+  return [run, true]
 }
 
 const isClassic = (s: Element) => !(s as HTMLScriptElement).type || /java|ecma/i.test((s as HTMLScriptElement).type)

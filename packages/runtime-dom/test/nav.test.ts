@@ -141,7 +141,7 @@ test('a level swap replaces the page only; the root and the kept layout are the 
   expect($('#m')!.textContent).toBe('b')
   expect(readChain(document)!.map((l) => l.key)).toEqual(['R:1', 'D:1', 'P:b'])
   expect(document.body.innerHTML).toBe(parse(doc({ ...app('1', 'b'), tail: '<script data-brust-store="s" type="application/json">{}</script><script type="module" src="/_brust/client/chunk-b.js"></script>' })).body.innerHTML)
-  expect(added.some((n) => (n as Element).getAttribute?.('data-brust-store') === 's')).toBe(true)
+  expect(added).toEqual([]) // no classic script among the new nodes (the store tag is JSON, the chunk a module)
 })
 
 test('a changed layout is replaced with its page; a persisted element is moved, not re-created', () => {
@@ -478,6 +478,53 @@ test('head scripts: all re-run after a whole-body swap (data-brust-once only whe
   expect($('#once')).toBe(once)
   expect($('#new-c')).not.toBeNull()
   expect(names().filter((n) => n === 'success').length).toBe(2)
+})
+
+// A script inside a persisted element ran with it: it must not run again (review a7652d11). Scripts that run are
+// re-created through document.createElement, so the created ones are the ones that ran.
+function created(): { texts: () => string[]; restore: () => void } {
+  const made: HTMLScriptElement[] = []
+  const real = document.createElement.bind(document)
+  const sp = spyOn(document, 'createElement').mockImplementation(((tag: string, o?: ElementCreationOptions) => {
+    const el = real(tag, o)
+    if (tag === 'script') made.push(el as HTMLScriptElement)
+    return el
+  }) as typeof document.createElement)
+  return { texts: () => made.map((s) => s.text), restore: () => sp.mockRestore() }
+}
+
+test('a nested persisted element keeps its script node and never re-runs it; a new unmatched one runs', async () => {
+  const chat = (id: string) => `<div class="wrap"><div data-brust-persist="${id}"><script>init-${id}</script></div></div>`
+  start({ ...app('1', 'a', chat('chat')) })
+  const live = $('[data-brust-persist="chat"] script')
+  pages['/b'] = { html: doc(app('1', 'b', chat('chat') + chat('fresh'))) }
+  pages['/c'] = { html: doc({ ...app('1', 'c', chat('chat')), root: 'R2:1' }) }
+  const c = created()
+  click($('#to-b')!) // a level swap: the persist sits inside the page range
+  await settle()
+  expect($('[data-brust-persist="chat"] script')).toBe(live)
+  expect(c.texts()).toEqual(['init-fresh'])
+  const nav = (globalThis as unknown as Record<symbol, NavBridge>)[Symbol.for('brust.nav')]!
+  await nav.navigate('/c') // a whole-body swap: the persist is not a direct child of <body>
+  await settle()
+  expect($('[data-brust-persist="chat"] script')).toBe(live)
+  expect(c.texts()).toEqual(['init-fresh'])
+  c.restore()
+})
+
+test('a level swap resets focus as a full load does, also when the focused link is in a kept layout', async () => {
+  start({ ...app('1', 'a') })
+  pages['/b'] = { html: doc(app('1', 'b')) }
+  const side = $('#side')!
+  const a = document.createElement('a')
+  a.href = '/b'
+  side.append(a)
+  a.focus()
+  expect(document.activeElement).toBe(a)
+  click(a)
+  await settle()
+  expect($('#side')).toBe(side) // the layout was kept
+  expect(document.activeElement).not.toBe(a)
 })
 
 test('boot does nothing on a page without a nav tag, and only once', () => {
