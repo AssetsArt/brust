@@ -79,7 +79,10 @@ async function open(path: string, root = base): Promise<{ page: Page; errors: st
     for (const t of ['click', 'load', 'success', 'error'])
       document.addEventListener(`brust:nav:${t}`, (e) => {
         const d = (e as CustomEvent).detail
-        window.__navlog.push({ type: t, id: d.id, url: d.url, trigger: d.trigger, status: d.status, swapped: d.swapped, loading: document.documentElement.hasAttribute('data-brust-loading') })
+        const e2 = { type: t, id: d.id, url: d.url, trigger: d.trigger, status: d.status, swapped: d.swapped, loading: document.documentElement.hasAttribute('data-brust-loading') }
+        window.__navlog.push(e2)
+        // survives the full load an error's default action starts
+        sessionStorage.setItem('navlog', JSON.stringify([...JSON.parse(sessionStorage.getItem('navlog') ?? '[]'), e2]))
       })
   })
   await page.goto(root + path)
@@ -100,6 +103,8 @@ async function nav(page: Page, act: () => Promise<unknown>): Promise<NavEvent[]>
   await settle(page)
   return page.evaluate((n) => window.__navlog.slice(n), n)
 }
+/** The events of a navigation that ended in a full load (read after the reload, from sessionStorage). */
+const reloadedLog = (page: Page): Promise<NavEvent[]> => page.evaluate(() => JSON.parse(sessionStorage.getItem('navlog') ?? '[]'))
 const follow = (page: Page, href: string) => nav(page, () => page.click(`nav a[href="${href}"]`))
 
 /** What a full load must equal: <html> and <body> attributes, the head children in order, the body DOM. */
@@ -168,10 +173,11 @@ test('a failed fetch is error { swapped: false } and then a full load; preventDe
   const { page, close } = await open('/')
   let first = true
   await page.route('**/b/one', (r) => { if (first && r.request().resourceType() === 'fetch') { first = false; return r.abort() } return r.continue() })
-  const ev = await nav(page, () => page.click('nav a[href="/b/one"]'))
+  await page.click('nav a[href="/b/one"]')
+  await page.waitForFunction(() => window.__mark === undefined && document.querySelector('[data-page=b-one]'))
+  const ev = await reloadedLog(page)
   expect(ev.map((e) => e.type)).toEqual(['click', 'load', 'error'])
   expect(ev[2]).toMatchObject({ swapped: false })
-  await page.waitForFunction(() => window.__mark === undefined && document.querySelector('[data-page=b-one]'))
   expect(new URL(page.url()).pathname).toBe('/b/one')
   await close()
 
@@ -228,7 +234,8 @@ test('back restores the scroll position; a #hash link scrolls to its target', as
   const { page, close } = await open('/long')
   await page.evaluate(() => scrollTo(0, 1500))
   await page.waitForFunction(() => scrollY === 1500)
-  await follow(page, '/a/one')
+  // a DOM click: Playwright's own click would scroll the header link into view first
+  await nav(page, () => page.evaluate(() => (document.querySelector('nav a[href="/a/one"]') as HTMLElement).click()))
   expect(await page.evaluate(() => scrollY)).toBe(0)
   const back = await nav(page, () => page.goBack())
   expect(back.at(-1)).toMatchObject({ type: 'success', trigger: 'popstate' })
@@ -317,9 +324,9 @@ test('a response from another build is a full load', async () => {
     const res = await r.fetch()
     await r.fulfill({ response: res, body: (await res.text()).replace(/data-brust-build="[^"]*"/, 'data-brust-build="another"') })
   })
-  const ev = await nav(page, () => page.click('nav a[href="/b/one"]'))
-  expect(ev.at(-1)).toMatchObject({ type: 'error', swapped: false })
+  await page.click('nav a[href="/b/one"]')
   await page.waitForFunction(() => window.__mark === undefined && document.querySelector('[data-page=b-one]'))
+  expect((await reloadedLog(page)).at(-1)).toMatchObject({ type: 'error', swapped: false })
   await close()
 })
 
