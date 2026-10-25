@@ -80,6 +80,34 @@ test('jobs.js has a stores table only when the manifest lists stores', async () 
   }
 }, 60_000)
 
+test('F461: the built-in navigation store is a package module in jobs.js, the manifest and the client chunk', async () => {
+  const out = localOut()
+  await build(join(fx, 'nav-store'), out)
+  const m = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))
+  const readers = Object.values(m.components as Record<string, { stores: string[] }>).filter((c) => c.stores.length > 0)
+  expect(readers.length).toBeGreaterThan(0)
+  for (const c of readers) expect(c.stores).toEqual(['@brust/core/navigation'])
+  expect(storeModules(m)).toEqual(['@brust/core/navigation'])
+  // jobs.js imports the package module (external, so the worker runs the package's own copy) and lists it by that name.
+  const jobs = readFileSync(join(out, 'jobs.js'), 'utf8')
+  expect(jobs).toMatch(/from\s*"@brust\/core\/navigation"/)
+  expect(jobs).toMatch(/"@brust\/core\/navigation":\s*\w+/)
+  const mod = await import(join(out, 'jobs.js'))
+  expect(typeof mod.stores['@brust/core/navigation'].navigation.hydrate).toBe('function')
+  // The native chunk imports the package module, which holds one subscription per tab and the shared store core by URL.
+  const native = clientTexts(out).filter(({ text }) => text.includes('brust:nav:'))
+  expect(native.length).toBeGreaterThan(0)
+  const runtime = (m.assets.runtime as string).slice('client/'.length)
+  expect(clientTexts(out).filter(({ text }) => text.includes('brust.reactive.ctx')).map(({ f }) => f)).toEqual([runtime])
+}, 120_000)
+
+test('F461: a user store named navigation is a store-name-reserved build error that names the built-in', async () => {
+  await expect(build(join(fx, 'store-reserved'), tmpOut())).rejects.toMatchObject({
+    rule: 'store-name-reserved',
+    message: expect.stringContaining("@brust/core/navigation"),
+  })
+}, 60_000)
+
 test('storeModules is the sorted unique union, tolerant of an absent field', () => {
   expect(storeModules({ components: { a: {}, b: { stores: ['z.ts', 'a.ts'] }, c: { stores: ['a.ts'] } } } as never)).toEqual(['a.ts', 'z.ts'])
   expect(storeModules({ components: {} } as never)).toEqual([])

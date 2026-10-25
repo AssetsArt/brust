@@ -21,6 +21,25 @@ pub const STORE_API_SOURCES: &[&str] = &[
     "brust/store",
 ];
 
+/// The built-in navigation store's module (`packages/brust/src/navigation.ts`, design §11). A package module, so the
+/// reader above (relative imports only) never sees it: [`builtin_store`] answers for it by name.
+pub const NAVIGATION_SOURCE: &str = "@brust/core/navigation";
+
+/// `navigation` exported by [`NAVIGATION_SOURCE`], as the store reader would describe it. `StoreRef.module` is the
+/// package specifier: the manifest, `jobs.js` and the loader name the module that way (packages/brust/src/store/builtin.ts).
+pub fn builtin_store(source: &str, export: &str) -> Option<StoreRef> {
+    (source == NAVIGATION_SOURCE && export == "navigation").then(|| StoreRef {
+        name: "navigation".into(),
+        module: NAVIGATION_SOURCE.into(),
+        // The keys of the factory in navigation.ts, sorted.
+        signals: ["error", "id", "state", "status", "to", "trigger", "url"]
+            .map(String::from)
+            .into(),
+        computeds: vec![],
+        factory_read: true,
+    })
+}
+
 /// How many modules a re-export chain may cross before the reader gives up.
 const MAX_DEPTH: usize = 8;
 

@@ -91,7 +91,28 @@ brust shows a thin line along the top of the viewport while the next page loads.
 - With `prefers-reduced-motion: reduce` it shows without the movement and without the fade.
 - `<html data-brust-progress="off">` turns it off. The element is a `<div data-brust-bar>` on `<html>`, and its `<style data-brust-bar>` is added to the head the first time it shows, if you want to restyle it.
 
-To build your own indicator instead, turn the built-in one off and listen to the events:
+### A preloader of your own
+
+To build your own indicator instead, turn the built-in one off with `<html data-brust-progress="off">` and read the [navigation store](#9-the-navigation-store) in a component. No `addEventListener`:
+
+```tsx
+import { navigation } from '@brust/core/navigation'
+import { useStore } from '@brust/core/store/react'
+
+export default function LoadingLine() {
+  const nav = useStore(navigation)
+  return <div className="line" data-state={nav.state} />
+}
+```
+
+```css
+.line { transform: scaleX(0); transform-origin: left; }
+.line[data-state="loading"] { transform: scaleX(.8); transition: transform 8s cubic-bezier(.1, .8, .2, 1) .15s; }
+```
+
+Put it in the layout. It reads `state`, which is `idle` in every page's server markup, so the layout still renders the same on each page and is kept across navigations. The `.15s` delay keeps the line still on a navigation that is quick, such as one served from the cache. `nav.to` is the path being loaded, for a label.
+
+The store is fed by the four events above. If you cannot use a store (plain script, no component), listen to them directly:
 
 ```ts
 document.addEventListener('brust:nav:load', () => bar.start())
@@ -102,7 +123,7 @@ document.addEventListener('brust:nav:error', (e) => {
 })
 ```
 
-Or in CSS alone, with no JavaScript:
+Or in CSS alone, with no JavaScript and no component:
 
 ```css
 .bar { transform: scaleX(0); transform-origin: left; }
@@ -138,10 +159,41 @@ await navigate('/search?q=brust', { replace: true }) // replace the current one
 
 `clearNavigationCache()` (§5) is exported next to it. The types `NavigateOptions`, `NavTrigger`, `NavLoadDetail`, `NavSuccessDetail` and `NavErrorDetail` are exported from `@brust/core` for the event `detail` shapes.
 
-## 9. Stores across a navigation
+## 9. The `navigation` store
+
+The events are the low-level contract. For a component, brust ships one built-in store that mirrors them, so you read navigation state the way you read any other store, with no `addEventListener`:
+
+```tsx
+import { navigation } from '@brust/core/navigation'
+import { useStore } from '@brust/core/store/react'
+
+export default function NavSpinner() {
+  const nav = useStore(navigation)
+  return <div hidden={nav.state !== 'loading'}>Loading {nav.to}…</div>
+}
+```
+
+It works in a native component and in a React island, and the first paint matches: the server renders `state: 'idle'` and `url` as the request's path and query, so hydration finds the markup it expects.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `state` | `'idle' \| 'loading'` | `'loading'` from `brust:nav:load` until `success` or `error` |
+| `url` | `string` | path and query of the page on screen. Updated at `success`, and at `error` when the error page was swapped in |
+| `to` | `string \| null` | path and query being loaded, else `null` |
+| `trigger` | `'link' \| 'navigate' \| 'popstate' \| null` | of the current or last navigation |
+| `status` | `number \| null` | HTTP status of the last navigation |
+| `error` | `string \| null` | the message of the last failed navigation, cleared at the next `load`. A swapped 404 reads `HTTP 404` |
+| `id` | `number` | the last navigation id (`0` before any) |
+
+- It is a normal store: `navigation.state.subscribe(...)` works in a plain script and `navigation.snapshot()` gives plain values. Do not write it; the next event overwrites a write.
+- `navigation` is a reserved store name. A `defineStore('navigation', …)` of your own that a component reads is a build error (`store-name-reserved`).
+- A component that reads `url` depends on the URL, so a layout that reads it renders different markup on every page and is replaced on every navigation instead of kept. Read `to` and `state` in a layout, and `url` where a page-level component is fine.
+- The module listens for the events once, when the first chunk that imports it loads. A navigation that is already loading at that moment shows `idle` until its `success`.
+
+## 10. Stores across a navigation
 
 A store that is already live keeps its client value across a navigation. The new page's store snapshot only seeds a store the tab has not used yet. This is the one deliberate exception to the rule above, and it matches React apps, where client store state survives a route change. See [Store](./store.md).
 
-## 10. React islands
+## 11. React islands
 
 When a page leaves the document, its islands are unmounted and their effect cleanups run, as on a React route change. The islands of the new page hydrate when idle, as on a full load.
