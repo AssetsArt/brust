@@ -156,3 +156,16 @@ is `origin/main` dcbb4a73 or later.
 | slug | rows | tier | role | deps | acceptance |
 |---|---|---|---|---|---|
 | spa-nav-store | F461 | standard (review: complex, compiler/store interface) | implementer (suggested: knock2) | - (independent of spa-nav-wave2; it uses only the alpha.26 event contract) | A native component AND a React island that both `useStore(navigation)`: first paint shows `idle` + the request path (served and static target); during a navigation to a slow route `state` is `loading` and `to` is set, and after it `idle` with `url` updated; `error` is set on a network failure; no hydration mismatch and no console error. A user `defineStore('navigation')` is a named build error. If the compiler cannot see a store declared in a package, fix that in this lane (memory `package-source-lane`) or say why in `unsure:`. `cargo test -p brust-compiler --no-fail-fast` if the compiler changes; battery + shadcn `--check`; `cd packages/brust && bun run typecheck && bun test`; runtime-dom tests + size check; `docs/store.md` + `docs/navigation.md` sections; served tests wired in ci.yml |
+
+**Amendment 2026-10-25 (human):** brust.dev and the docs use the store, never a hand-written
+`addEventListener`.
+- spa-nav-store owns the website dogfood. brust.dev's top loading line becomes a native component
+  that reads `const nav = useStore(navigation)` (`state`, `to`), and brust.dev sets
+  `<html data-brust-progress="off">`, so the site's own bar is the one shown. Acceptance adds a
+  served brust.dev check: the bar shows during a slow navigation and hides after it; no
+  `addEventListener('brust:nav` anywhere under `website/` (a grep gate); website tests + parity
+  shots.
+- The preloader examples in `docs/navigation.md` and on the website navigation page lead with
+  `useStore(navigation)`. The four events stay documented as the low-level reference.
+- spa-nav-wave2 drops its "brust.dev sets `--brust-progress-color`" item and adds no
+  `addEventListener` to the site. It merges first; spa-nav-store rebases once after it.
