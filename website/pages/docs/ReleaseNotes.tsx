@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-27', title: '2.0.0-alpha.27' },
       { id: 'alpha-26', title: '2.0.0-alpha.26' },
       { id: 'alpha-25', title: '2.0.0-alpha.25' },
       { id: 'alpha-24', title: '2.0.0-alpha.24' },
@@ -49,6 +50,42 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-27">2.0.0-alpha.27 · 26 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.26 (git log --merges --first-parent): #396 (F458, F459, F460), #397 (F461); behaviour in docs/navigation.md */}
+      <p>Navigation gets faster and smoother. Pages you hovered or visited are shown from memory, a thin progress line shows while a slow page loads, and the swap between pages is a cross-fade in browsers that support it. A new built-in store, <code>navigation</code>, gives a component the navigation state without <code>addEventListener</code>. Cache, progress line and transition are on by default. See <a href="/docs/navigation">Navigation</a>.</p>
+
+      <h3>Breaking</h3>
+      <ul>
+        {/* source: PR #396 (F458, F459, F460); packages/runtime-dom/src/nav/nav.ts; docs/navigation.md sections 4 to 7 */}
+        <li>
+          <strong>The page cache, the progress line and the page transition are on by default. Opt out with <code>data-brust-cache=&quot;0&quot;</code>, <code>data-brust-progress=&quot;off&quot;</code> and <code>data-brust-transition=&quot;off&quot;</code> on <code>&lt;html&gt;</code>.</strong> The cache means a page can be shown as it was up to five minutes ago, and a back or forward step shows the cached page at any age. A page that must never be shown from memory, such as an authenticated or sensitive one, has to send <code>Cache-Control: no-store</code>; that is the only thing that keeps a page out (<code>private</code>, <code>no-cache</code>, <code>max-age=0</code> and <code>must-revalidate</code> do not). If your own indicator is made of CSS on <code>html[data-brust-loading]</code>, delay it by about 150 ms: with a transition on, the old page is painted once more while the attribute is set, even for a cached page. Without a delay the indicator flashes.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #396 (F458); packages/runtime-dom/src/nav/nav.ts, packages/brust/src/actions/client.ts; docs/navigation.md section 5 */}
+        <li>
+          <strong>A page you hovered or visited is shown from memory, with no second request.</strong> In alpha.26 a prefetched page was held for 15 seconds and used once, so a click after that, a second click, or a back step fetched it again, and hovering again always fetched again. Now every page that is fetched, prefetched or navigated to, goes into a cache in the tab. An entry is fresh for 5 minutes: a hover, a click, <code>navigate()</code> or a link from anywhere uses it with zero requests, and after that the page is fetched again. Back and forward use an entry of any age. The cache holds 32 pages, least recently used out first, keyed by the URL without its <code>#hash</code>. It never holds a response with <code>Cache-Control: no-store</code>, a status of 400 or more, or a response that is not a brust page of this build. A click during a prefetch waits for that same request. <code>&lt;html data-brust-cache=&quot;60&quot;&gt;</code> sets the freshness in seconds, and <code>0</code> turns the cache off. A navigation served from the cache fires the same events, <code>click</code>, <code>load</code>, <code>success</code>, with the same <code>id</code> rules.
+        </li>
+        {/* source: PR #396 (F458); packages/brust/src/actions/client.ts; docs/navigation.md section 5 */}
+        <li>
+          <strong>A mutation clears the cache.</strong> A call through the actions client (<code>@brust/core/client</code>) with any method other than <code>GET</code> or <code>HEAD</code> clears the whole cache once it gets a response, so a page read after a change is never one from before it. If you change data another way (your own <code>fetch</code>, a form post, a logout), call <code>clearNavigationCache()</code>, exported from <code>@brust/core</code>; it does nothing on the server or on a page without the <code>nav</code> script.
+        </li>
+        {/* source: PR #396 (F459); packages/runtime-dom/src/nav/nav.ts; docs/navigation.md section 6 */}
+        <li>
+          <strong>A progress line along the top of the page while the next one loads.</strong> It appears only if a navigation is still loading 150 ms after <code>load</code>, so a cached or fast page never shows it. It moves on toward about 90%, runs to the end at <code>success</code> or <code>error</code>, and fades out. It is a <code>&lt;div data-brust-bar&gt;</code> on <code>&lt;html&gt;</code>, outside <code>&lt;body&gt;</code>, so no swap removes it. Set its colour with <code>--brust-progress-color</code> (default <code>#2f7cf6</code>). With <code>prefers-reduced-motion: reduce</code> it shows without the movement and the fade. <code>&lt;html data-brust-progress=&quot;off&quot;&gt;</code> turns it off, for an indicator of your own.
+        </li>
+        {/* source: PR #396 (F460); packages/runtime-dom/src/nav/nav.ts; docs/navigation.md section 7 */}
+        <li>
+          <strong>A cross-fade between pages, where the browser has view transitions.</strong> When <code>document.startViewTransition</code> exists, the swap runs inside a view transition whose default look is the browser&rsquo;s cross-fade of the page (opacity only, about 250 ms); a header or sidebar that stays does not visibly change, and nothing slides or scales. Everything slow (the fetch, the new page&rsquo;s scripts and styles) happens before the transition starts, so the old page is frozen for about one frame. The first eight eager images of the new page (not <code>loading=&quot;lazy&quot;</code>) get up to 100 ms to decode first, so a hero image does not pop in after the fade; mark below-the-fold images lazy. <code>success</code> fires when the new page is in the DOM, not when the animation ends, and a navigation that starts during a transition skips it. With reduced motion, without the API, or with <code>&lt;html data-brust-transition=&quot;off&quot;&gt;</code> the page swaps at once. Restyle it with <code>::view-transition-old(root)</code> and <code>::view-transition-new(root)</code>.
+        </li>
+        {/* source: #397 (F461); docs/navigation.md section 9 and docs/store.md; SPA navigation design section 11 */}
+        <li>
+          <strong>A <code>navigation</code> store: <code>useStore(navigation)</code> gives the navigation state with no <code>addEventListener</code> (#397).</strong> Import <code>navigation</code> from <code>@brust/core/navigation</code> and read it like any store, in a native component or a React island. Its keys: <code>state</code> (<code>&apos;idle&apos;</code> or <code>&apos;loading&apos;</code>, loading from <code>brust:nav:load</code> to <code>success</code> or <code>error</code>), <code>url</code> (path and query on screen), <code>to</code> (what is loading, else <code>null</code>), <code>trigger</code>, <code>status</code>, <code>error</code> (the message of the last failure; a swapped 404 reads <code>HTTP 404</code>) and <code>id</code>. The server paints <code>state: &apos;idle&apos;</code> and <code>url</code> as the request&rsquo;s path and query, so the first paint matches and hydration finds what it expects. The name <code>navigation</code> is reserved: your own <code>defineStore(&apos;navigation&apos;, …)</code> that a component reads is a build error (<code>store-name-reserved</code>). A layout that reads <code>url</code> renders different markup on every page, so it is replaced on every navigation instead of kept; read <code>to</code> and <code>state</code> in a layout. Do not write to it; the next event overwrites a write.
+        </li>
+      </ul>
 
       <h2 id="alpha-26">2.0.0-alpha.26 · 25 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.25 (git log --merges --first-parent v2.0.0-alpha.25..origin/main), written from the merged PRs and the lane branches before the cut: #391 (F455), #392 (F453), #393 (F454) and the navigation docs pull request (F456, #394); the SPA navigation design and plan */}
