@@ -150,3 +150,46 @@ test('the default scheduler bounds the wait for an idle period (a starved reques
     document.body.innerHTML = ''
   }
 })
+
+test('a hydrated island unmounts once when its host leaves the document', async () => {
+  reset(); const flush = makeIdle()
+  let unmounts = 0
+  def('nav_u', () => () => { unmounts++ })
+  html(`<div id="page"><brust-island id="u" data-id="nav_u">server</brust-island></div>`)
+  mount(); flush()
+  expect(unmounts).toBe(0)
+  document.getElementById('page')!.remove()
+  await Promise.resolve()   // the observer callback is a microtask
+  expect(unmounts).toBe(1)
+  unmount()
+  expect(unmounts).toBe(1)   // already gone: not disposed twice
+})
+
+test('an island host that is moved, not removed, stays mounted', async () => {
+  reset(); const flush = makeIdle()
+  let unmounts = 0
+  def('nav_m', () => () => { unmounts++ })
+  html(`<div id="a"><brust-island id="m" data-id="nav_m">server</brust-island></div><div id="b"></div>`)
+  mount(); flush()
+  document.getElementById('b')!.append(document.getElementById('m')!)   // data-brust-persist moves a live node
+  await Promise.resolve()
+  expect(unmounts).toBe(0)
+  unmount()
+  expect(unmounts).toBe(1)
+})
+
+test('a hydrate that returns nothing, or whose dispose throws, does not break the sweep', async () => {
+  reset(); const flush = makeIdle()
+  const order: string[] = []
+  const err = console.error; console.error = () => {}
+  try {
+    def('nav_n', () => {})
+    def('nav_t', () => () => { order.push('t'); throw new Error('boom') })
+    def('nav_k', () => () => { order.push('k') })
+    html(`<div id="p"><brust-island data-id="nav_n"></brust-island><brust-island data-id="nav_t"></brust-island><brust-island data-id="nav_k"></brust-island></div>`)
+    mount(); flush()
+    document.getElementById('p')!.remove()
+    await Promise.resolve()
+    expect(order).toEqual(['t', 'k'])
+  } finally { console.error = err; unmount() }
+})

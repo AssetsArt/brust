@@ -164,7 +164,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
 | popover | measured | static | 1 | 9 (7) | 110 | 1 | external-component, island-children, island-prop, spread-props | built |
 | progress | measured | static | 0 | 5 (0) | 0 | 1 | — | built |
-| radio-group | measured | static | 1 | 9 (5) | 98 | 1 | external-component, island-prop, spread-props | built |
+| radio-group | measured | static | 1 | 9 (5) | 99 | 1 | external-component, island-prop, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 92 | 1 | external-component, island-prop, spread-props | built |
 | select | measured | react | 1 | 26 (20) | 118 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
