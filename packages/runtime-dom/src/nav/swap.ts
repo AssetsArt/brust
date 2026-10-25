@@ -137,8 +137,9 @@ const isClassic = (s: Element) => !(s as HTMLScriptElement).type || /java|ecma/i
 /** The classic scripts among `nodes` (and under them), in document order. */
 export const classicScripts = (nodes: Node[]) => all(nodes, 'script').filter(isClassic) as HTMLScriptElement[]
 
-/** Run each script as a full load would: re-created (a parsed one never runs), one after the other, a `src` awaited. */
-export async function runScripts(list: HTMLScriptElement[]): Promise<void> {
+/** Run each script as a full load would: re-created (a parsed one never runs), one after the other, a `src` awaited.
+ *  `ran` gets each replacement, which stands for the old node from then on. */
+export async function runScripts(list: HTMLScriptElement[], ran?: (s: HTMLScriptElement) => void): Promise<void> {
   for (const old of list) {
     if (!old.isConnected) continue
     const s = document.createElement('script')
@@ -146,6 +147,7 @@ export async function runScripts(list: HTMLScriptElement[]): Promise<void> {
     s.text = old.text
     const done = s.src && new Promise((r) => { s.onload = s.onerror = r })
     old.replaceWith(s)
+    ran?.(s)
     await done
   }
 }

@@ -200,7 +200,8 @@ export default function Navigation({ blocks }: NavigationData) {
       </p>
       <CodeBlock code={blocks.clear.code} lang={blocks.clear.lang} file={blocks.clear.file} html={blocks.clear.html} />
       <p>
-        A navigation served from the cache fires the same events, and it ends within the same task, so <code>data-brust-loading</code> is never painted.
+        A navigation served from the cache fires the same events. Without a page transition it ends within the same task, so <code>data-brust-loading</code> is never painted. With one, the old page is painted
+        once more while it is set, for up to about 100 ms, so an indicator of your own should wait about 150 ms before it shows, as the built-in bar does.
       </p>
 
       <h2 id="events">Events</h2>

@@ -62,7 +62,7 @@ clearNavigationCache()
 
 `clearNavigationCache()` does nothing on the server or on a page without the `nav` script.
 
-A navigation served from the cache fires the same events (`click`, `load`, `success`, same `id` rules). It ends within the same task, so `data-brust-loading` is never painted.
+A navigation served from the cache fires the same events (`click`, `load`, `success`, same `id` rules). Without a page transition it ends within the same task, so `data-brust-loading` is never painted. With one (§7) the old page is painted once more while it is set, for up to about 100 ms, so an indicator of your own should wait about 150 ms before it shows, as the built-in bar does (§6).
 
 ## 6. Events
 
@@ -106,8 +106,10 @@ Or in CSS alone, with no JavaScript:
 
 ```css
 .bar { transform: scaleX(0); transform-origin: left; }
-html[data-brust-loading] .bar { transform: scaleX(.8); transition: transform 8s cubic-bezier(.1, .8, .2, 1); }
+html[data-brust-loading] .bar { transform: scaleX(.8); transition: transform 8s cubic-bezier(.1, .8, .2, 1) .15s; }
 ```
+
+The `.15s` delay keeps the bar still on a navigation that is quick, such as one served from the cache.
 
 ## 7. Page transitions
 

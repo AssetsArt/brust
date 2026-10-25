@@ -478,6 +478,20 @@ test('head scripts: all re-run after a whole-body swap (data-brust-once only whe
   expect($('#once')).toBe(once)
   expect($('#new-c')).not.toBeNull()
   expect(names().filter((n) => n === 'success').length).toBe(2)
+  // a script nav ran (re-created) is still the server's: gone from a page that does not send it (review 5057eb7b B1)
+  expect($('#new-b')).toBeNull()
+  // a script a component appended at runtime is kept and never run again, not even by a whole-body swap
+  const rt = document.createElement('script')
+  rt.id = 'rt'
+  document.head.append(rt)
+  const theme2 = $('#theme')
+  pages['/a'] = { html: doc({ ...app('1', 'a'), head }) }
+  await nav.navigate('/a')
+  await settle()
+  expect($('#rt')).toBe(rt)
+  expect($('#theme')).not.toBe(theme2) // the re-created one is re-created again
+  expect($('#new-c')).toBeNull()
+  expect([...document.head.children].map((e) => e.id)).toEqual(['theme', 'once', 'rt'])
 })
 
 // A script inside a persisted element ran with it: it must not run again (review a7652d11). Scripts that run are
@@ -776,7 +790,9 @@ test('view transitions: the first 8 new eager images are preloaded (srcset, size
     decoded.push(this)
     return new Promise(() => {}) // never: the 100 ms cap starts the transition
   })
-  start({ ...app('1', 'a', '<img src="/logo.png">') })
+  start({ ...app('1', 'a', '<img src="/logo.png" srcset="/logo-2x.png 2x">') })
+  // the browser picked the 2x candidate: the image is on screen under its src too (review 5057eb7b N2)
+  Object.defineProperty($('img')!, 'currentSrc', { value: 'http://localhost/logo-2x.png' })
   const imgs = Array.from({ length: 9 }, (_, i) => `<img src="img/${i}.png">`).join('')
   pages['/docs/b'] = {
     html: doc(app('1', 'b', `<img src="/logo.png"><img loading="lazy" src="/far.png"><img srcset="hero-1x.png 1x, /hero-2x.png 2x" sizes="50vw" crossorigin="anonymous" referrerpolicy="no-referrer">${imgs}`)),

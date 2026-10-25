@@ -195,7 +195,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       let t: VT | undefined
       if (start && html.getAttribute('data-brust-transition') !== 'off' && !reduced()) {
         const abs = (u: string | null) => (u ? new URL(u, url).href : '')
-        const onScreen = new Set([...document.querySelectorAll('img')].map((i) => i.currentSrc || i.src).filter(Boolean))
+        const onScreen = new Set([...document.querySelectorAll('img')].flatMap((i) => [i.src, i.currentSrc]).filter(Boolean))
         await Promise.race([
           new Promise((r) => setTimeout(r, 100)),
           Promise.all([...doc.querySelectorAll('img')]
@@ -215,10 +215,12 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       }
       t ? await t.updateCallbackDone : swap()
       if (!live()) return
-      // the head scripts new to it run; after a whole-body swap (<html> and <body> attributes replaced) every one runs
-      // again, as on a full load (a theme script setting <html class>), but a data-brust-once one only if it is new
-      const head = whole ? [...document.head.children].filter((e) => !e.hasAttribute('data-brust-once') || fresh.includes(e)) : fresh
-      await runScripts([...classicScripts(head), ...body])
+      // the head scripts new to it run; after a whole-body swap (<html> and <body> attributes replaced) every one the
+      // server sent runs again, as on a full load (a theme script setting <html class>), but a data-brust-once one only
+      // if it is new, and one a component added at runtime never (a loader such as Stripe.js must not run twice). A
+      // re-created script is the server's too, so the next reconcile still removes it.
+      const head = whole ? [...document.head.children].filter((e) => served.has(e) && (!e.hasAttribute('data-brust-once') || fresh.includes(e))) : fresh
+      await runScripts([...classicScripts(head), ...body], (s) => served.add(s))
       if (!live()) return
       html.removeAttribute(LOADING)
       progress()
