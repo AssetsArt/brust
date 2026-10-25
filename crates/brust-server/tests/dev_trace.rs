@@ -138,20 +138,22 @@ fn a_hit_carries_its_own_fresh_trace_and_the_cached_body_none() {
 }
 
 #[test]
-fn dev_markers_wrap_each_chain_level_and_are_absent_in_production_and_in_islands() {
+fn level_markers_wrap_each_inner_level_in_dev_and_production_and_never_inside_islands() {
+    // F453: the markers are the SPA-navigation ones (`brust-l`), in production too; the dev-only scheme is gone.
     let (dev, _) = boot_dev(Some(TOKEN));
     let (_, _, body) = get(&dev, "/pokemon/pikachu", &[]);
     assert!(
-        body.contains("<!--brust:appLayout_a1-->") && body.contains("<!--brust:detailPage_c3-->"),
+        body.contains("<!--brust-l:detailPage_c3:")
+            && body.contains("<!--/brust-l:detailPage_c3-->"),
         "{body}"
     );
-    assert_eq!(body.matches("<!--/brust-->").count(), 2);
-    // the leaf is wrapped inside the layout's outlet: layout open ... leaf open ... leaf close ... layout close
-    let (a, d) = (
-        body.find("<!--brust:appLayout_a1-->").unwrap(),
-        body.find("<!--brust:detailPage_c3-->").unwrap(),
+    // The root level is not wrapped: its mark goes on the nav tag.
+    assert!(!body.contains("<!--brust-l:appLayout_a1"), "{body}");
+    assert!(
+        !body.contains("<!--brust:") && !body.contains("<!--/brust-->"),
+        "{body}"
     );
-    assert!(a < d);
+    assert_eq!(body.matches("<!--/brust-l:").count(), 1);
     // /team renders a react island (teamBuilder): no marker inside <brust-island>
     let (_, _, team) = get(&dev, "/team", &[]);
     let mut rest = team.as_str();
@@ -167,10 +169,10 @@ fn dev_markers_wrap_each_chain_level_and_are_absent_in_production_and_in_islands
         rest = &rest[i + end..];
     }
     assert!(islands > 0, "the page has an island: {team}");
-    // production: not a byte of it
+    // production: the same markers, byte for byte the page's own
     let (prod, _) = boot_dev(None);
     let (_, _, pbody) = get(&prod, "/pokemon/pikachu", &[]);
-    assert!(!pbody.contains("<!--brust"), "{pbody}");
+    assert!(pbody.contains("<!--brust-l:detailPage_c3:"), "{pbody}");
 }
 
 #[test]

@@ -27,13 +27,13 @@ use crate::l2::{
     L2Config, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta, page_from_l2, pairs_of, remaining_ttl,
 };
 use crate::manifest::{
-    ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteCache, RouteRecord,
+    ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteCache, RouteRecord, Tier,
 };
 use crate::plan::{Lookup, PlanRow, PlanSeed, PlanSrc, PlannedCall};
 use crate::protocol::{JobCall, JobResult, JobsRequest, LoaderRequest, LoaderResponse, Verdict};
 use crate::render::{
     Overlay, RenderError, Renderer, ensure_doctype, hoist_head_into, inject_css_into,
-    inject_document_assets_into, use_ids,
+    inject_document_assets_with_root_into, use_ids,
 };
 use crate::routing::routes::{Search, decode_search};
 use crate::static_rules::{IMMUTABLE, asset_lookup_key, is_hashed, safe_rel};
@@ -814,7 +814,7 @@ fn render_document<H: Host>(
     ctx: &Node,
 ) -> Result<Bytes, RenderError> {
     let mut out = String::with_capacity(s.render_hints[ri].load(Ordering::Relaxed));
-    render_chain_into(
+    let root = render_chain_root_into(
         &s.manifest,
         &s.renderer,
         &route.id,
@@ -825,12 +825,13 @@ fn render_document<H: Host>(
     ensure_doctype(&mut out);
     hoist_head_into(&mut out);
     inject_css_into(&mut out, &route.css);
-    inject_document_assets_into(
+    inject_document_assets_with_root_into(
         &mut out,
         &route.chain,
         &s.manifest,
         ctx.get(STORE_KEY),
         s.action_prefix_tag.as_deref(),
+        root.as_deref(),
     );
     // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
     let hint = next_hint(out.len());
@@ -949,7 +950,7 @@ fn needs_first_gzip(b: &RenderedBody) -> bool {
 /// overlay (its `_idN`, its own child-instance slots from
 /// `ctx["__children"][<id>]`, its own job results from `ctx["__own"][<id>]`,
 /// and `_props`) into `out` (cleared first) — `render_document` minus asset
-/// tags and the hint.
+/// tags and the hint. Every level carries its `brust-l` marker (F453).
 pub fn render_chain_into(
     manifest: &Manifest,
     renderer: &Renderer,
@@ -958,6 +959,20 @@ pub fn render_chain_into(
     ctx: &Node,
     out: &mut String,
 ) -> Result<(), RenderError> {
+    render_chain_root_into(manifest, renderer, route_id, chain, ctx, out).map(|_| ())
+}
+
+/// [`render_chain_into`] that also returns the root level's `<id>:<hash>` (F453, design §5.9) for the `nav` tag's
+/// `data-brust-root`. A react-tier level is hydrated by React as written, so it gets no marker, nor does any
+/// level below it; with a react root the result is `None`.
+pub fn render_chain_root_into(
+    manifest: &Manifest,
+    renderer: &Renderer,
+    route_id: &str,
+    chain: &[String],
+    ctx: &Node,
+    out: &mut String,
+) -> Result<Option<String>, RenderError> {
     let children = ctx.get(CHILDREN_KEY);
     let own_all = ctx.get(OWN_KEY);
     // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -985,7 +1000,13 @@ pub fn render_chain_into(
             props: Some(props.clone()),
         }
     };
-    renderer.render_chain_into(chain, &base, &overlay, out)
+    let island = |id: &str| {
+        manifest
+            .components
+            .get(id)
+            .is_some_and(|c| c.tier == Tier::React)
+    };
+    renderer.render_chain_marked(chain, &base, &overlay, &island, out)
 }
 
 /// [`render_chain_into`] into a fresh String. `pub` (via

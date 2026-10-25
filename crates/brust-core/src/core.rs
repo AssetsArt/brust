@@ -42,8 +42,8 @@ pub struct CoreConfig {
     pub https: bool,
     /// The cache adapter (shared second tier); `None` = none, and nothing changes.
     pub l2: Option<L2Config>,
-    /// `brust dev` only (L14): a request carrying this token in `x-brust-dev-token` gets a trace header, and
-    /// every rendered chain level is wrapped in `<!--brust:id-->` markers. `None` in production.
+    /// `brust dev` only (L14): a request carrying this token in `x-brust-dev-token` gets a trace header.
+    /// `None` in production.
     pub dev_token: Option<String>,
 }
 
@@ -111,20 +111,8 @@ impl<H: Host> Core<H> {
     pub fn new(host: H, loaded: Loaded, cfg: CoreConfig) -> Result<Self, String> {
         let routes =
             RouteTable::from_manifest(&loaded.manifest).map_err(|e| format!("routes: {e}"))?;
-        let mut renderer =
+        let renderer =
             Renderer::from_templates(&loaded.templates).map_err(|e| format!("render: {e}"))?;
-        if cfg.dev_token.is_some() {
-            // Islands (react tier) are hydrated by React: nothing is ever injected inside or between their nodes.
-            renderer.set_dev_markers(
-                loaded
-                    .manifest
-                    .components
-                    .iter()
-                    .filter(|(_, c)| c.tier == crate::manifest::Tier::React)
-                    .map(|(id, _)| id.clone())
-                    .collect(),
-            );
-        }
         let plans = PlanIndex::new(&loaded.manifest).map_err(|e| format!("manifest: {e}"))?;
         if let Some(c) = &cfg.cors {
             c.validate().map_err(|e| format!("cors: {e}"))?;

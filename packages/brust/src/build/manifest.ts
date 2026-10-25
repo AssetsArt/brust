@@ -79,7 +79,14 @@ export interface ManifestJson {
   routes: RouteRecord[]
   components: Record<string, ComponentRecord>
   /** `runtime` is the core; `features` maps each feature module name to its file (L33). */
-  assets: { runtime: string; features: Record<string, string> }
+  assets: {
+    runtime: string
+    features: Record<string, string>
+    /** F453: the SPA-navigation module `client/nav-<hex>.js`; the `nav` tag is emitted only when it is set. */
+    nav?: string
+    /** F453: the build id (`data-brust-build`): a digest of the rest of the manifest, set last by `brust build`. */
+    build?: string
+  }
   jobs_module: string
   actions: ActionsRecord | null
   /** L16 R16.3: an actions-only build (no routes, no templates); everything but the prefix is a 404 problem+json. */
@@ -316,7 +323,7 @@ export function writeManifest(opts: {
   routeComponent: Map<string, string>
   compiled: Map<string, Compiled>
   /** The runtime files `buildRuntime` wrote: the core and the feature modules. */
-  runtime: { core: string; features: Record<string, string> }
+  runtime: { core: string; features: Record<string, string>; nav?: string }
   /** component id → `client/<file>` (client chunk or react island chunk). */
   chunks: Map<string, string>
   actions?: ActionsRecord | null
@@ -360,7 +367,7 @@ export function writeManifest(opts: {
     }
   })
   linkNativeChunks(routes, compiled, components)
-  return { version: MANIFEST_VERSION, routes, components, assets: { runtime: opts.runtime.core, features: opts.runtime.features }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
+  return { version: MANIFEST_VERSION, routes, components, assets: { runtime: opts.runtime.core, features: opts.runtime.features, ...(opts.runtime.nav === undefined ? {} : { nav: opts.runtime.nav }) }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
 }
 
 /** S6 amendment (F66): the server's asset injection walks only each chain component's direct

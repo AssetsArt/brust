@@ -194,7 +194,9 @@
       "island": "client/rt-island-<hash>.js",
       "collection": "client/rt-collection-<hash>.js",
       "store": "client/rt-store-<hash>.js"
-    }
+    },
+    "nav": "client/nav-<hash>.js",
+    "build": "<build>"
   },
   "jobs_module": "jobs.js",
   "actions": null,

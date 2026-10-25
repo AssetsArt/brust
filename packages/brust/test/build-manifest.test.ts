@@ -24,7 +24,7 @@ afterAll(() => {
  * pin compares everything else. `BRUST_UPDATE_PIN=1` regenerates the pin (then review it). */
 /** Bun's `toMatchObject` writes asymmetric matchers INTO the received object: assert on a copy. */
 const clone = <T>(v: T): T => structuredClone(v)
-const unhash = (m: unknown) => JSON.parse(JSON.stringify(m).replace(/-[0-9a-f]{10}\.js/g, '-<hash>.js'))
+const unhash = (m: unknown) => JSON.parse(JSON.stringify(m).replace(/-[0-9a-f]{10}\.js/g, '-<hash>.js').replace(/"build":"[0-9a-f]{16}"/, '"build":"<build>"'))
 
 /** The `modulepreload` hrefs of a page, as `client/<file>`, in order. */
 const preloads = (html: string) => [...html.matchAll(/<link rel="modulepreload" href="\/_brust\/([^"]+)">/g)].map((m) => m[1]!)
@@ -74,7 +74,11 @@ test('brust build writes the S6 manifest (pinned) and every file it names', asyn
     jobs: [{ kind: 'ssr', inputs: ['*', '__store'], target: item.jobs[1].target }],
   })
   expect(m.assets.react).toBeUndefined()
-  for (const p of [m.assets.runtime, ...Object.values(m.components).map((c: any) => c.client).filter(Boolean), 'jobs.js', 'public/app.css', 'index.js'])
+  // F453: the nav module is its own content-hashed asset, standalone (it imports no runtime), and the build id is a digest of the manifest.
+  expect(m.assets.nav).toMatch(/^client\/nav-[0-9a-f]{10}\.js$/)
+  expect(m.assets.build).toMatch(/^[0-9a-f]{16}$/)
+  expect(readFileSync(join(dist, m.assets.nav), 'utf8')).not.toContain('/_brust/')
+  for (const p of [m.assets.runtime, m.assets.nav, ...Object.values(m.components).map((c: any) => c.client).filter(Boolean), 'jobs.js', 'public/app.css', 'index.js'])
     expect(existsSync(join(dist, p))).toBe(true)
   for (const c of Object.values(m.components) as any[]) expect(existsSync(join(dist, c.template))).toBe(true)
   for (const f of readdirSync(join(dist, 'client'))) expect(f).toMatch(/^[A-Za-z0-9_][A-Za-z0-9_.-]*-[0-9a-f]{10}\.js$/) // pipeline.rs safe_rel + is_hashed
@@ -90,6 +94,14 @@ test('brust build writes the S6 manifest (pinned) and every file it names', asyn
   const prefixed = new RegExp(`identifierPrefix:\\s*"${target}"`)
   expect(readFileSync(join(dist, 'jobs.js'), 'utf8')).toMatch(prefixed)
   expect(readFileSync(join(dist, m.components[target].client), 'utf8')).toMatch(prefixed)
+})
+
+test('F453: the build id is stable across identical builds', async () => {
+  const read = () => JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf8')).assets as { build: string; nav: string }
+  await runBuild({ appRoot: app, entry: 'routes.tsx', outDir: 'dist', log: () => {} })
+  const first = read()
+  await runBuild({ appRoot: app, entry: 'routes.tsx', outDir: 'dist', log: () => {} })
+  expect(read()).toEqual(first)
 })
 
 test('the generated dist passes Manifest::load and renders through the real handlers (slot names line up)', async () => {

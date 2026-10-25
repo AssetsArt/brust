@@ -1,3 +1,5 @@
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +9,7 @@ use brust_server::render::{
     RenderError, Renderer, inject_assets, inject_document_assets_into, inject_page_assets_into,
     store_scripts_into, use_ids,
 };
+use common::unmarked;
 use serde_json::json;
 
 fn fx() -> PathBuf {
@@ -38,7 +41,7 @@ fn outlet_composes_leaf_first() {
         )
         .unwrap();
     assert_eq!(
-        html,
+        unmarked(&html),
         "<!doctype html><html><head><title>fx</title></head><body><nav>fx</nav><main><h1>Home</h1></main></body></html>"
     );
 }
@@ -57,7 +60,7 @@ fn outlet_is_not_escaped() {
         )
         .unwrap();
     assert!(
-        html.contains("<nav>fx</nav><p><b>&lt;i&gt;</b></p></body>"),
+        unmarked(&html).contains("<nav>fx</nav><p><b>&lt;i&gt;</b></p></body>"),
         "{html}"
     );
 }

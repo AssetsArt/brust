@@ -61,15 +61,18 @@ test('static route: 200, layout composed, zero Bun calls, only the layout runtim
   const r = await fetch(`${base}/`)
   const html = await r.text()
   expect(r.status).toBe(200)
-  expect(html).toMatch(/<main>\s*<section><h1>Home<\/h1><\/section><\/main>/)
-  // HomePage is static: no chunk, no island. The only scripts are the native layout's (useState):
-  // the runtime core, the one feature module the layout binds (L33: `basics`) and the layout chunk (contract 6) —
-  // they load in the browser, not in Bun.
+  // F453: the page level sits in a `brust-l` comment pair inside the layout's outlet.
+  expect(html).toMatch(/<main>\s*<!--brust-l:homePage_[0-9a-f]{8}:[0-9a-f]{16}--><section><h1>Home<\/h1><\/section><!--\/brust-l:homePage_[0-9a-f]{8}--><\/main>/)
+  // HomePage is static: no chunk, no island. The only scripts are the nav module (every full document, first) and the
+  // native layout's (useState): the runtime core, the one feature module the layout binds (L33: `basics`) and the
+  // layout chunk (contract 6) — they load in the browser, not in Bun.
   const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1])
-  expect(scripts).toHaveLength(3)
-  expect(scripts[0]).toMatch(/^\/_brust\/client\/runtime-[0-9a-f]{10}\.js$/)
-  expect(scripts[1]).toMatch(/^\/_brust\/client\/rt-basics-[0-9a-f]{10}\.js$/)
-  expect(scripts[2]).toMatch(/^\/_brust\/client\/appLayout_[0-9a-f]{8}-[0-9a-f]{10}\.js$/)
+  expect(scripts).toHaveLength(4)
+  expect(scripts[0]).toMatch(/^\/_brust\/client\/nav-[0-9a-f]{10}\.js$/)
+  expect(html).toMatch(/<script type="module" src="[^"]+" data-brust-nav data-brust-build="[0-9a-f]{16}" data-brust-root="appLayout_[0-9a-f]{8}:[0-9a-f]{16}"><\/script>/)
+  expect(scripts[1]).toMatch(/^\/_brust\/client\/runtime-[0-9a-f]{10}\.js$/)
+  expect(scripts[2]).toMatch(/^\/_brust\/client\/rt-basics-[0-9a-f]{10}\.js$/)
+  expect(scripts[3]).toMatch(/^\/_brust\/client\/appLayout_[0-9a-f]{8}-[0-9a-f]{10}\.js$/)
   expect(html).not.toContain('<script>')
   expect(html).not.toContain('brust-island')
   expect(await stats()).toMatchObject({ loader_calls: 0, job_calls: 0 })

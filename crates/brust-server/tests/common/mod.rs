@@ -5,6 +5,21 @@
 
 pub mod fake_bun;
 
+/// `html` without the `brust-l` level markers (F453: the comments around every inner chain level).
+pub fn unmarked(html: &str) -> String {
+    let mut out = String::new();
+    let mut rest = html;
+    while let Some(i) = rest.find("<!--") {
+        let after = &rest[i + 4..];
+        let end = after.find("-->").map_or(rest.len(), |e| i + 4 + e + 3);
+        let keep = !(after.starts_with("brust-l:") || after.starts_with("/brust-l:"));
+        out.push_str(&rest[..if keep { end } else { i }]);
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

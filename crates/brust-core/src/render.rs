@@ -86,9 +86,6 @@ fn render_into(
 
 pub struct Renderer {
     env: Environment<'static>,
-    /// `brust dev` (L14): wrap each chain level in `<!--brust:<id>-->…<!--/brust-->`, except these ids (react
-    /// islands, which React hydrates and which must not get a node injected). `None` = never (production).
-    dev_markers: Option<std::collections::HashSet<String>>,
 }
 
 impl Renderer {
@@ -110,15 +107,7 @@ impl Renderer {
             env.add_template(name, source)
                 .map_err(|e| render_err(id, &e))?;
         }
-        Ok(Renderer {
-            env,
-            dev_markers: None,
-        })
-    }
-
-    /// Turn on the dev DOM markers (L14); `skip` = component ids that never get one.
-    pub fn set_dev_markers(&mut self, skip: std::collections::HashSet<String>) {
-        self.dev_markers = Some(skip);
+        Ok(Renderer { env })
     }
 
     /// `Environment::get_template` for the render benches (a separate crate, so
@@ -149,7 +138,8 @@ impl Renderer {
     /// no per-component map is built. The root template writes straight into
     /// `out` (sized by the caller, M3-P P3); each inner level into a String of
     /// the same capacity hint. Capacity never changes a byte. On an error `out`
-    /// may hold a partial render; the caller drops it.
+    /// may hold a partial render; the caller drops it. Every level is marked
+    /// (see [`Self::render_chain_marked`]); the root's `<id>:<hash>` is dropped.
     pub fn render_chain_into(
         &self,
         chain: &[String],
@@ -157,12 +147,39 @@ impl Renderer {
         overlay: &dyn Fn(&str) -> Overlay,
         out: &mut String,
     ) -> Result<(), RenderError> {
+        self.render_chain_marked(chain, base, overlay, &|_| false, out)
+            .map(|_| ())
+    }
+
+    /// F453: [`Self::render_chain_into`] with the SPA-navigation level markers (design §5.9). Every inner level
+    /// (`pos > 0`) is wrapped in `<!--brust-l:<id>:<hash>-->…<!--/brust-l:<id>-->`, where `<hash>` covers that
+    /// level's OWN markup (its output with the child level left out; for the root also without `<head>…</head>`).
+    /// The root is not wrapped: its `<id>:<hash>` is returned, for the `nav` tag's `data-brust-root`.
+    ///
+    /// `unmarked(id)` is true for a level that must get no node (a react island, which React hydrates as written).
+    /// A level is marked only while it and every level above it is markable (an id that cannot sit in a comment
+    /// is not): markers inside an unmarked level's output would sit in markup that is not ours to touch, and a
+    /// chain with a hole in it is not a chain the client can walk. No marked root: `None`.
+    pub fn render_chain_marked(
+        &self,
+        chain: &[String],
+        base: &minijinja::Value,
+        overlay: &dyn Fn(&str) -> Overlay,
+        unmarked: &dyn Fn(&str) -> bool,
+        out: &mut String,
+    ) -> Result<Option<String>, RenderError> {
         out.clear();
         let cap = out.capacity();
-        let mut outlet: Option<String> = None;
+        let marked = chain
+            .iter()
+            .take_while(|id| marker_safe(id) && !unmarked(id))
+            .count();
+        let mut root = None;
+        let mut outlet: Option<minijinja::Value> = None;
         for (pos, id) in chain.iter().enumerate().rev() {
+            let child = outlet.take();
             let scope = minijinja::Value::from_object(Scope {
-                outlet: outlet.take().map(minijinja::Value::from_safe_string),
+                outlet: child.clone(),
                 overlay: overlay(id),
                 base: base.clone(),
             });
@@ -170,16 +187,12 @@ impl Renderer {
                 .env
                 .get_template(id)
                 .map_err(|_| RenderError::Unknown(id.clone()))?;
-            let mark = self
-                .dev_markers
-                .as_ref()
-                .is_some_and(|skip| !skip.contains(id));
+            let mark = pos < marked;
             if pos == 0 {
                 render_into(&tmpl, scope, out).map_err(|e| render_err(id, &e))?;
                 if mark {
-                    // After the doctype, never before it: a node ahead of `<!doctype>` puts the page in quirks mode.
-                    out.insert_str(doctype_end(out), &format!("<!--brust:{id}-->"));
-                    out.push_str("<!--/brust-->");
+                    let hash = level_hash(out, child.as_ref().and_then(|c| c.as_str()), true);
+                    root = Some(format!("{id}:{hash}"));
                 }
             } else {
                 // An inner level: its output becomes the parent's `__outlet`
@@ -188,13 +201,14 @@ impl Renderer {
                 let mut s = String::with_capacity(cap);
                 render_into(&tmpl, scope, &mut s).map_err(|e| render_err(id, &e))?;
                 if mark {
-                    s.insert_str(0, &format!("<!--brust:{id}-->"));
-                    s.push_str("<!--/brust-->");
+                    let hash = level_hash(&s, child.as_ref().and_then(|c| c.as_str()), false);
+                    s.insert_str(0, &format!("<!--brust-l:{id}:{hash}-->"));
+                    s.push_str(&format!("<!--/brust-l:{id}-->"));
                 }
-                outlet = Some(s);
+                outlet = Some(minijinja::Value::from_safe_string(s));
             }
         }
-        Ok(())
+        Ok(root)
     }
 
     /// [`Self::render_chain_into`] into a fresh String (tests, bench).
@@ -233,6 +247,66 @@ impl Renderer {
             ..Default::default()
         })
     }
+}
+
+/// Whether `id` can be written into a `brust-l` comment and a `data-brust-root` attribute as is: printable ASCII
+/// without `< > " \' & \``, no `--` (it would end the comment early) and no trailing `-` (`--->` ends it with a
+/// stray dash). A chain id is a component id the build chose, not user input; this is the belt for the braces.
+fn marker_safe(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && !matches!(b, b'<' | b'>' | b'"' | b'\'' | b'&' | b'`'))
+        && !id.contains("--")
+        && !id.ends_with('-')
+}
+
+/// F453: the shell hash of one chain level (design §5.9): 64 bits of blake3 (stable across processes, targets and
+/// Rust versions) over the level's own markup, as 16 hex digits. `child` (the `__outlet` string, wherever the
+/// template put it) is left out, and for the root so is `<head>…</head>` (the head is reconciled on its own).
+/// Each kept segment is length-prefixed, so a child moved from one spot to another changes the hash.
+fn level_hash(html: &str, child: Option<&str>, root: bool) -> String {
+    let mut cut: Vec<(usize, usize)> = Vec::new();
+    if let Some(c) = child.filter(|c| !c.is_empty()) {
+        cut.extend(html.match_indices(c).map(|(i, m)| (i, i + m.len())));
+    }
+    if root && let Some(r) = head_range(html) {
+        cut.push(r);
+    }
+    cut.sort_unstable();
+    let mut h = blake3::Hasher::new();
+    let mut seg = |s: &str| {
+        h.update(&(s.len() as u64).to_le_bytes());
+        h.update(s.as_bytes());
+    };
+    let mut at = 0;
+    for (a, b) in cut {
+        if b <= at {
+            continue;
+        }
+        seg(&html[at..a.max(at)]);
+        at = b;
+    }
+    seg(&html[at..]);
+    h.finalize().to_hex().as_str()[..16].to_string()
+}
+
+/// The byte range of the first `<head …>…</head>` element (not `<header>`), end tag included.
+fn head_range(html: &str) -> Option<(usize, usize)> {
+    let b = html.as_bytes();
+    let mut from = 0;
+    let start = loop {
+        let i = find_ci(html, "<head", from)?;
+        if matches!(
+            b.get(i + 5),
+            Some(b'>' | b'/') | Some(b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
+        ) {
+            break i;
+        }
+        from = i + 5;
+    };
+    let end = find_ci(html, "</head>", start)? + "</head>".len();
+    Some((start, end))
 }
 
 /// What one chain component sees over the base context.
@@ -652,19 +726,6 @@ fn has_attr(tag: &str, name: &str) -> bool {
     attr_value(tag, name).is_some()
 }
 
-/// Byte offset just past a leading `<!doctype …>` (case-insensitive, after optional whitespace); 0 when the document has none.
-fn doctype_end(html: &str) -> usize {
-    let lead = html.len() - html.trim_start().len();
-    let rest = &html[lead..];
-    if rest.len() >= 9
-        && rest.as_bytes()[..9].eq_ignore_ascii_case(b"<!doctype")
-        && let Some(i) = rest.find('>')
-    {
-        return lead + i + 1;
-    }
-    0
-}
-
 /// The components a page is made of, in the order the asset injection walks them: each chain level, the react
 /// children its jobs target, and its native children (L14 trace).
 pub fn page_components(chain: &[String], m: &Manifest) -> Vec<String> {
@@ -690,13 +751,31 @@ pub fn page_components(chain: &[String], m: &Manifest) -> Vec<String> {
 
 /// M3-F A4: as [`inject_page_assets_into`], with `prefix_tag` (the server's prebuilt
 /// `__BRUST_ACTION_PREFIX__` script, only for a non-default prefix) first:
-/// `[prefix tag][store tags][runtime]…`; nothing for a static chain (R12).
+/// `[nav tag][prefix tag][store tags][runtime]…`; nothing but the nav tag for a static chain (R12). No root mark
+/// (see [`inject_document_assets_with_root_into`]): the nav tag carries no `data-brust-root`.
 pub fn inject_document_assets_into(
     html: &mut String,
     chain: &[String],
     m: &Manifest,
     store: Option<&Node>,
     prefix_tag: Option<&str>,
+) {
+    inject_document_assets_with_root_into(html, chain, m, store, prefix_tag, None);
+}
+
+/// F453: the `nav` module's tag, `<script type="module" src="/_brust/<assets.nav>" data-brust-nav
+/// data-brust-build="<build id>" data-brust-root="<id>:<hash>">`, goes first among the body-end scripts of every
+/// full document (one with a `</body>`), BEFORE the all-static early exit: a page that loads no runtime still
+/// navigates. A fragment gets none. `root` is [`Renderer::render_chain_marked`]'s mark of the root level; none
+/// (a react root, an older caller) leaves `data-brust-root` off and the client swaps the whole body. A manifest
+/// without `assets.nav` emits no tag.
+pub fn inject_document_assets_with_root_into(
+    html: &mut String,
+    chain: &[String],
+    m: &Manifest,
+    store: Option<&Node>,
+    prefix_tag: Option<&str>,
+    root: Option<&str>,
 ) {
     let mut chunks: Vec<&str> = Vec::new();
     let mut react: Vec<&str> = Vec::new();
@@ -739,11 +818,30 @@ pub fn inject_document_assets_into(
             }
         }
     }
+    let mut tags = String::new();
+    if let Some(nav) = &m.assets.nav
+        && html.rfind("</body>").is_some()
+    {
+        tags.push_str("<script type=\"module\" src=\"/_brust/");
+        tags.push_str(nav);
+        tags.push_str("\" data-brust-nav data-brust-build=\"");
+        tags.push_str(m.assets.build.as_deref().unwrap_or_default());
+        tags.push('"');
+        if let Some(r) = root {
+            tags.push_str(" data-brust-root=\"");
+            tags.push_str(r);
+            tags.push('"');
+        }
+        tags.push_str("></script>");
+    }
     if !any_dynamic {
+        if !tags.is_empty() {
+            let at = html.rfind("</body>").unwrap_or(html.len());
+            html.insert_str(at, &tags);
+        }
         return;
     }
     let tag = |p: &str| format!("<script type=\"module\" src=\"/_brust/{p}\"></script>");
-    let mut tags = String::new();
     if let Some(t) = prefix_tag {
         tags.push_str(t);
     }
@@ -921,6 +1019,24 @@ mod tests {
     }
     use serde_json::json;
 
+    /// `html` without the `brust-l` level markers (the comments F453 adds around inner levels).
+    fn unmarked(html: &str) -> String {
+        let mut out = String::new();
+        let mut rest = html;
+        while let Some(i) = rest.find("<!--") {
+            let after = &rest[i + 4..];
+            let end = after.find("-->").map_or(rest.len(), |e| i + 4 + e + 3);
+            if after.starts_with("brust-l:") || after.starts_with("/brust-l:") {
+                out.push_str(&rest[..i]);
+            } else {
+                out.push_str(&rest[..end]);
+            }
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
     fn templates(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
             .iter()
@@ -1027,7 +1143,7 @@ mod tests {
         let out = r
             .render_chain(&["Layout".into(), "Leaf".into()], &ctx, &ids)
             .unwrap();
-        assert_eq!(out, "[L1|<F1:<n>:False>|False||&lt;n&gt;]");
+        assert_eq!(unmarked(&out), "[L1|<F1:<n>:False>|False||&lt;n&gt;]");
 
         // No overlay: the base ctx is used as-is.
         let out = r
@@ -1281,17 +1397,7 @@ mod tests {
         assert!(css < pre && pre < html.find("<title>").unwrap(), "{html}");
     }
 
-    // ---- L14: dev markers and the doctype ----
-
-    #[test]
-    fn doctype_end_finds_a_leading_doctype_only() {
-        assert_eq!(doctype_end("<!doctype html><html>"), 15);
-        assert_eq!(doctype_end("  <!DOCTYPE html>\n<html>"), 17);
-        assert_eq!(doctype_end("<html><!doctype html>"), 0);
-        assert_eq!(doctype_end("<!-- c --><!doctype html>"), 0);
-        assert_eq!(doctype_end("<!doctype html"), 0);
-        assert_eq!(doctype_end(""), 0);
-    }
+    // ---- F399: head hoist ----
 
     fn hoist(html: &str) -> String {
         let mut h = html.to_string();
@@ -1406,39 +1512,301 @@ mod tests {
         }
     }
 
-    #[test]
-    fn dev_markers_wrap_each_level_and_sit_after_the_doctype() {
-        let mut r = Renderer::from_templates(&templates(&[
+    // ---- F453: level markers, shell hashes, the nav tag ----
+
+    /// `(root, inner, leaf)` templates: the root and the inner layout each write their own markup around `__outlet`.
+    fn three_levels(root_body: &str) -> Renderer {
+        Renderer::from_templates(&templates(&[
             (
                 "root",
-                "<!doctype html><html><body>{{ __outlet | safe }}</body></html>",
+                &format!(
+                    "<!doctype html><html><head><title>{{{{ t }}}}</title></head><body>{root_body}{{{{ __outlet | safe }}}}</body></html>"
+                ),
+            ),
+            ("mid", "<main>{{ __outlet | safe }}</main>"),
+            ("leaf", "<p>{{ n }}</p>"),
+        ]))
+        .unwrap()
+    }
+
+    fn chain3() -> Vec<String> {
+        vec!["root".into(), "mid".into(), "leaf".into()]
+    }
+
+    fn mark(r: &Renderer, ctx: serde_json::Value) -> (String, Option<String>) {
+        let mut out = String::new();
+        let root = r
+            .render_chain_marked(
+                &chain3(),
+                &brust_jinja::value_of(&ctx),
+                &|_| Overlay::default(),
+                &|_| false,
+                &mut out,
+            )
+            .unwrap();
+        (out, root)
+    }
+
+    /// The `<hash>` of the `brust-l:<id>:` marker of `id`.
+    fn hash_of(html: &str, id: &str) -> String {
+        let key = format!("<!--brust-l:{id}:");
+        let at = html
+            .find(&key)
+            .unwrap_or_else(|| panic!("no marker for {id}: {html}"))
+            + key.len();
+        html[at..at + 16].to_string()
+    }
+
+    #[test]
+    fn level_markers_wrap_each_inner_level_and_the_root_is_passed_out() {
+        let r = three_levels("");
+        let (html, root) = mark(&r, serde_json::json!({"t": "T", "n": 1}));
+        let (mid, leaf) = (hash_of(&html, "mid"), hash_of(&html, "leaf"));
+        assert_eq!(
+            html,
+            format!(
+                "<!doctype html><html><head><title>T</title></head><body>\
+                 <!--brust-l:mid:{mid}--><main><!--brust-l:leaf:{leaf}--><p>1</p><!--/brust-l:leaf--></main><!--/brust-l:mid-->\
+                 </body></html>"
+            )
+        );
+        // The root is not wrapped: its mark goes to the nav tag, and the doctype stays the first thing.
+        let root = root.unwrap();
+        assert!(
+            root.starts_with("root:") && root.len() == "root:".len() + 16,
+            "{root}"
+        );
+        // The plain entry point marks too (the dev markers are gone).
+        let plain = r
+            .render_chain(
+                &chain3(),
+                &serde_json::json!({"t": "T", "n": 1}),
+                &|_| vec![],
+            )
+            .unwrap();
+        assert_eq!(plain, html);
+    }
+
+    #[test]
+    fn a_level_hash_ignores_the_child_and_the_head_and_sees_a_one_byte_change() {
+        let r = three_levels("<nav>a</nav>");
+        let (a, root_a) = mark(&r, serde_json::json!({"t": "T", "n": 1}));
+        // Another page under the same layouts, and another head: every layout level keeps its hash.
+        let (b, root_b) = mark(&r, serde_json::json!({"t": "Other title", "n": 2}));
+        assert_ne!(a, b);
+        assert_eq!(hash_of(&a, "mid"), hash_of(&b, "mid"));
+        assert_eq!(
+            root_a, root_b,
+            "the head and the child are not the root's own markup"
+        );
+        // The page level hashes its own markup: a change in it changes its hash.
+        assert_ne!(hash_of(&a, "leaf"), hash_of(&b, "leaf"));
+        // A one-byte change in the root's own markup changes the root hash (and not the inner level's).
+        let (c, root_c) = mark(
+            &three_levels("<nav>b</nav>"),
+            serde_json::json!({"t": "T", "n": 1}),
+        );
+        assert_ne!(root_a, root_c);
+        assert_eq!(hash_of(&a, "mid"), hash_of(&c, "mid"));
+        // ... also in the body outside the head, and in an inner level.
+        let r2 = Renderer::from_templates(&templates(&[
+            (
+                "root",
+                "<html><head></head><body>{{ __outlet | safe }}</body></html>",
+            ),
+            (
+                "mid",
+                "<main class=\"{{ c }}\">{{ __outlet | safe }}</main>",
             ),
             ("leaf", "<p>x</p>"),
-            ("isl", "<brust-island>i</brust-island>"),
         ]))
         .unwrap();
-        let chain: Vec<String> = vec!["root".into(), "leaf".into()];
-        let plain = r
-            .render_chain(&chain, &serde_json::json!({}), &|_| vec![])
+        let run = |c: &str| {
+            let mut o = String::new();
+            r2.render_chain_marked(
+                &chain3(),
+                &brust_jinja::value_of(&serde_json::json!({ "c": c })),
+                &|_| Overlay::default(),
+                &|_| false,
+                &mut o,
+            )
             .unwrap();
-        assert!(!plain.contains("<!--brust"));
-        r.set_dev_markers(["isl".to_string()].into());
-        let dev = r
-            .render_chain(&chain, &serde_json::json!({}), &|_| vec![])
-            .unwrap();
-        assert!(
-            dev.starts_with("<!doctype html><!--brust:root--><html>"),
-            "{dev}"
+            o
+        };
+        assert_ne!(hash_of(&run("a"), "mid"), hash_of(&run("b"), "mid"));
+        assert_eq!(hash_of(&run("a"), "leaf"), hash_of(&run("b"), "leaf"));
+    }
+
+    #[test]
+    fn a_child_moved_inside_its_parent_changes_the_hash() {
+        // The same bytes around the child, the child in a different spot: not the same markup.
+        let hash = |t: &str| {
+            let r = Renderer::from_templates(&templates(&[("mid", t), ("leaf", "L")])).unwrap();
+            let mut o = String::new();
+            r.render_chain_marked(
+                &["mid".into(), "leaf".into()],
+                &brust_jinja::value_of(&serde_json::json!({})),
+                &|_| Overlay::default(),
+                &|_| false,
+                &mut o,
+            )
+            .unwrap()
+            .unwrap()
+        };
+        assert_ne!(
+            hash("ab{{ __outlet | safe }}cd"),
+            hash("abc{{ __outlet | safe }}d")
         );
-        assert!(
-            dev.contains("<body><!--brust:leaf--><p>x</p><!--/brust--></body>"),
-            "{dev}"
+        // A parent that does not render its child hashes the same whatever the child is.
+        assert_eq!(hash("ab"), hash("ab"));
+    }
+
+    #[test]
+    fn hashing_is_done_before_head_hoist_and_asset_injection() {
+        let r = three_levels("");
+        let (html, root) = mark(&r, serde_json::json!({"t": "T", "n": 1}));
+        let mut doc = html.clone();
+        ensure_doctype(&mut doc);
+        hoist_head_into(&mut doc);
+        inject_css_into(&mut doc, &["client/a-0123456789.css".to_string()]);
+        // The injected link sits in the head; the root's mark is the chain output's, untouched by it.
+        let (again, root_again) = mark(&r, serde_json::json!({"t": "T", "n": 1}));
+        assert_eq!(again, html);
+        assert_eq!(root, root_again);
+        assert!(doc.contains("data-brust-css"));
+    }
+
+    #[test]
+    fn a_react_level_and_every_level_below_it_get_no_marker() {
+        let r = Renderer::from_templates(&templates(&[
+            ("root", "<html><body>{{ __outlet | safe }}</body></html>"),
+            ("isl", "<brust-island>{{ __outlet | safe }}</brust-island>"),
+            ("leaf", "<p>x</p>"),
+        ]))
+        .unwrap();
+        let chain: Vec<String> = vec!["root".into(), "isl".into(), "leaf".into()];
+        let run = |chain: &[String], unmarked: &dyn Fn(&str) -> bool| {
+            let mut o = String::new();
+            let root = r
+                .render_chain_marked(
+                    chain,
+                    &brust_jinja::value_of(&serde_json::json!({})),
+                    &|_| Overlay::default(),
+                    unmarked,
+                    &mut o,
+                )
+                .unwrap();
+            (o, root)
+        };
+        let (html, root) = run(&chain, &|id| id == "isl");
+        assert!(root.is_some());
+        assert_eq!(
+            html,
+            "<html><body><brust-island><p>x</p></brust-island></body></html>"
         );
-        assert!(dev.ends_with("</html><!--/brust-->"), "{dev}");
-        // a react level (in the skip set) is never wrapped
-        let isl = r
-            .render_chain(&["isl".to_string()], &serde_json::json!({}), &|_| vec![])
+        // A react root: no root mark either, so the client swaps the whole body.
+        let (html, root) = run(&chain, &|id| id == "root");
+        assert_eq!(root, None);
+        assert!(!html.contains("brust-l"), "{html}");
+        // A bare react island chain is untouched.
+        let (html, root) = run(&["isl".to_string()], &|id| id == "isl");
+        assert_eq!(
+            (html.as_str(), root),
+            ("<brust-island></brust-island>", None)
+        );
+    }
+
+    #[test]
+    fn an_id_that_cannot_sit_in_a_comment_gets_no_marker() {
+        for bad in ["", "a--b", "a-", "a>b", "a b", "a\"b", "a&b", "ä", "a<b"] {
+            assert!(!marker_safe(bad), "{bad:?}");
+        }
+        for ok in ["appLayout_a1", "routes/[slug]/page", "a-b", "a.b:c"] {
+            assert!(marker_safe(ok), "{ok:?}");
+        }
+        let r = Renderer::from_templates(&templates(&[
+            ("root", "<html>{{ __outlet | safe }}</html>"),
+            ("a--b", "<i></i>"),
+        ]))
+        .unwrap();
+        let mut o = String::new();
+        let root = r
+            .render_chain_marked(
+                &["root".into(), "a--b".into()],
+                &brust_jinja::value_of(&serde_json::json!({})),
+                &|_| Overlay::default(),
+                &|_| false,
+                &mut o,
+            )
             .unwrap();
-        assert_eq!(isl, "<brust-island>i</brust-island>");
+        assert!(root.is_some_and(|r| r.starts_with("root:")));
+        assert_eq!(o, "<html><i></i></html>");
+    }
+
+    fn nav_manifest() -> Manifest {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../brust-server/tests/fixtures/dist");
+        let mut m = crate::manifest::Manifest::load(&dir).unwrap().manifest;
+        m.assets.nav = Some("client/nav-0123456789.js".into());
+        m.assets.build = Some("b0b1b2b3b4".into());
+        m
+    }
+
+    #[test]
+    fn the_nav_tag_is_on_every_full_document_even_an_all_static_one() {
+        let m = nav_manifest();
+        let tag = "<script type=\"module\" src=\"/_brust/client/nav-0123456789.js\" data-brust-nav data-brust-build=\"b0b1b2b3b4\" data-brust-root=\"root:0123456789abcdef\"></script>";
+        let doc = "<html><head></head><body><p>x</p></body></html>";
+        // routes[0] is all-static: no runtime tags, the nav tag still goes in before </body>.
+        let mut s = doc.to_string();
+        inject_document_assets_with_root_into(
+            &mut s,
+            &m.routes[0].chain,
+            &m,
+            None,
+            None,
+            Some("root:0123456789abcdef"),
+        );
+        assert_eq!(
+            s,
+            format!("<html><head></head><body><p>x</p>{tag}</body></html>")
+        );
+        // A page with a native component: the nav tag is FIRST among the body-end scripts.
+        let mut d = doc.to_string();
+        inject_document_assets_with_root_into(
+            &mut d,
+            &m.routes[1].chain,
+            &m,
+            None,
+            Some("<script>P</script>"),
+            Some("root:0123456789abcdef"),
+        );
+        let (nav, prefix, rt) = (
+            d.find("data-brust-nav").unwrap(),
+            d.find("<script>P</script>").unwrap(),
+            d.find(&format!("src=\"/_brust/{}\"></script>", m.assets.runtime))
+                .unwrap(),
+        );
+        assert!(nav < prefix && prefix < rt, "{d}");
+        assert_eq!(d.matches("data-brust-nav").count(), 1);
+        // No root mark: no data-brust-root.
+        let mut n = doc.to_string();
+        inject_document_assets_into(&mut n, &m.routes[0].chain, &m, None, None);
+        assert!(
+            n.contains("data-brust-nav") && !n.contains("data-brust-root"),
+            "{n}"
+        );
+        // A fragment (no </body>) gets none, static or not.
+        for chain in [&m.routes[0].chain, &m.routes[1].chain] {
+            let mut f = "<p>frag</p>".to_string();
+            inject_document_assets_into(&mut f, chain, &m, None, None);
+            assert!(!f.contains("data-brust-nav"), "{f}");
+        }
+        // An older manifest (no assets.nav) emits none.
+        let mut old = nav_manifest();
+        old.assets.nav = None;
+        let mut o = doc.to_string();
+        inject_document_assets_into(&mut o, &old.routes[0].chain, &old, None, None);
+        assert_eq!(o, doc);
     }
 }

@@ -239,7 +239,7 @@ class BrustDevtools extends HTMLElement {
     return out
   }
 
-  /** Highlight a component on the page: chain marker (Range between `<!--brust:id-->` and its close), native `[x-data]`, island `brust-island`. */
+  /** Highlight a component on the page: chain marker (Range between `<!--brust-l:id:hash-->` and `<!--/brust-l:id-->`, the root is the whole document), native `[x-data]`, island `brust-island`. */
   private highlight(id: string): void {
     const rects = componentRects(id)
     if (rects.length === 0) { this.hl.hidden = true; return }
@@ -331,15 +331,16 @@ export function componentRects(id: string): DOMRect[] {
   // the island host is display:contents (no box of its own): its painted children carry the rects
   for (const e of document.querySelectorAll('brust-island')) if (e.getAttribute('data-id') === id) rects.push(...[...e.children].map((c) => c.getBoundingClientRect()))
   if (rects.length) return rects
-  // A chain level: the nodes between `<!--brust:id-->` and its matching `<!--/brust-->`.
+  // The root level carries no comment pair: its mark is on the nav tag, and it spans the document.
+  const root = document.querySelector('script[data-brust-nav]')?.getAttribute('data-brust-root')
+  if (root !== null && root !== undefined && root.slice(0, root.lastIndexOf(':')) === id) return [document.documentElement.getBoundingClientRect()]
+  // An inner chain level: the nodes between `<!--brust-l:id:hash-->` and its `<!--/brust-l:id-->` (F453 markers).
   const w = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT)
   let open: Comment | null = null
-  let depth = 0
   for (let n = w.nextNode() as Comment | null; n; n = w.nextNode() as Comment | null) {
     const v = n.nodeValue ?? ''
-    if (!open) { if (v === `brust:${id}`) { open = n; depth = 1 } continue }
-    if (v.startsWith('brust:')) depth++
-    else if (v === '/brust' && --depth === 0) {
+    if (!open) { if (v.startsWith('brust-l:') && v.slice(8, v.lastIndexOf(':')) === id) open = n; continue }
+    if (v === `/brust-l:${id}`) {
       const r = document.createRange()
       r.setStartAfter(open); r.setEndBefore(n)
       const box = r.getBoundingClientRect()
