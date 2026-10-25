@@ -98,7 +98,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       url = fin.href
       const doc = /html/.test(res.headers.get('content-type') ?? '') ? new DOMParser().parseFromString(await res.text(), 'text/html') : null
       if (!live()) return
-      if (doc?.querySelector(NAV)?.getAttribute('data-brust-build') !== build) throw new Error(`not a brust document of this build: ${url}`)
+      if (doc?.querySelector(NAV)?.getAttribute('data-brust-build') !== build) throw new Error(`not a brust page of this build`)
 
       // §3 step 4: everything the new page needs before it is shown. The store tags first, ahead of the old ones (a
       // store seeds from the first tag of its name; a live store never re-reads one), then the module scripts in
@@ -107,11 +107,11 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       const stores = Array.from(doc.querySelectorAll('script[data-brust-store]'), (s) => document.importNode(s, true))
       document.head.append(...stores)
       added.push(...stores)
-      for (const s of Array.from(doc.querySelectorAll('script[type=module][src]'))) {
+      for (const s of doc.querySelectorAll('script[type=module][src]')) {
         if (!s.matches(NAV)) await load(new URL(s.getAttribute('src')!, url).href)
         if (!live()) return
       }
-      const plan = planHead(Array.from(doc.head.children))
+      const plan = planHead([...doc.head.children])
       added.push(...plan.sheets.map(([e]) => e))
       // a load event is a later task: the handlers set now still catch a cached sheet
       await Promise.all(plan.sheets.map(([e]) => new Promise((r) => { (e as HTMLLinkElement).onload = (e as HTMLLinkElement).onerror = r })))

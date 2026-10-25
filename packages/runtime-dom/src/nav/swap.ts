@@ -16,7 +16,7 @@ export interface HeadPlan { want: Element[]; fixed: Set<Element>; sheets: [Eleme
  */
 export function planHead(next: Element[]): HeadPlan {
   const head = document.head
-  const old = Array.from(head.children)
+  const old = [...head.children]
   const pool = new Map<string, Element[]>()
   for (const el of old) { const k = el.outerHTML; pool.has(k) ? pool.get(k)!.push(el) : pool.set(k, [el]) }
   const want = next.map((n) => pool.get(n.outerHTML)?.shift() ?? n)
@@ -52,7 +52,7 @@ export function planHead(next: Element[]): HeadPlan {
 export function applyHead({ want, fixed }: HeadPlan): Element[] {
   const head = document.head
   const keep = new Set(want)
-  for (const el of Array.from(head.children)) if (!keep.has(el)) el.remove()
+  for (const el of [...head.children]) if (!keep.has(el)) el.remove()
   const fresh: Element[] = []
   let prev: Element | null = null
   for (let el of want) {
@@ -65,12 +65,12 @@ export function applyHead({ want, fixed }: HeadPlan): Element[] {
 }
 
 function copyAttrs(to: Element, from: Element, keep?: string): void {
-  for (const a of Array.from(to.attributes)) if (a.name !== keep && !from.hasAttribute(a.name)) to.removeAttribute(a.name)
-  for (const a of Array.from(from.attributes)) to.setAttribute(a.name, a.value)
+  for (const a of [...to.attributes]) if (a.name !== keep && !from.hasAttribute(a.name)) to.removeAttribute(a.name)
+  for (const a of from.attributes) to.setAttribute(a.name, a.value)
 }
 
 const all = (nodes: Node[], sel: string) =>
-  nodes.flatMap((n) => (n instanceof Element ? [...(n.matches(sel) ? [n] : []), ...Array.from(n.querySelectorAll(sel))] : []))
+  nodes.flatMap((n) => (n instanceof Element ? [...(n.matches(sel) ? [n] : []), ...n.querySelectorAll(sel)] : []))
 
 const P = '[data-brust-persist]'
 const key = (el: Element) => el.getAttribute('data-brust-persist')!
@@ -116,8 +116,8 @@ export function swapBody(doc: Document, loading: string): Node[] {
   }
   copyAttrs(document.documentElement, doc.documentElement, loading)
   copyAttrs(body, doc.body)
-  const next = Array.from(doc.body.childNodes)
-  const keep = persist(Array.from(body.childNodes))
+  const next = [...doc.body.childNodes]
+  const keep = persist([...body.childNodes])
   body.replaceChildren(...next)
   keep(next)
   return next
@@ -133,7 +133,7 @@ export async function runScripts(list: HTMLScriptElement[]): Promise<void> {
   for (const old of list) {
     if (!old.isConnected) continue
     const s = document.createElement('script')
-    for (const a of Array.from(old.attributes)) s.setAttribute(a.name, a.value)
+    for (const a of old.attributes) s.setAttribute(a.name, a.value)
     s.text = old.text
     const done = s.src && new Promise((r) => { s.onload = s.onerror = r })
     old.replaceWith(s)
