@@ -3,8 +3,9 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { chromium } from 'playwright'
 import { parseBench } from '../lib/bench'
-import { freshOut, HOOK_MS, serve, type Server } from './harness'
+import { freshOut, HOOK_MS, serve, type Server, TEST_MS, WAIT_MS } from './harness'
 
 const app = join(import.meta.dir, '..')
 const bin = join(app, '../packages/brust/bin/brust')
@@ -124,3 +125,29 @@ test('parseBench: min bar height 2%, axis units, a re-run moves the numbers', ()
   const bad = { ...fake, measurements: [{ ...m('S', 1, { '0.001': 1 }), nums: { rps: 1, p50: 1, p99: 1, total: 10, errors: 1, status: { '200': 9, '500': 1 } } }, m('I', 1, { '0.001': 1 }), m('D', 1, { '0.001': 1 })] }
   expect(parseBench(bad as never).allOk).toBe(false)
 })
+
+// F456: SPA navigation keeps <html>, so the step rail's --rail must go with the rail (RailFill's cleanup), not stay on the next page.
+test('RailFill (Chromium): --rail follows the scroll, and a navigation to /docs leaves none behind and does not reload', async () => {
+  const browser = await chromium.launch()
+  try {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } })
+    ctx.setDefaultTimeout(WAIT_MS)
+    const page = await ctx.newPage()
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(String(e)))
+    await page.goto(`${base}/`, { waitUntil: 'networkidle' })
+    await page.evaluate(() => { (window as unknown as Record<string, number>).__mark = 1 })
+    const rail = () => page.evaluate(() => document.documentElement.style.getPropertyValue('--rail'))
+    await page.evaluate(() => document.getElementById('rail')!.scrollIntoView({ block: 'end' }))
+    await page.waitForFunction(() => document.documentElement.style.getPropertyValue('--rail') !== '')
+    expect(await rail()).not.toBe('')
+    await page.click('a[href="/docs"]')
+    await page.waitForFunction(() => location.pathname === '/docs')
+    await page.waitForFunction(() => !document.getElementById('rail'))
+    expect(await rail()).toBe('')
+    expect(await page.evaluate(() => (window as unknown as Record<string, number>).__mark)).toBe(1) // never reloaded
+    expect(errors).toEqual([])
+  } finally {
+    await browser.close()
+  }
+}, TEST_MS)

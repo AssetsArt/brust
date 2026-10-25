@@ -41,19 +41,19 @@ async function open(path: string): Promise<Page> {
 const errorsOf = (p: Page) => (p as Page & { errors: string[] }).errors
 
 test('every Guide page is 200 with its title, a live demo frame and no compiler warning besides the react demos', async () => {
-  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'release-notes', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'css', 'configuration', 'cli', 'dev-mode', 'deployment', 'migrating', 'react-coverage', 'packages', 'shadcn', 'guides/shadcn-setup'])
+  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'release-notes', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'navigation', 'css', 'configuration', 'cli', 'dev-mode', 'deployment', 'migrating', 'react-coverage', 'packages', 'shadcn', 'guides/shadcn-setup'])
   for (const p of GUIDE) {
     const r = await fetch(`${base}/docs/${p.slug}`)
     expect([p.slug, r.status]).toEqual([p.slug, 200])
     const html = await r.text()
     expect(html).toContain(`<title>${p.title} · brust docs</title>`)
     // the coverage pages are reference tables generated from docs/*-coverage.json , the release notes and the shadcn setup guide are prose (its steps run in the reader's terminal): no demo frame
-    expect([p.slug, ['react-coverage', 'shadcn', 'release-notes', 'guides/shadcn-setup'].includes(p.slug) || /class="browser[ "]/.test(html)]).toEqual([p.slug, true])
+    expect([p.slug, ['react-coverage', 'shadcn', 'release-notes', 'guides/shadcn-setup', 'navigation'].includes(p.slug) || /class="browser[ "]/.test(html)]).toEqual([p.slug, true])
   }
 }, TEST_MS)
 
 test('tiers: pages static; demos as the docs text claims', () => {
-  for (const name of ['Introduction', 'Installation', 'ProjectStructure', 'Routing', 'Loaders', 'RenderingTiers', 'Caching', 'Actions', 'Store', 'Configuration', 'Cli', 'Deployment', 'Migrating', 'DemoPokemonPage'])
+  for (const name of ['Introduction', 'Installation', 'ProjectStructure', 'Routing', 'Loaders', 'RenderingTiers', 'Caching', 'Actions', 'Store', 'Navigation', 'Configuration', 'Cli', 'Deployment', 'Migrating', 'DemoPokemonPage'])
     expect([name, tierOf(name).tier, tierOf(name).client]).toEqual([name, 'static', null])
   for (const name of ['CacheProbe', 'StarterPicker', 'FileTree', 'RouteMatcher', 'ConfigBuilder', 'SwitchPanels', 'TeamPicker', 'TeamBadge', 'LoaderDemo'])
     expect([name, tierOf(name).tier]).toEqual([name, 'native'])
