@@ -28,8 +28,12 @@ export function readChain(doc: Document): Level[] | null {
   return open.length ? null : out
 }
 
-/** A pair can be a range only when the parser kept its two comments siblings (a `<p>` or a `<table>` can split them). */
-const usable = (l: Level) => l.open!.parentNode === l.close!.parentNode
+/**
+ * A pair can be a range only when the parser kept its two comments siblings (a block in a `<p>` splits them), and not
+ * in a table section: there the comments stay put while the parser moves the content out in front of the table
+ * (foster parenting), so the range would hold nothing of the level.
+ */
+const usable = (l: Level) => l.open!.parentNode === l.close!.parentNode && !/^T(ABLE|BODY|HEAD|FOOT|R)$/.test(l.open!.parentNode!.nodeName)
 
 /**
  * The level to replace: the first one whose id or hash differs, else the page (never kept), moved up while its pair is

@@ -72,9 +72,14 @@ test('swapLevel moves up a level when the parser split a pair (outlet in <p>, in
   // the root level's pair split too: the whole body
   const both = readChain(parse(doc({ body: `<p>${L('D', '1', `${L('P', 'b', '<div>x</div>')}`)}</p>` })))
   expect(swapLevel(ok, both)).toBe(0)
-  // foster parenting: text in a table is moved out in front of it, the comments stay
-  const t = readChain(parse(doc({ body: L('D', '1', `<table>${L('P', 'b', '<tr><td>x</td></tr>')}</table>`) })))
-  if (t && t[2] && t[2].open!.parentNode !== t[2].close!.parentNode) expect(swapLevel(ok, t)).toBe(1)
+  // foster parenting: the parser moves a block out in front of the table and leaves the comments in it, siblings
+  // around nothing; a pair in a table section is never a range
+  const t = readChain(parse(doc({ body: L('D', '1', `<table>${L('P', 'b', '<div id="fostered">x</div>')}</table>`) })))!
+  expect(t[2]!.open!.parentNode).toBe(t[2]!.close!.parentNode)
+  // (Chromium leaves the pair around nothing; happy-dom fosters only the element: the served table case checks Chromium)
+  expect(swapLevel(ok, t)).toBe(1)
+  const rows = readChain(parse(doc({ body: L('D', '1', `<table><tbody>${L('P', 'b', '<tr><td>x</td></tr>')}</tbody></table>`) })))!
+  expect(swapLevel(ok, rows)).toBe(1)
 })
 
 // ---- head ------------------------------------------------------------------------------------------
