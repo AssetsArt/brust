@@ -133,3 +133,18 @@ constraints, then your task row.
 ## Outcome
 
 (filled at integration)
+
+## Wave 2 (2026-10-25, after alpha.26): cache, progress bar, page transitions
+
+Design §10 (read all of it). Same global constraints as above, with one exception: this wave's base
+is `origin/main` dcbb4a73 or later.
+
+| row | summary |
+|---|---|
+| F458 | Client page cache (design §10.1): an LRU of 32 entries, fresh for 5 min, back/forward at any age, `no-store` and ≥ 400 never cached, `data-brust-cache`, `clearCache()` bridge + `clearNavigationCache()` export, and the actions client clearing it after a non-GET call. Fixes the human's two prefetch bugs. |
+| F459 | Built-in progress bar (§10.2), on by default, shown only after 150 ms, `--brust-progress-color`, `data-brust-progress="off"`. |
+| F460 | View Transitions around the swap (§10.3), on by default, root cross-fade, the six no-flicker rules, `data-brust-transition="off"`. |
+
+| slug | rows | tier | role | deps | acceptance |
+|---|---|---|---|---|---|
+| spa-nav-wave2 | F458, F459, F460 | complex (review: complex) | implementer (suggested: Dew) | - | **Red-before served tests** for the two bugs: hover then wait 16 s then click = 0 new document requests; hover, leave, hover again = 1 request; back to a visited page = 0 requests. Then: a `no-store` page and a 404 are fetched again; a POST through `@brust/core/client` clears the cache (the next navigation fetches); `data-brust-cache="0"` = no cache. Progress bar: a fixture route whose loader waits 500 ms shows the bar after 150 ms and removes it after `success`; a cache hit never inserts it; opt-out works; reduced motion has no animation. Transitions: in Chromium `startViewTransition` is called exactly once per navigation, `success` fires after `updateCallbackDone`, emulated reduced motion = not called, opt-out = not called, a navigation started during a transition skips it and lands on the newer page, and §7 item 14 (the layout matrix) still passes with transitions ON. Unit tests with an ASYNC `startViewTransition` stub. `cd packages/runtime-dom && bun test && bun scripts/size.ts --check` (raise `nav` to measured + 10% with a reason line); `cd packages/brust && bun run typecheck && bun test`; `docs/navigation.md` + the website navigation page gain the cache, progress-bar and transitions sections; brust.dev sets `--brust-progress-color` to its accent; website tests + parity shots (a full load must not move); served tests wired in ci.yml |
