@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test'
-import { navigate as browserNavigate } from '../src/navigate-browser'
-import { navigate as serverNavigate } from '../src/navigate'
+import { clearNavigationCache as browserClear, navigate as browserNavigate } from '../src/navigate-browser'
+import { clearNavigationCache as serverClear, navigate as serverNavigate } from '../src/navigate'
 
 const g = globalThis as Record<symbol | string, unknown>
 const KEY = Symbol.for('brust.nav')
@@ -36,4 +36,13 @@ test('bridge absent: a full load (assign, or replace)', async () => {
 
 test('server entry throws "navigate is browser-only"', () => {
   expect(() => serverNavigate('/x')).toThrow(/navigate is browser-only/)
+})
+
+test('clearNavigationCache: the bridge clears its page cache; without nav, and on the server, a no-op', () => {
+  let n = 0
+  browserClear()
+  g[KEY] = { navigate: () => Promise.resolve(), clearCache: () => n++ }
+  browserClear()
+  expect(n).toBe(1)
+  expect(serverClear()).toBeUndefined()
 })

@@ -48,11 +48,14 @@ export function planHead(next: Element[]): HeadPlan {
   return { want, fixed, sheets }
 }
 
-/** Make the head's element children exactly `plan.want`, moving no fixed element. Returns the elements new to it. */
-export function applyHead({ want, fixed }: HeadPlan): Element[] {
+/**
+ * Make the head's element children `plan.want`, moving no fixed element. An old element not wanted is removed only if
+ * `served` says it came from the server: one a live component added at runtime stays. Returns the elements new to it.
+ */
+export function applyHead({ want, fixed }: HeadPlan, served: (el: Element) => boolean = () => true): Element[] {
   const head = document.head
   const keep = new Set(want)
-  for (const el of [...head.children]) if (!keep.has(el)) el.remove()
+  for (const el of [...head.children]) if (!keep.has(el) && served(el)) el.remove()
   const fresh: Element[] = []
   let prev: Element | null = null
   for (let el of want) {
@@ -134,8 +137,9 @@ const isClassic = (s: Element) => !(s as HTMLScriptElement).type || /java|ecma/i
 /** The classic scripts among `nodes` (and under them), in document order. */
 export const classicScripts = (nodes: Node[]) => all(nodes, 'script').filter(isClassic) as HTMLScriptElement[]
 
-/** Run each script as a full load would: re-created (a parsed one never runs), one after the other, a `src` awaited. */
-export async function runScripts(list: HTMLScriptElement[]): Promise<void> {
+/** Run each script as a full load would: re-created (a parsed one never runs), one after the other, a `src` awaited.
+ *  `ran` gets each replacement, which stands for the old node from then on. */
+export async function runScripts(list: HTMLScriptElement[], ran?: (s: HTMLScriptElement) => void): Promise<void> {
   for (const old of list) {
     if (!old.isConnected) continue
     const s = document.createElement('script')
@@ -143,6 +147,7 @@ export async function runScripts(list: HTMLScriptElement[]): Promise<void> {
     s.text = old.text
     const done = s.src && new Promise((r) => { s.onload = s.onerror = r })
     old.replaceWith(s)
+    ran?.(s)
     await done
   }
 }

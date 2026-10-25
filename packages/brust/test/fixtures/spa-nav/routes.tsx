@@ -34,6 +34,8 @@ export const routes = defineRoutes([
       { path: '/store-a', Component: StoreA, loader: () => { cart.count.set(5); return {} } },
       { path: '/store-b', Component: StoreB, loader: () => { cart.count.set(5); late.v.set(7); return {} } },
       { path: '/long', Component: Long },
+      // a loader that takes 500 ms: the progress bar shows (§10.2)
+      { path: '/slow', Component: Leaf, loader: async () => { await new Promise((r) => setTimeout(r, 500)); return { name: 'slow' } } },
       {
         Component: A,
         loader: ({ path }) => ({ path }),

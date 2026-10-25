@@ -2,6 +2,7 @@
 // elysia is type-only here. Differences from 0.1.x runtime/treaty.ts: docs/actions.md "The client".
 import { type Treaty, treaty } from '@elysia/eden/treaty2'
 import type { AnyElysia } from 'elysia'
+import { clearNavigationCache } from '../navigate-browser'
 import { type ActionCredentials, DEFAULT_ACTION_PREFIX } from './prefix'
 
 export { DEFAULT_ACTION_PREFIX }
@@ -62,10 +63,16 @@ export function client<const App extends AnyElysia, Head extends Record<string, 
   // The root prefix (an actions-only deployment) adds nothing to the base: `https://api.example.com/team`, not `//team`.
   const base = resolveBaseUrl(opts)
   const prefix = resolvePrefix(opts)
+  // SPA navigation design §10.1: a mutation clears the page cache, so no page read after it is served from before it
+  const send = (async (url: RequestInfo | URL, req?: RequestInit) => {
+    const res = await (fetcher ?? fetch)(url, req)
+    if (!/^(GET|HEAD)$/i.test(req?.method ?? 'GET')) clearNavigationCache()
+    return res
+  }) as typeof fetch
   return treaty<App, Head>(base !== '' && prefix === '/' ? base : base + prefix, {
     ...rest,
     keepDomain: true,
-    ...(fetcher ? { fetcher } : {}),
+    fetcher: send,
     ...(init || defaults ? { fetch: typeof init === 'function' ? init : { ...defaults, ...init } } : {}),
   })
 }

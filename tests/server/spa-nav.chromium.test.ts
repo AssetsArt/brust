@@ -65,11 +65,11 @@ afterAll(async () => {
 })
 
 type NavEvent = { type: string; id: number; url: string; trigger?: string; status?: number; swapped?: boolean; loading: boolean }
-declare global { interface Window { __mark?: number; __navlog: NavEvent[] } }
+declare global { interface Window { __mark?: number; __navlog: NavEvent[]; __vt: string[]; __bars: number } }
 
 /** A page that records every brust:nav:* event (with whether <html> carried data-brust-loading at that moment). */
-async function open(path: string, root = base): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> {
-  const ctx = await browser.newContext({ viewport: { width: 1000, height: 700 } })
+async function open(path: string, root = base, opts: { reducedMotion?: 'reduce' } = {}): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> {
+  const ctx = await browser.newContext({ viewport: { width: 1000, height: 700 }, ...opts })
   const page = await ctx.newPage()
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(String(e)))
@@ -83,7 +83,23 @@ async function open(path: string, root = base): Promise<{ page: Page; errors: st
         window.__navlog.push(e2)
         // survives the full load an error's default action starts
         sessionStorage.setItem('navlog', JSON.stringify([...JSON.parse(sessionStorage.getItem('navlog') ?? '[]'), e2]))
+        if (t === 'success' || t === 'error') window.__vt.push(t)
       })
+    // the real View Transitions API, watched: each call, when its update is done, and a skip (§10.3)
+    window.__vt = []
+    const real = Document.prototype.startViewTransition
+    if (real)
+      Document.prototype.startViewTransition = function (this: Document, u: unknown) {
+        window.__vt.push('start')
+        const t = real.call(this, u as ViewTransitionUpdateCallback)
+        t.updateCallbackDone.then(() => window.__vt.push('done'), () => window.__vt.push('update-threw'))
+        t.ready.catch(() => window.__vt.push('skipped'))
+        return t
+      }
+    // every progress bar ever inserted (§10.2)
+    window.__bars = 0
+    new MutationObserver((rs) => { for (const r of rs) for (const n of r.addedNodes) if ((n as Element).matches?.('div[data-brust-bar]')) window.__bars++ })
+      .observe(document, { childList: true, subtree: true })
   })
   await page.goto(root + path)
   await settle(page)
@@ -114,7 +130,9 @@ const snapshot = (page: Page) =>
     const body = document.body.cloneNode(true) as HTMLElement
     body.querySelectorAll('[data-count]').forEach((e) => { e.textContent = '' })
     body.querySelectorAll('[data-brust-persist]').forEach((e) => e.replaceChildren())
-    return { url: location.href, title: document.title, html: attrs(document.documentElement), body: attrs(document.body), head: [...document.head.children].map((e) => e.outerHTML), dom: body.innerHTML }
+    // the progress bar's <style> is runtime-added (§10.2): a full load has none
+    const head = [...document.head.children].filter((e) => !e.matches('[data-brust-bar]'))
+    return { url: location.href, title: document.title, html: attrs(document.documentElement), body: attrs(document.body), head: head.map((e) => e.outerHTML), dom: body.innerHTML }
   })
 const fullLoads = new Map<string, Awaited<ReturnType<typeof snapshot>>>()
 async function fullLoad(url: string) {
@@ -316,6 +334,174 @@ test('prefetch: hover then click is one request; data-brust-prefetch="false" pre
   await close()
 })
 
+// ---- wave 2 (design §10.1): the page cache -------------------------------------------------------------------------------
+
+/** The document requests (fetch) of a page, by pathname. */
+function documents(page: Page): string[] {
+  const hits: string[] = []
+  page.on('request', (r) => { if (r.resourceType() === 'fetch' && r.method() === 'GET') hits.push(new URL(r.url()).pathname) })
+  return hits
+}
+const go = (page: Page, url: string) => nav(page, () => page.evaluate((u) => (globalThis as unknown as Record<symbol, { navigate(u: string): Promise<void> }>)[Symbol.for('brust.nav')]!.navigate(u), url))
+
+test('cache (human bug 1): hover, wait 16 s, click is zero new requests', async () => {
+  const { page, close } = await open('/')
+  const hits = documents(page)
+  await page.hover('nav a[href="/list"]')
+  await page.waitForFunction(() => performance.getEntriesByType('resource').some((e) => e.name.endsWith('/list')))
+  await Bun.sleep(16_000) // alpha.26 held a prefetch for 15 s
+  expect(hits).toEqual(['/list'])
+  const ev = await follow(page, '/list')
+  expect(ev.map((e) => [e.type, e.loading])).toEqual([['click', false], ['load', true], ['success', false]])
+  expect(hits).toEqual(['/list'])
+  await expectFullLoadParity(page)
+  await close()
+}, 60_000)
+
+test('cache (human bug 2): hover, leave, hover again is one request; back to visited pages is zero', async () => {
+  const { page, close } = await open('/')
+  const hits = documents(page)
+  await page.hover('nav a[href="/b/one"]')
+  await Bun.sleep(200)
+  await page.mouse.move(900, 650)
+  await page.hover('nav a[href="/b/one"]')
+  await Bun.sleep(200)
+  expect(hits).toEqual(['/b/one'])
+  await follow(page, '/b/one')
+  await follow(page, '/list')
+  await follow(page, '/')
+  expect(hits).toEqual(['/b/one', '/list', '/'])
+  for (const to of ['/list', '/b/one', '/']) {
+    const ev = await nav(page, () => page.goBack())
+    expect(ev.at(-1)).toMatchObject({ type: 'success', trigger: 'popstate' })
+    expect(new URL(page.url()).pathname).toBe(to)
+    await expectFullLoadParity(page)
+  }
+  expect(hits).toEqual(['/b/one', '/list', '/'])
+  await close()
+})
+
+test('cache: a no-store page and a 404 are fetched again; data-brust-cache="0" is no cache', async () => {
+  const { page, close } = await open('/')
+  const hits = documents(page)
+  await page.route('**/b/one', async (r) => {
+    if (r.request().resourceType() !== 'fetch') return r.continue()
+    const res = await r.fetch()
+    await r.fulfill({ response: res, headers: { ...res.headers(), 'cache-control': 'no-store' } })
+  })
+  // by navigate(): a click also focuses the link, and that focus prefetch is a request of its own for a page never kept
+  for (const to of ['/b/one', '/', '/b/one', '/missing', '/', '/missing']) await go(page, to)
+  expect(hits.filter((h) => h === '/b/one' || h === '/missing')).toEqual(['/b/one', '/b/one', '/missing', '/missing'])
+  await page.evaluate(() => document.documentElement.setAttribute('data-brust-cache', '0'))
+  for (const to of ['/list', '/', '/list']) await go(page, to)
+  expect(hits.filter((h) => h === '/list')).toEqual(['/list', '/list'])
+  await close()
+})
+
+test('cache: a POST through @brust/core/client clears it, the next navigation fetches', async () => {
+  const { page, errors, close } = await open('/go')
+  const hits = documents(page)
+  for (const to of ['/list', '/go', '/list', '/go']) await go(page, to)
+  expect(hits.filter((h) => h === '/list')).toEqual(['/list'])
+  const posts: string[] = []
+  page.on('request', (r) => { if (r.method() === 'POST') posts.push(new URL(r.url()).pathname) })
+  await page.click('#mutate')
+  await page.waitForFunction(() => (window as unknown as Record<string, number>).mutated === 1)
+  expect(posts).toEqual(['/_brust/action/bump'])
+  await go(page, '/list')
+  expect(hits.filter((h) => h === '/list')).toEqual(['/list', '/list'])
+  expect(errors.filter((e) => !/404/.test(e))).toEqual([])
+  await close()
+})
+
+// ---- wave 2 (design §10.2): the progress bar -------------------------------------------------------------------------------
+
+test('progress bar: shown after 150 ms on a 500 ms page, done at success; a cache hit and the opt-out never insert it', async () => {
+  const { page, close } = await open('/')
+  const at = page.evaluate(() => new Promise<number>((res) => {
+    const t0 = performance.now()
+    new MutationObserver((_, o) => { if (document.querySelector('div[data-brust-bar]')) { o.disconnect(); res(performance.now() - t0) } }).observe(document.documentElement, { childList: true })
+  }))
+  const ev = await go(page, '/slow')
+  const shown = await at
+  expect(shown).toBeGreaterThanOrEqual(140)
+  expect(shown).toBeLessThan(500)
+  expect(ev.at(-1)).toMatchObject({ type: 'success' })
+  // done at success: it runs to the end and fades, then it is gone
+  expect(await page.evaluate(() => document.querySelector('div[data-brust-bar]')?.getAttribute('data-brust-bar'))).toBe('done')
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('div[data-brust-bar]')!).backgroundColor)).toBe('rgb(47, 124, 246)')
+  await page.waitForFunction(() => !document.querySelector('div[data-brust-bar]'))
+  await expectFullLoadParity(page)
+  expect(await page.evaluate(() => window.__bars)).toBe(1)
+  await follow(page, '/')
+  await go(page, '/slow') // a cache hit
+  await page.evaluate(() => document.documentElement.setAttribute('data-brust-progress', 'off'))
+  await go(page, '/slow?fresh')
+  expect(await page.evaluate(() => window.__bars)).toBe(1)
+  await close()
+})
+
+test('progress bar: with reduced motion it shows without the trickle animation', async () => {
+  const { page, close } = await open('/', base, { reducedMotion: 'reduce' })
+  const anim = page.waitForFunction(() => { const b = document.querySelector('div[data-brust-bar]'); return b && getComputedStyle(b).animationName })
+  await go(page, '/slow')
+  expect(await (await anim).jsonValue()).toBe('none')
+  await close()
+})
+
+// ---- wave 2 (design §10.3): view transitions ---------------------------------------------------------------------------------
+
+test('transitions: one startViewTransition per navigation, success after updateCallbackDone, back too', async () => {
+  const { page, errors, close } = await open('/')
+  expect(await page.evaluate(() => typeof document.startViewTransition)).toBe('function')
+  await follow(page, '/list')
+  await follow(page, '/b/one')
+  await nav(page, () => page.goBack())
+  expect(await page.evaluate(() => window.__vt)).toEqual(['start', 'done', 'success', 'start', 'done', 'success', 'start', 'done', 'success'])
+  await expectFullLoadParity(page)
+  expect(errors).toEqual([])
+  await close()
+})
+
+test('transitions: not with reduced motion, not with data-brust-transition="off"', async () => {
+  const r = await open('/', base, { reducedMotion: 'reduce' })
+  await follow(r.page, '/list')
+  expect(await r.page.evaluate(() => window.__vt)).toEqual(['success'])
+  await r.close()
+  const { page, close } = await open('/')
+  await page.evaluate(() => document.documentElement.setAttribute('data-brust-transition', 'off'))
+  await follow(page, '/list')
+  expect(await page.evaluate(() => window.__vt)).toEqual(['success'])
+  await close()
+})
+
+test('transitions: a navigation started during a transition skips it and lands on the newer page', async () => {
+  const { page, errors, close } = await open('/')
+  const len = await page.evaluate(() => history.length)
+  await page.evaluate(() => {
+    const t = Document.prototype.startViewTransition
+    Document.prototype.startViewTransition = function (this: Document, u: unknown) {
+      Document.prototype.startViewTransition = t
+      const vt = t.call(this, u as ViewTransitionUpdateCallback)
+      // before the update runs (it waits for the old snapshot): a newer navigation
+      setTimeout(() => void (globalThis as unknown as Record<symbol, { navigate(u: string): Promise<void> }>)[Symbol.for('brust.nav')]!.navigate('/b/two'))
+      return vt
+    }
+  })
+  await page.click('nav a[href="/b/one"]')
+  await page.waitForFunction(() => window.__navlog.some((e) => e.type === 'success'))
+  await settle(page)
+  const ev = await page.evaluate(() => window.__navlog)
+  expect(ev.map((e) => e.type)).toEqual(['click', 'load', 'load', 'success'])
+  expect(ev.at(-1)!.url).toBe(`${base}/b/two`)
+  expect(await page.evaluate(() => window.__vt)).toContain('skipped')
+  expect(new URL(page.url()).pathname).toBe('/b/two')
+  expect(await page.evaluate(() => history.length)).toBe(len + 1)
+  await expectFullLoadParity(page)
+  expect(errors).toEqual([])
+  await close()
+})
+
 // ---- item 11: opt-outs -----------------------------------------------------------------------------------------------------
 
 test('opt-outs: data-brust-reload on a link and on <html>, a modifier click, target=_blank', async () => {
@@ -450,6 +636,8 @@ test('layout matrix: every ordered pair of pages equals a full load, keeps exact
       expect([u, v, name, value]).toEqual([u, v, name, keep.includes(layout) ? before[name] : '0'])
     }
   }
+  // §10.3: the matrix ran with transitions on, one per navigation
+  expect(await page.evaluate(() => window.__vt.filter((e) => e === 'start').length)).toBe(walk.length - 1)
   expect(errors).toEqual([])
   await close()
 }, 300_000)
