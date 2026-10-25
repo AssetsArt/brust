@@ -51,7 +51,12 @@ document, swap it in place.**
      position, never re-created), so an unchanged stylesheet is neither re-downloaded nor flashed. A
      new element is inserted at its position. New stylesheets were already added and awaited in
      step 4, and only their position changes here. An old element with no identical new one is
-     removed. Order matters because the stylesheet order is the cascade order: a page whose CSS order
+     removed, but only if it came from the server: it was in the head when `nav` booted, or `nav`
+     inserted it from a fetched document. A head element that a live component added at runtime
+     (a CSS-in-JS `<style>`, a React 19 hoisted `<link>`/`<style precedence>`, a persisted widget's
+     injected stylesheet) is never removed, because a kept layout or a persisted widget still needs
+     it. A full load would re-create it, so keeping it is the same result. (Amendment 2026-10-25,
+     Mellow's review of spa-nav-client.) Order matters because the stylesheet order is the cascade order: a page whose CSS order
      differs from the previous page's must cascade like a full load. A classic `<script>` that is
      new in the head runs. A reused one does not run again on a level swap (the root layout was
      kept, so `<html>`/`<body>` attributes were not touched). On a WHOLE-BODY swap (the root layout
@@ -196,8 +201,10 @@ keep the root and unmount it from the observer's dispose path.
   `replaceState` at boot.
 - Trap from 0.1.x: on `popstate`, `location` already points at the destination. Save the leaving
   entry's position against the id `nav` tracks itself, never one derived from `location`.
-- After a swap, focus is reset the way a full load resets it (the old active element is gone). No
-  extra focus management in this wave.
+- After a swap, focus is reset the way a full load resets it. When the focused element survived
+  (a link in a KEPT layout, or inside a persisted element), `nav` blurs it, so focus returns to the
+  body, as on a full load. (Amendment 2026-10-25, Mellow's review of spa-nav-client.) No other
+  focus management in this wave.
 
 ### 5.9 Nested layouts and multiple `<Outlet>` levels
 
@@ -259,9 +266,15 @@ is replaced, with no reload.
 
 - A comment pair whose two comments are not siblings in the live DOM or in the parsed response
   cannot be used as a range. The HTML parser can split them: an outlet inside a `<p>` whose child
-  starts a `<div>`, an outlet in a `<table>` (foster parenting), an `x-if`/`x-for` that moved
-  nodes. That level counts as changed, so the swap happens one level higher, ultimately the
-  whole body.
+  starts a `<div>`, an `x-if`/`x-for` that moved nodes. That level counts as changed, so the
+  swap happens one level higher, ultimately the whole body.
+- A comment pair whose parent is `TABLE`, `TBODY`, `THEAD`, `TFOOT` or `TR` is never a range either.
+  The parser does NOT split such a pair. It foster-parents the outlet's content out in front of the
+  table and leaves the two comments as siblings around nothing, so the sibling check alone would
+  keep the OLD page on screen. (Amendment 2026-10-25, found by Dew in spa-nav-client, `chain.ts`
+  `usable()`.)
+- `data-brust-once` means once per tab: a once-script that is new to this tab runs, and a reused
+  one is skipped (ruling on Dew's READY, 2026-10-25).
 - A level the server does not mark (a React-tier level, rendered and hydrated as one island, gets
   no comment nodes inside it) is not keepable. The swap happens at the deepest marked, equal
   ancestor above it.
