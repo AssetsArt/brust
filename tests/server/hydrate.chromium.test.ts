@@ -124,6 +124,28 @@ test('Team Full at six: the seventh button is disabled', async () => {
   await finish()
 }, 60_000)
 
+// F455 (SPA navigation, design 5.6): a second page's server markup replaces the body after boot, the way the nav module
+// swaps it (F302 style). The old island's React root must unmount (React empties the container on unmount, so the detached
+// host ends up childless) and the new page's island hydrates, with no console error and no reload.
+test('an island whose host leaves the document unmounts its React root; the next page\'s island hydrates', async () => {
+  await seed([])
+  const { page, finish } = await open('/pokemon/pikachu?nocache=1')
+  await page.evaluate(async (base) => {
+    const w = window as unknown as { __oldHost: HTMLElement }
+    const old = document.querySelector<HTMLElement>('brust-island[data-hydrated="1"]')!
+    if (!old.childElementCount) throw new Error('the hydrated island has no content')
+    w.__oldHost = old
+    const html = await (await fetch(`${base}/pokemon/bulbasaur?nocache=1`)).text()
+    document.body.replaceChildren(...Array.from(new DOMParser().parseFromString(html, 'text/html').body.children))
+  }, srv.base)
+  await page.waitForFunction(() => (window as unknown as { __oldHost: HTMLElement }).__oldHost.childElementCount === 0, undefined, { timeout: 8000 })
+  await page.waitForFunction(() => {
+    const h = document.querySelector('brust-island[data-hydrated="1"]')
+    return !!h && h !== (window as unknown as { __oldHost: HTMLElement }).__oldHost && h.childElementCount > 0
+  }, undefined, { timeout: 15_000 })
+  await finish()
+}, 60_000)
+
 test('/unified: native, island and node move together', async () => {
   const { page, finish } = await open('/unified?start=5')
   const all = async () => [await text(page, 'unified-island-count'), await text(page, 'unified-native-count'), await text(page, 'unified-node-count')].map((t) => t?.trim())

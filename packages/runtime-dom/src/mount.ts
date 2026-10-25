@@ -93,6 +93,6 @@ function startObserver(root: ParentNode): void {
   observer.observe(root, { childList: true, subtree: true })
 }
 export function unmount(root: ParentNode = document.body): void {
-  if (root === observedRoot) { observer?.disconnect(); observer = null; observedRoot = null }
+  if (root === observedRoot) { observer?.disconnect(); observer = null; observedRoot = null; pageBooted = false }   // torn down: the next mount() is a fresh boot
   disposeTree(root as Node)
 }
