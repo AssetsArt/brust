@@ -579,7 +579,7 @@ export function exposePlugin(compiled: Map<string, Compiled>): BunPlugin {
   }
 }
 
-/** The island entry of a react-tier component: registers `(host, props) => …` under its id. A
+/** The island entry of a react-tier component: registers `(host, props) => …` under its id; the hydrate fn returns the root's unmount, which the runtime calls when the host leaves the document (SPA navigation). A
  * `client_only` component was never server-rendered (its host is empty), so it mounts with
  * `createRoot`; hydrating it would fail (React #418). Everything else hydrates the SSR markup. */
 /** `writers` (F230): app modules that write another module's exports when they load; imported first, so the island
@@ -589,8 +589,8 @@ export function islandShim(c: Compiled, compiled?: Map<string, Compiled>, routeR
   const nested = compiled && nestedOf(compiled, c.id, routeRoots)
   const element = nested ? `__mk(Comp, props, ${JSON.stringify(xOf(compiled!, c.id))}, ${JSON.stringify(holesOf(compiled!, c.id))})` : 'createElement(Comp, props)'
   const [api, mount] = clientOnly
-    ? ['createRoot', `createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }).render(${element})`]
-    : ['hydrateRoot', `hydrateRoot(host, ${element}, { identifierPrefix: ${JSON.stringify(c.id)} })`]
+    ? ['createRoot', `const root = createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }); root.render(${element}); return () => root.unmount()`]
+    : ['hydrateRoot', `const root = hydrateRoot(host, ${element}, { identifierPrefix: ${JSON.stringify(c.id)} }); return () => root.unmount()`]
   let head = ''
   if (nested && compiled) {
     const comps = nested.map((id) => compiled.get(id)).filter((n): n is Compiled => n !== undefined)

@@ -3,7 +3,9 @@
 // hydrates each host once, when idle (spec S12). Load order between runtime and chunks is free.
 import { warnOnce, insideRaw } from './core-api'
 
-export type IslandHydrate = (host: HTMLElement, props: Record<string, unknown>) => void
+/** Hydrates `host`. It may return a dispose function (the React shim returns `() => root.unmount()`): the runtime
+ *  calls it once, when the host leaves the document, so effects clean up like a React route change. */
+export type IslandHydrate = (host: HTMLElement, props: Record<string, unknown>) => void | (() => void)
 type QueueEntry = [string, IslandHydrate]
 declare global { var __brustIslands: QueueEntry[] | undefined; var __brustIslandReady: (() => void) | undefined }
 
@@ -45,6 +47,8 @@ let idle: Idle = defaultIdle
 export function _setIdle(fn: Idle | null): void { idle = fn ?? defaultIdle }
 
 const pending = new Set<HTMLElement>()
+/** Dispose functions of hydrated hosts, until the host leaves the document. */
+const live = new Map<HTMLElement, () => void>()
 
 function readIslandProps(host: HTMLElement, id: string): Record<string, unknown> {
   const raw = host.getAttribute('x-props')
@@ -56,7 +60,11 @@ function readIslandProps(host: HTMLElement, id: string): Record<string, unknown>
 function hydrateHost(host: HTMLElement, id: string, hydrate: IslandHydrate): void {
   pending.delete(host)
   if (!host.isConnected || host.hasAttribute('data-hydrated')) return
-  try { hydrate(host, readIslandProps(host, id)); host.setAttribute('data-hydrated', '1') }
+  try {
+    const dispose = hydrate(host, readIslandProps(host, id))
+    if (typeof dispose === 'function') live.set(host, dispose)
+    host.setAttribute('data-hydrated', '1')
+  }
   catch (e) { console.error(`[brust] hydrate threw: ${id}`, e) }
 }
 
@@ -74,16 +82,24 @@ export function scheduleIslands(root: ParentNode): void {
   root.querySelectorAll<HTMLElement>('brust-island[data-id]').forEach(scheduleHost)
 }
 
-/** Forget pending hosts under a subtree that left the document. */
+/** A subtree left the document: forget its pending hosts and unmount the roots of its hydrated ones. */
 export function cancelIslands(root: Node): void {
   if (!(root instanceof Element)) return
-  if (root instanceof HTMLElement && pending.has(root)) pending.delete(root)
-  root.querySelectorAll<HTMLElement>('brust-island[data-id]').forEach((h) => pending.delete(h))
+  const hosts = root.querySelectorAll<HTMLElement>('brust-island[data-id]')
+  const forget = (h: HTMLElement) => {
+    pending.delete(h)
+    const dispose = live.get(h)
+    if (!dispose) return
+    live.delete(h)
+    try { dispose() } catch (e) { console.error('[brust] island unmount threw', e) }
+  }
+  if (root instanceof HTMLElement) forget(root)
+  hosts.forEach(forget)
 }
 
 /** Test helper: forget registrations, waiters, pending hosts and the global queue. */
 export function _resetIslands(): void {
-  slots.clear(); pending.clear(); idle = defaultIdle
+  slots.clear(); pending.clear(); live.clear(); idle = defaultIdle
   globalThis.__brustIslands = []
   globalThis.__brustIslandReady = undefined
 }
