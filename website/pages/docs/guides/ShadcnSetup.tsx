@@ -1,7 +1,7 @@
 // Guide: Set up shadcn/ui. The one-command flow (steps 1-4) was run on a fresh `bun create @brust/app` project with Bun 1.4.4 and the
-// pinned shadcn CLI 4.21.4 (2026-10-14): docs/transcripts/shadcn-init-guide.md, files in docs/transcripts/shadcn-init-guide-app/.
-// "Doing it by hand" is the earlier manual run (@brust/* 2.0.0-alpha.7, Bun 1.4.3): docs/transcripts/shadcn-setup-guide.md, files in
-// docs/transcripts/shadcn-setup-guide-app/. The test checks the quoted files against those directories.
+// pinned shadcn CLI 4.21.4 (2026-10-14): website/test/fixtures/shadcn-transcripts/shadcn-init-guide.md, files in website/test/fixtures/shadcn-transcripts/shadcn-init-guide-app/.
+// "Doing it by hand" is the earlier manual run (@brust/* 2.0.0-alpha.7, Bun 1.4.3): website/test/fixtures/shadcn-transcripts/shadcn-setup-guide.md, files in
+// website/test/fixtures/shadcn-transcripts/shadcn-setup-guide-app/. The test checks the quoted files against those directories.
 import CodeBlock from '../../../components/CodeBlock'
 import Lead from '../../../components/docs/Lead'
 import Note from '../../../components/docs/Note'
@@ -21,7 +21,7 @@ $ cd my-app && bun install`,
   initCmd: {
     lang: 'sh',
     cwd: '~/my-app',
-    // docs/transcripts/shadcn-init-guide.md section 1 (shadcn's own spinner lines are left out)
+    // website/test/fixtures/shadcn-transcripts/shadcn-init-guide.md section 1 (shadcn's own spinner lines are left out)
     code: `$ bunx brust shadcn init button card dialog
 ✓ components.json: done (app.css)
 ✓ tsconfig.json: done (added "@/*": ["./*"] under compilerOptions.paths)
@@ -65,7 +65,7 @@ Visit https://ui.shadcn.com/docs/installation/manual to manually configure your 
   components: {
     lang: 'json',
     file: 'components.json',
-    // docs/transcripts/shadcn-setup-guide-app/components.json (same file as tests/fixtures/shadcn/components.json)
+    // website/test/fixtures/shadcn-transcripts/shadcn-setup-guide-app/components.json (same file as tests/fixtures/shadcn/components.json)
     code: `{
   "$schema": "https://ui.shadcn.com/schema.json",
   "style": "new-york",
@@ -93,7 +93,7 @@ $ bunx shadcn@latest add button card dialog -y`,
   css: {
     lang: 'text',
     file: 'app.css (what \`add index\` put at the top; the variables follow)',
-    // docs/transcripts/shadcn-setup-guide-app/app.css:1-5
+    // website/test/fixtures/shadcn-transcripts/shadcn-setup-guide-app/app.css:1-5
     code: `@import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -103,7 +103,7 @@ $ bunx shadcn@latest add button card dialog -y`,
   page: {
     lang: 'tsx',
     file: 'pages/ShadcnPage.tsx',
-    // docs/transcripts/shadcn-setup-guide-app/pages/ShadcnPage.tsx
+    // website/test/fixtures/shadcn-transcripts/shadcn-setup-guide-app/pages/ShadcnPage.tsx
     code: `import { Button } from '../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog'
@@ -141,7 +141,7 @@ export default function ShadcnPage() {
   build: {
     lang: 'sh',
     cwd: '~/my-app',
-    // docs/transcripts/shadcn-init-guide.md section 2: the first lines and the last line of the real output (the Dialog parts are the islands)
+    // website/test/fixtures/shadcn-transcripts/shadcn-init-guide.md section 2: the first lines and the last line of the real output (the Dialog parts are the islands)
     code: `$ bun run build
 warning external-component components/ui/dialog.tsx:11:10 <DialogPrimitive.Root> comes from the package radix-ui (Dialog.Root); it renders as a React island (package source: .brust/pkg-src/p-4ba0125d4d233615/src/dialog.tsx renders as React in its source: export is not a function declaration)
 warning spread-props components/ui/dialog.tsx:11:10 props are spread into the React island <DialogPrimitive.Root>
@@ -178,14 +178,14 @@ export default function ShadcnSetup({ blocks }: ShadcnSetupData) {
       </Lead>
 
       <Step n={1} id="create" title="Create the project" />
-      {/* source: docs/transcripts/shadcn-setup-guide.md steps 1-2; the requirements are on the Installation page */}
+      {/* source: website/test/fixtures/shadcn-transcripts/shadcn-setup-guide.md steps 1-2; the requirements are on the Installation page */}
       <p>
         You need <a href="/docs/installation">Bun and a generated brust project</a>. The <code>blank</code> starter already has Tailwind CSS v4 through brust&rsquo;s own plugin, so there is no separate Tailwind build to configure.
       </p>
       <CodeBlock code={blocks.create.code} lang={blocks.create.lang} cwd={blocks.create.cwd} html={blocks.create.html} />
 
       <Step n={2} id="init" title="Set up shadcn/ui" />
-      {/* source: docs/transcripts/shadcn-init-guide.md (the real run); F175 */}
+      {/* source: website/test/fixtures/shadcn-transcripts/shadcn-init-guide.md (the real run); F175 */}
       <p>
         One command sets the project up and adds the components you name:
       </p>
@@ -211,13 +211,13 @@ export default function ShadcnSetup({ blocks }: ShadcnSetupData) {
       </Note>
 
       <Step n={3} id="use" title="Use them in a route" />
-      {/* source: docs/transcripts/shadcn-init-guide-app/pages/ShadcnPage.tsx and routes.tsx */}
+      {/* source: website/test/fixtures/shadcn-transcripts/shadcn-init-guide-app/pages/ShadcnPage.tsx and routes.tsx */}
       <p>The components are files in <code>components/ui/</code>. Import them like any other component and add the page to <code>routes.tsx</code>.</p>
       <CodeBlock code={blocks.page.code} lang={blocks.page.lang} file={blocks.page.file} html={blocks.page.html} />
       <CodeBlock code={blocks.route.code} lang={blocks.route.lang} file={blocks.route.file} html={blocks.route.html} />
 
       <Step n={4} id="build" title="Build and read the result" />
-      {/* source: docs/transcripts/shadcn-init-guide.md section 2 and the browser check in its findings */}
+      {/* source: website/test/fixtures/shadcn-transcripts/shadcn-init-guide.md section 2 and the browser check in its findings */}
       <p>
         <code>brust build</code> names every Radix part that renders as a <Tier t="react">React</Tier> island. These are warnings, not errors: the component works as it does in React. The card and the button are <Tier t="static">static</Tier> markup: a page with only those loads no JavaScript of its own. The dialog is where React comes in, one island per Radix part, and in the browser the <strong>Open</strong> button shows the dialog.
       </p>
@@ -227,7 +227,7 @@ export default function ShadcnSetup({ blocks }: ShadcnSetupData) {
       </p>
 
       <Step n={5} id="dark" title="Dark mode" />
-      {/* source: docs/transcripts/shadcn-setup-guide-app/app.css (:root at line 34, .dark at line 111, @custom-variant dark at line 5) */}
+      {/* source: website/test/fixtures/shadcn-transcripts/shadcn-setup-guide-app/app.css (:root at line 34, .dark at line 111, @custom-variant dark at line 5) */}
       <p>
         <code>add index</code> writes the variables twice: the light values under <code>:root</code> and the dark values under <code>.dark</code>, and the <code>dark:</code> variant applies below an element with the <code>dark</code> class. Put that class on <code>&lt;html&gt;</code> to switch the whole page.
       </p>
@@ -236,7 +236,7 @@ export default function ShadcnSetup({ blocks }: ShadcnSetupData) {
       <p>
         <code>brust shadcn init</code> does the steps below, so you normally skip them. They are here for projects that cannot run it.
       </p>
-      {/* source: docs/transcripts/shadcn-setup-guide.md step 4 (shadcn 4.21.4 does not detect brust) and step 8 (paths alone is enough) */}
+      {/* source: website/test/fixtures/shadcn-transcripts/shadcn-setup-guide.md step 4 (shadcn 4.21.4 does not detect brust) and step 8 (paths alone is enough) */}
       <p>
         The shadcn CLI&rsquo;s <code>init</code> does not recognise brust as a framework, so it stops there. Skip it: <code>add</code> only needs two files.
       </p>
@@ -252,7 +252,7 @@ export default function ShadcnSetup({ blocks }: ShadcnSetupData) {
       <Note>
         The imports the CLI writes into the components it adds (<code>@/components/ui/button</code> in the dialog) build as they are, with this one line.
       </Note>
-      {/* source: docs/transcripts/shadcn-setup-guide.md steps 5-6 */}
+      {/* source: website/test/fixtures/shadcn-transcripts/shadcn-setup-guide.md steps 5-6 */}
       <p>
         <code>add index</code> is the part of <code>init</code> you need: it adds the Tailwind imports, the light and dark colour variables and the <code>@theme</code> block to <code>app.css</code>, creates <code>lib/utils.ts</code> and installs <code>shadcn</code> and <code>tw-animate-css</code>. Then add the components. The CLI installs <code>cn</code>, the class-name helper the components import, as a package; there is no helper to write yourself.
       </p>

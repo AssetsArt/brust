@@ -1,4 +1,4 @@
-//! m1a-followups F1/F2: input that parses must never abort the process, and the
+//! ledger F1/F2: input that parses must never abort the process, and the
 //! AST accessor must not hand out borrows that outlive `Parsed`.
 use brust_compiler::analyze::component::analyze_component;
 use brust_compiler::analyze::hir::analyze_hir;

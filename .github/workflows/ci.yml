@@ -155,7 +155,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run battery
       # The reports are generated: a diff means the committed ones are stale.
-      - run: git diff --exit-code docs/react-coverage.md docs/react-coverage.json docs/plans/m1-exit-report.md
+      - run: git diff --exit-code docs/react-coverage.md docs/react-coverage.json docs/reports/m1-exit-report.md
       # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
       - run: bun test scripts/battery
       # F386: every native/static row's served first HTML equals React's renderToString (the real `brust build` + `start`, one app,
@@ -447,7 +447,7 @@ jobs:
       - run: bun build --no-bundle bench/run.ts > /dev/null
       - run: bun test bench/lib
       # The exit report is generated: a diff means the committed one is stale.
-      - run: bun run m2-exit && git diff --exit-code docs/plans/m2-exit-report.md
+      - run: bun run m2-exit && git diff --exit-code docs/reports/m2-exit-report.md
       - run: bun test scripts/m2-exit
       - run: bun test scripts/release-check.test.ts scripts/core-cf-check.test.ts
       # F264: the generated-names fixture is generated; stale or out of step with the cargo/Chromium tables fails.

@@ -3,7 +3,7 @@
 Purpose: let an external crate run lowering + HIR passes and read the reactive
 function and scopes without codegen (spec §10.3). No brust logic lives here.
 
-Changes (re-apply on every rev bump; see docs/design/bun-rev-bump.md):
+Changes (re-apply on every rev bump; also regenerate with scripts/bun-codegen.ts):
 1. Cargo.toml: `bun_ast = { path = "../ast" }` → `bun_ast.workspace = true`
 2. lib.rs: `mod imports;` → `pub mod imports;`, `pub(crate) mod pipeline;` → `pub mod pipeline;`
 3. imports.rs: `ProgramContext`, `ProgramContext::new`, `init_from_scope` → `pub`

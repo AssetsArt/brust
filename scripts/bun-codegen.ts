@@ -1,6 +1,6 @@
 // Usage: bun scripts/bun-codegen.ts <path-to-bun-checkout>
 // Regenerates bun-codegen/{json,xml}_byte_class.{rs,h} with Bun's own generators.
-// Run only when bumping the Bun rev (docs/design/bun-rev-bump.md). Output is committed.
+// Run only when bumping the Bun rev (then re-apply vendor/bun_react_compiler/BRUST-PATCH.md). Output is committed.
 import { resolve } from "node:path";
 
 const bunSrc = process.argv[2];

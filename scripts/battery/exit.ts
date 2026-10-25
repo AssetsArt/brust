@@ -18,7 +18,7 @@ export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }
 export const ERROR_ROWS = ['e-server-only-handler', 'e-request-prop', 'e-missing-key'] as const
 export const COMPILE_ERROR_ROWS = ['e-parse-error'] as const
 
-/** Gaps still open after `m2a-compiler` (ledger ids in docs/plans/m1a-followups.md). F33, F35, F37, F39, F40 and F32 (single-root) are closed. */
+/** Gaps still open after `m2a-compiler` (ledger ids). F33, F35, F37, F39, F40 and F32 (single-root) are closed. */
 export const DECLARED_GAPS: { id: string; what: string; owner: string }[] = [
   { id: 'F32-b', what: 'an `x-if` branch that is one inlined component keeps its `<brust-if>` wrapper (the runtime skips a host before `x-if`, ledger F52), and multi-root rows/branches keep theirs: foster-parented inside `<table>` / `<select>`', owner: 'm2d / M3' },
   { id: 'F34', what: 'per-instance child jobs: the compiler half is done (`instances[]` in the IR); running them per row needs the M2 server', owner: 'm2b' },

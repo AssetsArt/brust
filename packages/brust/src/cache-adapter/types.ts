@@ -1,4 +1,4 @@
-// The cache adapter contract (docs/design/2026-10-12-cache-adapter-design.md §3.1): a shared second
+// The cache adapter contract (cache adapter design §3.1): a shared second
 // tier behind brust's in-process cache. An adapter has two optional capabilities — a `store` of
 // rendered pages and a `broadcast` of invalidations (push `subscribe` or pull `since`) — so a store
 // without a channel (KV) can be composed with another adapter's broadcast (DO).

@@ -2,7 +2,7 @@
 //! emit this crate supports and compare with expected.<emit>.<ext>. Set
 //! BRUSTC_UPDATE=1 to rewrite expectations after an intentional change; an
 //! update also deletes the expectation of the other outcome, so a case never
-//! keeps both (m1a-followups F5).
+//! keeps both (ledger F5).
 //!
 //! | emit | success | failure |
 //! |------|---------|---------|

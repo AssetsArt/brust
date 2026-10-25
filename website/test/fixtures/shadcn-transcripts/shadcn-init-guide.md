@@ -1,6 +1,6 @@
 # Transcript: `brust shadcn init` on a fresh create-app project (F175, R41.10)
 
-Run 2026-10-14 on macOS, Bun 1.4.4, `bun create @brust/app@latest` 2.0.0-alpha.10 (`@brust/core` ^2.0.0-alpha.10), the pinned shadcn CLI 4.21.4 (`bun x shadcn@4.21.4`). The files of the final app that the guide quotes are in `docs/transcripts/shadcn-init-guide-app/`.
+Run 2026-10-14 on macOS, Bun 1.4.4, `bun create @brust/app@latest` 2.0.0-alpha.10 (`@brust/core` ^2.0.0-alpha.10), the pinned shadcn CLI 4.21.4 (`bun x shadcn@4.21.4`). The files of the final app that the guide quotes are in `website/test/fixtures/shadcn-transcripts/shadcn-init-guide-app/`.
 
 ## What is not the published artefact
 

@@ -1,4 +1,4 @@
-// SPA navigation (F454, design docs/design/2026-10-25-spa-navigation-design.md §7 items 1-14) in real Chromium against
+// SPA navigation (F454, acceptance items 1-14) in real Chromium against
 // packages/brust/test/fixtures/spa-nav, served by `brust start` and as `--target static` files. The oracle is the one
 // rule (§2): after every navigation the document equals a fresh full load of the same URL (head children in order,
 // <html>/<body> attributes, body DOM with counter values and persisted nodes blanked), and the document was never

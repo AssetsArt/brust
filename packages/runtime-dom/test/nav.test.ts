@@ -1,4 +1,4 @@
-// The SPA navigation module (design docs/design/2026-10-25-spa-navigation-design.md, F454) under happy-dom: the level
+// The SPA navigation module (F454) under happy-dom: the level
 // chain and which level is swapped (§5.9), the head plan (§3 step 5), the body swap with persisted elements, and the
 // whole flow from a click to the events (§4) with a stubbed fetch. The served Chromium tests (tests/server/spa-nav*)
 // check the same against a real server and a full load.

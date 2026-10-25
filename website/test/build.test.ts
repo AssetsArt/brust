@@ -1,5 +1,5 @@
 // website/test/build.test.ts — the site builds clean, and every foundation component compiles to the tier the plan's
-// tier table claims (docs/plans/2026-10-13-docs-site-port.md, verified by the A1.1 spike).
+// tier table claims (verified by the A1.1 spike).
 import { afterAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'

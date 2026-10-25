@@ -1,5 +1,5 @@
 // Navigation — links swap the page in place, the one rule, what is swapped, opt-outs, prefetch, the brust:nav:* events, a preloader, navigate().
-// Source of truth: docs/navigation.md and docs/design/2026-10-25-spa-navigation-design.md. This page is static: the docs site you are reading navigates this way.
+// Source of truth: docs/navigation.md and the SPA navigation design. This page is static: the docs site you are reading navigates this way.
 import CodeBlock from '../../components/CodeBlock'
 import Lead from '../../components/docs/Lead'
 import Note from '../../components/docs/Note'

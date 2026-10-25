@@ -1,6 +1,6 @@
 //! brust v2 host-agnostic core: everything a request needs that does not depend on where it runs.
 //! `brust-server` is the native host over it (tokio + hyper + the Bun worker pool); `brust-wasm`
-//! (Cloudflare Workers, later) is the second. Spec: `docs/design/2026-10-12-m4-cloudflare-workers-design.md` §3-§4.
+//! (Cloudflare Workers, later) is the second.
 //!
 //! - **Static dispatch.** The pipeline is generic over `H: host::Host` and monomorphised per host:
 //!   no `dyn`, no boxed futures. Build one `core::Core<H>` per server and call `Core::handle` per

@@ -19,7 +19,7 @@ const TOKEN = 'cn-fold-proof'
 
 /** Every page of `cn-fold/routes.tsx`. */
 const PAGES = ['alert', 'attachment', 'badge', 'badge-aslink', 'breadcrumb', 'bubble', 'button', 'button-aschild', 'button-group', 'card', 'checkbox', 'empty', 'field', 'input', 'input-group', 'item', 'kbd', 'label', 'marker', 'message', 'native-select', 'pagination', 'skeleton', 'sonner', 'switch', 'table', 'textarea']
-/** The pages whose only jobs were class jobs (docs/plans/2026-10-14-shadcn-cn-fold.md §2), and `field`, whose fed Label
+/** The pages whose only jobs were class jobs (the F149 cn-fold plan), and `field`, whose fed Label
  * is fused into its parent's class job since R34.96 (PR 2b), so the build evaluates that one job too. */
 const NO_WORKER = ['alert', 'attachment', 'badge', 'badge-aslink', 'bubble', 'button', 'button-aschild', 'card', 'empty', 'field', 'input', 'item', 'kbd', 'label', 'marker', 'message', 'skeleton', 'switch', 'table', 'textarea']
 /** The pages of `cn-fold/static-routes.tsx`: the job-free pages that ship no component script. */

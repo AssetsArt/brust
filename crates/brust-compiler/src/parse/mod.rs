@@ -107,7 +107,7 @@ unsafe fn boxed<T: ?Sized>(b: &T) -> &'static T {
 
 /// Stack size of the compiler thread. Bun's parser guards its recursion against
 /// the per-thread limit `ensure_stack_limit` sets, but the vendored React Compiler
-/// and our own readers recurse without a guard (m1a-followups F1); 256 MiB keeps
+/// and our own readers recurse without a guard (ledger F1); 256 MiB keeps
 /// a 6000-deep JSX tree or a 6000-term expression well inside the stack.
 const COMPILER_STACK: usize = 256 << 20;
 
@@ -312,7 +312,7 @@ impl Parsed {
     }
 
     /// Lends the AST for the duration of `f`. The borrow cannot escape the
-    /// closure, so nothing read from it can outlive `Parsed` (m1a-followups F2).
+    /// closure, so nothing read from it can outlive `Parsed` (ledger F2).
     pub fn with_ast<R>(&self, f: impl FnOnce(&js_ast::Ast<'_>) -> R) -> R {
         f(&self.ast)
     }
