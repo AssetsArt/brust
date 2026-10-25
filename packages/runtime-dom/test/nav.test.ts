@@ -806,3 +806,11 @@ test('a click cancels the pending hover intent: a page the cache never keeps is 
   await new Promise((r) => setTimeout(r, 90))
   expect(fetched).toEqual(['http://localhost/b'])
 })
+
+test('only no-store keeps a page out: "public, max-age=0, must-revalidate" is cached, "no-store" is not', async () => {
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')), headers: { 'cache-control': 'public, max-age=0, must-revalidate' } }
+  pages['/c'] = { html: doc(app('1', 'c')), headers: { 'cache-control': 'no-store' } }
+  for (const u of ['/b', '/c', '/b', '/c']) await bridge().navigate(u)
+  expect(fetched.map((u) => new URL(u).pathname)).toEqual(['/b', '/c', '/c'])
+})

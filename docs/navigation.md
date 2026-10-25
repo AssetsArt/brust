@@ -47,6 +47,7 @@ Every fetched page, prefetched or navigated to, goes into a page cache in memory
 - **Back and forward** show the cached page at any age, as the browser's back-forward cache does. A page that is not in the cache is fetched.
 - A click during a prefetch waits for that same request.
 - **Never cached**: a response with `Cache-Control: no-store`, any status of 400 or more, and a response that is not a brust page of this build. A page that must never be stale sends `no-store`.
+- **Only `no-store` keeps a page out.** `private`, `no-cache`, `max-age=0` and `must-revalidate` (many hosts send `public, max-age=0, must-revalidate` on every page) do not: a page served that way is cached for its 5 minutes. A page that must never be shown from memory, such as an authenticated or sensitive one, sends `Cache-Control: no-store`. A logout through `@brust/core/client` already clears the cache; any other logout calls `clearNavigationCache()`.
 - It holds at most 32 pages; the least recently used goes first. The key is the URL without its `#hash`.
 - `<html data-brust-cache="60">` sets the freshness in seconds. `data-brust-cache="0"` turns the cache off (a click during a prefetch still shares it).
 
