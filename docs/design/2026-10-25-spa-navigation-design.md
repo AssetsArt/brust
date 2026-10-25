@@ -51,7 +51,12 @@ document, swap it in place.**
      position, never re-created), so an unchanged stylesheet is neither re-downloaded nor flashed. A
      new element is inserted at its position. New stylesheets were already added and awaited in
      step 4, and only their position changes here. An old element with no identical new one is
-     removed. Order matters because the stylesheet order is the cascade order: a page whose CSS order
+     removed, but only if it came from the server: it was in the head when `nav` booted, or `nav`
+     inserted it from a fetched document. A head element that a live component added at runtime
+     (a CSS-in-JS `<style>`, a React 19 hoisted `<link>`/`<style precedence>`, a persisted widget's
+     injected stylesheet) is never removed, because a kept layout or a persisted widget still needs
+     it. A full load would re-create it, so keeping it is the same result. (Amendment 2026-10-25,
+     Mellow's review of spa-nav-client.) Order matters because the stylesheet order is the cascade order: a page whose CSS order
      differs from the previous page's must cascade like a full load. A classic `<script>` that is
      new in the head runs. A reused one does not run again on a level swap (the root layout was
      kept, so `<html>`/`<body>` attributes were not touched). On a WHOLE-BODY swap (the root layout
@@ -196,8 +201,10 @@ keep the root and unmount it from the observer's dispose path.
   `replaceState` at boot.
 - Trap from 0.1.x: on `popstate`, `location` already points at the destination. Save the leaving
   entry's position against the id `nav` tracks itself, never one derived from `location`.
-- After a swap, focus is reset the way a full load resets it (the old active element is gone). No
-  extra focus management in this wave.
+- After a swap, focus is reset the way a full load resets it. When the focused element survived
+  (a link in a KEPT layout, or inside a persisted element), `nav` blurs it, so focus returns to the
+  body, as on a full load. (Amendment 2026-10-25, Mellow's review of spa-nav-client.) No other
+  focus management in this wave.
 
 ### 5.9 Nested layouts and multiple `<Outlet>` levels
 
