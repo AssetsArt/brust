@@ -216,6 +216,33 @@ test('an island on A unmounts (its effect cleanup runs) and the island on B hydr
   await close()
 })
 
+// ---- F456: navigate() from @brust/core in an island -------------------------------------------------------------------
+
+test('navigate(url) from an island runs the SPA flow: load then success with trigger "navigate", resolves after, no reload', async () => {
+  const { page, errors, close } = await open('/go')
+  await page.waitForFunction(() => document.querySelector('brust-island[data-hydrated] #go'))
+  const len = await page.evaluate(() => history.length)
+  const ev = await nav(page, () => page.click('#go'))
+  expect(ev.map((e) => e.type)).toEqual(['load', 'success'])
+  expect(ev.map((e) => e.trigger)).toEqual(['navigate', 'navigate'])
+  expect(ev[0].loading).toBe(true)
+  expect(await page.evaluate(() => window.__mark)).toBe(1) // never reloaded
+  expect(new URL(page.url()).pathname).toBe('/list')
+  expect(await page.evaluate(() => (window as unknown as Record<string, number>).resolved)).toBe(1)
+  expect(await page.evaluate(() => history.length)).toBe(len + 1)
+  // { replace: true } adds no history entry
+  await page.goBack()
+  await page.waitForFunction(() => location.pathname === '/go')
+  await settle(page)
+  await page.waitForFunction(() => document.querySelector('brust-island[data-hydrated] #go-replace'))
+  const len2 = await page.evaluate(() => history.length)
+  await nav(page, () => page.click('#go-replace'))
+  expect(new URL(page.url()).pathname).toBe('/long')
+  expect(await page.evaluate(() => history.length)).toBe(len2)
+  expect(errors).toEqual([])
+  await close()
+})
+
 // ---- item 7: stores -------------------------------------------------------------------------------------------------
 
 test('a live store keeps its client value; a store first used on B is seeded from B\'s snapshot', async () => {

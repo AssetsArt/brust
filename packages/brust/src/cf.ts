@@ -2,6 +2,8 @@
 // Same names as `index.ts` minus what needs a host process: no `run`, no `loadConfig`. `cache.invalidate` goes through
 // the CF bundle's napi stub to the runtime the wasm glue installed at start (`server-handlers` `install`).
 export { buildTime } from './build-time'
+export { navigate } from './navigate'
+export type { NavErrorDetail, NavLoadDetail, NavigateOptions, NavSuccessDetail, NavTrigger } from './navigate'
 export { cache } from './cache'
 export type { ComponentCacheOptions, InvalidateArgs, InvalidateResult } from './cache'
 export {

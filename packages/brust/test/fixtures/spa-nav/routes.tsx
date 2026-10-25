@@ -7,6 +7,7 @@ import A from './A'
 import A2 from './A2'
 import B from './B'
 import Block from './Block'
+import Go from './Go'
 import Home from './Home'
 import IslandPage from './IslandPage'
 import Leaf from './Leaf'
@@ -29,6 +30,7 @@ export const routes = defineRoutes([
       { path: '/', Component: Home },
       { path: '/list', Component: List },
       { path: '/island', Component: IslandPage },
+      { path: '/go', Component: Go },
       { path: '/store-a', Component: StoreA, loader: () => { cart.count.set(5); return {} } },
       { path: '/store-b', Component: StoreB, loader: () => { cart.count.set(5); late.v.set(7); return {} } },
       { path: '/long', Component: Long },

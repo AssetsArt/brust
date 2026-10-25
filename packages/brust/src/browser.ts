@@ -5,6 +5,8 @@
 // config, no napi addon — a react island may import `cache` from the package root.
 import { cacheComponent } from './cache-core'
 export { buildTime } from './build-time'
+export { navigate } from './navigate-browser'
+export type { NavErrorDetail, NavLoadDetail, NavigateOptions, NavSuccessDetail, NavTrigger } from './navigate'
 import type { InvalidateArgs, InvalidateResult } from './native'
 
 function invalidate(_args: InvalidateArgs): InvalidateResult {
