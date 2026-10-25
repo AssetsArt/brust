@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { type LoaderCtx, Outlet } from '@brust/core/routes'
 import { absolute } from '../lib/site'
+import NavLine from './NavLine'
 import SiteFooter from './SiteFooter'
 import SiteHeader from './SiteHeader'
 
@@ -40,7 +41,7 @@ export async function layoutLoader({ path }: LoaderCtx): Promise<LayoutData> {
 
 export default function Layout({ title, version, url }: LayoutData) {
   return (
-    <html lang="en">
+    <html lang="en" data-brust-progress="off">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -56,6 +57,7 @@ export default function Layout({ title, version, url }: LayoutData) {
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600;700&display=swap" />
       </head>
       <body>
+        <NavLine />
         <SiteHeader version={version} />
         <main>
           <Outlet />

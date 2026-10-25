@@ -91,7 +91,28 @@ brust shows a thin line along the top of the viewport while the next page loads.
 - With `prefers-reduced-motion: reduce` it shows without the movement and without the fade.
 - `<html data-brust-progress="off">` turns it off. The element is a `<div data-brust-bar>` on `<html>`, and its `<style data-brust-bar>` is added to the head the first time it shows, if you want to restyle it.
 
-To build your own indicator instead, turn the built-in one off and listen to the events:
+### A preloader of your own
+
+To build your own indicator instead, turn the built-in one off with `<html data-brust-progress="off">` and read the [navigation store](#9-the-navigation-store) in a component. No `addEventListener`:
+
+```tsx
+import { navigation } from '@brust/core/navigation'
+import { useStore } from '@brust/core/store/react'
+
+export default function LoadingLine() {
+  const nav = useStore(navigation)
+  return <div className="line" data-state={nav.state} />
+}
+```
+
+```css
+.line { transform: scaleX(0); transform-origin: left; }
+.line[data-state="loading"] { transform: scaleX(.8); transition: transform 8s cubic-bezier(.1, .8, .2, 1) .15s; }
+```
+
+Put it in the layout. It reads `state`, which is `idle` in every page's server markup, so the layout still renders the same on each page and is kept across navigations. The `.15s` delay keeps the line still on a navigation that is quick, such as one served from the cache. `nav.to` is the path being loaded, for a label.
+
+The store is fed by the four events above. If you cannot use a store (plain script, no component), listen to them directly:
 
 ```ts
 document.addEventListener('brust:nav:load', () => bar.start())
@@ -102,7 +123,7 @@ document.addEventListener('brust:nav:error', (e) => {
 })
 ```
 
-Or in CSS alone, with no JavaScript:
+Or in CSS alone, with no JavaScript and no component:
 
 ```css
 .bar { transform: scaleX(0); transform-origin: left; }

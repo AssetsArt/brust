@@ -162,7 +162,7 @@ Every UI surface then updates because they all read `team`. See [Actions](./acti
 
 ## 10. The built-in `navigation` store
 
-brust ships one store of its own, `navigation`, fed by the SPA navigation events (`state`, `url`, `to`, `trigger`, `status`, `error`, `id`). Import the handle from `@brust/core/navigation` and read it through `useStore` like any other store, in a native component or an island. The name is reserved. See [Navigation](./navigation.md#8-the-navigation-store).
+brust ships one store of its own, `navigation`, fed by the SPA navigation events (`state`, `url`, `to`, `trigger`, `status`, `error`, `id`). Import the handle from `@brust/core/navigation` and read it through `useStore` like any other store, in a native component or an island. The name is reserved. See [Navigation](./navigation.md#9-the-navigation-store).
 
 ## 11. Example
 
