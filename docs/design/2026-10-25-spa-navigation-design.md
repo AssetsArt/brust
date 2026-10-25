@@ -259,9 +259,15 @@ is replaced, with no reload.
 
 - A comment pair whose two comments are not siblings in the live DOM or in the parsed response
   cannot be used as a range. The HTML parser can split them: an outlet inside a `<p>` whose child
-  starts a `<div>`, an outlet in a `<table>` (foster parenting), an `x-if`/`x-for` that moved
-  nodes. That level counts as changed, so the swap happens one level higher, ultimately the
-  whole body.
+  starts a `<div>`, an `x-if`/`x-for` that moved nodes. That level counts as changed, so the
+  swap happens one level higher, ultimately the whole body.
+- A comment pair whose parent is `TABLE`, `TBODY`, `THEAD`, `TFOOT` or `TR` is never a range either.
+  The parser does NOT split such a pair. It foster-parents the outlet's content out in front of the
+  table and leaves the two comments as siblings around nothing, so the sibling check alone would
+  keep the OLD page on screen. (Amendment 2026-10-25, found by Dew in spa-nav-client, `chain.ts`
+  `usable()`.)
+- `data-brust-once` means once per tab: a once-script that is new to this tab runs, and a reused
+  one is skipped (ruling on Dew's READY, 2026-10-25).
 - A level the server does not mark (a React-tier level, rendered and hydrated as one island, gets
   no comment nodes inside it) is not keepable. The swap happens at the deepest marked, equal
   ancestor above it.
