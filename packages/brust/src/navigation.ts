@@ -20,27 +20,40 @@ const path = (href: unknown): string => {
   }
 }
 
-export const navigation = defineStore('navigation', () => ({
-  /** `'loading'` from `brust:nav:load` until `success` / `error`. */
-  state: signal<'idle' | 'loading'>('idle'),
-  /** Path + search of the page on screen: updated at `success`, and at `error` when the page was swapped in. */
-  url: signal<string>(at()),
-  /** Path + search being loaded, else `null`. */
-  to: signal<string | null>(null),
-  /** Of the current or last navigation. */
-  trigger: signal<NavigationTrigger | null>(null),
-  /** HTTP status of the last navigation. */
-  status: signal<number | null>(null),
-  /** Message of the last failed navigation; cleared at the next `load`. */
-  error: signal<string | null>(null),
-  /** The last navigation id (0 before any). */
-  id: signal<number>(0),
-}))
+declare const __BRUST_DEV__: boolean | undefined
+
+// Instances this module's factory made: a record under the name that is not one belongs to someone else's defineStore.
+const made = new WeakSet<object>()
+
+export const navigation = defineStore('navigation', () => {
+  const store = {
+    /** `'loading'` from `brust:nav:load` until `success` / `error`. */
+    state: signal<'idle' | 'loading'>('idle'),
+    /** Path + search of the page on screen: updated at `success`, and at `error` when the page was swapped in. */
+    url: signal<string>(at()),
+    /** Path + search being loaded, else `null`. */
+    to: signal<string | null>(null),
+    /** Of the current or last navigation. */
+    trigger: signal<NavigationTrigger | null>(null),
+    /** HTTP status of the last navigation. */
+    status: signal<number | null>(null),
+    /** Message of the last failed navigation; cleared at the next `load`. */
+    error: signal<string | null>(null),
+    /** The last navigation id (0 before any). */
+    id: signal<number>(0),
+  }
+  made.add(store)
+  return store
+})
 
 // One subscription per tab, whichever chunk evaluates this module first (the store registry is shared the same way).
 const BOUND = Symbol.for('brust.navigation')
 if (typeof document !== 'undefined' && !(globalThis as { [BOUND]?: true })[BOUND]) {
   ;(globalThis as { [BOUND]?: true })[BOUND] = true
+  // A user `defineStore('navigation', …)` outside a component is not seen by the compiler (`store-name-reserved`); it
+  // would share this record by name, so say so in dev.
+  if (typeof __BRUST_DEV__ !== 'undefined' && __BRUST_DEV__ && !made.has(navigation()))
+    console.warn("[brust] the store name 'navigation' is reserved for @brust/core/navigation, but another defineStore('navigation') made the record in use; rename yours")
   const on = (name: string, apply: (d: Record<string, unknown>) => void) =>
     document.addEventListener(`brust:nav:${name}`, (e) => apply((e as CustomEvent).detail ?? {}))
   on('load', (d) =>

@@ -113,4 +113,44 @@ describe('browser', () => {
     doc.addEventListener = orig
     expect(added).toEqual([])
   })
+
+  test('dev: another defineStore(\'navigation\') that made the record in use is warned about', async () => {
+    const reg = globalThis as unknown as { [k: symbol]: unknown; __BRUST_DEV__?: boolean }
+    delete reg[Symbol.for('brust.stores')]
+    delete reg[Symbol.for('brust.navigation')]
+    const { defineStore, signal } = await import('@brust/runtime-dom/store')
+    const mine = defineStore('navigation', () => ({ open: signal(false) }))
+    mine() // the user's store resolves first and owns the record
+    const warned: string[] = []
+    const warn = console.warn
+    console.warn = (m: string) => void warned.push(m)
+    reg.__BRUST_DEV__ = true
+    try {
+      const spec = '../src/navigation.ts?dev-warn'
+      await import(spec)
+    } finally {
+      console.warn = warn
+      delete reg.__BRUST_DEV__
+    }
+    expect(warned).toHaveLength(1)
+    expect(warned[0]).toContain("'navigation' is reserved")
+  })
+
+  test('dev: its own record, and production with a foreign one, stay quiet', async () => {
+    const reg = globalThis as unknown as { [k: symbol]: unknown; __BRUST_DEV__?: boolean }
+    delete reg[Symbol.for('brust.stores')]
+    delete reg[Symbol.for('brust.navigation')]
+    const warned: string[] = []
+    const warn = console.warn
+    console.warn = (m: string) => void warned.push(m)
+    reg.__BRUST_DEV__ = true
+    try {
+      const spec = '../src/navigation.ts?dev-quiet'
+      await import(spec)
+    } finally {
+      console.warn = warn
+      delete reg.__BRUST_DEV__
+    }
+    expect(warned).toEqual([])
+  })
 })
