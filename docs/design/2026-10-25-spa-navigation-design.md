@@ -53,8 +53,13 @@ document, swap it in place.**
      step 4, and only their position changes here. An old element with no identical new one is
      removed. Order matters because the stylesheet order is the cascade order: a page whose CSS order
      differs from the previous page's must cascade like a full load. A classic `<script>` that is
-     new in the head runs, and a reused one does not run again. `document.title` follows from the
-     new `<title>`;
+     new in the head runs. A reused one does not run again on a level swap (the root layout was
+     kept, so `<html>`/`<body>` attributes were not touched). On a WHOLE-BODY swap (the root layout
+     changed, or the fallback) every classic head script runs again, in document order, right after
+     the `<html>`/`<body>` attributes are replaced, as on a full load. That is what keeps a theme
+     script that sets `<html class>` correct. A script marked `data-brust-once` runs only on the
+     first load (analytics loaders). (Amendment 2026-10-25, ruling on challenge 9c2632d3.)
+     `document.title` follows from the new `<title>`;
    - the body: ONLY the layout levels that changed are replaced (§5.9, nested layouts). The
      levels above them stay live: their DOM nodes, component state, hydrated islands and inner
      scroll positions are untouched. When the root layout itself changed, the body's children are
@@ -139,7 +144,8 @@ To make clicks feel instant, `nav` prefetches a qualifying link:
 
 - after 65 ms of hover (`pointerenter`, cancelled on `pointerleave`), on `focusin`, or at once on
   `touchstart`;
-- with `fetch(url, { priority: 'low', headers: { 'Sec-Purpose': 'prefetch' } })`;
+- with `fetch(url, { priority: 'low' })` (no `Sec-Purpose` header: `Sec-*` is a forbidden request
+  header and `fetch` drops it; Dew, 2026-10-25);
 - the response promise is held for up to 15 s and used at most once (by the click on that URL);
 - not when `navigator.connection.saveData` is set or `effectiveType` is `2g`/`slow-2g`, and not when
   the link or an ancestor has `data-brust-prefetch="false"` or `data-brust-reload`.
@@ -277,7 +283,8 @@ today.
 
 - `packages/runtime-dom/src/nav/*.ts`: standalone. It imports nothing from the core, because it must
   run on pages without the core. It is built as its own content-hashed asset `client/nav-<hex>.js`,
-  with a budget line in `docs/runtime-budget.json` (target ≤ 2.5 KB gzip).
+  with a budget line in `docs/runtime-budget.json` (the 2.5 KB gzip estimate was wrong: with every behaviour of §3-§5.9 it measures 3393 B, and
+  the budget is 3730 B, measured + 10%; amendment 2026-10-25, challenge 9c2632d3).
 - `crates/brust-core/src/manifest.rs` `Assets` gains `nav` (optional, so an older manifest still
   loads). `crates/brust-core/src/render.rs` `inject_document_assets_into` emits the tag on every
   full document. The tag goes BEFORE the `if !any_dynamic { return }` early exit, so all-static
