@@ -7,7 +7,7 @@ version = "0.0.0"
 edition = "2024"
 license = "MIT"
 
-# Bun crates. One rev for all of them; bump via docs/design/bun-rev-bump.md.
+# Bun crates. One rev for all of them; bump with scripts/bun-codegen.ts (regenerate the codegen output) and re-apply vendor/bun_react_compiler/BRUST-PATCH.md.
 [workspace.dependencies]
 bun_js_parser      = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
 bun_ast            = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }

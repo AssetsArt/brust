@@ -1,4 +1,4 @@
-// F461 (design docs/design/2026-10-25-spa-navigation-design.md §11): the built-in `navigation` store, read through
+// F461 (SPA navigation design §11): the built-in `navigation` store, read through
 // `useStore(navigation)` by a native component and by React islands, in real Chromium against
 // packages/brust/test/fixtures/nav-store, served by `brust start` and as `--target static` files.
 // Run alone: `bun test --timeout 300000 tests/server/nav-store.chromium.test.ts`.

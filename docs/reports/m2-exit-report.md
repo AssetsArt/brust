@@ -35,7 +35,7 @@ The M2 bar was not met at M2 exit; ledger F68 closed in M3-P on the suite in `be
 
 ## Ledger F32–F49
 
-12 closed, 6 re-filed (owner column of `docs/plans/m1a-followups.md`).
+12 closed, 6 re-filed (owner column of `scripts/m2-exit/ledger-rows.md`).
 
 | Id | State | Owner / reason |
 |---|---|---|

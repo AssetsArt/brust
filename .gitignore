@@ -21,3 +21,6 @@ tests/fixtures/shadcn/dist/
 **/.brust/resolve-cache-*.json
 crates/*/target
 packages/brust/test/fixtures/.battery-ssr/
+
+# local, lead-owned plans, ledger and design docs (see bb rule:internal-docs)
+.internal/

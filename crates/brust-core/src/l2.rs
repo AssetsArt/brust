@@ -1,4 +1,4 @@
-//! The shared second cache tier (cache adapters, `docs/design/2026-10-12-cache-adapter-design.md`):
+//! The shared second cache tier (cache adapters):
 //! the contract types a host's `Host::l2_get` / `Host::l2_set` speak, the per-core counters behind
 //! `stats.l2`, and the invalidation floor that keeps an L2 body older than a replayed invalidation
 //! from being served (spec §4.2.3; native and Workers alike, ruling L7c).

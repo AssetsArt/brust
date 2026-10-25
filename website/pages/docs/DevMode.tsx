@@ -286,7 +286,7 @@ export default function DevMode({ blocks }: DevModeData) {
         Every HTML page served through the dev proxy carries <code>&lt;brust-devtools&gt;</code>, a small indicator in the bottom-right corner that reads like <code>ready · 2s 1n 0r</code>: the build state and how many components of this page are static, native and React.
         Click it, or press <code>Alt+Shift+B</code>, to open the panel; <code>Esc</code> closes it.
       </p>
-      {/* source: docs/plans/m1a-followups.md row F113 ("Alt+Shift+B is swallowed while focus is inside an input/textarea/contenteditable (accepted)") and devtools.ts:102 (the indicator is a button whose click toggles the panel) */}
+      {/* source: ledger row F113 ("Alt+Shift+B is swallowed while focus is inside an input/textarea/contenteditable (accepted)") and devtools.ts:102 (the indicator is a button whose click toggles the panel) */}
       <p>
         While focus is inside a text field, the shortcut does not open the panel (the field takes the key). Click the indicator instead.
       </p>

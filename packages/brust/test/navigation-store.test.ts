@@ -1,4 +1,4 @@
-// F461 (design docs/design/2026-10-25-spa-navigation-design.md §11): the built-in `navigation` store. The server half
+// F461 (SPA navigation design §11): the built-in `navigation` store. The server half
 // (idle defaults, the loader seeding `url`) and the browser half (the four `brust:nav:*` events set the signals) are
 // pinned here; the real thing in Chromium is tests/server/nav-store.chromium.test.ts.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'

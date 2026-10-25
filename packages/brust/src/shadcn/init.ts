@@ -16,7 +16,7 @@ export const SHADCN_VERSION = '4.21.4'
 
 /**
  * The packages the components import (R41.5), each pinned to the exact version the transcript ran
- * (`docs/transcripts/shadcn-init-guide.md`, F181). They move together with `SHADCN_VERSION`: a release that moves one
+ * (`website/test/fixtures/shadcn-transcripts/shadcn-init-guide.md`, F181). They move together with `SHADCN_VERSION`: a release that moves one
  * re-runs the transcript. A package the project already depends on, at any version, is left alone.
  */
 export const SHADCN_DEP_PINS = {

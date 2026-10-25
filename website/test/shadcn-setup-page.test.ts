@@ -1,5 +1,5 @@
 // website/test/shadcn-setup-page.test.ts — /docs/guides/shadcn-setup: the guide renders as static, sits after "shadcn/ui and libraries",
-// links resolve, and the quoted files are the files of the verified run (docs/transcripts/shadcn-setup-guide-app/).
+// links resolve, and the quoted files are the files of the verified run (website/test/fixtures/shadcn-transcripts/shadcn-setup-guide-app/).
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -10,8 +10,8 @@ let srv: Server | undefined
 let manifest: Manifest
 let html = ''
 const root = join(import.meta.dir, '..', '..')
-const app = (f: string) => readFileSync(join(root, 'docs/transcripts/shadcn-init-guide-app', f), 'utf8')
-const handApp = (f: string) => readFileSync(join(root, 'docs/transcripts/shadcn-setup-guide-app', f), 'utf8')
+const app = (f: string) => readFileSync(join(root, 'website/test/fixtures/shadcn-transcripts/shadcn-init-guide-app', f), 'utf8')
+const handApp = (f: string) => readFileSync(join(root, 'website/test/fixtures/shadcn-transcripts/shadcn-setup-guide-app', f), 'utf8')
 const unescape = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
 const text = (h: string) => unescape(h.replace(/<[^>]+>/g, ''))
 
@@ -55,7 +55,7 @@ test('the quoted files are the files of the verified run', () => {
 
 test('the one-command step quotes the real run and the version it needs', () => {
   const page = text(html)
-  const transcript = readFileSync(join(root, 'docs/transcripts/shadcn-init-guide.md'), 'utf8')
+  const transcript = readFileSync(join(root, 'website/test/fixtures/shadcn-transcripts/shadcn-init-guide.md'), 'utf8')
   // every non-blank line of the quoted output is a line of the transcript's run
   const block = page.slice(page.indexOf('$ bunx brust shadcn init'), page.indexOf('It did, in order'))
   expect(block.length).toBeGreaterThan(200)

@@ -1,4 +1,4 @@
-// The built-in `navigation` store (design docs/design/2026-10-25-spa-navigation-design.md §11): the `brust:nav:*` events as
+// The built-in `navigation` store (SPA navigation design §11): the `brust:nav:*` events as
 // signals, so a component reads navigation state through `useStore(navigation)` like any other store. Browser-safe and
 // React-free, like `@brust/core/store`. The name is reserved (the compiler refuses a user `defineStore('navigation')`).
 //

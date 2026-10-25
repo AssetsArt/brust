@@ -1,8 +1,8 @@
 # bench/ATTRIBUTION.md — post-P6 attribution tree (M3-P §5)
 
-Companion to `bench/RESULTS.md` (spec `docs/design/2026-10-10-m3-perf-bench-design.md` §5: "Record the final tree in
+Companion to `bench/RESULTS.md` (spec: the M3 perf bench design, §5: "Record the final tree in
 `bench/ATTRIBUTION.md`"). This is the tree after every wave-3 lever (P0, P5, P1, P2, P3, P8, F75, P4, P6), measured on
-`m3p` @ 2ca941d on 2026-10-11. It is what the P7 plan (`docs/plans/2026-10-11-m3p-e-tail.md`) was chosen from.
+`m3p` @ 2ca941d on 2026-10-11. It is what the P7 plan (the M3-P tail plan) was chosen from.
 
 ## Method
 
@@ -264,7 +264,7 @@ request. About 3 µs of it is the HTTP layer: 0.1.x builds the same hyper `auto:
    Only the last lever is < 2%, so there is one, not two. If P7 also lands < 2% on both D and I, the rule is met
    after P7.
 
-So M3-P continues with P7. Plan: `docs/plans/2026-10-11-m3p-e-tail.md`.
+So M3-P continues with P7. Plan: the M3-P tail plan.
 
 ## Scratch evidence (not committed)
 
@@ -415,7 +415,7 @@ D 2,061 rps vs 1,936, I 14,855 vs 14,240. All within 15%.
 Parent-sum check (acceptance 2): bridge legs + rest = 15.31 µs on D (parent 15.08), 14.21 on I (14.16); read + parse = 77.13 on D (parent 77.21), 0.65 on I (0.76).
 Run-to-run spread of the c=1 numbers across the three repetitions: wake out 8.29–9.49 µs, wake back 5.95–7.12 µs on D; the medians are stable to ±10%.
 
-**What it means for the in-process ceiling** (memo `docs/plans/2026-10-11-research-bun-inprocess-bridge-memo.md` §6.1).
+**What it means for the in-process ceiling** (the in-process bridge research memo, §6.1).
 1. The bridge row was never "wake + JSON": it is wake only (≈ 14–15 µs, 58% out / 42% back). The JSON envelope sits **outside** it, in the JS handler and the Rust read.
 2. **Probe I** (the cheap page): the bridge is 21% of the c=1 e2e and the whole JSON envelope is 3.5 µs (5%). Removing the thread hop is the entire prize: ≤ +26% rps at c=1 (1/(1−0.21)), the same ceiling the memo estimated.
 3. **Probe D**: the wake is only 3.2% (15.3 µs). The large removable cost is the 23 KB response encoded to JSON and decoded again: `JSON.stringify` 23.0 + serde parse 76.1 + utf8/write 2.1 ≈ 101 µs = **20.9% of e2e**, and the *parse* half alone (76 µs, 15.7%) is 75% of it. That cost is payload encoding, not the thread boundary: it can shrink in the current shape (a lazy or tape `Node`, the E3 follow-up already named above; a binary or schema'd encoding) and an in-process bridge would still have to move 23 KB of structured data (JSC `get`s, not free). Ceiling for an in-process bridge on D: ≤ +3% for the wake alone, up to ~+32% if it also removed the JSON round trip without paying for field reads.

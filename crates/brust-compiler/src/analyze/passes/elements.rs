@@ -1,4 +1,4 @@
-//! F288 phase A: the element-value fold (design note `docs/plans/2026-10-23-f288-element-value.md` §2-§4), run in a
+//! F288 phase A: the element-value fold (the F288 element-value design, sections 2-4), run in a
 //! call-site clone (`specialise`) of a component that reads its `children` only as an element: `typeof children ===
 //! "function"` (E1), `React.Children.only(children)` (E2), `children(args)` (E3), `React.cloneElement(child, config)`
 //! (E4), a module function of the element (§3, `getElementRef`), and rendering the result (E6). At the call site the

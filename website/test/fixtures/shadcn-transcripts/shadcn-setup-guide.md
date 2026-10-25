@@ -1,6 +1,6 @@
 # Transcript: shadcn/ui on a fresh create-app project (L35, R38.1)
 
-Run 2026-10-14 on macOS, Bun 1.4.3, published `@brust/*` 2.0.0-alpha.7, real `shadcn` CLI 4.21.4 (`bunx shadcn@latest`). The files of the final app that the guide quotes are in `docs/transcripts/shadcn-setup-guide-app/`.
+Run 2026-10-14 on macOS, Bun 1.4.3, published `@brust/*` 2.0.0-alpha.7, real `shadcn` CLI 4.21.4 (`bunx shadcn@latest`). The files of the final app that the guide quotes are in `website/test/fixtures/shadcn-transcripts/shadcn-setup-guide-app/`.
 
 ## Findings (what the guide must say)
 

@@ -1,4 +1,4 @@
-// SPA navigation (design docs/design/2026-10-25-spa-navigation-design.md): a qualifying link click, `navigate()` or
+// SPA navigation (design): a qualifying link click, `navigate()` or
 // back/forward fetches the real HTML document and swaps it in place, so the page shows exactly what a full load of
 // that URL shows (§2). Anything that cannot be swapped is a full load. Events: `brust:nav:click|load|success|error`.
 import { applyHead, classicScripts, planHead, runScripts, swapBody } from './swap'

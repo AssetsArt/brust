@@ -55,5 +55,5 @@ test('the sections exist, no internal spec references, static, and every cited p
   expect(component(manifest, 'Shadcn').tier).toBe('static')
   const root = join(import.meta.dir, '..', '..')
   const src = readFileSync(join(import.meta.dir, '..', 'pages/docs/Shadcn.tsx'), 'utf8')
-  for (const m of src.matchAll(/source: [^*]*?((?:crates|packages|docs|tests|scripts)\/[\w./-]+\.\w+)/g)) expect([m[1], existsSync(join(root, m[1]!))]).toEqual([m[1], true])
+  for (const m of src.matchAll(/source: [^*]*?((?:crates|packages|docs|tests|scripts|website)\/[\w./-]+\.\w+)/g)) expect([m[1], existsSync(join(root, m[1]!))]).toEqual([m[1], true])
 })
