@@ -7,6 +7,7 @@ export default function R1() {
     <html lang="en">
       <head>
         <link rel="stylesheet" href="/public/site.css" />
+        <script src="/public/theme.js" />
       </head>
       <body>
         <header data-layout="R1">

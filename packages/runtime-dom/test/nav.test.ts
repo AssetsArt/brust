@@ -134,7 +134,8 @@ test('a level swap replaces the page only; the root and the kept layout are the 
   const header = $('#h')!
   const side = $('#side')!
   const next = parse(doc({ ...app('1', 'b'), tail: '<script data-brust-store="s" type="application/json">{}</script><script type="module" src="/_brust/client/chunk-b.js"></script>' }))
-  const added = swapBody(next, 'data-brust-loading')
+  const [added, whole] = swapBody(next, 'data-brust-loading')
+  expect(whole).toBe(false)
   expect($('#h')).toBe(header)
   expect($('#side')).toBe(side)
   expect($('#m')!.textContent).toBe('b')
@@ -158,7 +159,7 @@ test('a root change swaps the whole body and the attributes of <html> and <body>
   show({ ...app('1', 'a'), html: ' lang="en" class="a"', bodyAttrs: ' class="ba"' })
   document.documentElement.setAttribute('data-brust-loading', '')
   const header = $('#h')!
-  swapBody(parse(doc({ ...app('1', 'b'), root: 'R2:9', html: ' lang="th"', bodyAttrs: ' data-x="1"' })), 'data-brust-loading')
+  expect(swapBody(parse(doc({ ...app('1', 'b'), root: 'R2:9', html: ' lang="th"', bodyAttrs: ' data-x="1"' })), 'data-brust-loading')[1]).toBe(true)
   expect($('#h')).not.toBe(header)
   expect(document.documentElement.getAttribute('lang')).toBe('th')
   expect(document.documentElement.hasAttribute('class')).toBe(false)
@@ -434,6 +435,31 @@ test('navigate() through the bridge; a full load when SPA navigation is off or t
   document.body.removeAttribute('data-brust-reload')
   expect(assign.mock.calls).toEqual([['https://other.example/'], ['http://localhost/c']])
   assign.mockRestore()
+})
+
+test('head scripts: all re-run after a whole-body swap (data-brust-once only when new), only new ones on a level swap', async () => {
+  const head = '<script id="theme">document.documentElement.className = "dark"</script><script id="once" data-brust-once>1</script>'
+  start({ ...app('1', 'a'), head })
+  const theme = $('#theme')
+  const once = $('#once')
+  pages['/b'] = { html: doc({ ...app('1', 'b'), head: head + '<script id="new-b">2</script>' }) }
+  pages['/c'] = { html: doc({ ...app('1', 'c'), root: 'R2:1', head: head + '<script id="new-c" data-brust-once>3</script>' }) }
+  click($('#to-b')!)
+  await settle()
+  // a level swap: the reused ones are the same nodes (not run again), the new one was re-created to run
+  expect($('#theme')).toBe(theme)
+  expect($('#once')).toBe(once)
+  const newB = $('#new-b')
+  expect(newB).not.toBeNull()
+  const nav = (globalThis as unknown as Record<symbol, NavBridge>)[Symbol.for('brust.nav')]!
+  await nav.navigate('/c')
+  await settle()
+  // a whole-body swap: every classic head script re-created (run) except the reused data-brust-once one
+  expect($('#theme')).not.toBe(theme)
+  expect($('#theme')!.outerHTML).toBe(theme!.outerHTML)
+  expect($('#once')).toBe(once)
+  expect($('#new-c')).not.toBeNull()
+  expect(names().filter((n) => n === 'success').length).toBe(2)
 })
 
 test('boot does nothing on a page without a nav tag, and only once', () => {

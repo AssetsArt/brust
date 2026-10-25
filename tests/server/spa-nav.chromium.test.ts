@@ -242,6 +242,18 @@ test('back restores the scroll position; a #hash link scrolls to its target', as
 
 // ---- item 9: data-brust-persist ------------------------------------------------------------------------------------------
 
+test('a classic head script (a theme script setting <html class>) leaves <html> as a full load does, across root layouts', async () => {
+  const { page, close } = await open('/')
+  expect(await page.evaluate(() => document.documentElement.className)).toBe('themed')
+  await follow(page, '/r2/one') // the root changed: <html> attributes replaced, every head script runs again
+  expect(await page.evaluate(() => document.documentElement.className)).toBe('r2 themed')
+  await expectFullLoadParity(page)
+  await follow(page, '/b/one')
+  expect(await page.evaluate(() => document.documentElement.className)).toBe('themed')
+  await expectFullLoadParity(page)
+  await close()
+})
+
 test('a data-brust-persist element is the same node after a navigation, across root layouts too', async () => {
   const { page, close } = await open('/')
   await page.evaluate(() => { (document.getElementById('player') as unknown as Record<string, number>).__same = 1 })

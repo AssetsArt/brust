@@ -121,7 +121,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       for (const [e, m] of plan.sheets) m == null ? e.removeAttribute('media') : e.setAttribute('media', m)
       pos.set(cur, [scrollX, scrollY])
       const fresh = applyHead(plan)
-      const body = swapBody(doc, LOADING)
+      const [body, whole] = swapBody(doc, LOADING)
       added.length = 0
       if (trigger === 'popstate') cur = pop || tag()
       else if (replace) history.replaceState({ ...history.state, brust: cur }, '', url)
@@ -129,7 +129,10 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       pushed = true
       shown = location.href
       land(url, pos.get(pop!))
-      await runScripts(classicScripts([...fresh, ...body]))
+      // the head scripts new to it run; after a whole-body swap (<html> and <body> attributes replaced) every one runs
+      // again, as on a full load (a theme script setting <html class>), but a data-brust-once one only if it is new
+      const head = whole ? [...document.head.children].filter((e) => !e.hasAttribute('data-brust-once') || fresh.includes(e)) : fresh
+      await runScripts(classicScripts([...head, ...body]))
       if (!live()) return
       html.removeAttribute(LOADING)
       if (status < 400) fire('success', { id, url, from, trigger, status })

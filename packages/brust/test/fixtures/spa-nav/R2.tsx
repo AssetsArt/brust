@@ -7,6 +7,7 @@ export default function R2() {
     <html lang="th" className="r2">
       <head>
         <link rel="stylesheet" href="/public/site.css" />
+        <script src="/public/theme.js" />
       </head>
       <body className="r2">
         <header data-layout="R2">

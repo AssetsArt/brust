@@ -94,9 +94,10 @@ function tail(body: HTMLElement): ChildNode[] | null {
 
 /**
  * Swap the body to `doc`'s (§5.9): from the first level that changed, or the whole body (with the attributes of
- * `<html>` and `<body>`) when the root changed or a chain cannot be trusted. Returns the inserted nodes.
+ * `<html>` and `<body>`) when the root changed or a chain cannot be trusted. Returns the inserted nodes, and true for a
+ * whole-body swap.
  */
-export function swapBody(doc: Document, loading: string): Node[] {
+export function swapBody(doc: Document, loading: string): [Node[], boolean] {
   const body = document.body
   const a = readChain(document)
   const b = readChain(doc)
@@ -112,7 +113,7 @@ export function swapBody(doc: Document, loading: string): Node[] {
     keep(next)
     for (const n of ta) n.remove()
     body.append(...tb)
-    return [...next, ...tb]
+    return [[...next, ...tb], false]
   }
   copyAttrs(document.documentElement, doc.documentElement, loading)
   copyAttrs(body, doc.body)
@@ -120,7 +121,7 @@ export function swapBody(doc: Document, loading: string): Node[] {
   const keep = persist([...body.childNodes])
   body.replaceChildren(...next)
   keep(next)
-  return next
+  return [next, true]
 }
 
 const isClassic = (s: Element) => !(s as HTMLScriptElement).type || /java|ecma/i.test((s as HTMLScriptElement).type)
