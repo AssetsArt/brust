@@ -494,9 +494,16 @@ Requested by the human after using alpha.26 on brust.dev:
      module imports, stylesheets placed and awaited (§3 step 4). The update callback is
      synchronous DOM work only, so the frozen old snapshot is held for one frame, not for a
      network wait.
-  2. New `<img>` elements in the swapped content that are in the viewport are given up to 100 ms
-     to `decode()` before the transition starts (`Promise.race` with a timeout), so a hero image
-     does not pop in after the fade. Off-screen images are not awaited.
+  2. Before `startViewTransition`, the first 8 `<img>` elements (document order) of the swapped
+     content are preloaded, and the transition waits at most 100 ms in total for them
+     (`Promise.race` of their `decode()`s with one timeout), so a hero image does not pop in
+     after the fade. An image counts only if it is not `loading="lazy"` and its URL is not
+     already in the live document. Each one is preloaded with `new Image()`, which copies `srcset`,
+     `sizes`, `crossorigin` and `referrerpolicy` (so the browser picks the same candidate and
+     does not download it twice), with `src` resolved against the final URL. This runs only when
+     a transition runs. (Amendment 2026-10-25, ruling on Dew's challenge 098832e3: "in the
+     viewport" cannot be known before the swap, because the parsed document has no layout;
+     non-lazy is the proxy.)
   3. `update` runs EXACTLY once. A synchronous throw from `startViewTransition` itself means a
      direct swap. If `updateCallbackDone` rejects, the swap threw: propagate it to the §4 `error`
      path, never swallow it, never run it again.
