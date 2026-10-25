@@ -2,6 +2,8 @@
 /// <reference path="./assets.d.ts" />
 // `@brust/core`: the app-facing API.
 export { buildTime } from './build-time'
+export { navigate } from './navigate'
+export type { NavErrorDetail, NavLoadDetail, NavigateOptions, NavSuccessDetail, NavTrigger } from './navigate'
 export { cache } from './cache'
 export { type BrustConfig, BrustConfigError, loadConfig } from './config'
 export { type RunOptions, run } from './run'

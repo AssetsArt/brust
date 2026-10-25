@@ -123,7 +123,9 @@ export default function Store({ blocks, candidates }: StoreData) {
         <li>
           <code>Map</code>, <code>Set</code> and <code>Date</code> serialize to <code>{'{}'}</code>, a <code>BigInt</code> throws, functions and <code>undefined</code> are dropped.
         </li>
-        <li>Navigating without a reload does not carry a snapshot.</li>
+        <li>
+          A store that is already live keeps its client value across a <a href="/docs/navigation">navigation</a>. The new page's snapshot only seeds a store the tab has not used yet.
+        </li>
       </ul>
       <Note>
         A cached page carries its store snapshot. Do not cache pages that paint per-user store data, such as a team seeded from the reader's cookie.
