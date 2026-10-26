@@ -10,7 +10,7 @@ import Lead from '../../components/docs/Lead'
 
 export interface LoadersData {
   toc: TocItem[]
-  blocks: Record<'loader' | 'ctx' | 'page' | 'verdicts' | 'mine', CodeBlockData>
+  blocks: Record<'loader' | 'ctx' | 'page' | 'verdicts' | 'headers' | 'mine', CodeBlockData>
   demo: { initial: Lookup; names: string[] }
 }
 
