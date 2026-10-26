@@ -667,6 +667,109 @@ fn loader_headers_survive_l1_hit() {
     assert_eq!(f.counts().0, 1);
 }
 
+/// F464: `res.headers` pairs reach every outcome, repeated names kept: the page, a redirect (Location from
+/// `redirect()`), an httpError and a notFound page. A refused name or an invalid value is dropped, the page
+/// still answers.
+#[test]
+fn loader_header_pairs_on_every_outcome() {
+    let f = FakeBun::new(
+        |req| {
+            let pairs = json!([
+                ["set-cookie", "a=1; Path=/"],
+                ["set-cookie", "b=2; Path=/"],
+                ["referrer-policy", "no-referrer"],
+                ["cache-control", "no-store"]
+            ]);
+            match req["params"]["name"].as_str() {
+                Some("out") => {
+                    json!({"verdict": "redirect", "location": "/login", "status": 303, "headers": pairs})
+                }
+                Some("tea") => {
+                    json!({"verdict": "httpError", "status": 429, "body": "slow", "headers": [["retry-after", "5"]]})
+                }
+                Some("gone") => {
+                    json!({"verdict": "notFound", "data": {"name": "gone"}, "headers": [["x-why", "gone"]]})
+                }
+                _ => {
+                    let mut v = default_loader(req);
+                    v["headers"] = json!([
+                        ["content-security-policy", "frame-ancestors 'none'"],
+                        ["location", "/evil"],
+                        ["content-type", "text/evil"],
+                        ["x-bad", "a\u{1}b"],
+                        ["x-ok", "1"]
+                    ]);
+                    v
+                }
+            }
+        },
+        default_jobs,
+    );
+    let s = boot(f.clone());
+    let (st, h, _) = get(&s, "/pokemon/out", &[]);
+    assert_eq!(st, 303);
+    assert_eq!(h.get_all("location").iter().collect::<Vec<_>>(), ["/login"]);
+    let cookies: Vec<_> = h
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap())
+        .collect();
+    assert_eq!(cookies, ["a=1; Path=/", "b=2; Path=/"]);
+    assert_eq!(h.get("referrer-policy").unwrap(), "no-referrer");
+    assert_eq!(h.get("cache-control").unwrap(), "no-store");
+    let (st, h, body) = get(&s, "/pokemon/tea", &[]);
+    assert_eq!((st, body.as_str()), (429, "slow"));
+    assert_eq!(h.get("retry-after").unwrap(), "5");
+    let (st, h, _) = get(&s, "/pokemon/gone", &[]);
+    assert_eq!(st, 404);
+    assert_eq!(h.get("x-why").unwrap(), "gone");
+    let (st, h, body) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(
+        h.get("content-security-policy").unwrap(),
+        "frame-ancestors 'none'"
+    );
+    assert_eq!(h.get("x-ok").unwrap(), "1");
+    assert!(h.get("location").is_none());
+    assert!(h.get("x-bad").is_none());
+    assert_eq!(h.get("content-type").unwrap(), "text/html; charset=utf-8");
+}
+
+/// F464: `Set-Cookie`, a `Cache-Control` with `no-store` / `private` (any case, any position) or `Vary: *`
+/// keeps a page out of the cache; a public `Cache-Control` does not.
+#[test]
+fn loader_headers_that_keep_a_page_out_of_the_cache() {
+    let cases = [
+        (json!([["set-cookie", "a=1"]]), false),
+        (json!([["cache-control", "No-Store"]]), false),
+        (json!([["cache-control", "max-age=0, private"]]), false),
+        (json!([["cache-control", "private=\"x-a\""]]), false),
+        (json!([["vary", "Accept, *"]]), false),
+        (json!({"set-cookie": "legacy=1"}), false),
+        (
+            json!([["cache-control", "public, max-age=60"], ["vary", "Accept"]]),
+            true,
+        ),
+    ];
+    for (headers, stored) in cases {
+        let hv = headers.clone();
+        let f = FakeBun::new(
+            move |req| {
+                let mut v = default_loader(req);
+                v["headers"] = hv.clone();
+                v
+            },
+            default_jobs,
+        );
+        let s = boot(f.clone());
+        let (_, h1, _) = get(&s, "/pokemon/pikachu", &[]);
+        let (_, h2, _) = get(&s, "/pokemon/pikachu", &[]);
+        assert_eq!(cache_hdr(&h1), Some("MISS"), "{headers}");
+        assert_eq!(cache_hdr(&h2) == Some("HIT"), stored, "{headers}");
+        assert_eq!(f.counts().0, if stored { 1 } else { 2 }, "{headers}");
+    }
+}
+
 /// Fix 4: a job result with neither `value` nor `error` fails the request
 /// like a job error; nothing is cached.
 #[test]

@@ -230,6 +230,21 @@ describe.skipIf(!ENABLED)('cf-min on local workerd', () => {
     expect(await raw('num')).toContain('<div id="raw" x-raw>7</div>')
   })
 
+  test('15 res.headers (F464): both cookies on a redirect; a no-store page is never stored', async () => {
+    const r = await get('/out')
+    expect(r.status).toBe(303)
+    expect(r.headers.get('location')).toBe('/')
+    expect(r.headers.getSetCookie()).toEqual(['a=1; Path=/', 'b=2; Path=/'])
+    await r.text()
+    for (let i = 0; i < 2; i++) {
+      const p = await get('/private/3')
+      expect(p.status).toBe(200)
+      expect(p.headers.get('cache-control')).toBe('no-store')
+      expect(p.headers.get('x-brust-cache')).toBe('MISS')
+      await p.text()
+    }
+  })
+
   test('p50 of 50 distinct-id MISSes', async () => {
     const ms: number[] = []
     for (let i = 0; i < 50; i++) {
