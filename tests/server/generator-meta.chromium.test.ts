@@ -49,7 +49,7 @@ const metas = (html: string) => [...html.matchAll(/<meta\b[^>]*\bname=["']genera
 test('the manifest has the tiers the test relies on: a native page and a React-tier page', () => {
   const m = JSON.parse(readFileSync(join(app, 'dist/manifest.json'), 'utf8'))
   const tierOf = (path: string) => {
-    const r = m.routes.find((r: { path?: string }) => r.path === path)
+    const r = m.routes.find((r: { pattern: string }) => r.pattern === path)
     return m.components[r.chain.at(-1)].tier
   }
   expect(tierOf('/')).toBe('native')
