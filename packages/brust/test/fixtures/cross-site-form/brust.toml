@@ -1,0 +1,3 @@
+# F465: the prefix the Assets Art console uses (`/auth`); every state-changing action call is same-origin by default.
+[actions]
+prefix = "/auth"
