@@ -1,7 +1,6 @@
 //! The plan state of a planned loader call (M3-P P6), as data: what a host's `loader` is offered
 //! (`PlanSeed`) and hands back (`PlannedCall`). Moved from `brust-server/src/pipeline.rs`.
 //! Native-host seam (`doc(hidden)`), not an API.
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use brust_jinja::ctx::{MapInner, Node};
@@ -54,7 +53,7 @@ pub struct PlannedCall {
     /// base + loader data (`merge_loader_data`), as `page` builds it.
     pub ctx: Node,
     /// The loader's response headers.
-    pub headers: BTreeMap<String, String>,
+    pub headers: crate::protocol::Headers,
     /// `collect_jobs`, owned (re-borrowed with `rehydrate` after the call).
     pub rows: Vec<PlanRow>,
     /// Hits pinned, owner, misses — exactly `lookup_jobs`'.

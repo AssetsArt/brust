@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test'
+import { expect, spyOn, test } from 'bun:test'
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -519,4 +519,87 @@ test('dispatch: over the cap → {error} naming the cap (loader, planned ctx)', 
   const b = await d('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
   expect(dec(view, b).error).toMatch(/> 262144 \(maxLoaderResponseBytes\)/)
   expect(put.length).toBe(0)
+})
+
+// ---- F464: res.headers ----
+
+// biome-ignore lint/suspicious/noExplicitAny: loader fixtures
+const chain3 = (root: any, mid: any, page: any) =>
+  flattenRoutes(defineRoutes([{ Component: C, loader: root, children: [{ path: '/a', Component: C, loader: mid, children: [{ path: '/a/{id}', Component: C, loader: page }] }] }]))
+    .leaves
+// the leaf of a 3-level chain
+type H = { res: { headers: Headers } }
+
+test('res.headers: one Headers for the chain, in chain order; set replaces, append adds, repeated set-cookie stay pairs', async () => {
+  const seen: Headers[] = []
+  const h = makeHandlers({
+    leaves: chain3(
+      ({ res }: H) => { seen.push(res.headers); res.headers.set('Cache-Control', 'no-store'); res.headers.append('Set-Cookie', 'a=1'); res.headers.set('X-Level', 'root') },
+      ({ res }: H) => { seen.push(res.headers); res.headers.append('Set-Cookie', 'b=2'); res.headers.append('Vary', 'Accept') },
+      ({ res }: H) => { seen.push(res.headers); res.headers.set('X-Level', 'page'); res.headers.append('Vary', 'Cookie'); return { p: 1 } },
+    ),
+    jobs: {},
+  })
+  const r: unknown = await h.loader(ctx('r2'))
+  expect(r).toEqual({
+    ok: true,
+    data: { p: 1 },
+    headers: [['cache-control', 'no-store'], ['vary', 'Accept, Cookie'], ['x-level', 'page'], ['set-cookie', 'a=1'], ['set-cookie', 'b=2']],
+  })
+  expect(new Set(seen).size).toBe(1)
+  const again: unknown = await h.loader(ctx('r2')) // a shared object would carry the cookies twice
+  expect(again).toEqual(r)
+})
+
+test('res.headers: no header set, no headers key', async () => {
+  const h = makeHandlers({ leaves: chain3(async () => ({}), undefined, async () => ({ x: 1 })), jobs: {} })
+  expect(await h.loader(ctx('r2'))).toEqual({ ok: true, data: { x: 1 } })
+})
+
+test('res.headers go on every verdict: notFound, redirect, httpError (with its own headers option after)', async () => {
+  const set = ({ res }: H) => { res.headers.set('Cache-Control', 'no-store'); res.headers.append('Set-Cookie', 'sid=; Max-Age=0') }
+  const nf = makeHandlers({ leaves: chain3(set, undefined, async () => notFound({ w: 1 })), jobs: {} })
+  expect(await nf.loader(ctx('r2'))).toEqual({ verdict: 'notFound', data: { w: 1 }, headers: [['cache-control', 'no-store'], ['set-cookie', 'sid=; Max-Age=0']] })
+  const rd = makeHandlers({ leaves: chain3(set, ({ res }: H) => { res.headers.append('Set-Cookie', 'b=2'); return redirect('/login', 303) }, async () => ({ never: 1 })), jobs: {} })
+  expect(await rd.loader(ctx('r2'))).toEqual({
+    verdict: 'redirect',
+    location: '/login',
+    status: 303,
+    headers: [['cache-control', 'no-store'], ['set-cookie', 'sid=; Max-Age=0'], ['set-cookie', 'b=2']],
+  })
+  const he = makeHandlers({ leaves: chain3(set, undefined, async () => httpError(429, 'slow', { headers: { 'Retry-After': '5' } })), jobs: {} })
+  expect(await he.loader(ctx('r2'))).toEqual({
+    verdict: 'httpError',
+    status: 429,
+    body: 'slow',
+    headers: [['cache-control', 'no-store'], ['retry-after', '5'], ['set-cookie', 'sid=; Max-Age=0']],
+  })
+})
+
+test('res.headers refuses the server\'s names: a throw naming it in dev, a warning and a drop in production', async () => {
+  for (const name of ['Content-Type', 'content-length', 'Transfer-Encoding', 'Connection', 'Location']) {
+    const page = ({ res }: H) => { res.headers.set('X-Ok', '1'); res.headers.append(name, 'x'); return {} }
+    const dev = makeHandlers({ leaves: chain3(undefined, undefined, page), jobs: {}, dev: true })
+    const r = (await dev.loader(ctx('r2'))) as { error: string }
+    expect(r.error).toContain(`"${name}"`)
+    const warn = spyOn(console, 'warn').mockImplementation(() => {})
+    const prod = makeHandlers({ leaves: chain3(undefined, undefined, page), jobs: {} })
+    expect(await prod.loader(ctx('r2'))).toEqual({ ok: true, data: {}, headers: [['x-ok', '1']] })
+    expect(String(warn.mock.calls[0]?.[0])).toContain(`"${name}"`)
+    warn.mockRestore()
+  }
+  // set as well as append
+  const dev = makeHandlers({ leaves: chain3(undefined, undefined, ({ res }: H) => { res.headers.set('location', '/x'); return {} }), jobs: {}, dev: true })
+  expect(((await dev.loader(ctx('r2'))) as { error: string }).error).toContain('redirect()')
+})
+
+test('res.headers on a static render: the build is told every name, on a verdict too', async () => {
+  const recs: unknown[] = []
+  const h = makeHandlers({
+    leaves: chain3(({ res }: H) => { res.headers.append('Set-Cookie', 'a=1'); res.headers.append('Set-Cookie', 'b=1') }, undefined, async () => redirect('/x')),
+    jobs: {},
+    ssg: (r) => recs.push(r),
+  })
+  await h.loader(ctx('r2'))
+  expect(recs).toEqual([{ kind: 'headers', routeId: 'r2', path: '/items/7', names: ['set-cookie'] }])
 })

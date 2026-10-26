@@ -10,7 +10,7 @@ import Lead from '../../components/docs/Lead'
 
 export interface LoadersData {
   toc: TocItem[]
-  blocks: Record<'loader' | 'ctx' | 'page' | 'verdicts' | 'mine', CodeBlockData>
+  blocks: Record<'loader' | 'ctx' | 'page' | 'verdicts' | 'headers' | 'mine', CodeBlockData>
   demo: { initial: Lookup; names: string[] }
 }
 
@@ -35,6 +35,9 @@ const CTX = `interface LoaderCtx<P> {
     headers: Record<string, string>
     cookies: Record<string, string>
     search: Record<string, string>   // query, url-decoded, + is a space
+  }
+  res: {
+    headers: Headers   // response headers, one object for the whole chain
   }
 }`
 
@@ -61,6 +64,21 @@ export async function loadersLoader({ req }: LoaderCtx): Promise<LoadersData> {
   return { toc, blocks, demo: { query, found: p !== undefined, card: p ? cardOf(p) : unknownCard(query) } }
 }`
 
+const HEADERS = `import { redirect } from '@brust/core/routes'
+
+// a layout: every page under it is never cached
+export function accountLoader({ res }: LoaderCtx) {
+  res.headers.set('Cache-Control', 'no-store')
+  return {}
+}
+
+export async function logoutLoader({ req, res }: LoaderCtx) {
+  await endSession(req.cookies.sid)
+  res.headers.append('Set-Cookie', 'sid=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax')
+  res.headers.append('Set-Cookie', 'theme=; Max-Age=0; Path=/')
+  return redirect('/login', 303)   // both cookies go with the redirect
+}`
+
 const NAMES = ['pikachu', 'eevee', 'snorlax', 'mewtwo', 'agumon']
 
 export async function loadersLoader(): Promise<LoadersData> {
@@ -71,12 +89,14 @@ export async function loadersLoader(): Promise<LoadersData> {
       { id: 'props', title: 'How the data reaches components' },
       { id: 'demo', title: 'Try a lookup' },
       { id: 'verdicts', title: 'Not found, redirect, errors' },
+      { id: 'headers', title: 'Response headers' },
     ],
     blocks: {
       loader: codeBlock({ lang: 'ts', file: 'lib/loaders.ts', code: LOADER }),
       ctx: codeBlock({ lang: 'ts', file: '@brust/core/routes', code: CTX }),
       page: codeBlock({ lang: 'tsx', file: 'pages/DetailPage.tsx', code: PAGE }),
       verdicts: codeBlock({ lang: 'ts', file: 'lib/loaders.ts', code: VERDICTS }),
+      headers: codeBlock({ lang: 'ts', file: 'lib/loaders.ts', code: HEADERS }),
       mine: codeBlock({ lang: 'ts', file: 'pages/docs/Loaders.tsx', code: MINE }),
     },
     demo: { initial: lookup('pikachu'), names: NAMES },
@@ -128,6 +148,32 @@ export default function Loaders({ blocks, demo }: LoadersData) {
         <li>
           A response that carries <code>Set-Cookie</code> is never stored in the page cache.
         </li>
+      </ul>
+
+      <h2 id="headers">Response headers</h2>
+      <p>
+        <code>res.headers</code> is a standard <code>Headers</code> for the response. Use it to set cookies, turn off caching, or send a policy such as <code>Content-Security-Policy</code> or <code>Referrer-Policy</code> for a page:
+      </p>
+      <CodeBlock code={blocks.headers.code} lang={blocks.headers.lang} file={blocks.headers.file} html={blocks.headers.html} />
+      <ul>
+        <li>
+          There is one object per request, shared by every loader in the chain. Loaders run root to leaf, so a layout can set a header for every page under it and a page can add to it. <code>set</code> replaces a value, and
+          <code>append</code> adds one, so two <code>Set-Cookie</code> stay two.
+        </li>
+        <li>
+          The headers go on whatever the chain answers: the page, <code>notFound()</code>, <code>redirect()</code> and <code>httpError()</code>. A thrown <code>Error</code> is a plain 500 without them.
+        </li>
+        <li>
+          <code>Content-Type</code>, <code>Content-Length</code>, <code>Transfer-Encoding</code>, <code>Connection</code> and <code>Location</code> belong to the server (a redirect's target comes from <code>redirect()</code>). Setting one
+          throws in <code>brust dev</code>, and in production it is dropped with a warning that names it.
+        </li>
+        <li>
+          The page cache never stores a response with <code>Set-Cookie</code>, a <code>Cache-Control</code> with <code>no-store</code> or <code>private</code>, or <code>Vary: *</code>.
+        </li>
+        <li>
+          <code>Cache-Control: no-store</code> also keeps the page out of the browser's navigation cache (see <a href="/docs/navigation#prefetch">Navigation</a>).
+        </li>
+        <li>A static build (<code>--target static</code>) writes files, which carry no headers: they are dropped, and the build warns with <code>ssg-headers</code>, naming them.</li>
       </ul>
     </>
   )

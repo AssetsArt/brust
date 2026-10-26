@@ -30,7 +30,9 @@ use crate::manifest::{
     ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteCache, RouteRecord, Tier,
 };
 use crate::plan::{Lookup, PlanRow, PlanSeed, PlanSrc, PlannedCall};
-use crate::protocol::{JobCall, JobResult, JobsRequest, LoaderRequest, LoaderResponse, Verdict};
+use crate::protocol::{
+    Headers, JobCall, JobResult, JobsRequest, LoaderRequest, LoaderResponse, Verdict,
+};
 use crate::render::{
     Overlay, RenderError, Renderer, ensure_doctype, hoist_head_into, inject_css_into,
     inject_document_assets_with_root_into, use_ids,
@@ -350,12 +352,7 @@ async fn page<H: Host>(
                 store: snapshot,
             }) => {
                 merge_loader_response(&mut ctx, data, snapshot, &route.id);
-                for (k, v) in headers {
-                    if k.eq_ignore_ascii_case("set-cookie") {
-                        cacheable = false;
-                    }
-                    extra.push((k, v));
-                }
+                cacheable &= loader_headers(&route.id, headers, &mut extra);
             }
             Ok(LoaderResponse::Ok { ok: false, .. }) => {
                 tracing::error!(route = %route.id, "loader returned ok: false");
@@ -364,12 +361,18 @@ async fn page<H: Host>(
             Ok(LoaderResponse::Verdict(Verdict::NotFound {
                 data,
                 store: snapshot,
+                headers,
             })) => {
                 merge_loader_response(&mut ctx, data, snapshot, &route.id);
+                loader_headers(&route.id, headers, &mut extra);
                 status = 404;
                 cacheable = false;
             }
-            Ok(LoaderResponse::Verdict(Verdict::Redirect { location, status })) => {
+            Ok(LoaderResponse::Verdict(Verdict::Redirect {
+                location,
+                status,
+                headers,
+            })) => {
                 // A Location `resp` would silently drop (control characters)
                 // must not become a redirect without a target.
                 let Some(location) = location_header(&location) else {
@@ -382,19 +385,21 @@ async fn page<H: Host>(
                     tracing::warn!(route = %route.id, status, "redirect status outside 300-308; using 302");
                     302
                 };
-                return body::resp(
-                    status,
-                    "text/plain",
-                    &[("Location".into(), location)],
-                    Vec::new(),
-                );
+                let mut extra = vec![("Location".into(), location)];
+                loader_headers(&route.id, headers, &mut extra);
+                return body::resp(status, "text/plain", &extra, Vec::new());
             }
-            Ok(LoaderResponse::Verdict(Verdict::HttpError { status, body })) => {
+            Ok(LoaderResponse::Verdict(Verdict::HttpError {
+                status,
+                body,
+                headers,
+            })) => {
                 if !(400..=599).contains(&status) {
                     tracing::error!(route = %route.id, status, "httpError status outside 400-599");
                     return body::error_500();
                 }
-                return body::resp(status, "text/plain", &[], body.into_bytes());
+                loader_headers(&route.id, headers, &mut extra);
+                return body::resp(status, "text/plain", &extra, body.into_bytes());
             }
             Ok(LoaderResponse::Error { error }) => {
                 // A plan in the cell means the loader succeeded and the worker's job batch failed
@@ -424,12 +429,7 @@ async fn page<H: Host>(
     let (mut ctx, plans, lookup) = match planned {
         Some((pc, results)) => {
             // The loader's `Ok` arm (which applies its headers) did not run on this path.
-            for (k, v) in &pc.headers {
-                if k.eq_ignore_ascii_case("set-cookie") {
-                    cacheable = false;
-                }
-                extra.push((k.clone(), v.clone()));
-            }
+            cacheable &= loader_headers(&route.id, pc.headers, &mut extra);
             let plans = rehydrate(&s.plans, pc.rows);
             let mut lookup = pc.lookup;
             if let Some(t) = &mut meta.trace {
@@ -1943,6 +1943,54 @@ pub(crate) fn merge_values(ctx: &mut Node, plans: &[JobPlan], values: &[Option<A
             }
         }
     }
+}
+
+// ----------------------------------------------------------------------------
+// (4) loader response headers (F464)
+// ----------------------------------------------------------------------------
+
+/// Names the server owns: framing, the page type, and a redirect's target (from `redirect()`).
+const REFUSED_HEADERS: [&str; 5] = [
+    "content-type",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "location",
+];
+
+/// A loader's `res.headers` onto `extra`, in order, repeated names kept. A refused name, or a name or value
+/// that is not a valid header, is dropped with an error log (the worker refuses the names first; an invalid
+/// value never fails the page). Returns whether the response may still be stored: not with `Set-Cookie`,
+/// a `Cache-Control` carrying `no-store` or `private`, or `Vary: *`.
+fn loader_headers(route: &str, headers: Headers, extra: &mut Vec<(String, String)>) -> bool {
+    let mut cacheable = true;
+    for (k, v) in headers.0 {
+        if REFUSED_HEADERS.iter().any(|r| k.eq_ignore_ascii_case(r)) {
+            tracing::error!(route, header = %k, "a loader cannot set this response header; dropped");
+            continue;
+        }
+        if http::HeaderName::from_bytes(k.as_bytes()).is_err()
+            || http::HeaderValue::from_str(&v).is_err()
+        {
+            tracing::error!(route, header = %k, "loader response header is not a valid header; dropped");
+            continue;
+        }
+        let tokens = || {
+            v.split(',')
+                .map(|t| t.split('=').next().unwrap_or("").trim())
+        };
+        if k.eq_ignore_ascii_case("set-cookie")
+            || (k.eq_ignore_ascii_case("cache-control")
+                && tokens().any(|t| {
+                    t.eq_ignore_ascii_case("no-store") || t.eq_ignore_ascii_case("private")
+                }))
+            || (k.eq_ignore_ascii_case("vary") && tokens().any(|t| t == "*"))
+        {
+            cacheable = false;
+        }
+        extra.push((k, v));
+    }
+    cacheable
 }
 
 // ----------------------------------------------------------------------------

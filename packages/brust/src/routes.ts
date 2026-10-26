@@ -25,10 +25,20 @@ export interface LoaderReq {
   search: Record<string, string>
 }
 
+/** The response a loader shapes (F464). One per request, shared by every loader in the chain in chain order:
+ * `set` replaces, `append` adds (repeated `Set-Cookie` survive). The headers go on whatever the chain answers:
+ * the page, `notFound()`, `redirect()` and an `httpError()`. `Content-Type`, `Content-Length`,
+ * `Transfer-Encoding`, `Connection` and `Location` are the server's (a redirect's comes from `redirect()`):
+ * setting one throws in dev and is dropped with a warning in production. */
+export interface LoaderRes {
+  headers: Headers
+}
+
 export interface LoaderCtx<P = Record<string, string>> {
   params: P
   path: string
   req: LoaderReq
+  res: LoaderRes
 }
 
 /** `brust build --target static` (gaps round R9.2): `params` lists the values of a dynamic route's
