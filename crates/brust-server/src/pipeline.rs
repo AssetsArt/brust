@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(pc.lookup.misses, [0, 1, 2]);
         assert_eq!(pc.lookup.owner, [0, 1, 2]);
         assert!(pc.lookup.values.iter().all(Option::is_none));
-        assert_eq!(pc.headers.get("x-a").map(String::as_str), Some("1"));
+        assert_eq!(pc.headers.get("x-a"), Some("1"));
         // The owned rows rehydrate to the plans the declined path collects.
         let back = rehydrate(&idx, pc.rows);
         assert_eq!(back.len(), plans.len());

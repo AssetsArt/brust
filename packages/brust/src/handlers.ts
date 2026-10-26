@@ -20,11 +20,14 @@ export interface LoaderRequest {
   plan?: boolean
 }
 
+/** Response headers as `[name, value]` pairs: a repeated name (`set-cookie`) stays repeated. */
+export type HeaderPairs = [string, string][]
+
 export type LoaderResponse =
-  | { ok: true; data: Record<string, unknown>; headers?: Record<string, string>; store?: StoreSnapshot | null }
-  | { verdict: 'notFound'; data: unknown; store?: StoreSnapshot | null }
-  | { verdict: 'redirect'; location: string; status: number }
-  | { verdict: 'httpError'; status: number; body: string }
+  | { ok: true; data: Record<string, unknown>; headers?: HeaderPairs; store?: StoreSnapshot | null }
+  | { verdict: 'notFound'; data: unknown; headers?: HeaderPairs; store?: StoreSnapshot | null }
+  | { verdict: 'redirect'; location: string; status: number; headers?: HeaderPairs }
+  | { verdict: 'httpError'; status: number; body: string; headers?: HeaderPairs }
   | { error: string }
 
 export type JobKind = 'precompute' | 'ssr'
@@ -132,6 +135,47 @@ function withStore<T extends LoaderResponse>(r: T): T {
 
 // ---- handlers ----
 
+// ---- response headers (F464) ----
+
+/** Names the server owns: the framing, the page's type, and a redirect's target (`redirect()`). */
+const REFUSED_HEADERS = new Set(['content-type', 'content-length', 'transfer-encoding', 'connection', 'location'])
+
+/** `res.headers`: a `Headers` that refuses the server's names, by a throw in dev (the loader fails with a 500 that
+ * names it) and by a warning in production (the call does nothing). */
+class LoaderHeaders extends Headers {
+  constructor(private readonly dev: boolean) {
+    super()
+  }
+  private allowed(name: string): boolean {
+    if (!REFUSED_HEADERS.has(name.trim().toLowerCase())) return true
+    const msg = `res.headers: a loader cannot set "${name}" (the server sets it${name.trim().toLowerCase() === 'location' ? '; use redirect()' : ''})`
+    if (this.dev) throw new Error(msg)
+    console.warn(`[brust] warning ${msg}; dropped`)
+    return false
+  }
+  override set(name: string, value: string): void {
+    if (this.allowed(name)) super.set(name, value)
+  }
+  override append(name: string, value: string): void {
+    if (this.allowed(name)) super.append(name, value)
+  }
+}
+
+/** The wire pairs, absent when empty. `Set-Cookie` one pair per cookie (iteration would join them). */
+function headerPairs(h: Headers): HeaderPairs | undefined {
+  const out: HeaderPairs = []
+  for (const [k, v] of h) if (k !== 'set-cookie') out.push([k, v])
+  for (const c of h.getSetCookie()) out.push(['set-cookie', c])
+  return out.length > 0 ? out : undefined
+}
+
+/** `r` with `headers` set when there are any. */
+function withHeaders<T extends LoaderResponse>(r: T, h: Headers): T {
+  const pairs = headerPairs(h)
+  if (pairs) (r as { headers?: HeaderPairs }).headers = pairs
+  return r
+}
+
 /** `parent`: the data the chain merged before the verdict. A notFound renders the route's
  * template (layouts included), so the layouts' data stays under the verdict's own keys. */
 function verdictJson(v: Verdict, parent: Record<string, unknown>): LoaderResponse {
@@ -190,6 +234,8 @@ export function makeHandlers(opts: {
   stores?: Record<string, object>
   /** Static output (R9.5): loaders see `ssgRequest`, and what a static file drops is recorded. */
   ssg?: (r: SsgRecord) => void
+  /** `brust dev`: a refused `res.headers` name throws instead of being dropped with a warning (F464). */
+  dev?: boolean
 }): Handlers {
   const byId = new Map(opts.leaves.map((l) => [l.id, l]))
   const literals = literalsIndex(opts.manifest)
@@ -235,6 +281,14 @@ export function makeHandlers(opts: {
       // loader's data is assigned as data, as the spread copied it.
       return runInStoreContext(async () => {
         const merged: Record<string, unknown> = Object.create(null)
+        const res = { headers: new LoaderHeaders(opts.dev === true) }
+        // R9.5: a static file carries no headers; the build warns, naming them.
+        const out = <T extends LoaderResponse>(r: T): T => {
+          withHeaders(r, res.headers)
+          const names = (r as { headers?: HeaderPairs }).headers?.map(([n]) => n)
+          if (opts.ssg && names) opts.ssg({ kind: 'headers', routeId: req.routeId, path: req.path, names: [...new Set(names)] })
+          return r
+        }
         try {
           const touch = storeIdx.get(req.routeId)
           if (touch) {
@@ -247,21 +301,22 @@ export function makeHandlers(opts: {
             let r: unknown
             try {
               const lreq = opts.ssg ? ssgRequest(req.req, req.routeId, req.path, opts.ssg) : req.req
-              r = await node.loader({ params: req.params, path: req.path, req: lreq })
+              r = await node.loader({ params: req.params, path: req.path, req: lreq, res })
             } catch (e) {
-              if (isHttpErrorTrigger(e)) return { verdict: 'httpError', status: e.status, body: e.body } as LoaderResponse
+              if (isHttpErrorTrigger(e)) {
+                // httpError's own `headers` option adds to what the chain set
+                for (const [k, v] of Object.entries(e.headers ?? {})) res.headers.append(k, v)
+                return out({ verdict: 'httpError', status: e.status, body: e.body } as LoaderResponse)
+              }
               throw e
             }
             if (isVerdict(r)) {
-              const v = verdictJson(r, merged)
+              const v = out(verdictJson(r, merged))
               return 'verdict' in v && v.verdict === 'notFound' ? withStore(v) : v
             }
             if (r && typeof r === 'object') Object.assign(merged, r)
           }
-          const ok = withStore({ ok: true, data: merged } as LoaderResponse)
-          const headers = (ok as { headers?: Record<string, string> }).headers
-          if (opts.ssg && headers && Object.keys(headers).length > 0) opts.ssg({ kind: 'headers', routeId: req.routeId, path: req.path, names: Object.keys(headers) })
-          return ok
+          return out(withStore({ ok: true, data: merged } as LoaderResponse))
         } catch (e) {
           return { error: String(e) } as LoaderResponse
         }

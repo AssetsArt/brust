@@ -218,7 +218,7 @@ export default function Navigation({ blocks }: NavigationData) {
         </li>
         <li>
           <b>Only <code>no-store</code> keeps a page out.</b> <code>private</code>, <code>no-cache</code>, <code>max-age=0</code> and <code>must-revalidate</code> do not: many hosts send <code>public, max-age=0, must-revalidate</code> on every page,
-          and such a page is cached for its 5 minutes. A page that must never be shown from memory, such as an authenticated or sensitive one, sends <code>Cache-Control: no-store</code>. A logout through <code>@brust/core/client</code> already
+          and such a page is cached for its 5 minutes. A page that must never be shown from memory, such as an authenticated or sensitive one, sends <code>Cache-Control: no-store</code>: a loader sets it with <code>res.headers</code>, and on a layout it covers every page under it (see <a href="/docs/loaders#headers">Response headers</a>). A logout through <code>@brust/core/client</code> already
           clears the cache; any other logout calls <code>clearNavigationCache()</code>.
         </li>
         <li>

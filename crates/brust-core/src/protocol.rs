@@ -40,9 +40,9 @@ pub enum LoaderResponse {
     Ok {
         ok: bool,
         data: Node,
-        /// Response headers the loader set (e.g. `set-cookie`), copied onto the
-        /// HTTP response; a `set-cookie` key makes the page uncacheable.
-        headers: BTreeMap<String, String>,
+        /// Response headers the loader set (`res.headers`, F464), copied onto the
+        /// HTTP response; `pipeline::loader_headers` decides what keeps it uncacheable.
+        headers: Headers,
         /// M3-F C2: the request's store snapshot (C1: `{ name: { key: Json } }`). `None` when the
         /// worker sent no `store` or `null` (R1: absent ≡ null).
         store: Option<Node>,
@@ -76,8 +76,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
 
     fn visit_map<A: serde::de::MapAccess<'de>>(self, mut m: A) -> Result<LoaderResponse, A::Error> {
         use serde::de::Error as _;
-        let (mut ok, mut data, mut headers) =
-            (None::<bool>, None::<Node>, None::<BTreeMap<String, String>>);
+        let (mut ok, mut data, mut headers) = (None::<bool>, None::<Node>, None::<Headers>);
         let (mut verdict, mut location, mut status) = (None::<String>, None::<String>, None::<u16>);
         let (mut body, mut error) = (None::<String>, None::<String>);
         let (mut planned, mut results) = (None::<bool>, None::<Vec<JobResult>>);
@@ -120,6 +119,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 return Ok(LoaderResponse::Verdict(Verdict::NotFound {
                     data: data.unwrap_or_default(),
                     store,
+                    headers: headers.unwrap_or_default(),
                 }));
             }
             Some("redirect") => {
@@ -127,6 +127,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 return Ok(LoaderResponse::Verdict(Verdict::Redirect {
                     location,
                     status: status.unwrap_or(302),
+                    headers: headers.unwrap_or_default(),
                 }));
             }
             Some("httpError") => {
@@ -134,6 +135,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 return Ok(LoaderResponse::Verdict(Verdict::HttpError {
                     status,
                     body: body.unwrap_or_default(),
+                    headers: headers.unwrap_or_default(),
                 }));
             }
             Some(other) => {
@@ -157,6 +159,75 @@ fn d302() -> u16 {
     302
 }
 
+/// The response headers a loader set (F464), in order. On the wire a list of `[name, value]` pairs, so a
+/// repeated name (`set-cookie`) stays repeated; the map form `{ name: value }` an older worker sends still parses,
+/// and so does `null` (none).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Headers(pub Vec<(String, String)>);
+
+impl Headers {
+    /// The first value of `name` (any case).
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<'a> From<&'a [(&'a str, &'a str)]> for Headers {
+    fn from(p: &'a [(&'a str, &'a str)]) -> Self {
+        Headers(
+            p.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for Headers {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Headers;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a list of [name, value] pairs or a { name: value } map")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut a: A,
+            ) -> Result<Headers, A::Error> {
+                let mut out = Vec::with_capacity(a.size_hint().unwrap_or(0));
+                while let Some(p) = a.next_element::<(String, String)>()? {
+                    out.push(p);
+                }
+                Ok(Headers(out))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut m: A,
+            ) -> Result<Headers, A::Error> {
+                let mut out = Vec::new();
+                while let Some(p) = m.next_entry::<String, String>()? {
+                    out.push(p);
+                }
+                Ok(Headers(out))
+            }
+            fn visit_unit<E>(self) -> Result<Headers, E> {
+                Ok(Headers::default())
+            }
+            fn visit_none<E>(self) -> Result<Headers, E> {
+                Ok(Headers::default())
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
 /// A loader's non-`ok` outcome.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "verdict", rename_all = "camelCase")]
@@ -166,16 +237,22 @@ pub enum Verdict {
         data: Node,
         #[serde(default)]
         store: Option<Node>,
+        #[serde(default)]
+        headers: Headers,
     },
     Redirect {
         location: String,
         #[serde(default = "d302")]
         status: u16,
+        #[serde(default)]
+        headers: Headers,
     },
     HttpError {
         status: u16,
         #[serde(default)]
         body: String,
+        #[serde(default)]
+        headers: Headers,
     },
 }
 
@@ -338,7 +415,7 @@ mod tests {
             LoaderResponse::Ok {
                 ok: true,
                 data: Node::from(json!({"x": 1})),
-                headers: BTreeMap::new(),
+                headers: Headers::default(),
                 store: None
             }
         );
@@ -351,7 +428,7 @@ mod tests {
             LoaderResponse::Ok {
                 ok: true,
                 data: Node::from(json!({})),
-                headers: BTreeMap::new(),
+                headers: Headers::default(),
                 store: Some(Node::from(json!({"cart": {"count": 1}})))
             }
         );
@@ -373,14 +450,16 @@ mod tests {
             loader(json!({"verdict": "notFound", "data": {"a": 1}, "store": {"s": {"k": 2}}})),
             LoaderResponse::Verdict(Verdict::NotFound {
                 data: Node::from(json!({"a": 1})),
-                store: Some(Node::from(json!({"s": {"k": 2}})))
+                store: Some(Node::from(json!({"s": {"k": 2}}))),
+                headers: Headers::default()
             })
         );
         assert_eq!(
             loader(json!({"verdict": "notFound", "data": {"a": 1}})),
             LoaderResponse::Verdict(Verdict::NotFound {
                 data: Node::from(json!({"a": 1})),
-                store: None
+                store: None,
+                headers: Headers::default()
             })
         );
     }
@@ -399,7 +478,80 @@ mod tests {
         let LoaderResponse::Ok { headers, .. } = r else {
             panic!("expected Ok, got {r:?}")
         };
-        assert_eq!(headers.get("set-cookie").map(String::as_str), Some("a=1"));
+        assert_eq!(headers.get("set-cookie"), Some("a=1"));
+    }
+
+    /// F464: the pair form keeps order and repeated names; the map form (an older worker) and `null` still parse.
+    #[test]
+    fn loader_headers_pairs_and_legacy_map() {
+        let r = loader(json!({"ok": true, "data": {}, "headers": [
+            ["cache-control", "no-store"], ["set-cookie", "a=1"], ["set-cookie", "b=2"]
+        ]}));
+        let LoaderResponse::Ok { headers, .. } = r else {
+            panic!("expected Ok, got {r:?}")
+        };
+        assert_eq!(
+            headers,
+            Headers::from(
+                &[
+                    ("cache-control", "no-store"),
+                    ("set-cookie", "a=1"),
+                    ("set-cookie", "b=2")
+                ][..]
+            )
+        );
+        let r =
+            loader(json!({"ok": true, "data": {}, "headers": {"x-a": "1", "set-cookie": "c=3"}}));
+        let LoaderResponse::Ok { headers, .. } = r else {
+            panic!("expected Ok, got {r:?}")
+        };
+        assert_eq!(headers.get("X-A"), Some("1"));
+        assert_eq!(headers.get("set-cookie"), Some("c=3"));
+        let r = loader(json!({"ok": true, "data": {}, "headers": null}));
+        let LoaderResponse::Ok { headers, .. } = r else {
+            panic!("expected Ok, got {r:?}")
+        };
+        assert!(headers.is_empty());
+        // a pair that is not two strings is a parse error, never a silent drop
+        assert!(
+            serde_json::from_value::<LoaderResponse>(
+                json!({"ok": true, "data": {}, "headers": [["x"]]})
+            )
+            .is_err()
+        );
+    }
+
+    /// F464: every verdict carries the chain's headers.
+    #[test]
+    fn verdicts_carry_headers() {
+        let h = Headers::from(&[("set-cookie", "a=1"), ("set-cookie", "b=2")][..]);
+        let pairs = json!([["set-cookie", "a=1"], ["set-cookie", "b=2"]]);
+        assert_eq!(
+            loader(
+                json!({"verdict": "redirect", "location": "/x", "status": 303, "headers": pairs})
+            ),
+            LoaderResponse::Verdict(Verdict::Redirect {
+                location: "/x".into(),
+                status: 303,
+                headers: h.clone()
+            })
+        );
+        assert_eq!(
+            loader(json!({"verdict": "notFound", "data": {}, "headers": pairs})),
+            LoaderResponse::Verdict(Verdict::NotFound {
+                data: Node::from(json!({})),
+                store: None,
+                headers: h.clone()
+            })
+        );
+        assert_eq!(
+            loader(json!({"verdict": "httpError", "status": 403, "headers": pairs})),
+            LoaderResponse::Verdict(Verdict::HttpError {
+                status: 403,
+                body: String::new(),
+                headers: h
+            })
+        );
     }
 
     #[test]
@@ -408,14 +560,16 @@ mod tests {
             loader(json!({"verdict": "notFound", "data": {"a": 1}})),
             LoaderResponse::Verdict(Verdict::NotFound {
                 data: Node::from(json!({"a": 1})),
-                store: None
+                store: None,
+                headers: Headers::default()
             })
         );
         assert_eq!(
             loader(json!({"verdict": "notFound"})),
             LoaderResponse::Verdict(Verdict::NotFound {
                 data: Node::Null,
-                store: None
+                store: None,
+                headers: Headers::default()
             })
         );
     }
@@ -426,14 +580,16 @@ mod tests {
             loader(json!({"verdict": "redirect", "location": "/x"})),
             LoaderResponse::Verdict(Verdict::Redirect {
                 location: "/x".into(),
-                status: 302
+                status: 302,
+                headers: Headers::default()
             })
         );
         assert_eq!(
             loader(json!({"verdict": "redirect", "location": "/x", "status": 301})),
             LoaderResponse::Verdict(Verdict::Redirect {
                 location: "/x".into(),
-                status: 301
+                status: 301,
+                headers: Headers::default()
             })
         );
     }
@@ -444,14 +600,16 @@ mod tests {
             loader(json!({"verdict": "httpError", "status": 418, "body": "teapot"})),
             LoaderResponse::Verdict(Verdict::HttpError {
                 status: 418,
-                body: "teapot".into()
+                body: "teapot".into(),
+                headers: Headers::default()
             })
         );
         assert_eq!(
             loader(json!({"verdict": "httpError", "status": 500})),
             LoaderResponse::Verdict(Verdict::HttpError {
                 status: 500,
-                body: String::new()
+                body: String::new(),
+                headers: Headers::default()
             })
         );
     }

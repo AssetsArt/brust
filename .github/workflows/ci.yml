@@ -423,6 +423,7 @@ jobs:
       # F438: served tests that were on main but in no CI step. Each runs alone (each starts its own server).
       # L16: an actions-only deployment and a page-only one on two origins, cookies and CORS.
       - run: bun test --timeout 180000 tests/server/actions-standalone.chromium.test.ts
+      - run: bun test --timeout 180000 tests/server/cross-site-form.chromium.test.ts
       # F128: `listening on` is printed before `ready` on every boot.
       - run: bun test --timeout 120000 tests/server/boot-order.test.ts
       # F420/F421: a controlled select/textarea paints `selected` / its text before hydration, as React does.
@@ -441,6 +442,8 @@ jobs:
       - run: bun test --timeout 300000 tests/server/spa-nav.chromium.test.ts
       # F461: the built-in navigation store (useStore(navigation)) in a native reader and islands, served and static.
       - run: bun test --timeout 300000 tests/server/nav-store.chromium.test.ts
+      # F464: loader res.headers: two Set-Cookie on a redirect, a layout's no-store (server cache + SPA cache), CSP.
+      - run: bun test --timeout 300000 tests/server/loader-headers.chromium.test.ts
       # F442 W3b: Radix's own useId (react-id) is an id slot with the radix- prefix; served ids share as React's do.
       - run: bun test --timeout 120000 tests/server/radix-id.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.

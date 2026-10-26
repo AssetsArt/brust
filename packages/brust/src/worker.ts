@@ -215,6 +215,7 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     manifest,
     stores: (jobsMod.stores ?? {}) as Record<string, object>,
     ...(env.BRUST_SSG === '1' && env.BRUST_SSG_LOG ? { ssg: ssgLog(env.BRUST_SSG_LOG) } : {}),
+    dev: env.NODE_ENV === 'development',
   })
   const id = registerWorker(view, slots, makeDispatch(handlers, view, slots))
   if (l2 && env.BRUST_WORKER_ID === '0') {
