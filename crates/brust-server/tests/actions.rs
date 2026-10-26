@@ -1230,3 +1230,123 @@ fn the_root_prefix_is_only_for_actions_only_and_maps_the_path_as_is() {
     assert_eq!((status, b.as_str()), (200, "pong\n"));
     assert_eq!(fake.fetch_count(), 2);
 }
+
+// ----- F465: a cross-site HTML form POST answers the documented 403, whatever the body -----
+
+/// Writes `req` on a fresh socket and reads to EOF or 1 s: the whole answer, head and body.
+fn raw_all(s: &brust_server::Server, req: &[u8]) -> String {
+    use std::io::{Read, Write};
+    let mut tcp = std::net::TcpStream::connect(s.local_addr()).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    // The server may answer and close before a large body is written out: a write error is not a failure here.
+    let _ = tcp.write_all(req);
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while let Ok(n) = tcp.read(&mut chunk) {
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// What a browser sends for a cross-site form post: the cross-site `Origin` / `Sec-Fetch-*`, a form content
+/// type, and `body` (`None`: no body headers at all).
+fn form_post(extra: &str, content_type: &str, body: Option<&str>) -> Vec<u8> {
+    // `connection: close` so the read ends with the answer instead of waiting out the timeout.
+    let mut r = format!(
+        "POST {ACTION} HTTP/1.1\r\nhost: fx\r\nconnection: close\r\n{extra}content-type: {content_type}\r\n"
+    );
+    match body {
+        Some(b) => r.push_str(&format!("content-length: {}\r\n\r\n{b}", b.len())),
+        None => r.push_str("\r\n"),
+    }
+    r.into_bytes()
+}
+
+#[test]
+fn cross_site_form_posts_get_the_documented_403_for_every_shape() {
+    let (fake, s) = server(note);
+    let boundary = "----b";
+    let multipart = format!(
+        "--{boundary}\r\ncontent-disposition: form-data; name=\"text\"\r\n\r\nhi\r\n--{boundary}--\r\n"
+    );
+    let urlencoded = "text=hi";
+    let ct_multi = format!("multipart/form-data; boundary={boundary}");
+    let origin = format!("origin: {EVIL}\r\n");
+    let fetch = "sec-fetch-site: cross-site\r\n";
+    let both = format!(
+        "origin: {EVIL}\r\nsec-fetch-site: cross-site\r\nsec-fetch-mode: navigate\r\nsec-fetch-dest: document\r\n"
+    );
+    let mut bad = vec![];
+    for (name, extra) in [
+        ("origin", origin.as_str()),
+        ("fetch-site", fetch),
+        ("browser", both.as_str()),
+    ] {
+        for (kind, ct, body) in [
+            (
+                "urlencoded",
+                "application/x-www-form-urlencoded",
+                Some(urlencoded),
+            ),
+            (
+                "urlencoded-empty",
+                "application/x-www-form-urlencoded",
+                Some(""),
+            ),
+            (
+                "urlencoded-nobody",
+                "application/x-www-form-urlencoded",
+                None,
+            ),
+            ("multipart", ct_multi.as_str(), Some(multipart.as_str())),
+            ("multipart-nobody", ct_multi.as_str(), None),
+            ("text-plain", "text/plain", Some("a=b")),
+        ] {
+            let got = raw_all(&s, &form_post(extra, ct, body));
+            if !(got.starts_with("HTTP/1.1 403") && got.contains("CrossSiteRejected")) {
+                bad.push(format!(
+                    "{name}/{kind}: {}",
+                    got.lines().next().unwrap_or("")
+                ));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "not the documented 403: {bad:#?}");
+    assert_eq!(fake.fetch_count(), 0);
+}
+
+#[test]
+fn cross_site_posts_get_the_403_whatever_the_framing() {
+    let (fake, s) = server(note);
+    let head = format!(
+        "POST {ACTION} HTTP/1.1\r\nhost: fx\r\nconnection: close\r\nsec-fetch-site: cross-site\r\ncontent-type: application/x-www-form-urlencoded\r\n"
+    );
+    let big = format!("a={}", "x".repeat(300_000));
+    let shapes = [
+        (
+            "chunked",
+            format!("{head}transfer-encoding: chunked\r\n\r\nd\r\npayload=a.b.c\r\n0\r\n\r\n"),
+        ),
+        (
+            "expect-continue",
+            format!("{head}expect: 100-continue\r\ncontent-length: 13\r\n\r\npayload=a.b.c"),
+        ),
+        (
+            "body over the action cap",
+            format!("{head}content-length: {}\r\n\r\n{big}", big.len()),
+        ),
+        ("no body, no length", format!("{head}\r\n")),
+    ];
+    let mut bad = vec![];
+    for (name, req) in &shapes {
+        let got = raw_all(&s, req.as_bytes());
+        if !(got.starts_with("HTTP/1.1 403") && got.contains("CrossSiteRejected")) {
+            bad.push(format!("{name}: {}", got.lines().next().unwrap_or("")));
+        }
+    }
+    assert!(bad.is_empty(), "not the documented 403: {bad:#?}");
+    assert_eq!(fake.fetch_count(), 0);
+}
