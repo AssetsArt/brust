@@ -66,9 +66,9 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         <li>
           <strong>Some header names belong to the server.</strong> <code>Content-Type</code>, <code>Content-Length</code>, <code>Transfer-Encoding</code>, <code>Connection</code> and <code>Location</code> cannot be set from a loader. In <code>brust dev</code> setting one throws and names it; in production it is dropped with a warning that names it; the Cloudflare target always drops it and warns. A static build (<code>--target static</code>) writes files, which carry no headers, so loader headers are dropped and the build warns with <code>ssg-headers</code>.
         </li>
-        {/* source: #401 (F464); docs/navigation.md section 5 (Never cached) on lane f464-loader-headers */}
+        {/* source: #401 (F464); docs/navigation.md section 5 (Never cached) */}
         <li>
-          <strong>A header can keep a page out of the caches.</strong> A response with <code>Set-Cookie</code>, a <code>Cache-Control</code> of <code>no-store</code> or <code>private</code>, or <code>Vary: *</code> is never stored, by the server cache or by the browser&rsquo;s navigation cache, so <code>Cache-Control: no-store</code> from a layout loader covers every page under it. See <a href="/docs/navigation#prefetch">Navigation</a>.
+          <strong>A header can keep a page out of the caches.</strong> A response with <code>Set-Cookie</code>, a <code>Cache-Control</code> of <code>no-store</code> or <code>private</code>, or <code>Vary: *</code> is never stored by the server cache. The browser&rsquo;s navigation cache skips only <code>no-store</code>, so <code>Cache-Control: no-store</code> from a layout loader keeps every page under it out of both. See <a href="/docs/navigation#prefetch">Navigation</a>.
         </li>
       </ul>
 
