@@ -53,20 +53,20 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-28">2.0.0-alpha.28 · 26 October 2026</h2>
-      {/* source: lane f464-loader-headers, #TBD-F464 (F464), not merged at the time of writing; the Loaders docs page and docs/navigation.md section 5 on that branch; #400 (F465) */}
+      {/* source: lane f464-loader-headers, #401 (F464), not merged at the time of writing; the Loaders docs page and docs/navigation.md section 5 on that branch; #400 (F465) */}
       <p>A loader can now set response headers: cookies, caching, and security policies, on the page and on a redirect. One behaviour change comes with it: headers given to <code>httpError()</code> now reach the response.</p>
 
       <h3>Changes</h3>
       <ul>
-        {/* source: #TBD-F464 (F464); the Response headers section of the Loaders docs page on lane f464-loader-headers */}
+        {/* source: #401 (F464); the Response headers section of the Loaders docs page on lane f464-loader-headers */}
         <li>
-          <strong>Every loader gets <code>res.headers</code>, a standard <code>Headers</code> for the response (#TBD-F464).</strong> There is one object per request, shared by the whole layout chain. Loaders run root to leaf, so a layout can set a header for every page under it and a page can add to it: <code>set</code> replaces a value (the deepest <code>set</code> wins) and <code>append</code> adds one, so two <code>Set-Cookie</code> stay two. The headers go on whatever the chain answers: the page, <code>notFound()</code>, <code>redirect()</code> and <code>httpError()</code>. A thrown plain <code>Error</code> is still a bare 500 without them. Typical uses: two <code>Set-Cookie</code> with <code>return redirect(&apos;/login&apos;, 303)</code> on logout; <code>Cache-Control: no-store</code> in a layout loader for every signed-in page; <code>Referrer-Policy</code>; and a real <code>Content-Security-Policy</code> header, so <code>frame-ancestors</code> works, which a <code>&lt;meta&gt;</code> tag cannot do. See <a href="/docs/loaders#headers">Response headers</a>.
+          <strong>Every loader gets <code>res.headers</code>, a standard <code>Headers</code> for the response (#401).</strong> There is one object per request, shared by the whole layout chain. Loaders run root to leaf, so a layout can set a header for every page under it and a page can add to it: <code>set</code> replaces a value (the deepest <code>set</code> wins) and <code>append</code> adds one, so two <code>Set-Cookie</code> stay two. The headers go on whatever the chain answers: the page, <code>notFound()</code>, <code>redirect()</code> and <code>httpError()</code>. A thrown plain <code>Error</code> is still a bare 500 without them. Typical uses: two <code>Set-Cookie</code> with <code>return redirect(&apos;/login&apos;, 303)</code> on logout; <code>Cache-Control: no-store</code> in a layout loader for every signed-in page; <code>Referrer-Policy</code>; and a real <code>Content-Security-Policy</code> header, so <code>frame-ancestors</code> works, which a <code>&lt;meta&gt;</code> tag cannot do. See <a href="/docs/loaders#headers">Response headers</a>.
         </li>
-        {/* source: #TBD-F464 (F464); the Loaders docs page on lane f464-loader-headers */}
+        {/* source: #401 (F464); the Loaders docs page on lane f464-loader-headers */}
         <li>
           <strong>Some header names belong to the server.</strong> <code>Content-Type</code>, <code>Content-Length</code>, <code>Transfer-Encoding</code>, <code>Connection</code> and <code>Location</code> cannot be set from a loader. In <code>brust dev</code> setting one throws and names it; in production it is dropped with a warning that names it; the Cloudflare target always drops it and warns. A static build (<code>--target static</code>) writes files, which carry no headers, so loader headers are dropped and the build warns with <code>ssg-headers</code>.
         </li>
-        {/* source: #TBD-F464 (F464); docs/navigation.md section 5 (Never cached) on lane f464-loader-headers */}
+        {/* source: #401 (F464); docs/navigation.md section 5 (Never cached) on lane f464-loader-headers */}
         <li>
           <strong>A header can keep a page out of the caches.</strong> A response with <code>Set-Cookie</code>, a <code>Cache-Control</code> of <code>no-store</code> or <code>private</code>, or <code>Vary: *</code> is never stored, by the server cache or by the browser&rsquo;s navigation cache, so <code>Cache-Control: no-store</code> from a layout loader covers every page under it. See <a href="/docs/navigation#prefetch">Navigation</a>.
         </li>
@@ -74,7 +74,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
 
       <h3>Fixes</h3>
       <ul>
-        {/* source: #TBD-F464 (F464); the Loaders docs page on lane f464-loader-headers */}
+        {/* source: #401 (F464); the Loaders docs page on lane f464-loader-headers */}
         <li>
           <strong>Headers passed to <code>httpError()</code> reach the response.</strong> The options&rsquo; <code>headers</code> were dropped before; now they are sent, together with the headers the loaders set.
         </li>
