@@ -280,6 +280,7 @@ Options (all optional):
 | `parseDate` | Defaults to `true`: ISO date strings in JSON come back as `Date`. Set `false` to keep strings. |
 | `throwHttpError` | Throw on a non-2xx instead of returning `error`. |
 | `onRequest`, `onResponse` | Hooks around each call. |
+| `middleware` | A list of functions between Eden and the transport, for example to renew a token and send the call again, or to add a header on every call. See Middleware. |
 
 Eden's other options pass through. `keepDomain` is always set by the wrapper and cannot be overridden: without it Eden rewrites a relative base like `/_brust/action` to `https:///_brust/action`.
 
@@ -293,6 +294,60 @@ Every call resolves `{ data, error, status, response, headers }`. Exactly one of
 | `response` | The raw `Response`. |
 | `headers` | The response `Headers`. |
 
+### Middleware
+
+`client({ middleware })` takes a list of functions that sit between Eden and the transport. Eden has already built the request (URL, body, `headers`, `onRequest`); the chain returns the `Response` that Eden then parses, so `onResponse`, `parseDate`, `throwHttpError` and `{ data, error }` work as without it. The return type is still `Treaty.Instance<App>`: no route type changes.
+
+```ts
+type ActionMiddleware = (req: Request, next: (req: Request) => Promise<Response>) => Promise<Response> | Response
+```
+
+- **Order.** `middleware[0]` is the outermost: `[a, b]` runs `a`, then `b`, then the transport, and the response goes back through `b`, then `a`. The innermost `next` calls the `fetch` option, or global `fetch`.
+- **Sending again.** `next` may be called zero, one or many times. Every `next(r)` sends its own copy of `r`: `r` is never consumed, so a retry sends the same JSON or multipart body again. If you read the body yourself (`await req.json()`), read `req.clone()` instead.
+- **Answering without a request.** A link may return a `Response` without calling `next`; nothing is sent and the navigation cache is not touched.
+- **Errors.** A link that throws (or rejects) is a network failure: the call resolves `status: 503` and `error.value` is the thrown error. With `throwHttpError` the call throws instead.
+- **The navigation cache.** A request that goes out with a method other than `GET`/`HEAD` clears the SPA page cache once it has an answer. A retried mutation clears it twice, which is harmless.
+- **URLs.** The chain works on a `Request`, so the URL must be absolute or resolvable against the page: use `baseUrl` on the server, as without a chain. With no `middleware` (or an empty list) the client is the plain transport and nothing is built.
+- **Browser and server.** The same code runs in a page and in a loader. There is no global registry: make one `client<App>({ middleware })` in a module and import it.
+
+Two recipes. A token renewal is not built in, because auth schemes differ; this one renews once for all calls that fail together (single-flight), then sends the failing call again once:
+
+```ts
+// api.ts
+import { type ActionMiddleware, client } from '@brust/core/client'
+import type { App } from './actions'
+
+let renewing: Promise<boolean> | undefined
+const renewSession = () =>
+  (renewing ??= fetch('/_brust/action/session/refresh', { method: 'POST' })
+    .then((r) => r.ok)
+    .finally(() => { renewing = undefined }))
+
+const renew: ActionMiddleware = async (req, next) => {
+  const res = await next(req)
+  if (res.status !== 401) return res
+  return (await renewSession()) ? next(req) : res // the SAME req, sent again
+}
+
+const org: ActionMiddleware = (req, next) => {
+  const r = new Request(req) // a copy to change; `req` stays unread
+  r.headers.set('x-org', currentOrg())
+  return next(r)
+}
+
+export const api = client<App>({ middleware: [renew, org] })
+```
+
+`renew` is outermost, so a retry goes through `org` again. Calls keep their route types: `api.team.post({ id, name })` still checks its body, and `r.error.value` still narrows on a returned `status(409, ...)`. The renewal request above uses plain `fetch`, so it does not pass through the chain and cannot loop.
+
+### Typed routes
+
+Types come from the chained Elysia instance, not from what a handler does at run time:
+
+- Routes registered on an `any` app, or inside a function that does not return the chained instance, give the client no types. Write `export const auth = new Elysia().post(...)` (chained) and `app.use(auth)`, and export `typeof app`.
+- A handler that returns a `Response` gives `data` an untyped body. A typed answer is a returned value plus `status(code, body)` (or `problem()`): the client then narrows `error.status` and `error.value`.
+- Cookies work on a typed answer. An action may set several cookies (the `cookie` API, or `set.headers['set-cookie'] = [...]`) and return `status(401, { error: 'unauthorized' })`: every `Set-Cookie` header reaches the client, and `error.value` keeps its type.
+
 ### Differences from the 0.1.x client
 
 The 0.1.x `runtime/treaty.ts` was a hand-made client. This one is Eden's, and its semantics are not shimmed back to the old ones:
@@ -303,7 +358,7 @@ The 0.1.x `runtime/treaty.ts` was a hand-made client. This one is Eden's, and it
 - (d) ISO date strings in JSON come back as `Date` by default; pass `parseDate: false` to keep strings. 0.1.x always returned strings.
 - (e) A GET carries `content-type: application/json`, so a cross-origin GET is preflighted. 0.1.x sent none (see CORS).
 - (f) Eden's `fetch` option is a `RequestInit`, and its transport is `fetcher`. This wrapper keeps the 0.1.x name: `client({ fetch })` is the transport, and the `RequestInit` moves to `init`.
-- (g) New: `throwHttpError`, `onRequest`, `onResponse` and `.use(plugin)`.
+- (g) New: `throwHttpError`, `onRequest`, `onResponse`, `.use(plugin)` and `middleware` (see Middleware: a plugin's hooks run before and after a call, so only `middleware` can send the call again).
 
 Unchanged: `headers` may be a function, a `File`/`Blob` in the body switches to multipart, and the prefix order below.
 
