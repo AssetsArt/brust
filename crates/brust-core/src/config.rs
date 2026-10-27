@@ -261,9 +261,11 @@ impl ActionsConfig {
         }
         // F470: a route under the prefix answers GET/HEAD of its own paths (the pipeline); the prefix itself stays the
         // actions app's mount point, and a `{*rest}` route there would take every GET from it.
-        if let Some(rt) = m.routes.iter().find(|rt| {
-            rt.pattern == *p || (under(&rt.pattern, p) && rt.pattern.contains("{*"))
-        }) {
+        if let Some(rt) = m
+            .routes
+            .iter()
+            .find(|rt| rt.pattern == *p || (under(&rt.pattern, p) && rt.pattern.contains("{*")))
+        {
             return Err(format!("prefix {p:?} shadows route {:?}", rt.pattern));
         }
         self.validate_limits()
