@@ -137,12 +137,16 @@ export async function runBuild(opts: {
     if (isAbsolute(actions.entry) || rel === '..' || rel.startsWith('../') || isAbsolute(rel) || !statOk(actionsEntry)) {
       throw new BuildError('actions-entry', `actions.entry ${actions.entry} is not a file inside the app`)
     }
-    // The actions app answers every path under its prefix, so a page there could never be served.
+    // F470: a route under the prefix answers GET and HEAD of its own paths, the actions app everything else there. The
+    // prefix itself stays the actions app's mount point, and a {*rest} route would take every GET under it.
     for (const l of leaves) {
-      if (l.pattern !== '*' && (l.pattern === actions.prefix || l.pattern.startsWith(`${actions.prefix}/`))) {
+      if (l.pattern === actions.prefix) {
+        throw new BuildError('actions-prefix', `route ${l.id} (${l.pattern}) is the actions prefix ${actions.prefix}: that path is the actions app's mount point`)
+      }
+      if (l.pattern.startsWith(`${actions.prefix}/`) && l.pattern.includes('{*')) {
         throw new BuildError(
           'actions-prefix',
-          `route ${l.id} (${l.pattern}) lies under the actions prefix ${actions.prefix}: the actions app answers every path there`,
+          `route ${l.id} (${l.pattern}) is a catch-all under the actions prefix ${actions.prefix}: it would take every GET there from the actions app`,
         )
       }
     }
