@@ -54,18 +54,18 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-29">2.0.0-alpha.29 · 27 October 2026</h2>
-      {/* source: the pull requests of the alpha.29 batch: #TBD-f471-action-client-middleware (F471), #TBD-f470-routes-under-actions-prefix (F470), #404 (F468), #403 (F469), #TBD-f466-f467-loader-wire (F466, F467), #405 (F462, F463); behaviour in docs/actions.md, docs/navigation.md, docs/cache-adapters.md */}
+      {/* source: the pull requests of the alpha.29 batch: #409 (F471), #407 (F470), #404 (F468), #403 (F469), #406 (F466, F467), #405 (F462, F463); behaviour in docs/actions.md, docs/navigation.md, docs/cache-adapters.md */}
       <p>The actions client can now renew a token and send a call again, a route can sit under the actions prefix, every page names the brust version that served it, and the navigation progress line is thinner by default. One behaviour change: a loader that sends <code>Vary: Accept</code> is no longer cached.</p>
 
       <h3>Changes</h3>
       <ul>
-        {/* source: #TBD-f471-action-client-middleware (F471); docs/actions.md section 6 (Middleware, Typed routes); packages/brust/src/actions/client.ts */}
+        {/* source: #409 (F471); docs/actions.md section 6 (Middleware, Typed routes); packages/brust/src/actions/client.ts */}
         <li>
-          <strong>Action client middleware: <code>client&lt;App&gt;({'{ middleware: [...] }'})</code> (#TBD-f471-action-client-middleware).</strong> A middleware is <code>(req, next) =&gt; Response</code> (<code>ActionMiddleware</code>), placed between Eden and the transport. <code>middleware[0]</code> is the outermost: <code>[a, b]</code> runs <code>a</code>, then <code>b</code>, then the transport, and the response comes back through <code>b</code>, then <code>a</code>. <code>next</code> may be called any number of times and each call sends its own copy of the request, so a retry sends the same JSON or multipart body again. A link can answer without calling <code>next</code>, and then nothing is sent. A link that throws is a network failure: the call resolves with <code>status: 503</code> (or throws, with <code>throwHttpError</code>). The same code runs in a page and in a loader. The docs carry a token-renewal recipe that renews once for all calls that fail together and then sends the failing call again, and a recipe that adds a custom header to every call. The new &ldquo;Typed routes&rdquo; example shows Elysia <code>t</code> schemas for the body and each response, and cookies set on a typed <code>status()</code> answer: every <code>Set-Cookie</code> reaches the client and <code>error.value</code> keeps its type. See <a href="/docs/actions">Actions</a>.
+          <strong>Action client middleware: <code>client&lt;App&gt;({'{ middleware: [...] }'})</code> (#409).</strong> A middleware is <code>(req, next) =&gt; Response</code> (<code>ActionMiddleware</code>), placed between Eden and the transport. <code>middleware[0]</code> is the outermost: <code>[a, b]</code> runs <code>a</code>, then <code>b</code>, then the transport, and the response comes back through <code>b</code>, then <code>a</code>. <code>next</code> may be called any number of times and each call sends its own copy of the request, so a retry sends the same JSON or multipart body again. A link can answer without calling <code>next</code>, and then nothing is sent. A link that throws is a network failure: the call resolves with <code>status: 503</code> (or throws, with <code>throwHttpError</code>). The same code runs in a page and in a loader. The docs carry a token-renewal recipe that renews once for all calls that fail together and then sends the failing call again, and a recipe that adds a custom header to every call. The new &ldquo;Typed routes&rdquo; example shows Elysia <code>t</code> schemas for the body and each response, and cookies set on a typed <code>status()</code> answer: every <code>Set-Cookie</code> reaches the client and <code>error.value</code> keeps its type. See <a href="/docs/actions">Actions</a>.
         </li>
-        {/* source: #TBD-f470-routes-under-actions-prefix (F470); docs/actions.md (The prefix); packages/brust/src/build/index.ts, packages/brust/src/actions/load.ts */}
+        {/* source: #407 (F470); docs/actions.md (The prefix); packages/brust/src/build/index.ts, packages/brust/src/actions/load.ts */}
         <li>
-          <strong>A page or loader route may sit under the actions prefix (#TBD-f470-routes-under-actions-prefix).</strong> A <code>GET</code> or <code>HEAD</code> that a route whose own pattern is under the prefix matches is served by the route. Every other method, and a <code>GET</code> that no such route matches, still go to the actions app; the <code>*</code> catch-all never counts, and neither does a route outside the prefix. Build and boot now refuse only the prefix itself and a <code>{'{*rest}'}</code> route under it. A <code>GET</code> action that a route shadows is named in a warning at boot. Example: an OAuth <code>GET</code> callback at <code>/auth/{'{provider}'}/callback</code> is a loader that sets the session cookie and redirects, while Apple&apos;s <code>form_post</code> to the same path stays an action.
+          <strong>A page or loader route may sit under the actions prefix (#407).</strong> A <code>GET</code> or <code>HEAD</code> that a route whose own pattern is under the prefix matches is served by the route. Every other method, and a <code>GET</code> that no such route matches, still go to the actions app; the <code>*</code> catch-all never counts, and neither does a route outside the prefix. Build and boot now refuse only the prefix itself and a <code>{'{*rest}'}</code> route under it. A <code>GET</code> action that a route shadows is named in a warning at boot. Example: an OAuth <code>GET</code> callback at <code>/auth/{'{provider}'}/callback</code> is a loader that sets the session cookie and redirects, while Apple&apos;s <code>form_post</code> to the same path stays an action.
         </li>
         {/* source: #404 (F468); docs and tests on that PR */}
         <li>
@@ -79,17 +79,17 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
 
       <h3>Breaking</h3>
       <ul>
-        {/* source: #TBD-f466-f467-loader-wire (F467); docs/cache-adapters.md (What is stored); the Caching and Loaders docs pages */}
+        {/* source: #406 (F467); docs/cache-adapters.md (What is stored); the Caching and Loaders docs pages */}
         <li>
-          <strong>A response whose <code>Vary</code> names a field other than <code>Accept-Encoding</code> is no longer cached (#TBD-f466-f467-loader-wire).</strong> The cache key holds no request header, so a page that varies on <code>Cookie</code> or <code>Accept-Language</code> would have been served to everyone. A loader that sends <code>Vary: Accept</code> loses caching; drop the header if the page does not vary, or accept that it is rendered per request.
+          <strong>A response whose <code>Vary</code> names a field other than <code>Accept-Encoding</code> is no longer cached (#406).</strong> The cache key holds no request header, so a page that varies on <code>Cookie</code> or <code>Accept-Language</code> would have been served to everyone. A loader that sends <code>Vary: Accept</code> loses caching; drop the header if the page does not vary, or accept that it is rendered per request.
         </li>
       </ul>
 
       <h3>Fixes</h3>
       <ul>
-        {/* source: #TBD-f466-f467-loader-wire (F466); the Loaders docs page */}
+        {/* source: #406 (F466); the Loaders docs page */}
         <li>
-          <strong>The content type of <code>httpError()</code> reaches the wire.</strong> A string body is <code>text/plain; charset=utf-8</code> and an object body is <code>application/json; charset=utf-8</code> by default, and <code>{'{ contentType }'}</code> names another. A server-owned name in the <code>headers</code> of <code>httpError()</code> is dropped with a warning in <code>brust dev</code> as well, instead of failing the request with a 500 that hid the error the loader meant to send (#TBD-f466-f467-loader-wire).
+          <strong>The content type of <code>httpError()</code> reaches the wire.</strong> A string body is <code>text/plain; charset=utf-8</code> and an object body is <code>application/json; charset=utf-8</code> by default, and <code>{'{ contentType }'}</code> names another. A server-owned name in the <code>headers</code> of <code>httpError()</code> is dropped with a warning in <code>brust dev</code> as well, instead of failing the request with a 500 that hid the error the loader meant to send (#406).
         </li>
         {/* source: #405 (F462); packages/runtime-dom/src/nav/nav.ts */}
         <li>
