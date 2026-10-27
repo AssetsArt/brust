@@ -483,11 +483,43 @@ test('progress bar: shown after 150 ms on a 500 ms page, done at success; a cach
   await close()
 })
 
-test('progress bar: with reduced motion it shows without the trickle animation', async () => {
+test('progress bar: with reduced motion it shows at 80% without the trickle animation, and the finish is instant', async () => {
   const { page, close } = await open('/', base, { reducedMotion: 'reduce' })
-  const anim = page.waitForFunction(() => { const b = document.querySelector('div[data-brust-bar]'); return b && getComputedStyle(b).animationName })
+  const seen = page.waitForFunction(() => {
+    const b = document.querySelector('div[data-brust-bar]')
+    return b && { anim: getComputedStyle(b).animationName, transform: getComputedStyle(b).transform }
+  })
   await go(page, '/slow')
-  expect(await (await anim).jsonValue()).toBe('none')
+  expect(await (await seen).jsonValue()).toEqual({ anim: 'none', transform: 'matrix(0.8, 0, 0, 1, 0, 0)' })
+  await close()
+})
+
+test('progress bar: 2px by default; --brust-progress-height sets it', async () => {
+  const { page, close } = await open('/')
+  const style = (url: string) => {
+    const s = page.waitForFunction(() => {
+      const b = document.querySelector('div[data-brust-bar]:not([data-brust-bar=done])')
+      return b && { height: getComputedStyle(b).height, color: getComputedStyle(b).backgroundColor }
+    })
+    return go(page, url).then(async () => (await s).jsonValue())
+  }
+  expect(await style('/slow?1')).toEqual({ height: '2px', color: 'rgb(47, 124, 246)' })
+  await page.waitForFunction(() => !document.querySelector('div[data-brust-bar]'))
+  await page.evaluate(() => document.documentElement.style.setProperty('--brust-progress-height', '5px'))
+  expect(await style('/slow?2')).toEqual({ height: '5px', color: 'rgb(47, 124, 246)' })
+  await close()
+})
+
+test('progress bar: an app rule on div[data-brust-bar] wins, though the built-in <style> is added after the app CSS', async () => {
+  const { page, close } = await open('/')
+  // the app's own rule, same specificity as the built-in one, in the head before the bar ever shows
+  await page.evaluate(() => document.head.append(Object.assign(document.createElement('style'), { textContent: 'div[data-brust-bar]{height:4px;background:rgb(255,0,0)}' })))
+  const s = page.waitForFunction(() => {
+    const b = document.querySelector('div[data-brust-bar]:not([data-brust-bar=done])')
+    return b && { height: getComputedStyle(b).height, color: getComputedStyle(b).backgroundColor }
+  })
+  await go(page, '/slow?3')
+  expect(await (await s).jsonValue()).toEqual({ height: '4px', color: 'rgb(255, 0, 0)' })
   await close()
 })
 

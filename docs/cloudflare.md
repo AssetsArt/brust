@@ -117,6 +117,8 @@ Files under `dist/client` and `dist/public` become assets at the URL they are re
 
 `_headers` sets `X-Content-Type-Options: nosniff` and `X-Powered-By` on everything, `immutable` on `/_brust/client/*`, and per file on `/public/*`: `immutable` for names with a content hash, `max-age=3600` otherwise. A `_headers` file holds at most 100 rules; past that brust writes a single `/public/*` rule with `max-age=3600` and warns.
 
+Pages rendered by the Worker also carry `<meta name="generator" content="brust/<version>">` in their `<head>`, the same value as `X-Powered-By`.
+
 ## 5. Bindings and `cloudflare:workers`
 
 Declare bindings in your own `wrangler.jsonc` and read them from the `env` export:

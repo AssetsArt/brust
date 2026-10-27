@@ -5,6 +5,7 @@ mod common;
 use brust_server::InvalidateArgs;
 use common::*;
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 fn job_ids(fake: &FakeBun) -> Vec<String> {
     fake.last_jobs().expect("a jobs call")["jobs"]
@@ -67,6 +68,60 @@ fn route_css_is_linked_after_head_on_an_all_static_page() {
         h.get("cache-control").unwrap(),
         "public, max-age=31536000, immutable"
     );
+}
+
+/// F468: a `generator` makes `X-Powered-By` AND one `<meta name="generator">` in every full document, from the same
+/// string; `None` makes neither. Fresh render, cache HIT, a not-found verdict page, and a non-document all agree.
+#[test]
+fn generator_stamps_the_header_and_one_meta_per_document() {
+    const META: &str = "<meta name=\"generator\" content=\"brust/9.9.9-test\">";
+    let boot_gen = |generator: Option<&str>| {
+        let f = FakeBun::new(
+            |req| {
+                if req["params"]["name"] == "nothing" {
+                    json!({"verdict": "notFound", "data": {"pokemon": {"name": "nothing", "stats": {}, "moves": []}}})
+                } else {
+                    default_loader(req)
+                }
+            },
+            default_jobs,
+        );
+        let mut cfg = config(&fx());
+        cfg.generator = generator.map(str::to_string);
+        let s = brust_server::start(cfg).expect("start");
+        let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&f))));
+        f.bind(&s, id);
+        s
+    };
+    let s = boot_gen(Some("brust/9.9.9-test"));
+    for path in [
+        "/",
+        "/pokemon/pikachu",
+        "/pokemon/pikachu",
+        "/pokemon/nothing",
+    ] {
+        let (_, h, body) = get(&s, path, &[]);
+        assert_eq!(h.get("x-powered-by").unwrap(), "brust/9.9.9-test", "{path}");
+        assert_eq!(
+            body.matches("name=\"generator\"").count(),
+            1,
+            "{path}: {body}"
+        );
+        assert!(body.contains(&format!("{META}</head>")), "{path}: {body}");
+    }
+    // The second /pokemon/pikachu was a HIT: the stored document carries the meta too.
+    let (_, h, _) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(cache_hdr(&h), Some("HIT"));
+    // Not a document: no meta (and the header is there as before).
+    let (_, h, ping) = get(&s, "/ping", &[]);
+    assert_eq!(h.get("x-powered-by").unwrap(), "brust/9.9.9-test");
+    assert!(!ping.contains("generator"), "{ping}");
+
+    let s = boot_gen(None);
+    let (st, h, body) = get(&s, "/", &[]);
+    assert_eq!(st, 200);
+    assert!(h.get("x-powered-by").is_none());
+    assert!(!body.contains("generator"), "{body}");
 }
 
 /// L19 review N1: the font and image families a stylesheet's `url()` may reference are served from

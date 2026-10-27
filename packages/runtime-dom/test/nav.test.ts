@@ -668,7 +668,16 @@ test('the progress bar: only after 150 ms of loading, outside <body>, done at su
   await new Promise((r) => setTimeout(r, 80))
   const bar = $('div[data-brust-bar]')!
   expect(bar.parentNode).toBe(document.documentElement)
-  expect(document.head.querySelector('style[data-brust-bar]')!.textContent).toContain('--brust-progress-color')
+  const css = document.head.querySelector('style[data-brust-bar]')!
+  expect(css).toBe(document.head.firstElementChild!)
+  expect(css.textContent).toContain('height:var(--brust-progress-height,2px)')
+  expect(css.textContent).toContain('background:var(--brust-progress-color,#2f7cf6)')
+  expect(css.textContent).toContain('animation:brust-bar 8s cubic-bezier(.1,.8,.2,1) forwards')
+  expect(css.textContent).toContain('@keyframes brust-bar{to{transform:scaleX(.8)}}')
+  // the finish: runs to full, then fades
+  expect(css.textContent).toContain('div[data-brust-bar=done]{animation:none;transform:none;opacity:0;transition:transform .2s,opacity .3s .2s}')
+  // reduced motion: at .8 at once, and the finish is instant
+  expect(css.textContent).toContain('@media (prefers-reduced-motion:reduce){div[data-brust-bar]{animation:none;transform:scaleX(.8)}div[data-brust-bar=done]{transition:none}}')
   release()
   await settle()
   expect(names()).toEqual(['click', 'load', 'success'])

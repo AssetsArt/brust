@@ -80,8 +80,9 @@ type SsgRecord =
   | { kind: 'read'; routeId: string; path: string; field: string; key: string }
   | { kind: 'headers'; routeId: string; path: string; names: string[] }
 
-const DEFAULT_404 =
-  '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>\n'
+// F468: like every page the build renders, the default 404 carries `<meta name="generator" content="brust/<version>">`.
+const default404 = (version: string) =>
+  `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>404 Not Found</title><meta name="generator" content="brust/${version.replace(/[&"<>]/g, (c) => `&#${c.charCodeAt(0)};`)}"></head><body><h1>404 Not Found</h1></body></html>\n`
 
 /** A `_redirects` source as Cloudflare Pages matches it (review N4): the decoded path, with only what
  * the file format or the decoding needs escaped (whitespace and control characters, and `%`, so a
@@ -222,7 +223,7 @@ export async function writeStatic(
     throw new BuildError('ssg-render', `${where}: status ${r.status}, want 200 (or a redirect()): ${excerpt(text(r))}`)
   })
   if (o.plan.defaultNotFound) {
-    write('404.html', Buffer.from(DEFAULT_404))
+    write('404.html', Buffer.from(default404(o.version)))
     warn("[brust] warning ssg-404 no '*' route: wrote a default 404.html (without one, Cloudflare Pages serves every unknown path as the home page)")
   }
   writeFileSync(join(dir, '_redirects'), report.redirects.map((r) => `${redirectSource(r.from)} ${r.to} ${r.status}\n`).join(''))

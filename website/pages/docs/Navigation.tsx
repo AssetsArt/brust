@@ -62,7 +62,10 @@ const CLEAR = `import { clearNavigationCache } from '@brust/core'
 await fetch('/api/cart', { method: 'POST', body })
 clearNavigationCache()`
 
-const COLOR = `:root { --brust-progress-color: var(--accent); }`
+const COLOR = `:root {
+  --brust-progress-color: var(--accent);
+  --brust-progress-height: 3px;
+}`
 
 const VT = `::view-transition-old(root),
 ::view-transition-new(root) { animation-duration: 150ms; }`
@@ -320,10 +323,15 @@ export default function Navigation({ blocks }: NavigationData) {
 
       <h2 id="progress">The progress bar</h2>
       <p>
-        A thin line along the top of the viewport while the next page loads. It appears only when a navigation is still loading 150 ms after <code>load</code>, so a cached page or a fast server never shows it. It moves on its own toward about 90%,
-        runs to the end at <code>success</code> or <code>error</code>, and fades out. With <code>prefers-reduced-motion: reduce</code> it shows without the movement or the fade. Set its colour with <code>--brust-progress-color</code>:
+        A 2 px line along the top of the viewport while the next page loads. It appears only when a navigation is still loading 150 ms after <code>load</code>, so a cached page or a fast server never shows it. It moves on its own toward about 80%,
+        slowing as it goes, runs to the end at <code>success</code> or <code>error</code>, and fades out. With <code>prefers-reduced-motion: reduce</code> it shows at 80% after the same 150 ms, without the movement, and goes at once at the end. Set
+        its colour with <code>--brust-progress-color</code> and its height with <code>--brust-progress-height</code>:
       </p>
       <CodeBlock code={blocks.color.code} lang={blocks.color.lang} file={blocks.color.file} html={blocks.color.html} />
+      <p>
+        To restyle it further, write a rule for <code>div[data-brust-bar]</code> in your CSS. The built-in rules are one attribute selector each and go first in the head, so yours wins. <code>data-brust-progress="off"</code> on{' '}
+        <code>&lt;html&gt;</code> turns it off.
+      </p>
       <p>
         To build your own indicator, set <code>data-brust-progress="off"</code> on <code>&lt;html&gt;</code> and read the <a href="#navigation-store">navigation store</a> in a component, with no <code>addEventListener</code>. This site's loading
         line is made this way:

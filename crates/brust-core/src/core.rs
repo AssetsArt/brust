@@ -31,7 +31,7 @@ pub struct CoreConfig {
     pub l1_capacity: u64,
     pub job_cache_capacity: u64,
     pub cors: Option<CorsConfig>,
-    /// `X-Powered-By` value; `None` = header not stamped.
+    /// `X-Powered-By` value, and the `<meta name="generator">` content of every full document; `None` = neither.
     pub generator: Option<String>,
     /// M3-F: the actions subtree; `None` = no actions.
     pub actions: Option<ActionsConfig>,
@@ -91,6 +91,9 @@ pub struct Core<H: Host> {
     pub(crate) plan_offer: Box<[AtomicU32]>,
     /// `X-Powered-By`, stamped on every response by [`Core::finish`].
     pub(crate) powered_by: Option<HeaderValue>,
+    /// F468: `<meta name="generator" content="…">` for the same `generator` string, prebuilt at `new`; every full
+    /// document gets it in `render_document`, the one place a document is assembled.
+    pub(crate) generator_meta: Option<Box<str>>,
     /// The scheme the L1 key expressions see is `https`.
     pub(crate) https: bool,
     /// The cache adapter; `None` = no L2 call is ever made.
@@ -163,6 +166,10 @@ impl<H: Host> Core<H> {
             .map(String::into_boxed_str),
             actions: cfg.actions,
             powered_by: powered_by(cfg.generator.as_deref()),
+            generator_meta: cfg
+                .generator
+                .as_deref()
+                .map(|g| crate::render::generator_meta_tag(g).into_boxed_str()),
             https: cfg.https,
             l2: cfg.l2,
             l2_counters: Arc::default(),
