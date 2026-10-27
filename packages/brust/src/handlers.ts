@@ -27,7 +27,7 @@ export type LoaderResponse =
   | { ok: true; data: Record<string, unknown>; headers?: HeaderPairs; store?: StoreSnapshot | null }
   | { verdict: 'notFound'; data: unknown; headers?: HeaderPairs; store?: StoreSnapshot | null }
   | { verdict: 'redirect'; location: string; status: number; headers?: HeaderPairs }
-  | { verdict: 'httpError'; status: number; body: string; headers?: HeaderPairs }
+  | { verdict: 'httpError'; status: number; body: string; contentType: string; headers?: HeaderPairs }
   | { error: string }
 
 export type JobKind = 'precompute' | 'ssr'
@@ -140,6 +140,9 @@ function withStore<T extends LoaderResponse>(r: T): T {
 /** Names the server owns: the framing, the page's type, and a redirect's target (`redirect()`). */
 const REFUSED_HEADERS = new Set(['content-type', 'content-length', 'transfer-encoding', 'connection', 'location'])
 
+const refusedMessage = (name: string) =>
+  `a loader cannot set "${name}" (the server sets it${name.trim().toLowerCase() === 'location' ? '; use redirect()' : ''})`
+
 /** `res.headers`: a `Headers` that refuses the server's names, by a throw in dev (the loader fails with a 500 that
  * names it) and by a warning in production (the call does nothing). */
 class LoaderHeaders extends Headers {
@@ -148,7 +151,7 @@ class LoaderHeaders extends Headers {
   }
   private allowed(name: string): boolean {
     if (!REFUSED_HEADERS.has(name.trim().toLowerCase())) return true
-    const msg = `res.headers: a loader cannot set "${name}" (the server sets it${name.trim().toLowerCase() === 'location' ? '; use redirect()' : ''})`
+    const msg = `res.headers: ${refusedMessage(name)}`
     if (this.dev) throw new Error(msg)
     console.warn(`[brust] warning ${msg}; dropped`)
     return false
@@ -304,9 +307,13 @@ export function makeHandlers(opts: {
               r = await node.loader({ params: req.params, path: req.path, req: lreq, res })
             } catch (e) {
               if (isHttpErrorTrigger(e)) {
-                // httpError's own `headers` option adds to what the chain set
-                for (const [k, v] of Object.entries(e.headers ?? {})) res.headers.append(k, v)
-                return out({ verdict: 'httpError', status: e.status, body: e.body } as LoaderResponse)
+                // httpError's own `headers` option adds to what the chain set. A refused name is dropped with a warning
+                // in dev too: a throw here would hide the error the loader meant to send (F466).
+                for (const [k, v] of Object.entries(e.headers ?? {})) {
+                  if (REFUSED_HEADERS.has(k.trim().toLowerCase())) console.warn(`[brust] warning res.headers: ${refusedMessage(k)}; dropped`)
+                  else res.headers.append(k, v)
+                }
+                return out({ verdict: 'httpError', status: e.status, body: e.body, contentType: e.contentType } as LoaderResponse)
               }
               throw e
             }

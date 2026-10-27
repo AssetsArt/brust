@@ -19,6 +19,7 @@ request -> tier 1: in-process cache (microseconds)  --hit-->  200, x-brust-cache
            loader -> jobs -> render -> tier 1 insert -> tier 2 store.set (in the background)
 ```
 
+- **What is stored.** Only a 200 that a loader did not mark otherwise: a `Set-Cookie`, a `Cache-Control` with `no-store` or `private`, or a `Vary` naming any field other than `Accept-Encoding` keeps a page out of both tiers. The key holds no request header, so a page that varies on `Cookie` or `Accept-Language` would be served to everyone.
 - **Tier 1** is always there: the Rust cache of the process (native) or of the isolate (Workers). The adapter is never called on a tier-1 hit.
 - **Tier 2** exists only with an adapter that has a `store`. Only rendered page bodies are shared. Job results stay in tier 1. A `key` invalidation (job user keys) is broadcast, but the store ignores it.
 - A `cache.invalidate(...)` call clears tier 1 of the process that ran it at once. The adapter then deletes the shared entries and broadcasts the event. Other instances replay it into their own tier 1.

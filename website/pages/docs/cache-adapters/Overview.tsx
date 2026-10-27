@@ -81,6 +81,9 @@ export default function Overview({ blocks }: OverviewData) {
       <CodeBlock code={blocks.tiers.code} lang={blocks.tiers.lang} html={blocks.tiers.html} />
       <ul>
         <li>
+          <b>What is stored.</b> Only a 200 that a loader did not mark otherwise: a <code>Set-Cookie</code>, a <code>Cache-Control</code> with <code>no-store</code> or <code>private</code>, or a <code>Vary</code> naming any field other than <code>Accept-Encoding</code> keeps a page out of both tiers. The key holds no request header, so a page that varies on <code>Cookie</code> or <code>Accept-Language</code> would be served to everyone.
+        </li>
+        <li>
           <b>Tier 1</b> is always there: the Rust cache of the process (native) or of the isolate (Workers). The adapter is never called on a tier-1 hit.
         </li>
         <li>

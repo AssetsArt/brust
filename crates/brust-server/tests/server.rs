@@ -735,8 +735,10 @@ fn loader_header_pairs_on_every_outcome() {
     assert_eq!(h.get("content-type").unwrap(), "text/html; charset=utf-8");
 }
 
-/// F464: `Set-Cookie`, a `Cache-Control` with `no-store` / `private` (any case, any position) or `Vary: *`
-/// keeps a page out of the cache; a public `Cache-Control` does not.
+/// F464 + F467: `Set-Cookie`, a `Cache-Control` with `no-store` / `private` (any case, any position) or a `Vary`
+/// naming any field but `Accept-Encoding` (`*` included) keeps a page out of the cache; a public `Cache-Control`
+/// and `Vary: Accept-Encoding` do not. The cache key carries no request header, so `Vary: Cookie` stored once
+/// would be served to everyone.
 #[test]
 fn loader_headers_that_keep_a_page_out_of_the_cache() {
     let cases = [
@@ -745,11 +747,31 @@ fn loader_headers_that_keep_a_page_out_of_the_cache() {
         (json!([["cache-control", "max-age=0, private"]]), false),
         (json!([["cache-control", "private=\"x-a\""]]), false),
         (json!([["vary", "Accept, *"]]), false),
-        (json!({"set-cookie": "legacy=1"}), false),
+        (json!([["vary", "*"]]), false),
+        (json!([["vary", "Cookie"]]), false),
+        (json!([["vary", "cookie"]]), false),
+        (json!([["vary", "Authorization"]]), false),
+        (json!([["vary", "Accept-Language"]]), false),
+        (json!([["vary", "Accept-Encoding, Cookie"]]), false),
         (
-            json!([["cache-control", "public, max-age=60"], ["vary", "Accept"]]),
+            json!([["vary", "Accept-Encoding"], ["vary", "Cookie"]]),
+            false,
+        ),
+        (json!({"set-cookie": "legacy=1"}), false),
+        (json!([["vary", "Accept-Encoding"]]), true),
+        (json!([["vary", "accept-encoding"]]), true),
+        (
+            json!([["vary", " Accept-Encoding , accept-encoding"]]),
             true,
         ),
+        (
+            json!([
+                ["cache-control", "public, max-age=60"],
+                ["vary", "Accept-Encoding"]
+            ]),
+            true,
+        ),
+        (json!([["cache-control", "public, max-age=60"]]), true),
     ];
     for (headers, stored) in cases {
         let hv = headers.clone();
@@ -767,6 +789,100 @@ fn loader_headers_that_keep_a_page_out_of_the_cache() {
         assert_eq!(cache_hdr(&h1), Some("MISS"), "{headers}");
         assert_eq!(cache_hdr(&h2) == Some("HIT"), stored, "{headers}");
         assert_eq!(f.counts().0, if stored { 1 } else { 2 }, "{headers}");
+    }
+}
+
+/// F467: the decision is made on the loader's own `Vary`, before brust appends `Vary: Accept-Encoding` to a
+/// gzipped page. A gzip client's page (which carries that token) is stored; with a loader `Vary: Cookie` the same
+/// page is not stored, and its response keeps both fields.
+#[test]
+fn vary_is_decided_on_the_loaders_headers_not_the_servers() {
+    let dist = sized_dist(20 * 1024);
+    let gz = [("accept-encoding", "gzip")];
+    let f = fake();
+    let s = boot_in(f.clone(), dist.path());
+    let (_, h1, _) = request_raw(&s, "GET", "/sized", &gz);
+    let (_, h2, _) = request_raw(&s, "GET", "/sized", &gz);
+    assert_eq!(hdr(&h1, "content-encoding"), Some("gzip"));
+    assert_eq!(hdr(&h1, "vary"), Some("Accept-Encoding"));
+    assert_eq!(cache_hdr(&h1), Some("MISS"));
+    assert_eq!(
+        cache_hdr(&h2),
+        Some("HIT"),
+        "brust's own Vary does not keep a page out"
+    );
+    let f = FakeBun::new(
+        |req| {
+            let mut v = default_loader(req);
+            v["headers"] = json!([["vary", "Cookie"]]);
+            v
+        },
+        default_jobs,
+    );
+    let s = boot_in(f.clone(), dist.path());
+    for _ in 0..2 {
+        let (_, h, _) = request_raw(&s, "GET", "/sized", &gz);
+        assert_eq!(cache_hdr(&h), Some("MISS"));
+        assert_eq!(hdr(&h, "content-encoding"), Some("gzip"));
+        let vary: Vec<String> = h
+            .get_all("vary")
+            .iter()
+            .map(|v| v.to_str().unwrap().to_ascii_lowercase())
+            .collect();
+        let all = vary.join(",");
+        assert!(
+            all.contains("cookie") && all.contains("accept-encoding"),
+            "{vary:?}"
+        );
+    }
+    assert_eq!(f.counts().0, 2);
+}
+
+/// F466: an `httpError` answers with the content type the loader asked for. The worker names one for every
+/// verdict; the older wire (no `contentType`) and an unusable value answer `text/plain; charset=utf-8`. The
+/// loader's own `Content-Type` header is still refused.
+#[test]
+fn http_error_content_type_reaches_the_wire() {
+    let f = FakeBun::new(
+        |req| match req["params"]["name"].as_str() {
+            Some("json") => {
+                json!({"verdict": "httpError", "status": 401, "body": "{\"error\":\"unauthorized\"}", "contentType": "application/json; charset=utf-8"})
+            }
+            Some("html") => {
+                json!({"verdict": "httpError", "status": 400, "body": "<b>no</b>", "contentType": "text/html; charset=utf-8", "headers": [["content-type", "text/evil"], ["x-ok", "1"]]})
+            }
+            Some("old") => json!({"verdict": "httpError", "status": 418, "body": "teapot"}),
+            Some("bad") => {
+                json!({"verdict": "httpError", "status": 418, "body": "teapot", "contentType": "a\u{1}b"})
+            }
+            Some("empty") => {
+                json!({"verdict": "httpError", "status": 418, "body": "teapot", "contentType": " "})
+            }
+            _ => default_loader(req),
+        },
+        default_jobs,
+    );
+    let s = boot(f.clone());
+    let ct = |h: &http::HeaderMap| {
+        h.get("content-type")
+            .map(|v| v.to_str().unwrap().to_string())
+    };
+    let (st, h, body) = get(&s, "/pokemon/json", &[]);
+    assert_eq!((st, body.as_str()), (401, "{\"error\":\"unauthorized\"}"));
+    assert_eq!(ct(&h).as_deref(), Some("application/json; charset=utf-8"));
+    let (st, h, body) = get(&s, "/pokemon/html", &[]);
+    assert_eq!((st, body.as_str()), (400, "<b>no</b>"));
+    assert_eq!(ct(&h).as_deref(), Some("text/html; charset=utf-8"));
+    assert_eq!(h.get_all("content-type").iter().count(), 1);
+    assert_eq!(h.get("x-ok").unwrap(), "1");
+    for name in ["old", "bad", "empty"] {
+        let (st, h, body) = get(&s, &format!("/pokemon/{name}"), &[]);
+        assert_eq!((st, body.as_str()), (418, "teapot"), "{name}");
+        assert_eq!(
+            ct(&h).as_deref(),
+            Some("text/plain; charset=utf-8"),
+            "{name}"
+        );
     }
 }
 

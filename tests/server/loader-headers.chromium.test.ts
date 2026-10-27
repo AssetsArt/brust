@@ -79,6 +79,35 @@ test('(2) a layout\'s no-store reaches every page under it, and the server cache
   expect(c).toEqual(['MISS', 'MISS'])
 })
 
+test('F467: a cached page whose loader sends Vary: Cookie is not stored; Vary: Accept-Encoding is', async () => {
+  const seen = async (path: string) => {
+    const out: (string | null)[] = []
+    for (let i = 0; i < 2; i++) {
+      const r = await get(path)
+      expect(r.status).toBe(200)
+      out.push(r.headers.get('x-brust-cache'))
+      await r.text()
+    }
+    return out
+  }
+  expect(await seen('/vary-cookie')).toEqual(['MISS', 'MISS'])
+  expect((await get('/vary-cookie')).headers.get('vary')?.toLowerCase()).toContain('cookie')
+  expect(await seen('/vary-encoding')).toEqual(['MISS', 'HIT'])
+})
+
+test('F466: httpError answers with its content type, the chain\'s headers and its own; a refused name in its options is dropped', async () => {
+  const j = await get('/err-json')
+  expect(j.status).toBe(401)
+  expect(j.headers.get('content-type')).toBe('application/json; charset=utf-8')
+  expect(j.headers.get('x-chain')).toBe('kept')
+  expect(j.headers.get('x-why')).toBe('expired')
+  expect(await j.json()).toEqual({ error: 'unauthorized' })
+  const h = await get('/err-html')
+  expect(h.status).toBe(400)
+  expect(h.headers.get('content-type')).toBe('text/html; charset=utf-8')
+  expect(await h.text()).toBe('<b>no</b>')
+})
+
 test('(4) a Content-Security-Policy set by a loader arrives as a header', async () => {
   const r = await get('/csp')
   expect(r.status).toBe(200)
