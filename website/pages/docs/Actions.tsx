@@ -17,7 +17,7 @@ import Lead from '../../components/docs/Lead'
 
 export interface ActionsData {
   toc: TocItem[]
-  blocks: Record<'install' | 'toml' | 'app' | 'client' | 'errors' | 'apiToml' | 'apiBuild' | 'webToml' | 'injected' | 'cookie', CodeBlockData>
+  blocks: Record<'install' | 'toml' | 'app' | 'client' | 'errors' | 'apiToml' | 'apiBuild' | 'webToml' | 'injected' | 'cookie' | 'middleware' | 'typed', CodeBlockData>
   candidates: { id: number; name: string; sprite: string }[]
 }
 
@@ -89,6 +89,80 @@ const COOKIE = `.post('/login', ({ cookie: { session } }) => {
   return { ok: true }
 })`
 
+// source: docs/actions.md §6 "Middleware" (F471): the renewal recipe and a custom header
+const MIDDLEWARE = `// api.ts
+import { type ActionMiddleware, client } from '@brust/core/client'
+import type { App } from './actions'
+
+let generation = 0 // counts renewals; a call that failed before the last one just retries
+let renewing: Promise<boolean> | undefined
+const renewSession = (seen: number) =>
+  seen !== generation
+    ? Promise.resolve(true)
+    : (renewing ??= fetch('/_brust/action/session/refresh', { method: 'POST' })
+        .then((r) => {
+          if (r.ok) generation++
+          return r.ok
+        })
+        .finally(() => { renewing = undefined }))
+
+const renew: ActionMiddleware = async (req, next) => {
+  const seen = generation
+  const res = await next(req)
+  if (res.status !== 401) return res
+  return (await renewSession(seen)) ? next(req) : res // the SAME req, sent again
+}
+
+const org: ActionMiddleware = (req, next) => {
+  const r = new Request(req) // a copy to change; \`req\` stays unread
+  r.headers.set('x-org', currentOrg())
+  return next(r)
+}
+
+export const api = client<App>({ middleware: [renew, org] })`
+
+// source: docs/actions.md §6 "Typed routes" (F471); compiled and run by packages/brust/test/actions-typed-routes-doc.test.ts
+const TYPED = `// actions/auth.ts
+import { Elysia, status, t } from 'elysia'
+
+export const auth = new Elysia().post(
+  '/login',
+  {
+    body: t.Object({ user: t.String(), pass: t.String() }),
+    cookie: t.Cookie({ sid: t.Optional(t.String()), csrf: t.Optional(t.String()) }),
+    response: {
+      200: t.Object({ user: t.String() }),
+      401: t.Object({ error: t.Literal('bad credentials') }),
+    },
+  },
+  async ({ body, cookie }) => {
+    if (!(await checkLogin(body.user, body.pass))) return status(401, { error: 'bad credentials' })
+    cookie.sid.set({ value: newSession(body.user), httpOnly: true, path: '/' })
+    cookie.csrf.set({ value: newCsrf(), path: '/' })
+    return { user: body.user }
+  },
+)
+
+// actions/index.ts
+import { brust } from '@brust/core/elysia'
+import { Elysia } from 'elysia'
+import { auth } from './auth'
+
+const app = new Elysia({ adapter: brust() }).use(auth)
+export type App = typeof app
+
+// api.ts: \`renew\` is the middleware from the recipe above
+import { client } from '@brust/core/client'
+import type { App } from './actions'
+
+const api = client<App>({ middleware: [renew] })
+
+export async function login(user: string, pass: string) {
+  const r = await api.login.post({ user, pass }) // a wrong body is a type error
+  if (r.error?.status === 401) return r.error.value.error // 'bad credentials'
+  return r.data?.user // string | undefined
+}`
+
 const PICK = [25, 1, 4, 7, 133, 143, 150, 94]
 
 export async function actionsLoader(): Promise<ActionsData> {
@@ -113,6 +187,8 @@ export async function actionsLoader(): Promise<ActionsData> {
       webToml: codeBlock({ lang: 'toml', file: 'web/brust.toml', code: WEB_TOML }),
       injected: codeBlock({ lang: 'text', file: 'every page', code: INJECTED }),
       cookie: codeBlock({ lang: 'ts', file: 'api/actions.ts', code: COOKIE }),
+      middleware: codeBlock({ lang: 'ts', file: 'api.ts', code: MIDDLEWARE }),
+      typed: codeBlock({ lang: 'ts', file: 'auth.ts, index.ts, api.ts', code: TYPED }),
     },
     candidates: PICK.map((id) => ({ id, name: displayName(byId(id)!.name), sprite: spriteUrl(id) })),
   }
@@ -146,6 +222,27 @@ export default function Actions({ blocks, candidates }: ActionsData) {
       <p>
         Every call resolves to <code>{'{ data, error, status, response, headers }'}</code>, with exactly one of <code>data</code> and <code>error</code> set. A network failure resolves with status 503.
       </p>
+
+      <h3 id="middleware">Middleware</h3>
+      {/* source: docs/actions.md §6 "Middleware" (F471); packages/brust/src/actions/client.ts */}
+      <p>
+        <code>client({'{ middleware }'})</code> takes a list of functions between the typed client and <code>fetch</code>. Each gets the request Eden built and a <code>next</code> that sends it on; <code>middleware[0]</code> is the outermost. A link can add a header, answer without calling <code>next</code>, or call <code>next</code> again: after a 401 it renews the session and sends the same request once more. Every <code>next(r)</code> sends its own copy of <code>r</code>, so a retry carries the same JSON or multipart body. A link that throws is a network failure (status 503). The client keeps its route types.
+      </p>
+      <CodeBlock code={blocks.middleware.code} lang={blocks.middleware.lang} file={blocks.middleware.file} html={blocks.middleware.html} />
+      <p>
+        brust has no built-in token renewal, because auth schemes differ; the single-flight above renews once for every call that fails together. The renewal itself uses plain <code>fetch</code>, so it does not pass through the chain.
+      </p>
+
+      <h3 id="typed-routes">Typed routes</h3>
+      <ul>
+        <li>Routes registered on an <code>any</code> app, or in a function that does not return the chained instance, give the client no types. Write <code>export const auth = new Elysia().post(…)</code> and <code>app.use(auth)</code>.</li>
+        <li>A handler that returns a <code>Response</code> gives <code>data</code> an untyped body. Return a value, or <code>status(code, body)</code> / <code>problem()</code>, and the client narrows <code>error.status</code> and <code>error.value</code>.</li>
+        <li>An action may set several cookies and return a typed <code>status(401, …)</code>: every <code>Set-Cookie</code> header reaches the client.</li>
+      </ul>
+      <p>
+        The whole path in one example: a chained plugin with <code>t</code> schemas for the body and each response, a cookie set on the answer, a typed 401, <code>app.use(plugin)</code>, and a client with middleware that still narrows <code>data</code> and <code>error.value</code>. The schemas are Elysia's (see Validation in <code>docs/actions.md</code>); the status answers are covered in <a href="#errors">Errors and limits</a>.
+      </p>
+      <CodeBlock code={blocks.typed.code} lang={blocks.typed.lang} file={blocks.typed.file} html={blocks.typed.html} />
 
       <Step n={4} id="try" title="Try it" />
       <p>

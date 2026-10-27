@@ -1,0 +1,3 @@
+[actions]
+entry = "actions.ts"
+prefix = "/"
