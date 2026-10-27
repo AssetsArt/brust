@@ -1,6 +1,8 @@
 //! Symbols the full parse/visit path needs beyond sema's `native.rs`: JSC-backed
 //! helpers, the transpiler-cache dispatch, macros, URL. Spike-grade but exact ABI.
-use core::ffi::{c_int, c_void};
+#[cfg(target_os = "linux")]
+use core::ffi::c_int;
+use core::ffi::c_void;
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64 {
