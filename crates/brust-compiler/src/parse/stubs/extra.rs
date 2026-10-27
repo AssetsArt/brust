@@ -118,16 +118,20 @@ fn collate(
         (i, j) = (i + 1, j + 1);
     }
     let order = (a.len() - i).cmp(&(b.len() - j));
-    if order.is_ne() || numeric_and_base {
+    if order.is_ne() {
         return order as i32;
+    }
+    if numeric_and_base {
+        return a.iter().cmp(b.iter()) as i32;
     }
     // Tertiary: lowercase before uppercase at the first difference in case.
     for (x, y) in a.iter().zip(b.iter()) {
-        if x != y {
+        if x.is_uppercase() != y.is_uppercase() {
             return (x.is_uppercase() as i32) - (y.is_uppercase() as i32);
         }
     }
-    0
+    // Total: strings that collate equal but differ are ordered by their bytes.
+    a.iter().cmp(b.iter()) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -201,6 +205,12 @@ mod tests {
         assert_eq!(cmp("same", "same", false), 0);
         assert_eq!(cmp("a10", "a2", false), -1);
         assert_eq!(cmp("a2", "a10", true), -1);
-        assert_eq!(cmp("A2", "a02", true), 0);
+        // Never equal for different strings, in either mode: ties fall back to the bytes.
+        assert_eq!(cmp("A2", "a02", true), -1);
+        assert_eq!(cmp("a02", "A2", true), 1);
+        // A non-ASCII pair keeps one order, both ways round.
+        assert_eq!(cmp("a", "\u{e4}", false), -1);
+        assert_eq!(cmp("\u{e4}", "a", false), 1);
+        assert_eq!(cmp("\u{212a}", "K", false), 1); // Kelvin sign: same letter and case as K, so the bytes decide
     }
 }
