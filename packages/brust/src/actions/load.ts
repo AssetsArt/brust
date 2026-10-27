@@ -61,12 +61,29 @@ function samePath(a: string, b: string): boolean {
 
 const STREAM_METHODS = new Set(['POST', 'PUT', 'PATCH'])
 
+/** Could one request path match both `listed` (a stream entry, prefix included) and `route` (an Elysia path)? A
+ * parameter on either side matches any one segment; a final `*` on either side matches one or more. */
+function overlaps(listed: string, route: string): boolean {
+  const a = listed.split('/')
+  const b = route.split('/')
+  const param = (s: string) => /^(:|\{)/.test(s)
+  for (let i = 0; ; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x === undefined || y === undefined) return x === y
+    if ((x === '*' && i === a.length - 1) || (y === '*' && i === b.length - 1)) return x !== '' && y !== ''
+    if (x !== y && !param(x) && !param(y)) return false
+  }
+}
+
 /**
  * F475: `[actions] stream` against the app. `missing`: listed entries with no `{ parse: 'none' }` route of that method and
- * path (boot fails: Rust would hand those routes a body the app parses as a whole). `unlisted`: `{ parse: 'none' }`
- * POST/PUT/PATCH routes not on the list (their bodies stay buffered, capped at `max_body_bytes`).
+ * path. `parsed`: routes that parse their body although a listed entry can match their path (a static route under a
+ * `:param` or `*` entry). Both fail boot: Rust would stream those bodies up to `max_stream_bytes` into a route that parses
+ * them whole, past `max_body_bytes`. `unlisted`: `{ parse: 'none' }` POST/PUT/PATCH routes not on the list (their bodies
+ * stay buffered, capped at `max_body_bytes`).
  */
-export function streamRouteCheck(app: AnyElysia, entries: string[], prefix: string): { missing: string[]; unlisted: string[] } {
+export function streamRouteCheck(app: AnyElysia, entries: string[], prefix: string): { missing: string[]; parsed: string[]; unlisted: string[] } {
   const full = (p: string) => (prefix === '/' ? p : p === '/' ? prefix : prefix + p)
   const listed = entries.map((e) => {
     const [m, p] = e.trim().split(/ +/)
@@ -74,8 +91,11 @@ export function streamRouteCheck(app: AnyElysia, entries: string[], prefix: stri
   })
   const routes = app.routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, none: parsesNone(r) }))
   const missing = listed.filter((l) => !routes.some((r) => r.none && r.method === l.method && samePath(r.path, l.path))).map((l) => l.entry)
+  const parsed = routes
+    .filter((r) => !r.none && listed.some((l) => l.method === r.method && overlaps(l.path, r.path)))
+    .map((r) => `${r.method} ${r.path}`)
   const unlisted = routes
     .filter((r) => r.none && STREAM_METHODS.has(r.method) && !listed.some((l) => l.method === r.method && samePath(r.path, l.path)))
     .map((r) => `${r.method} ${r.path}`)
-  return { missing, unlisted }
+  return { missing, parsed, unlisted }
 }

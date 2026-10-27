@@ -206,8 +206,10 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     const shadowed = env.BRUST_WORKER_ID && env.BRUST_WORKER_ID !== '0' ? [] : shadowedGetActions(actionsApp, flattenRoutes(routes).leaves.map((l) => l.pattern), manifest.actions.prefix)
     if (shadowed.length) console.warn(`[brust] warning: a route under the actions prefix answers GET there, so these GET actions are never reached: ${shadowed.join(', ')}`)
     // F475: a listed route must parse nothing (the app reads the stream itself); an unlisted parse-none route stays buffered.
-    const { missing, unlisted } = streamRouteCheck(actionsApp, manifest.actions.stream ?? [], manifest.actions.prefix)
+    const { missing, parsed, unlisted } = streamRouteCheck(actionsApp, manifest.actions.stream ?? [], manifest.actions.prefix)
     if (missing.length) throw new Error(`[actions] stream lists ${missing.join(', ')}, but no { parse: 'none' } action route of that method and path exists`)
+    if (parsed.length)
+      throw new Error(`[actions] stream covers ${parsed.join(', ')}, which parse their body; give them { parse: 'none' } or narrow the stream entry`)
     if (unlisted.length && (!env.BRUST_WORKER_ID || env.BRUST_WORKER_ID === '0'))
       console.warn(`[brust] warning: these { parse: 'none' } actions are not in [actions] stream, so their bodies are buffered, capped at max_body_bytes: ${unlisted.join(', ')}`)
     setActionsLimits({ maxResponseBytes: manifest.actions.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES })

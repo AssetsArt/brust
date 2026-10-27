@@ -124,13 +124,32 @@ test('streamRouteCheck: listed entries need a { parse: none } route; unlisted pa
       .post('/json', () => 'j'),
     '/api',
   )
-  expect(streamRouteCheck(a, ['POST /upload', 'PUT /files/:name'], '/api')).toEqual({ missing: [], unlisted: ['PATCH /api/raw'] })
+  expect(streamRouteCheck(a, ['POST /upload', 'PUT /files/:name'], '/api')).toEqual({ missing: [], parsed: [], unlisted: ['PATCH /api/raw'] })
   // A parsed route, a wrong method, or no route at all is missing.
   expect(streamRouteCheck(a, ['POST /json', 'PUT /upload', 'POST /nope'], '/api').missing).toEqual(['POST /json', 'PUT /upload', 'POST /nope'])
   expect(streamRouteCheck(a, [], '/api').unlisted).toEqual(['POST /api/upload', 'PUT /api/files/:id', 'PATCH /api/raw'])
   // The root prefix of an actions-only build adds nothing.
   const root = mountActions(new Elysia({ adapter: brust() }).post('/up', { parse: 'none' }, () => 'u'), '/')
-  expect(streamRouteCheck(root, ['POST /up'], '/')).toEqual({ missing: [], unlisted: [] })
+  expect(streamRouteCheck(root, ['POST /up'], '/')).toEqual({ missing: [], parsed: [], unlisted: [] })
+})
+
+test('streamRouteCheck: a parsing route a listed :param or * entry can reach is reported (F475)', () => {
+  const a = mountActions(
+    new Elysia({ adapter: brust() })
+      .put('/files/*', { parse: 'none' }, () => 'f')
+      .put('/files/special', () => 's')
+      .put('/files/a/b', () => 'ab')
+      .post('/files/x', () => 'x')
+      .put('/files', () => 'root')
+      .post('/u/:id', { parse: 'none' }, () => 'u')
+      .post('/u/me', () => 'me')
+      .post('/v/:id', () => 'v'),
+    '/api',
+  )
+  expect(streamRouteCheck(a, ['PUT /files/*', 'POST /u/:id'], '/api').parsed).toEqual(['PUT /api/files/special', 'PUT /api/files/a/b', 'POST /api/u/me'])
+  // An entry for a static path reaches a parsing :param route too.
+  const b = mountActions(new Elysia({ adapter: brust() }).post('/v/me', { parse: 'none' }, () => 'me').post('/v/:id', () => 'v'), '/api')
+  expect(streamRouteCheck(b, ['POST /v/me'], '/api').parsed).toEqual(['POST /api/v/:id'])
 })
 
 test('streamEntryError mirrors the Rust StreamRoute rules (F475)', () => {
