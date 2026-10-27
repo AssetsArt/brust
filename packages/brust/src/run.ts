@@ -11,7 +11,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { type BrustConfig, type ConfigOverrides, loadConfig } from './config'
-import { beginDrain, localAddr, type StartOptions, startServer, untilReady } from './native'
+import { beginDrain, localAddr, type StartOptions, type StreamOptions, startServer, untilReady } from './native'
 import { DEFAULT_MAX_LOADER_RESPONSE_BYTES } from './worker'
 
 export interface RunOptions {
@@ -27,7 +27,7 @@ export interface RunOptions {
 
 /** The manifest fields `run` needs (build/manifest.ts owns the full shape). */
 export interface RunManifest {
-  actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null
+  actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } & StreamKeys | null
   /** L16 R16.3: `brust build --actions-only`: no page routes and no routes entry. */
   actions_only?: boolean
   /** L16 R16.4b: a page-only build; the actions app is deployed elsewhere (`[actions] base_url`). */
@@ -36,6 +36,16 @@ export interface RunManifest {
   cache?: { adapter: string; getTimeoutMs: number; maxBodyBytes: number; namespace: string; buildId: string } | null
   /** F165: `false` = no route can call a worker; absent (older manifests) = the pool is needed. */
   needs_workers?: boolean
+}
+
+/** F475: the `[actions] stream` keys of `manifest.actions`, passed to napi as they are. */
+type StreamKeys = Pick<StreamOptions, 'stream' | 'maxStreamBytes' | 'streamIdleMs' | 'streamTotalMs' | 'maxStreams'>
+
+/** F475: the stream keys `a` carries; none without a `stream` list, so an app without one starts as before. */
+function streamOptions(a: StreamKeys): StreamKeys {
+  if (!a.stream?.length) return {}
+  const { stream, maxStreamBytes, streamIdleMs, streamTotalMs, maxStreams } = a
+  return { stream, maxStreamBytes, streamIdleMs, streamTotalMs, ...(maxStreams !== undefined ? { maxStreams } : {}) }
 }
 
 /** F165 (R40.1): the pool size `run` spawns: none only when the build said no request needs one. */
@@ -54,7 +64,7 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     ...(cfg.maxLoaderResponseBytes !== undefined && cfg.maxLoaderResponseBytes !== DEFAULT_MAX_LOADER_RESPONSE_BYTES ? { maxLoaderResponseBytes: cfg.maxLoaderResponseBytes } : {}),
     workerThreads: cfg.ioThreads,
     generator: `brust/${version}`,
-    ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}) } } : {}),
+    ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}), ...streamOptions(m.actions) } } : {}),
     ...(actionsClient(cfg, m) ? { actionsClient: actionsClient(cfg, m) } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
     ...(devToken ? { devToken } : {}),

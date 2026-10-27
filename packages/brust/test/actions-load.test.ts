@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { Elysia } from 'elysia'
 import { brust } from '../src/actions/elysia'
-import { loadActionsApp, mountActions, shadowedGetActions } from '../src/actions/load'
-import { prefixError } from '../src/actions/prefix'
+import { loadActionsApp, mountActions, shadowedGetActions, streamRouteCheck } from '../src/actions/load'
+import { prefixError, streamEntryError } from '../src/actions/prefix'
 import app from './fixtures/actions/app'
 
 const m = mountActions(app, '/_brust/action')
@@ -113,4 +113,27 @@ test('shadowedGetActions: the GET actions a route under the prefix hides (F470)'
     'GET /auth/:provider/start (route /auth/{provider}/start)',
   ])
   expect(shadowedGetActions(a, ['/', '/elsewhere'], '/auth')).toEqual([])
+})
+
+test('streamRouteCheck: listed entries need a { parse: none } route; unlisted parse-none routes are reported (F475)', () => {
+  const a = mountActions(
+    new Elysia({ adapter: brust() })
+      .post('/upload', { parse: 'none' }, () => 'u')
+      .put('/files/:id', { parse: 'none' }, () => 'f')
+      .patch('/raw', { parse: 'none' }, () => 'r')
+      .post('/json', () => 'j'),
+    '/api',
+  )
+  expect(streamRouteCheck(a, ['POST /upload', 'PUT /files/:name'], '/api')).toEqual({ missing: [], unlisted: ['PATCH /api/raw'] })
+  // A parsed route, a wrong method, or no route at all is missing.
+  expect(streamRouteCheck(a, ['POST /json', 'PUT /upload', 'POST /nope'], '/api').missing).toEqual(['POST /json', 'PUT /upload', 'POST /nope'])
+  expect(streamRouteCheck(a, [], '/api').unlisted).toEqual(['POST /api/upload', 'PUT /api/files/:id', 'PATCH /api/raw'])
+  // The root prefix of an actions-only build adds nothing.
+  const root = mountActions(new Elysia({ adapter: brust() }).post('/up', { parse: 'none' }, () => 'u'), '/')
+  expect(streamRouteCheck(root, ['POST /up'], '/')).toEqual({ missing: [], unlisted: [] })
+})
+
+test('streamEntryError mirrors the Rust StreamRoute rules (F475)', () => {
+  for (const ok of ['POST /upload', 'put /files/*', 'PATCH /a/:id/b', 'POST /']) expect(streamEntryError(ok)).toBeNull()
+  for (const bad of ['GET /x', 'POST upload', 'POST /a//b', 'POST /a/*/b', 'POST /a*', '/upload', 1]) expect(streamEntryError(bad)).not.toBeNull()
 })

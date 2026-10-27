@@ -72,7 +72,7 @@ export interface ManifestLike {
   >
   jobs_module?: string
   /** `brust build` (M3-F A3): the actions entry, relative to dist. Absent/null = no actions. */
-  actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number } | null
+  actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; stream?: string[] } | null
 }
 
 export function toJson(out: unknown): string {

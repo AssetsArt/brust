@@ -199,12 +199,17 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
   const jobs = (jobsMod.default ?? jobsMod) as JobsModule
   if (manifest.actions) {
     // Lazy: elysia is an optional peer, so an app without [actions] must boot without it installed (R7).
-    const { loadActionsApp, shadowedGetActions } = await import('./actions/load')
+    const { loadActionsApp, shadowedGetActions, streamRouteCheck } = await import('./actions/load')
     const actionsApp = await loadActionsApp(join(dist, manifest.actions.entry), manifest.actions.prefix)
     setActionsApp(actionsApp)
     // F470: a GET under the prefix that a route there matches is the route's; say which GET actions that hides (once)
     const shadowed = env.BRUST_WORKER_ID && env.BRUST_WORKER_ID !== '0' ? [] : shadowedGetActions(actionsApp, flattenRoutes(routes).leaves.map((l) => l.pattern), manifest.actions.prefix)
     if (shadowed.length) console.warn(`[brust] warning: a route under the actions prefix answers GET there, so these GET actions are never reached: ${shadowed.join(', ')}`)
+    // F475: a listed route must parse nothing (the app reads the stream itself); an unlisted parse-none route stays buffered.
+    const { missing, unlisted } = streamRouteCheck(actionsApp, manifest.actions.stream ?? [], manifest.actions.prefix)
+    if (missing.length) throw new Error(`[actions] stream lists ${missing.join(', ')}, but no { parse: 'none' } action route of that method and path exists`)
+    if (unlisted.length && (!env.BRUST_WORKER_ID || env.BRUST_WORKER_ID === '0'))
+      console.warn(`[brust] warning: these { parse: 'none' } actions are not in [actions] stream, so their bodies are buffered, capped at max_body_bytes: ${unlisted.join(', ')}`)
     setActionsLimits({ maxResponseBytes: manifest.actions.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES })
   }
   loaderCap = Number.parseInt(env.BRUST_MAX_LOADER_RESPONSE_BYTES ?? '', 10) || DEFAULT_MAX_LOADER_RESPONSE_BYTES

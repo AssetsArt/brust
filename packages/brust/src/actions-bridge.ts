@@ -1,7 +1,7 @@
 // The worker side of the `fetch` call kind (design E4/E5, contracts A1/A2). Rust forwards the actions prefix subtree
 // here; the app registered with `setActionsApp` (Elysia 2 via brust() — m3f-actions-elysia) answers a web Request
 // with a web Response, framed into this worker's SAB slot. No Elysia import: the app is anything with `fetch`.
-import { putFetchReply, takeFetchBody } from './native'
+import { pullFetchBody, putFetchReply, takeFetchBody } from './native'
 import type { LoaderReq } from './routes'
 import { runInStoreContext } from './store/server-context'
 
@@ -22,8 +22,10 @@ export interface FetchRequest {
   method: string
   url: string
   headers: [string, string][]
-  /** `{heap: n}` (F82): more than 262144 bytes (`ACTION_INLINE_BODY_BYTES`, independent of the slot size), fetched with `takeFetchBody(slot)`. */
-  body: { text: string } | { b64: string } | { heap: number } | null
+  /** `{heap: n}` (F82): more than 262144 bytes (`ACTION_INLINE_BODY_BYTES`, independent of the slot size), fetched with `takeFetchBody(slot)`.
+   * `{stream}` (F475): a `[actions] stream` route's body, pulled chunk by chunk with `pullFetchBody(slot, token)`; `length` is the
+   * declared Content-Length, if any. */
+  body: { text: string } | { b64: string } | { heap: number } | { stream: { length: number | null; token: number } } | null
   req: LoaderReq
 }
 /** A2 meta: `status`, `headers`, and (F82) `heap` — the byte length of a response body that crossed by
@@ -39,8 +41,36 @@ export interface FetchMeta {
 export interface HeapIo {
   takeBody(slot: number): Uint8Array | null
   putReply(slot: number, body: Uint8Array): boolean
+  /** F475: the next chunk of the slot's streamed body (`pullFetchBody`); only `fetch` calls with A1 `{stream}` use it. */
+  pullBody?(slot: number, token: number): Promise<Uint8Array | string | null>
 }
-const nativeHeapIo: HeapIo = { takeBody: (slot) => takeFetchBody(slot), putReply: (slot, body) => putFetchReply(slot, body) }
+const nativeHeapIo: HeapIo = {
+  takeBody: (slot) => takeFetchBody(slot),
+  putReply: (slot, body) => putFetchReply(slot, body),
+  pullBody: (slot, token) => pullFetchBody(slot, token),
+}
+
+/** F475: what a failed pull means to the app; Rust answers 413 / 408 / 400 whatever the app then returns. */
+const STREAM_FAILED: Record<string, string> = {
+  max_stream_bytes: 'brust: the request body exceeds max_stream_bytes',
+  idle: 'brust: the request body stalled longer than stream_idle_ms',
+}
+
+/** F475: the request body as the app reads it: each read pulls one chunk from Rust, and nothing is pulled before a read
+ * (`highWaterMark: 0`), so the client is read only as fast as the app consumes. */
+export function pulledBody(pull: () => Promise<Uint8Array | string | null>): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(c) {
+        const r = await pull()
+        if (r === null) c.close()
+        else if (typeof r === 'string') c.error(new TypeError(STREAM_FAILED[r] ?? 'brust: the request body broke off or ended short'))
+        else c.enqueue(r)
+      },
+    },
+    { highWaterMark: 0 },
+  )
+}
 
 let maxResponseBytes = 8_388_608
 /** `startWorker` sets the manifest's `actions.maxResponseBytes` (R5). Default 8388608. */
@@ -68,13 +98,13 @@ const TEXT_PLAIN: [string, string][] = [['content-type', 'text/plain; charset=ut
 
 /** A1 → web Request (R8 origin: `http://<host>` when the host pair is sane, else `localhost`). Bytes, never a
  * string body, so no content-type is invented. GET/HEAD never carry a body (R4; `new Request` forbids one). */
-export function toRequest(r: FetchRequest, heapBody?: Uint8Array): Request {
+export function toRequest(r: FetchRequest, heapBody?: Uint8Array | ReadableStream<Uint8Array>): Request {
   const host = r.headers.find(([k]) => k === 'host')?.[1]
   const origin = `http://${host && HOST.test(host) ? host : 'localhost'}`
   const bodyless = r.method === 'GET' || r.method === 'HEAD'
   const b = r.body
-  const body = bodyless || !b ? undefined : 'heap' in b ? (heapBody as BodyInit | undefined) : 'text' in b ? enc.encode(b.text) : Buffer.from(b.b64, 'base64')
-  return new Request(origin + r.url, { method: r.method, headers: r.headers, body })
+  const body = bodyless || !b ? undefined : 'heap' in b || 'stream' in b ? (heapBody as BodyInit | undefined) : 'text' in b ? enc.encode(b.text) : Buffer.from(b.b64, 'base64')
+  return new Request(origin + r.url, { method: r.method, headers: r.headers, body, ...(body instanceof ReadableStream ? { duplex: 'half' } : {}) } as RequestInit)
 }
 
 /** A2 writer at `slot`'s sub-region `[slot*sub, slot*sub+sub)`, `sub = floor(view.byteLength / slots)`:
@@ -146,11 +176,16 @@ export async function runFetch(requestJson: string, view: Uint8Array, slot: numb
   if (!a) return fail(view, slot, slots, 'brust: actions are not configured in this worker')
   try {
     const fr = JSON.parse(requestJson) as FetchRequest
-    let heapBody: Uint8Array | undefined
+    let heapBody: Uint8Array | ReadableStream<Uint8Array> | undefined
     if (fr.body && 'heap' in fr.body) {
       const got = io.takeBody(slot)
       if (!got || got.length !== fr.body.heap) throw new Error(`heap request body ${got ? `${got.length} != ${fr.body.heap}` : 'missing'} bytes (F82)`)
       heapBody = got
+    } else if (fr.body && 'stream' in fr.body) {
+      const { pullBody } = io
+      if (!pullBody) throw new Error('streamed request body without a pull channel (F475)')
+      const { token } = fr.body.stream
+      heapBody = pulledBody(() => pullBody(slot, token))
     }
     const req = toRequest(fr, heapBody)
     // R1/E5: one store scope around the handler AND the body read (a lazy body may still touch stores).

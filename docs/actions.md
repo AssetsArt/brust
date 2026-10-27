@@ -42,9 +42,16 @@ prefix = "/_brust/action"    # default "/_brust/action"
 max_body_bytes = 1048576      # request body cap, default 1 MiB, 1..67108864
 max_response_bytes = 8388608  # response body cap, default 8 MiB, 262144..67108864
 cross_site = "reject"        # "reject" (default) or "allow": see Security posture
+stream = ["POST /upload"]     # routes whose request body streams to the app, relative to the prefix; default none
+max_stream_bytes = 268435456  # streamed body cap, default 256 MiB, 1..4294967296
+stream_idle_ms = 30000        # longest wait for the client's next byte, default 30 s
+stream_total_ms = 900000      # the whole streamed request, default 15 min
+max_streams = 4               # streamed requests at once, default a quarter of the worker slots (at least 1)
 ```
 
-`brust build` bundles the entry to `dist/actions.js` (with `elysia` kept external) and records `actions { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite }` in the manifest. The worker imports it at boot.
+`brust build` bundles the entry to `dist/actions.js` (with `elysia` kept external) and records `actions { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite }` in the manifest, plus the `stream` keys when the list is set. The worker imports it at boot.
+
+`stream` names the routes whose body is not read before your app runs: each entry is `"<METHOD> <path>"` (`POST`, `PUT` or `PATCH`; `:name` matches one segment, a final `*` the rest), and each must be a route declared with `{ parse: 'none' }`, which reads `request.body` itself. The server passes the body through as the app reads it, so memory stays at about one chunk per upload however large the body is, up to `max_stream_bytes` instead of `max_body_bytes`. Boot fails when a listed entry has no such route; a `{ parse: 'none' }` route left off the list stays buffered and capped at `max_body_bytes`, with a boot warning. A body past `max_stream_bytes` is answered **413**, one that stalls longer than `stream_idle_ms` or runs past `stream_total_ms` is **408** (both with `Connection: close`, whatever the app answered), and a streamed request over `max_streams` is **503** with `Retry-After: 1` before a byte is read. The Cloudflare target ignores the list for now: its bodies stay buffered under `max_body_bytes`.
 
 The entry must default-export an Elysia app built with the `brust()` adapter. Also export the app's type so the client can be typed from it:
 
