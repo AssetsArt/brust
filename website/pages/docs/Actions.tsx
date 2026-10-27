@@ -164,7 +164,7 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         {/* source: crates/brust-core/src/pipeline.rs (routed_under), packages/brust/src/build/index.ts (actions-prefix), packages/brust/src/actions/load.ts (shadowedGetActions) */}
         <li>
           A page or loader route may sit under the prefix: a <code>GET</code> or <code>HEAD</code> it matches is the route's, and everything else there stays the app's (any other method, a <code>GET</code> no route
-          under the prefix matches; the <code>*</code> catch-all never counts). So an OAuth <code>GET</code> callback at <code>/auth/{'{provider}'}/callback</code> can be a loader that sets a cookie and redirects while Apple's{' '}
+          under the prefix matches; the <code>*</code> catch-all never counts). A generic route outside the prefix, such as <code>{'/{a}/{b}'}</code>, never takes a path under the prefix; only a route whose own pattern is under it does. So an OAuth <code>GET</code> callback at <code>/auth/{'{provider}'}/callback</code> can be a loader that sets a cookie and redirects while Apple's{' '}
           <code>form_post</code> to the same path stays an action. A <code>GET</code> action shadowed this way is named in a boot warning. The build refuses a route equal to the prefix and a <code>{'{*rest}'}</code> route under it.
         </li>
         <li>

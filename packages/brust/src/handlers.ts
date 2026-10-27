@@ -310,7 +310,7 @@ export function makeHandlers(opts: {
                 // httpError's own `headers` option adds to what the chain set. A refused name is dropped with a warning
                 // in dev too: a throw here would hide the error the loader meant to send (F466).
                 for (const [k, v] of Object.entries(e.headers ?? {})) {
-                  if (REFUSED_HEADERS.has(k.trim().toLowerCase())) console.warn(`[brust] warning res.headers: ${refusedMessage(k)}; dropped`)
+                  if (REFUSED_HEADERS.has(k.trim().toLowerCase())) console.warn(`[brust] warning httpError headers: ${refusedMessage(k)}; dropped`)
                   else res.headers.append(k, v)
                 }
                 return out({ verdict: 'httpError', status: e.status, body: e.body, contentType: e.contentType } as LoaderResponse)
