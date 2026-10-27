@@ -139,7 +139,7 @@ The `.15s` delay keeps the bar still on a navigation that is quick, such as one 
 When the browser has the View Transitions API (`document.startViewTransition`), the swap runs inside a view transition. The default look is the browser's own cross-fade of the whole page (opacity only, about 250 ms). Pixels that are the same in both pages, such as a header or a sidebar that stays, do not visibly change, so only the content that changed fades. Nothing slides or scales.
 
 - Everything slow happens before the transition starts: the fetch, the new page's scripts and stylesheets. The old page is frozen for about one frame, never for a network wait.
-- The eager images of the new page (not `loading="lazy"`) get up to 100 ms to decode before the transition starts, so a hero image does not pop in after the fade. A page should mark its below-the-fold images `loading="lazy"`; those are not waited for.
+- The eager images the navigation swaps in (not `loading="lazy"`; a kept layout's are on screen already) get up to 100 ms to decode before the transition starts, so a hero image does not pop in after the fade. A page should mark its below-the-fold images `loading="lazy"`; those are not waited for.
 - Back and forward use the same transition. A navigation that starts while a transition runs skips it and lands on the newer page.
 - With `prefers-reduced-motion: reduce`, in a browser without the API, or with `<html data-brust-transition="off">`, the page swaps at once.
 - Customise it with the standard CSS: `::view-transition-old(root)`, `::view-transition-new(root)`, or give your own elements a `view-transition-name`.

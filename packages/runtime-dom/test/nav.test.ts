@@ -247,6 +247,20 @@ test('the new page\'s store tags are in the document before its modules load, wh
   expect(document.querySelectorAll('script[data-brust-store="s"]').length).toBe(1) // the one in the new tail
 })
 
+test('while the new page\'s modules load, an old-page reader finds its own store tag first; a store new to the page finds the new tag', async () => {
+  const seen: string[] = []
+  const first = (n: string) => document.querySelector(`script[data-brust-store="${n}"]`)?.textContent ?? 'none'
+  show({ ...app('1', 'a'), body: `${app('1', 'a').body}<a id="to-b" href="/b">b</a>`, tail: '<script data-brust-store="s" type="application/json">{"n":0}</script><script type="module" src="/_brust/client/core-1.js"></script>' })
+  stop = boot(async (u) => { seen.push(`${new URL(u).pathname} s=${first('s')} t=${first('t')}`) })
+  pages['/b'] = { html: doc({ ...app('1', 'b'), tail: '<script data-brust-store="s" type="application/json">{"n":1}</script><script data-brust-store="t" type="application/json">{"m":2}</script><script type="module" src="/_brust/client/for-1.js"></script>' }) }
+  click($('#to-b')!)
+  await settle()
+  expect(seen).toEqual(['/_brust/client/for-1.js s={"n":0} t={"m":2}'])
+  expect(names()).toEqual(['click', 'load', 'success'])
+  // after the swap: only the new page's tags, once each
+  expect([...document.querySelectorAll('script[data-brust-store]')].map((e) => e.textContent)).toEqual(['{"n":1}', '{"m":2}'])
+})
+
 test('a 404 brust page is swapped in and ends with error { status: 404, swapped: true }', async () => {
   start()
   pages['/b'] = { status: 404, html: doc({ body: '<h1 id="nf">not found</h1>' }) }
@@ -817,6 +831,25 @@ test('view transitions: the first 8 new eager images are preloaded (srcset, size
   expect([hero.getAttribute('sizes'), hero.getAttribute('crossorigin'), hero.getAttribute('referrerpolicy')]).toEqual(['50vw', 'anonymous', 'no-referrer'])
   expect(at - t0).toBeGreaterThanOrEqual(95)
   expect(at - t0).toBeLessThan(400)
+  expect($('#m')!.textContent).toBe('b')
+  dec.mockRestore()
+  vt.restore()
+})
+
+test('view transitions: only the swapped level\'s images are preloaded; a kept layout\'s never take a slot', async () => {
+  const vt = transitions()
+  const decoded: string[] = []
+  const dec = spyOn(HTMLImageElement.prototype, 'decode').mockImplementation(function (this: HTMLImageElement) {
+    decoded.push(this.getAttribute('srcset') ?? new URL(this.src).pathname)
+    return Promise.resolve()
+  })
+  // a srcset-only image has no src to match on screen: in the kept layout it would look new
+  const side = Array.from({ length: 8 }, (_, i) => `<img srcset="/side-${i}.png 1x">`).join('')
+  const lay = (page: string, extra = '') => ({ body: `<header id="h">site</header>${L('D', '1', `<aside id="side">${side}</aside>${L('P', page, `<main id="m">${page}</main>${extra}`)}`)}`, tail: app('1', 'a').tail })
+  start(lay('a'))
+  pages['/b'] = { html: doc(lay('b', '<img src="/page.png">')) }
+  await bridge().navigate('/b')
+  expect(decoded).toEqual(['/page.png'])
   expect($('#m')!.textContent).toBe('b')
   dec.mockRestore()
   vt.restore()

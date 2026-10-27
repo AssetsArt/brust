@@ -1,7 +1,7 @@
 // SPA navigation (design): a qualifying link click, `navigate()` or
 // back/forward fetches the real HTML document and swaps it in place, so the page shows exactly what a full load of
 // that URL shows (§2). Anything that cannot be swapped is a full load. Events: `brust:nav:click|load|success|error`.
-import { applyHead, classicScripts, planHead, runScripts, swapBody } from './swap'
+import { applyHead, classicScripts, incomingImages, planHead, runScripts, swapBody } from './swap'
 
 type Trigger = 'link' | 'navigate' | 'popstate'
 export interface NavBridge { navigate(url: string, opts?: { replace?: boolean }): Promise<void>; clearCache(): void }
@@ -150,12 +150,14 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       const doc = /html/.test(res.type) ? new DOMParser().parseFromString(res.text, 'text/html') : null
       if (doc?.querySelector(NAV)?.getAttribute('data-brust-build') !== build) throw new Error(`not a brust page of this build`)
 
-      // §3 step 4: everything the new page needs before it is shown. The store tags first, ahead of the old ones (a
-      // store seeds from the first tag of its name; a live store never re-reads one), then the module scripts in
-      // document order (one at a time: the order they register in is the order the server wrote), then the stylesheets
-      // the head plan inserted, with `media="not all"`: loaded and parsed, applied to nothing until the swap.
+      // §3 step 4: everything the new page needs before it is shown. The store tags first, at the end of the body, after
+      // the old ones (a store seeds from the first tag of its name; a live store never re-reads one): an old-page island
+      // that hydrates while the modules load still finds its own page's tag, and a store new to this page, first read
+      // by one of its modules, finds the new one. The swap removes them with the old body tail. Then the module scripts
+      // in document order (one at a time: the order they register in is the order the server wrote), then the
+      // stylesheets the head plan inserted, with `media="not all"`: loaded and parsed, applied to nothing until the swap.
       const stores = Array.from(doc.querySelectorAll('script[data-brust-store]'), (s) => document.importNode(s, true))
-      document.head.append(...stores)
+      document.body.append(...stores)
       added.push(...stores)
       for (const s of doc.querySelectorAll('script[type=module][src]')) {
         if (!s.matches(NAV)) await load(new URL(s.getAttribute('src')!, url).href)
@@ -187,8 +189,9 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
         shown = location.href
         land(url, pos.get(pop!))
       }
-      // §10.3: the swap inside a view transition (a root cross-fade). Everything slow is done by now. The first 8 images of
-      // the new page that are not lazy and not on screen already are preloaded (the same candidate: srcset, sizes,
+      // §10.3: the swap inside a view transition (a root cross-fade). Everything slow is done by now. The first 8 images the
+      // swap puts in (the changed level's, so a kept layout's never take a slot) that are not lazy and not on screen
+      // already are preloaded (the same candidate: srcset, sizes,
       // crossorigin and referrerpolicy copied) and get 100 ms in all to decode, so none pops in after the fade. `swap`
       // runs once: a throw from it rejects updateCallbackDone and takes the error path; a throw from startViewTransition
       // itself is a direct swap.
@@ -199,7 +202,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
         const onScreen = new Set([...document.querySelectorAll('img')].flatMap((i) => [i.src, i.currentSrc]).filter(Boolean))
         await Promise.race([
           new Promise((r) => setTimeout(r, 100)),
-          Promise.all([...doc.querySelectorAll('img')]
+          Promise.all(incomingImages(doc)
             .filter((i) => i.getAttribute('loading') !== 'lazy' && (i.hasAttribute('src') || i.hasAttribute('srcset')) && !onScreen.has(abs(i.getAttribute('src'))))
             .slice(0, 8)
             .map((i) => {
