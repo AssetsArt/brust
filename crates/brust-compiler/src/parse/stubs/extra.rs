@@ -2,38 +2,6 @@
 //! helpers, the transpiler-cache dispatch, macros, URL. Spike-grade but exact ABI.
 use core::ffi::{c_int, c_void};
 
-#[repr(C)]
-struct SimdutfResult {
-    status: c_int,
-    count: usize,
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
-    p: *const u8,
-    len: usize,
-    out: *mut u16,
-) -> SimdutfResult {
-    // SAFETY: caller passes a readable (p, len) range and an output buffer sized for it.
-    let bytes = unsafe { core::slice::from_raw_parts(p, len) };
-    let Ok(s) = core::str::from_utf8(bytes) else {
-        return SimdutfResult {
-            status: 1,
-            count: 0,
-        };
-    };
-    let mut n = 0usize;
-    for u in s.encode_utf16() {
-        // SAFETY: simdutf's contract — `out` holds at least utf16_length_from_utf8(p, len) units.
-        unsafe { out.add(n).write(u) };
-        n += 1;
-    }
-    SimdutfResult {
-        status: 0,
-        count: n,
-    }
-}
-
 #[unsafe(no_mangle)]
 extern "C" fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64 {
     x.powf(y)
