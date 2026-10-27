@@ -71,7 +71,8 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
   }
 
   // ---- the progress bar (§10.2): only for a navigation still loading 150 ms after `load`; outside <body>, so no swap
-  // removes it, and its <style> is runtime-added, so the head reconcile keeps it ----
+  // removes it, and its <style> is runtime-added, so the head reconcile keeps it. The <style> goes first in the head
+  // and its rules are one attribute selector each, so an app rule on div[data-brust-bar] wins ----
   let bar: Element | undefined
   let css: HTMLStyleElement | undefined
   let wait: ReturnType<typeof setTimeout> | undefined
@@ -81,12 +82,12 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       if (!bar && html.getAttribute('data-brust-progress') !== 'off') wait = setTimeout(() => {
         if (!css) {
           ;(css = document.createElement('style')).textContent =
-            `div[${BAR}]{position:fixed;z-index:2147483647;top:0;left:0;width:100%;height:3px;pointer-events:none;background:var(--brust-progress-color,#2f7cf6);transform-origin:0;transform:scaleX(0);animation:brust-bar 8s cubic-bezier(.1,.7,.3,1) forwards}` +
-            `div[${BAR}=done]{animation:none;transform:none;opacity:0;transition:transform .2s,opacity .3s .2s}@keyframes brust-bar{to{transform:scaleX(.9)}}` +
-            `@media (prefers-reduced-motion:reduce){div[${BAR}]{animation:none;transform:scaleX(.9)}}`
+            `div[${BAR}]{position:fixed;z-index:2147483647;top:0;left:0;width:100%;height:var(--brust-progress-height,2px);pointer-events:none;background:var(--brust-progress-color,#2f7cf6);transform-origin:0;transform:scaleX(0);animation:brust-bar 8s cubic-bezier(.1,.8,.2,1) forwards}` +
+            `div[${BAR}=done]{animation:none;transform:none;opacity:0;transition:transform .2s,opacity .3s .2s}@keyframes brust-bar{to{transform:scaleX(.8)}}` +
+            `@media (prefers-reduced-motion:reduce){div[${BAR}]{animation:none;transform:scaleX(.8)}div[${BAR}=done]{transition:none}}`
           css.setAttribute(BAR, '')
         }
-        if (!css.isConnected) document.head.append(css)
+        if (!css.isConnected) document.head.prepend(css)
         html.append((bar = document.createElement('div')))
         bar.setAttribute(BAR, '')
       }, 150)

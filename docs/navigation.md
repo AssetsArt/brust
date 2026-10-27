@@ -85,11 +85,13 @@ While a navigation loads, `<html>` carries `data-brust-loading` (set at `load`, 
 
 ### The progress bar
 
-brust shows a thin line along the top of the viewport while the next page loads. It appears only when a navigation is still loading 150 ms after `load`, so a cached page or a fast server never shows it. It moves on its own toward about 90%, runs to the end at `success` or `error`, and fades out. It sits outside `<body>`, so no swap removes it.
+brust shows a 2 px line along the top of the viewport while the next page loads. It appears only when a navigation is still loading 150 ms after `load`, so a cached page or a fast server never shows it. It moves on its own toward about 80%, slowing as it goes, runs to the end at `success` or `error`, and fades out. It sits outside `<body>`, so no swap removes it.
 
 - Colour: set `--brust-progress-color` (default `#2f7cf6`), for example `:root { --brust-progress-color: var(--accent); }`.
-- With `prefers-reduced-motion: reduce` it shows without the movement and without the fade.
-- `<html data-brust-progress="off">` turns it off. The element is a `<div data-brust-bar>` on `<html>`, and its `<style data-brust-bar>` is added to the head the first time it shows, if you want to restyle it.
+- Height: set `--brust-progress-height` (default `2px`).
+- With `prefers-reduced-motion: reduce` it shows at 80% after the same 150 ms, without the movement, and goes at once at the end.
+- To restyle it, write a rule for `div[data-brust-bar]` in your CSS: the element is a `<div data-brust-bar>` on `<html>`, and the built-in rules are one attribute selector each, in a `<style data-brust-bar>` added first in the head, so your rule wins.
+- `<html data-brust-progress="off">` turns it off.
 
 ### A preloader of your own
 
