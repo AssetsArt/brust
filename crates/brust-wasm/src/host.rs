@@ -24,7 +24,7 @@ use wasm_bindgen_futures::JsFuture;
 
 use crate::bridge::{js_action, js_jobs, js_loader, js_string};
 use crate::capped::Capped;
-use crate::head::action_url;
+use crate::head::{action_request_headers, action_url};
 
 /// The `Extensions` mark of a `Built` action reply whose body is the app's JS `Response`, kept in
 /// `WasmHost::replies` until the adapter answers with it (R4).
@@ -188,19 +188,8 @@ impl Host for WasmHost {
     async fn action(&self, call: ActionCall<'_>) -> Result<ActionReply, CallError> {
         let js = |e| CallError::BadResponse(js_string(e));
         let headers = web_sys::Headers::new().map_err(js)?;
-        for (n, v) in call.headers {
-            if is_framing_header(n.as_str()) {
-                continue;
-            }
-            headers
-                .append(n.as_str(), &String::from_utf8_lossy(v.as_bytes()))
-                .map_err(js)?;
-        }
-        // R8: HTTP/2 carries the host in `:authority`, not a `host` header.
-        if !call.headers.contains_key(http::header::HOST)
-            && let Some(au) = call.authority
-        {
-            headers.append("host", au).map_err(js)?;
+        for (n, v) in action_request_headers(call.headers, call.authority) {
+            headers.append(&n, &v).map_err(js)?;
         }
         let init = web_sys::RequestInit::new();
         init.set_method(call.method);

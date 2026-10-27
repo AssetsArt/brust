@@ -1,0 +1,3 @@
+# F474: the prefix the Assets Art console uses (`/auth`).
+[actions]
+prefix = "/auth"

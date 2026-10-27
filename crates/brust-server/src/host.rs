@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use brust_core::body::{header_str, is_framing_header};
+use brust_core::body::{header_str, is_request_hop_header};
 use brust_core::config::ACTION_INLINE_BODY_BYTES;
 use brust_core::host::{ActionCall, ActionReply, CallError, Clock, Host, ReadErr, StaticRoot};
 use brust_core::plan::{PlanCell, PlanSeed, PlannedCall};
@@ -120,26 +120,7 @@ impl Host for NativeHost {
         };
         let full = call.full;
         let query = full.split_once('?').map_or("", |(_, q)| q);
-        let mut pairs: Vec<(Cow<str>, Cow<str>)> = call
-            .headers
-            .iter()
-            .filter(|(n, _)| {
-                !is_framing_header(n.as_str())
-                    && n.as_str() != brust_core::trace::REQUEST_TOKEN_HEADER
-            })
-            .map(|(n, v)| {
-                (
-                    Cow::Borrowed(n.as_str()),
-                    String::from_utf8_lossy(v.as_bytes()),
-                )
-            })
-            .collect();
-        // R8: HTTP/2 carries the host in `:authority`, not a `host` header.
-        if !call.headers.contains_key(http::header::HOST)
-            && let Some(au) = call.authority
-        {
-            pairs.push((Cow::Borrowed("host"), Cow::Owned(au.to_owned())));
-        }
+        let pairs = worker_request_headers(call.headers, call.authority);
         let req = FetchRequest {
             method: call.method,
             url: full,
@@ -257,6 +238,32 @@ async fn inside_root(root: &std::path::Path, file: &std::path::Path) -> bool {
 const DISCARD_AFTER_REFUSAL: usize = 1 << 20;
 const DISCARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// The headers an action's `Request` carries: the client's, less the hop-by-hop pair and the dev token (F474: the
+/// client's `Content-Length` stays), and `host` from `:authority` when HTTP/2 sent none (R8).
+fn worker_request_headers<'a>(
+    headers: &'a HeaderMap,
+    authority: Option<&str>,
+) -> Vec<(Cow<'a, str>, Cow<'a, str>)> {
+    let mut pairs: Vec<(Cow<str>, Cow<str>)> = headers
+        .iter()
+        .filter(|(n, _)| {
+            !is_request_hop_header(n.as_str()) && n.as_str() != brust_core::trace::REQUEST_TOKEN_HEADER
+        })
+        .map(|(n, v)| {
+            (
+                Cow::Borrowed(n.as_str()),
+                String::from_utf8_lossy(v.as_bytes()),
+            )
+        })
+        .collect();
+    if !headers.contains_key(http::header::HOST)
+        && let Some(au) = authority
+    {
+        pairs.push((Cow::Borrowed("host"), Cow::Owned(au.to_owned())));
+    }
+    pairs
+}
+
 /// The whole body, at most `cap` bytes. A declared Content-Length over the cap is refused before any byte is kept; a
 /// chunked body is refused the moment it passes the cap; the whole read must finish within `deadline`. A refused body
 /// is then drained (see [`DISCARD_AFTER_REFUSAL`]) before `TooLarge` is returned.
@@ -344,6 +351,40 @@ mod tests {
     }
 
     const T: std::time::Duration = std::time::Duration::from_secs(5);
+
+    fn names(p: &[(Cow<str>, Cow<str>)]) -> Vec<&str> {
+        p.iter().map(|(n, _)| n.as_ref()).collect()
+    }
+
+    #[test]
+    fn the_action_sees_the_clients_content_length() {
+        let mut h = HeaderMap::new();
+        h.insert("host", "a.test".parse().unwrap());
+        h.insert("content-type", "application/zip".parse().unwrap());
+        h.insert("content-length", "1024".parse().unwrap());
+        let p = worker_request_headers(&h, None);
+        let cl = p.iter().find(|(n, _)| n == "content-length").map(|(_, v)| v.as_ref());
+        assert_eq!(cl, Some("1024"));
+    }
+
+    #[test]
+    fn a_chunked_request_has_no_content_length_and_the_hop_pair_stops_here() {
+        let mut h = HeaderMap::new();
+        h.insert("host", "a.test".parse().unwrap());
+        h.insert("transfer-encoding", "chunked".parse().unwrap());
+        h.insert("connection", "keep-alive".parse().unwrap());
+        h.insert("x-brust-dev-token", "t".parse().unwrap());
+        let p = worker_request_headers(&h, None);
+        assert_eq!(names(&p), ["host"]);
+    }
+
+    #[test]
+    fn host_comes_from_the_authority_when_http2_sent_none() {
+        let h = HeaderMap::new();
+        let p = worker_request_headers(&h, Some("b.test"));
+        assert_eq!(names(&p), ["host"]);
+        assert_eq!(p[0].1, "b.test");
+    }
 
     #[tokio::test]
     async fn read_capped_gives_up_on_a_trickled_body() {
