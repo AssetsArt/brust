@@ -54,7 +54,7 @@ test('loader: first verdict wins and stops the chain; httpError throw is a verdi
   const r = makeHandlers({ leaves: leaves({ child: async () => redirect('/login', 303) }), jobs: {} })
   expect(await r.loader(ctx('r1'))).toEqual({ verdict: 'redirect', location: '/login', status: 303 })
   const e = makeHandlers({ leaves: leaves({ child: async () => httpError(403, 'no') }), jobs: {} })
-  expect(await e.loader(ctx('r1'))).toEqual({ verdict: 'httpError', status: 403, body: 'no' })
+  expect(await e.loader(ctx('r1'))).toEqual({ verdict: 'httpError', status: 403, body: 'no', contentType: 'text/plain; charset=utf-8' })
 })
 
 test('loader: a throw becomes {error}; unknown routeId too', async () => {
@@ -572,8 +572,56 @@ test('res.headers go on every verdict: notFound, redirect, httpError (with its o
     verdict: 'httpError',
     status: 429,
     body: 'slow',
+    contentType: 'text/plain; charset=utf-8',
     headers: [['cache-control', 'no-store'], ['retry-after', '5'], ['set-cookie', 'sid=; Max-Age=0']],
   })
+})
+
+test('F466: the httpError verdict carries the content type: asked, or the default for the body kind', async () => {
+  const one = async (thrown: () => never) => {
+    const h = makeHandlers({ leaves: leaves({ child: async () => thrown() }), jobs: {} })
+    return h.loader(ctx('r1'))
+  }
+  expect(await one(() => httpError(401, { error: 'unauthorized' }))).toEqual({
+    verdict: 'httpError',
+    status: 401,
+    body: '{"error":"unauthorized"}',
+    contentType: 'application/json; charset=utf-8',
+  })
+  expect(await one(() => httpError(400, '<b>no</b>', { contentType: 'text/html; charset=utf-8' }))).toMatchObject({
+    body: '<b>no</b>',
+    contentType: 'text/html; charset=utf-8',
+  })
+  expect(await one(() => httpError(422, { a: 1 }, { contentType: 'application/problem+json' }))).toMatchObject({
+    body: '{"a":1}',
+    contentType: 'application/problem+json',
+  })
+  expect(await one(() => httpError(503))).toMatchObject({ body: '', contentType: 'text/plain; charset=utf-8' })
+})
+
+test('F466: a refused name in httpError\'s own headers is dropped with the production warning, in dev too (no throw)', async () => {
+  for (const dev of [true, false]) {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {})
+    const h = makeHandlers({
+      leaves: leaves({
+        child: async () => httpError(429, 'slow', { headers: { 'Content-Type': 'text/evil', Location: '/x', 'Retry-After': '5' } }),
+      }),
+      jobs: {},
+      dev,
+    })
+    expect(await h.loader(ctx('r1'))).toEqual({
+      verdict: 'httpError',
+      status: 429,
+      body: 'slow',
+      contentType: 'text/plain; charset=utf-8',
+      headers: [['retry-after', '5']],
+    })
+    const msgs = warn.mock.calls.map((c) => String(c[0]))
+    expect(msgs).toHaveLength(2)
+    expect(msgs[0]).toContain('"Content-Type"')
+    expect(msgs[1]).toContain('redirect()')
+    warn.mockRestore()
+  }
 })
 
 test('res.headers refuses the server\'s names: a throw naming it in dev, a warning and a drop in production', async () => {
