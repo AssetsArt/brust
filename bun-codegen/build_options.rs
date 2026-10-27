@@ -2,7 +2,7 @@
 // time. `bun_core` does `include!(concat!(env!("BUN_CODEGEN_DIR"), "/build_options.rs"))`.
 // Keep SHA equal to the pinned rev in Cargo.toml (40 hex chars — const-eval slices it).
 #[allow(dead_code, unreachable_pub, unused)]
-pub const SHA: &str = "620b50f6abea3413a30235c5885bfe8cbffd592d";
+pub const SHA: &str = "38afee6c84fcf48c0edb2466aa4b27d287a59c30";
 #[allow(dead_code, unreachable_pub, unused)]
 pub const REPORTED_NODEJS_VERSION: &str = "v24.3.0";
 #[allow(dead_code, unreachable_pub, unused)]
@@ -16,7 +16,7 @@ pub const ENABLE_FUZZILLI: bool = false;
 #[allow(dead_code, unreachable_pub, unused)]
 pub const FALLBACK_HTML_VERSION: &str = "0000000000000000";
 #[allow(dead_code, unreachable_pub, unused)]
-pub const VERSION: crate::Version = crate::Version { major: 1, minor: 4, patch: 2 };
+pub const VERSION: crate::Version = crate::Version { major: 1, minor: 4, patch: 4 };
 #[allow(dead_code, unreachable_pub, unused)]
 pub const BASE_PATH: &[u8] = "/brust-v2".as_bytes();
 #[allow(dead_code, unreachable_pub, unused)]

@@ -9,14 +9,14 @@ license = "MIT"
 
 # Bun crates. One rev for all of them; bump with scripts/bun-codegen.ts (regenerate the codegen output) and re-apply vendor/bun_react_compiler/BRUST-PATCH.md.
 [workspace.dependencies]
-bun_js_parser      = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
-bun_ast            = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
-bun_js_printer     = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
-bun_react_compiler = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
-bun_alloc          = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
-bun_core           = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
-bun_collections    = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
-bun_threading      = { git = "https://github.com/oven-sh/bun", rev = "620b50f6abea3413a30235c5885bfe8cbffd592d" }
+bun_js_parser      = { git = "https://github.com/oven-sh/bun", rev = "38afee6c84fcf48c0edb2466aa4b27d287a59c30" } # bun-v1.4.4
+bun_ast            = { git = "https://github.com/oven-sh/bun", rev = "38afee6c84fcf48c0edb2466aa4b27d287a59c30" } # bun-v1.4.4
+bun_js_printer     = { git = "https://github.com/oven-sh/bun", rev = "38afee6c84fcf48c0edb2466aa4b27d287a59c30" } # bun-v1.4.4
+bun_react_compiler = { git = "https://github.com/oven-sh/bun", rev = "38afee6c84fcf48c0edb2466aa4b27d287a59c30" } # bun-v1.4.4
+bun_alloc          = { git = "https://github.com/oven-sh/bun", rev = "38afee6c84fcf48c0edb2466aa4b27d287a59c30" } # bun-v1.4.4
+bun_core           = { git = "https://github.com/oven-sh/bun", rev = "38afee6c84fcf48c0edb2466aa4b27d287a59c30" } # bun-v1.4.4
+bun_collections    = { git = "https://github.com/oven-sh/bun", rev = "38afee6c84fcf48c0edb2466aa4b27d287a59c30" } # bun-v1.4.4
+bun_threading      = { git = "https://github.com/oven-sh/bun", rev = "38afee6c84fcf48c0edb2466aa4b27d287a59c30" } # bun-v1.4.4
 # Third-party versions the vendored Bun crate inherits (copied from Bun's workspace at the rev).
 enumset  = "1"
 smallvec = "1"
