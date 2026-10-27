@@ -355,6 +355,51 @@ Types come from the chained Elysia instance, not from what a handler does at run
 - A handler that returns a `Response` gives `data` an untyped body. A typed answer is a returned value plus `status(code, body)` (or `problem()`): the client then narrows `error.status` and `error.value`.
 - Cookies work on a typed answer. An action may set several cookies (the `cookie` API, or `set.headers['set-cookie'] = [...]`) and return `status(401, { error: 'unauthorized' })`: every `Set-Cookie` header reaches the client, and `error.value` keeps its type.
 
+The whole path in one example: a chained plugin with `t` schemas for the body and for each response, a cookie set on the answer, a typed 401, `app.use(plugin)`, and a client with middleware that still narrows `data` and `error.value`. The schemas are explained in [Validation](#4-validation) and the status answers in [Errors](#5-errors).
+
+```ts
+// actions/auth.ts
+import { Elysia, status, t } from 'elysia'
+
+export const auth = new Elysia().post(
+  '/login',
+  {
+    body: t.Object({ user: t.String(), pass: t.String() }),
+    cookie: t.Cookie({ sid: t.Optional(t.String()), csrf: t.Optional(t.String()) }),
+    response: {
+      200: t.Object({ user: t.String() }),
+      401: t.Object({ error: t.Literal('bad credentials') }),
+    },
+  },
+  async ({ body, cookie }) => {
+    if (!(await checkLogin(body.user, body.pass))) return status(401, { error: 'bad credentials' })
+    cookie.sid.set({ value: newSession(body.user), httpOnly: true, path: '/' })
+    cookie.csrf.set({ value: newCsrf(), path: '/' })
+    return { user: body.user }
+  },
+)
+
+// actions/index.ts
+import { brust } from '@brust/core/elysia'
+import { Elysia } from 'elysia'
+import { auth } from './auth'
+
+const app = new Elysia({ adapter: brust() }).use(auth)
+export type App = typeof app
+
+// api.ts: `renew` is the middleware from the recipe above
+import { client } from '@brust/core/client'
+import type { App } from './actions'
+
+const api = client<App>({ middleware: [renew] })
+
+export async function login(user: string, pass: string) {
+  const r = await api.login.post({ user, pass }) // a wrong body is a type error
+  if (r.error?.status === 401) return r.error.value.error // 'bad credentials'
+  return r.data?.user // string | undefined
+}
+```
+
 ### Differences from the 0.1.x client
 
 The 0.1.x `runtime/treaty.ts` was a hand-made client. This one is Eden's, and its semantics are not shimmed back to the old ones:

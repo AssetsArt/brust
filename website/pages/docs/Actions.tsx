@@ -17,7 +17,7 @@ import Lead from '../../components/docs/Lead'
 
 export interface ActionsData {
   toc: TocItem[]
-  blocks: Record<'install' | 'toml' | 'app' | 'client' | 'errors' | 'apiToml' | 'apiBuild' | 'webToml' | 'injected' | 'cookie' | 'middleware', CodeBlockData>
+  blocks: Record<'install' | 'toml' | 'app' | 'client' | 'errors' | 'apiToml' | 'apiBuild' | 'webToml' | 'injected' | 'cookie' | 'middleware' | 'typed', CodeBlockData>
   candidates: { id: number; name: string; sprite: string }[]
 }
 
@@ -121,6 +121,48 @@ const org: ActionMiddleware = (req, next) => {
 
 export const api = client<App>({ middleware: [renew, org] })`
 
+// source: docs/actions.md §6 "Typed routes" (F471); compiled and run by packages/brust/test/actions-typed-routes-doc.test.ts
+const TYPED = `// actions/auth.ts
+import { Elysia, status, t } from 'elysia'
+
+export const auth = new Elysia().post(
+  '/login',
+  {
+    body: t.Object({ user: t.String(), pass: t.String() }),
+    cookie: t.Cookie({ sid: t.Optional(t.String()), csrf: t.Optional(t.String()) }),
+    response: {
+      200: t.Object({ user: t.String() }),
+      401: t.Object({ error: t.Literal('bad credentials') }),
+    },
+  },
+  async ({ body, cookie }) => {
+    if (!(await checkLogin(body.user, body.pass))) return status(401, { error: 'bad credentials' })
+    cookie.sid.set({ value: newSession(body.user), httpOnly: true, path: '/' })
+    cookie.csrf.set({ value: newCsrf(), path: '/' })
+    return { user: body.user }
+  },
+)
+
+// actions/index.ts
+import { brust } from '@brust/core/elysia'
+import { Elysia } from 'elysia'
+import { auth } from './auth'
+
+const app = new Elysia({ adapter: brust() }).use(auth)
+export type App = typeof app
+
+// api.ts: \`renew\` is the middleware from the recipe above
+import { client } from '@brust/core/client'
+import type { App } from './actions'
+
+const api = client<App>({ middleware: [renew] })
+
+export async function login(user: string, pass: string) {
+  const r = await api.login.post({ user, pass }) // a wrong body is a type error
+  if (r.error?.status === 401) return r.error.value.error // 'bad credentials'
+  return r.data?.user // string | undefined
+}`
+
 const PICK = [25, 1, 4, 7, 133, 143, 150, 94]
 
 export async function actionsLoader(): Promise<ActionsData> {
@@ -146,6 +188,7 @@ export async function actionsLoader(): Promise<ActionsData> {
       injected: codeBlock({ lang: 'text', file: 'every page', code: INJECTED }),
       cookie: codeBlock({ lang: 'ts', file: 'api/actions.ts', code: COOKIE }),
       middleware: codeBlock({ lang: 'ts', file: 'api.ts', code: MIDDLEWARE }),
+      typed: codeBlock({ lang: 'ts', file: 'auth.ts, index.ts, api.ts', code: TYPED }),
     },
     candidates: PICK.map((id) => ({ id, name: displayName(byId(id)!.name), sprite: spriteUrl(id) })),
   }
@@ -196,6 +239,10 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         <li>A handler that returns a <code>Response</code> gives <code>data</code> an untyped body. Return a value, or <code>status(code, body)</code> / <code>problem()</code>, and the client narrows <code>error.status</code> and <code>error.value</code>.</li>
         <li>An action may set several cookies and return a typed <code>status(401, …)</code>: every <code>Set-Cookie</code> header reaches the client.</li>
       </ul>
+      <p>
+        The whole path in one example: a chained plugin with <code>t</code> schemas for the body and each response, a cookie set on the answer, a typed 401, <code>app.use(plugin)</code>, and a client with middleware that still narrows <code>data</code> and <code>error.value</code>. The schemas are Elysia's (see Validation in <code>docs/actions.md</code>); the status answers are covered in <a href="#errors">Errors and limits</a>.
+      </p>
+      <CodeBlock code={blocks.typed.code} lang={blocks.typed.lang} file={blocks.typed.file} html={blocks.typed.html} />
 
       <Step n={4} id="try" title="Try it" />
       <p>
