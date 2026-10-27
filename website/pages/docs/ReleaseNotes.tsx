@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-30', title: '2.0.0-alpha.30' },
       { id: 'alpha-29', title: '2.0.0-alpha.29' },
       { id: 'alpha-28', title: '2.0.0-alpha.28' },
       { id: 'alpha-27', title: '2.0.0-alpha.27' },
@@ -52,6 +53,26 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-30">2.0.0-alpha.30 · 27 October 2026</h2>
+      {/* source: #411 (F472) */}
+      <p>A maintenance release: the compiler moves to the Bun 1.4.4 release. Nothing changes for apps, and nothing breaks.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: #411 (F472) */}
+        <li>
+          <strong>The compiler builds on Bun&apos;s crates from the <code>bun-v1.4.4</code> release (#411).</strong> The parser and the React Compiler come from that release, in place of a Bun main snapshot from 8 October. CI and the release build run on Bun 1.4.4, and the templates from <code>create-app</code> pin <code>@types/bun</code> <code>^1.4.4</code>. Bun 1.4.4 is the version to use for apps.
+        </li>
+      </ul>
+
+      <h3>Fixes</h3>
+      <ul>
+        {/* source: #411 (F472); the lazy-import fixture */}
+        <li>
+          <strong>The diagnostic for a dynamic <code>import()</code> that the compiler cannot lazy-load now points at the <code>import</code> keyword.</strong> Its column moved, taken from upstream; the compiled output is the same.
+        </li>
+      </ul>
 
       <h2 id="alpha-29">2.0.0-alpha.29 · 27 October 2026</h2>
       {/* source: the pull requests of the alpha.29 batch: #409 (F471), #407 (F470), #404 (F468), #403 (F469), #406 (F466, F467), #405 (F462, F463); behaviour in docs/actions.md, docs/navigation.md, docs/cache-adapters.md */}
