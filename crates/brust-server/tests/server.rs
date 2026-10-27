@@ -5,6 +5,7 @@ mod common;
 use brust_server::InvalidateArgs;
 use common::*;
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 fn job_ids(fake: &FakeBun) -> Vec<String> {
     fake.last_jobs().expect("a jobs call")["jobs"]
@@ -67,6 +68,60 @@ fn route_css_is_linked_after_head_on_an_all_static_page() {
         h.get("cache-control").unwrap(),
         "public, max-age=31536000, immutable"
     );
+}
+
+/// F468: a `generator` makes `X-Powered-By` AND one `<meta name="generator">` in every full document, from the same
+/// string; `None` makes neither. Fresh render, cache HIT, a not-found verdict page, and a non-document all agree.
+#[test]
+fn generator_stamps_the_header_and_one_meta_per_document() {
+    const META: &str = "<meta name=\"generator\" content=\"brust/9.9.9-test\">";
+    let boot_gen = |generator: Option<&str>| {
+        let f = FakeBun::new(
+            |req| {
+                if req["params"]["name"] == "nothing" {
+                    json!({"verdict": "notFound", "data": {"pokemon": {"name": "nothing", "stats": {}, "moves": []}}})
+                } else {
+                    default_loader(req)
+                }
+            },
+            default_jobs,
+        );
+        let mut cfg = config(&fx());
+        cfg.generator = generator.map(str::to_string);
+        let s = brust_server::start(cfg).expect("start");
+        let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&f))));
+        f.bind(&s, id);
+        s
+    };
+    let s = boot_gen(Some("brust/9.9.9-test"));
+    for path in [
+        "/",
+        "/pokemon/pikachu",
+        "/pokemon/pikachu",
+        "/pokemon/nothing",
+    ] {
+        let (_, h, body) = get(&s, path, &[]);
+        assert_eq!(h.get("x-powered-by").unwrap(), "brust/9.9.9-test", "{path}");
+        assert_eq!(
+            body.matches("name=\"generator\"").count(),
+            1,
+            "{path}: {body}"
+        );
+        assert!(body.contains(&format!("{META}</head>")), "{path}: {body}");
+    }
+    // The second /pokemon/pikachu was a HIT: the stored document carries the meta too.
+    let (_, h, _) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(cache_hdr(&h), Some("HIT"));
+    // Not a document: no meta (and the header is there as before).
+    let (_, h, ping) = get(&s, "/ping", &[]);
+    assert_eq!(h.get("x-powered-by").unwrap(), "brust/9.9.9-test");
+    assert!(!ping.contains("generator"), "{ping}");
+
+    let s = boot_gen(None);
+    let (st, h, body) = get(&s, "/", &[]);
+    assert_eq!(st, 200);
+    assert!(h.get("x-powered-by").is_none());
+    assert!(!body.contains("generator"), "{body}");
 }
 
 /// L19 review N1: the font and image families a stylesheet's `url()` may reference are served from
@@ -735,8 +790,10 @@ fn loader_header_pairs_on_every_outcome() {
     assert_eq!(h.get("content-type").unwrap(), "text/html; charset=utf-8");
 }
 
-/// F464: `Set-Cookie`, a `Cache-Control` with `no-store` / `private` (any case, any position) or `Vary: *`
-/// keeps a page out of the cache; a public `Cache-Control` does not.
+/// F464 + F467: `Set-Cookie`, a `Cache-Control` with `no-store` / `private` (any case, any position) or a `Vary`
+/// naming any field but `Accept-Encoding` (`*` included) keeps a page out of the cache; a public `Cache-Control`
+/// and `Vary: Accept-Encoding` do not. The cache key carries no request header, so `Vary: Cookie` stored once
+/// would be served to everyone.
 #[test]
 fn loader_headers_that_keep_a_page_out_of_the_cache() {
     let cases = [
@@ -745,11 +802,31 @@ fn loader_headers_that_keep_a_page_out_of_the_cache() {
         (json!([["cache-control", "max-age=0, private"]]), false),
         (json!([["cache-control", "private=\"x-a\""]]), false),
         (json!([["vary", "Accept, *"]]), false),
-        (json!({"set-cookie": "legacy=1"}), false),
+        (json!([["vary", "*"]]), false),
+        (json!([["vary", "Cookie"]]), false),
+        (json!([["vary", "cookie"]]), false),
+        (json!([["vary", "Authorization"]]), false),
+        (json!([["vary", "Accept-Language"]]), false),
+        (json!([["vary", "Accept-Encoding, Cookie"]]), false),
         (
-            json!([["cache-control", "public, max-age=60"], ["vary", "Accept"]]),
+            json!([["vary", "Accept-Encoding"], ["vary", "Cookie"]]),
+            false,
+        ),
+        (json!({"set-cookie": "legacy=1"}), false),
+        (json!([["vary", "Accept-Encoding"]]), true),
+        (json!([["vary", "accept-encoding"]]), true),
+        (
+            json!([["vary", " Accept-Encoding , accept-encoding"]]),
             true,
         ),
+        (
+            json!([
+                ["cache-control", "public, max-age=60"],
+                ["vary", "Accept-Encoding"]
+            ]),
+            true,
+        ),
+        (json!([["cache-control", "public, max-age=60"]]), true),
     ];
     for (headers, stored) in cases {
         let hv = headers.clone();
@@ -767,6 +844,100 @@ fn loader_headers_that_keep_a_page_out_of_the_cache() {
         assert_eq!(cache_hdr(&h1), Some("MISS"), "{headers}");
         assert_eq!(cache_hdr(&h2) == Some("HIT"), stored, "{headers}");
         assert_eq!(f.counts().0, if stored { 1 } else { 2 }, "{headers}");
+    }
+}
+
+/// F467: the decision is made on the loader's own `Vary`, before brust appends `Vary: Accept-Encoding` to a
+/// gzipped page. A gzip client's page (which carries that token) is stored; with a loader `Vary: Cookie` the same
+/// page is not stored, and its response keeps both fields.
+#[test]
+fn vary_is_decided_on_the_loaders_headers_not_the_servers() {
+    let dist = sized_dist(20 * 1024);
+    let gz = [("accept-encoding", "gzip")];
+    let f = fake();
+    let s = boot_in(f.clone(), dist.path());
+    let (_, h1, _) = request_raw(&s, "GET", "/sized", &gz);
+    let (_, h2, _) = request_raw(&s, "GET", "/sized", &gz);
+    assert_eq!(hdr(&h1, "content-encoding"), Some("gzip"));
+    assert_eq!(hdr(&h1, "vary"), Some("Accept-Encoding"));
+    assert_eq!(cache_hdr(&h1), Some("MISS"));
+    assert_eq!(
+        cache_hdr(&h2),
+        Some("HIT"),
+        "brust's own Vary does not keep a page out"
+    );
+    let f = FakeBun::new(
+        |req| {
+            let mut v = default_loader(req);
+            v["headers"] = json!([["vary", "Cookie"]]);
+            v
+        },
+        default_jobs,
+    );
+    let s = boot_in(f.clone(), dist.path());
+    for _ in 0..2 {
+        let (_, h, _) = request_raw(&s, "GET", "/sized", &gz);
+        assert_eq!(cache_hdr(&h), Some("MISS"));
+        assert_eq!(hdr(&h, "content-encoding"), Some("gzip"));
+        let vary: Vec<String> = h
+            .get_all("vary")
+            .iter()
+            .map(|v| v.to_str().unwrap().to_ascii_lowercase())
+            .collect();
+        let all = vary.join(",");
+        assert!(
+            all.contains("cookie") && all.contains("accept-encoding"),
+            "{vary:?}"
+        );
+    }
+    assert_eq!(f.counts().0, 2);
+}
+
+/// F466: an `httpError` answers with the content type the loader asked for. The worker names one for every
+/// verdict; the older wire (no `contentType`) and an unusable value answer `text/plain; charset=utf-8`. The
+/// loader's own `Content-Type` header is still refused.
+#[test]
+fn http_error_content_type_reaches_the_wire() {
+    let f = FakeBun::new(
+        |req| match req["params"]["name"].as_str() {
+            Some("json") => {
+                json!({"verdict": "httpError", "status": 401, "body": "{\"error\":\"unauthorized\"}", "contentType": "application/json; charset=utf-8"})
+            }
+            Some("html") => {
+                json!({"verdict": "httpError", "status": 400, "body": "<b>no</b>", "contentType": "text/html; charset=utf-8", "headers": [["content-type", "text/evil"], ["x-ok", "1"]]})
+            }
+            Some("old") => json!({"verdict": "httpError", "status": 418, "body": "teapot"}),
+            Some("bad") => {
+                json!({"verdict": "httpError", "status": 418, "body": "teapot", "contentType": "a\u{1}b"})
+            }
+            Some("empty") => {
+                json!({"verdict": "httpError", "status": 418, "body": "teapot", "contentType": " "})
+            }
+            _ => default_loader(req),
+        },
+        default_jobs,
+    );
+    let s = boot(f.clone());
+    let ct = |h: &http::HeaderMap| {
+        h.get("content-type")
+            .map(|v| v.to_str().unwrap().to_string())
+    };
+    let (st, h, body) = get(&s, "/pokemon/json", &[]);
+    assert_eq!((st, body.as_str()), (401, "{\"error\":\"unauthorized\"}"));
+    assert_eq!(ct(&h).as_deref(), Some("application/json; charset=utf-8"));
+    let (st, h, body) = get(&s, "/pokemon/html", &[]);
+    assert_eq!((st, body.as_str()), (400, "<b>no</b>"));
+    assert_eq!(ct(&h).as_deref(), Some("text/html; charset=utf-8"));
+    assert_eq!(h.get_all("content-type").iter().count(), 1);
+    assert_eq!(h.get("x-ok").unwrap(), "1");
+    for name in ["old", "bad", "empty"] {
+        let (st, h, body) = get(&s, &format!("/pokemon/{name}"), &[]);
+        assert_eq!((st, body.as_str()), (418, "teapot"), "{name}");
+        assert_eq!(
+            ct(&h).as_deref(),
+            Some("text/plain; charset=utf-8"),
+            "{name}"
+        );
     }
 }
 

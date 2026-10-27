@@ -52,7 +52,8 @@ const observe = (html: string) =>
       const sig = (e: Element) => `${e.localName}${[...e.attributes].map((a) => `[${a.name.toLowerCase()}=${a.value}]`).join('')}${e.localName === 'title' ? `:${e.textContent}` : ''}`
       return {
         title: document.title,
-        head: [...document.head.children].map(sig),
+        head: [...document.head.children].filter((e) => !e.matches('meta[name=generator]')).map(sig),
+        generators: document.head.querySelectorAll('meta[name=generator]').length,
         bodyHoistables: [...document.body.querySelectorAll('title, meta, link')].filter((e) => !e.closest('svg')).map(sig),
         svgTitle: document.body.querySelector('svg title')?.textContent ?? null,
       }
@@ -68,8 +69,10 @@ for (const [name, path] of Object.entries(routes)) {
     const file = path === '/' ? 'index.html' : `${path.slice(1)}.html`
     const statik = await observe(readFileSync(join(app, 'dist/static', file), 'utf8'))
     expect(react.bodyHoistables).toEqual([])
-    expect(served).toEqual(react)
-    expect(statik).toEqual(react)
+    // F468: brust adds exactly one generator meta to the head, which React's own render has no counterpart for
+    expect([served.generators, statik.generators, react.generators]).toEqual([1, 1, 0])
+    expect({ ...served, generators: 0 }).toEqual(react)
+    expect({ ...statik, generators: 0 }).toEqual(react)
   }, 60_000)
 }
 

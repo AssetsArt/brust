@@ -273,6 +273,48 @@ test('a live store keeps its client value; a store first used on B is seeded fro
   await close()
 })
 
+test('F462: an old-page island hydrating while the next page\'s modules load renders its own page\'s seed (no #418)', async () => {
+  const ctx = await browser.newContext()
+  const page = await ctx.newPage()
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(String(e)))
+  page.on('console', (m) => { if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) errors.push(m.text()) })
+  // islands hydrate only when the test says so
+  await page.addInitScript(() => {
+    const w = window as unknown as { __idle: (() => void)[]; requestIdleCallback: (cb: () => void) => number }
+    w.__idle = []
+    w.requestIdleCallback = (cb) => w.__idle.push(cb)
+  })
+  const flush = () => page.evaluate(() => { const w = window as unknown as { __idle: (() => void)[] }; for (const cb of w.__idle.splice(0)) cb() })
+  // the next page's modules wait for the test: the window between its seed tags and the swap
+  let hold = false
+  let held!: () => void
+  const gate = new Promise<void>((r) => (held = r))
+  let asked!: () => void
+  const waiting = new Promise<void>((r) => (asked = r))
+  await page.route('**/_brust/**', async (r) => {
+    if (hold && r.request().resourceType() === 'script') { asked(); await gate }
+    await r.continue()
+  })
+  await page.goto(`${base}/mood-a`)
+  await page.waitForFunction(() => (window as unknown as { __idle: unknown[] }).__idle.length > 0)
+  expect(await page.textContent('#mood-a')).toBe('1')
+  hold = true
+  const done = page.evaluate(() => (globalThis as unknown as Record<symbol, { navigate(u: string): Promise<void> }>)[Symbol.for('brust.nav')]!.navigate('/mood-b'))
+  await waiting
+  await flush()
+  await page.waitForFunction(() => document.querySelector('brust-island[data-hydrated] #mood-a'))
+  expect(await page.textContent('#mood-a')).toBe('1')
+  held()
+  await done
+  expect(await page.textContent('#mood-b')).toBe('2')
+  await flush()
+  await page.waitForFunction(() => document.querySelector('brust-island[data-hydrated] #mood-b'))
+  await page.waitForTimeout(100)
+  expect(errors).toEqual([])
+  await ctx.close()
+})
+
 // ---- item 8: scroll ----------------------------------------------------------------------------------------------------
 
 test('back restores the scroll position; a #hash link scrolls to its target', async () => {
@@ -441,11 +483,43 @@ test('progress bar: shown after 150 ms on a 500 ms page, done at success; a cach
   await close()
 })
 
-test('progress bar: with reduced motion it shows without the trickle animation', async () => {
+test('progress bar: with reduced motion it shows at 80% without the trickle animation, and the finish is instant', async () => {
   const { page, close } = await open('/', base, { reducedMotion: 'reduce' })
-  const anim = page.waitForFunction(() => { const b = document.querySelector('div[data-brust-bar]'); return b && getComputedStyle(b).animationName })
+  const seen = page.waitForFunction(() => {
+    const b = document.querySelector('div[data-brust-bar]')
+    return b && { anim: getComputedStyle(b).animationName, transform: getComputedStyle(b).transform }
+  })
   await go(page, '/slow')
-  expect(await (await anim).jsonValue()).toBe('none')
+  expect(await (await seen).jsonValue()).toEqual({ anim: 'none', transform: 'matrix(0.8, 0, 0, 1, 0, 0)' })
+  await close()
+})
+
+test('progress bar: 2px by default; --brust-progress-height sets it', async () => {
+  const { page, close } = await open('/')
+  const style = (url: string) => {
+    const s = page.waitForFunction(() => {
+      const b = document.querySelector('div[data-brust-bar]:not([data-brust-bar=done])')
+      return b && { height: getComputedStyle(b).height, color: getComputedStyle(b).backgroundColor }
+    })
+    return go(page, url).then(async () => (await s).jsonValue())
+  }
+  expect(await style('/slow?1')).toEqual({ height: '2px', color: 'rgb(47, 124, 246)' })
+  await page.waitForFunction(() => !document.querySelector('div[data-brust-bar]'))
+  await page.evaluate(() => document.documentElement.style.setProperty('--brust-progress-height', '5px'))
+  expect(await style('/slow?2')).toEqual({ height: '5px', color: 'rgb(47, 124, 246)' })
+  await close()
+})
+
+test('progress bar: an app rule on div[data-brust-bar] wins, though the built-in <style> is added after the app CSS', async () => {
+  const { page, close } = await open('/')
+  // the app's own rule, same specificity as the built-in one, in the head before the bar ever shows
+  await page.evaluate(() => document.head.append(Object.assign(document.createElement('style'), { textContent: 'div[data-brust-bar]{height:4px;background:rgb(255,0,0)}' })))
+  const s = page.waitForFunction(() => {
+    const b = document.querySelector('div[data-brust-bar]:not([data-brust-bar=done])')
+    return b && { height: getComputedStyle(b).height, color: getComputedStyle(b).backgroundColor }
+  })
+  await go(page, '/slow?3')
+  expect(await (await s).jsonValue()).toEqual({ height: '4px', color: 'rgb(255, 0, 0)' })
   await close()
 })
 

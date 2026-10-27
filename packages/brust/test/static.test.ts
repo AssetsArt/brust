@@ -226,8 +226,25 @@ test('R9.3: a dynamic route without params fails; no * route writes a default 40
   const n = build(no404)
   expect([n.code, n.stderr]).toEqual([0, ''])
   expect(n.stdout).toContain("[brust] warning ssg-404 no '*' route: wrote a default 404.html")
-  expect(readFileSync(join(no404, 'dist/static/404.html'), 'utf8')).toContain('<h1>404 Not Found</h1>')
+  const d404 = readFileSync(join(no404, 'dist/static/404.html'), 'utf8')
+  expect(d404).toContain('<h1>404 Not Found</h1>')
+  // F468: the default 404 is a document brust wrote, so it carries the generator meta too (the _headers value)
+  const gen = /X-Powered-By: (brust\/\S+)/.exec(readFileSync(join(no404, 'dist/static/_headers'), 'utf8'))?.[1]
+  expect(gen).toBeTruthy()
+  expect(d404.match(/<meta name="generator"[^>]*>/g)).toEqual([`<meta name="generator" content="${gen}">`])
 }, 120_000)
+
+test('F468: every static page carries one <meta name="generator"> equal to the _headers X-Powered-By', () => {
+  const gen = /X-Powered-By: (brust\/\S+)/.exec(readFileSync(join(out, '_headers'), 'utf8'))?.[1]
+  expect(gen).toMatch(/^brust\/\d/)
+  const pages = (readdirSync(out, { recursive: true }) as string[]).filter((f) => f.endsWith('.html') && !f.startsWith('_brust') && !f.startsWith('public'))
+  expect(pages).toContain('index.html')
+  expect(pages).toContain('404.html')
+  for (const f of pages) {
+    const metas = readFileSync(join(out, f), 'utf8').match(/<meta\b[^>]*\bname="generator"[^>]*>/g) ?? []
+    expect(metas, f).toEqual([`<meta name="generator" content="${gen}">`])
+  }
+})
 
 test('W1d PR 3: a page whose component throws (an early-return chain ending in `throw new Error`) fails the static build, naming the path and not the message', () => {
   const dir = variant('throws', (d) => {

@@ -199,6 +199,9 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
         <li>
           Only a <strong>200</strong> without <code>Set-Cookie</code> is stored, so a <code>notFound()</code> page is rendered every time.
         </li>
+        <li>
+          A response whose <code>Vary</code> names any field other than <code>Accept-Encoding</code> is not stored either: the key holds no request header, so a page that varies on <code>Cookie</code> or <code>Accept-Language</code> would be served to everyone. A loader's <code>Cache-Control</code> of <code>no-store</code> or <code>private</code> also keeps a page out.
+        </li>
         <li>Cookies do not bypass by themselves. A page that paints per-user data must not be cached, or must use a bypass or prefix on that cookie.</li>
       </ul>
       {/* source: crates/brust-core/src/pipeline.rs:1120-1128 (query pairs are decoded for the expressions) and :1108-1116 (cookies and headers are taken as sent); key_expr.rs:12-14 (path params arrive decoded) */}
