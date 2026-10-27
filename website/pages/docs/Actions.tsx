@@ -161,6 +161,12 @@ export default function Actions({ blocks, candidates }: ActionsData) {
       <ul>
         <li>An unknown path or a wrong method under the prefix is a 404 problem+json from Elysia; there is no 405.</li>
         <li>Outside the prefix, a non-GET request to a page is a 405 from Rust.</li>
+        {/* source: crates/brust-core/src/pipeline.rs (routed_under), packages/brust/src/build/index.ts (actions-prefix), packages/brust/src/actions/load.ts (shadowedGetActions) */}
+        <li>
+          A page or loader route may sit under the prefix: a <code>GET</code> or <code>HEAD</code> it matches is the route's, and everything else there stays the app's (any other method, a <code>GET</code> no route
+          under the prefix matches; the <code>*</code> catch-all never counts). So an OAuth <code>GET</code> callback at <code>/auth/{'{provider}'}/callback</code> can be a loader that sets a cookie and redirects while Apple's{' '}
+          <code>form_post</code> to the same path stays an action. A <code>GET</code> action shadowed this way is named in a boot warning. The build refuses a route equal to the prefix and a <code>{'{*rest}'}</code> route under it.
+        </li>
         <li>
           Cross-site requests are rejected by default (<code>cross_site = "reject"</code>). Behind a proxy, pass <code>Host</code> through or set <code>X-Forwarded-Host</code>, or same-origin POSTs get a 403.
         </li>

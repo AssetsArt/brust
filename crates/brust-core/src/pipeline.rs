@@ -64,6 +64,16 @@ impl std::fmt::Display for CacheOutcome {
     }
 }
 
+/// F470: `full` matches a page or loader route (not the catch-all) whose own pattern lies under the actions prefix.
+fn routed_under<H: Host>(s: &Core<H>, a: &crate::config::ActionsConfig, full: &str) -> bool {
+    s.routes.match_route(full).is_some_and(|m| {
+        !m.not_found && {
+            let route = &s.manifest.routes[s.routes.route_index(m.route_id)];
+            !route.catch_all && a.is_under(&route.pattern)
+        }
+    })
+}
+
 /// What the per-request log line needs from the page branch.
 pub(crate) struct PageMeta {
     /// manifest route index (logged as its id; "-" before a match)
@@ -96,12 +106,16 @@ pub async fn handle<H: Host>(
         return c.preflight_response(acao, headers);
     }
 
-    // ----- actions (M3-F E3): the whole prefix subtree, any method, before the method gate and the
-    // `/_brust/` static root (the default prefix lives under it). The body is read ONLY here.
-    if let Some(a) = &s.actions
-        && a.is_under(&crate::routing::routes::normalize_request_path(path_only))
-    {
-        return crate::actions::handle(s, a, &rq, incoming, method == "HEAD").await;
+    // ----- actions (M3-F E3): the prefix subtree, before the method gate and the `/_brust/` static root (the
+    // default prefix lives under it). The body is read ONLY here. F470: a GET/HEAD that a route declared under the
+    // prefix matches (`/auth/{provider}/callback`) is that page's; the catch-all never counts, and a route declared
+    // outside the prefix (`/{a}/{b}`) does not take a path of the actions app.
+    if let Some(a) = &s.actions {
+        let norm = crate::routing::routes::normalize_request_path(path_only);
+        let read = method == "GET" || method == "HEAD";
+        if a.is_under(&norm) && !(read && routed_under(s, a, full)) {
+            return crate::actions::handle(s, a, &rq, incoming, method == "HEAD").await;
+        }
     }
 
     // L16 (R16.3): an actions-only deployment has no pages; its own paths stay (`/ping`, stats).
