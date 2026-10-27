@@ -247,9 +247,9 @@
       "class": "Fallback",
       "rule": "dynamic-import",
       "message": "dynamic import() is not supported natively; the component renders as a React island",
-      "loc": 71,
+      "loc": 64,
       "line": 2,
-      "col": 33,
+      "col": 26,
       "remediation": "import the module statically or keep the lazy component in a React-tier parent"
     },
     {

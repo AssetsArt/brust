@@ -28,7 +28,7 @@ jobs:
         with: { toolchain: nightly-2026-09-15, components: "rust-src, rustfmt, clippy" }
       - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "canary" }
+        with: { bun-version: "1.4.4" }
       - uses: actions/cache@v4
         with:
           path: |
@@ -83,7 +83,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "canary" }
+        with: { bun-version: "1.4.4" }
       # worker-build's version has ONE source: npm/core-cf/package.json brust.workerBuild (core-cf-check --versions pins it to Cargo.toml).
       - id: wb
         run: echo "v=$(bun -e "console.log(require('./npm/core-cf/package.json').brust.workerBuild)")" >> "$GITHUB_OUTPUT"
@@ -126,7 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "canary" }
+        with: { bun-version: "1.4.4" }
       - run: bun install --frozen-lockfile
       - run: cd packages/runtime-dom && bun run typecheck
       - run: cd packages/runtime-dom && bun test
@@ -144,7 +144,7 @@ jobs:
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
       - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "canary" }
+        with: { bun-version: "1.4.4" }
       - uses: actions/cache@v4
         with:
           path: |
@@ -176,7 +176,7 @@ jobs:
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
       - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "canary" }
+        with: { bun-version: "1.4.4" }
       - uses: actions/cache@v4
         with:
           path: |
@@ -199,7 +199,7 @@ jobs:
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
       - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "canary" }
+        with: { bun-version: "1.4.4" }
       - uses: actions/cache@v4
         with:
           path: |
@@ -234,7 +234,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "canary" }
+        with: { bun-version: "1.4.4" }
       - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with: { name: addon-linux-x64, path: packages/brust/native }

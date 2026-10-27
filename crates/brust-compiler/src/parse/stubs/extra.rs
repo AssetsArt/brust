@@ -1,38 +1,8 @@
 //! Symbols the full parse/visit path needs beyond sema's `native.rs`: JSC-backed
 //! helpers, the transpiler-cache dispatch, macros, URL. Spike-grade but exact ABI.
-use core::ffi::{c_int, c_void};
-
-#[repr(C)]
-struct SimdutfResult {
-    status: c_int,
-    count: usize,
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
-    p: *const u8,
-    len: usize,
-    out: *mut u16,
-) -> SimdutfResult {
-    // SAFETY: caller passes a readable (p, len) range and an output buffer sized for it.
-    let bytes = unsafe { core::slice::from_raw_parts(p, len) };
-    let Ok(s) = core::str::from_utf8(bytes) else {
-        return SimdutfResult {
-            status: 1,
-            count: 0,
-        };
-    };
-    let mut n = 0usize;
-    for u in s.encode_utf16() {
-        // SAFETY: simdutf's contract — `out` holds at least utf16_length_from_utf8(p, len) units.
-        unsafe { out.add(n).write(u) };
-        n += 1;
-    }
-    SimdutfResult {
-        status: 0,
-        count: n,
-    }
-}
+#[cfg(target_os = "linux")]
+use core::ffi::c_int;
+use core::ffi::c_void;
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64 {
@@ -102,4 +72,145 @@ unsafe extern "C" fn Bun__linux_trace_emit(
     _duration_ns: i64,
 ) -> c_int {
     0
+}
+
+// bun_core::strings::locale_compare goes through these (ICU's "en" collator in Bun). The React Compiler sorts the
+// specifiers it imports with it. ICU is not linked here, so this is an approximation of CLDR root order that agrees
+// with it on ASCII names: spaces and punctuation before digits before letters, letters without regard to case first,
+// then lowercase before uppercase. `is_numeric_and_base` compares a run of digits as its number and ignores case.
+fn collate(
+    a: impl Iterator<Item = char>,
+    b: impl Iterator<Item = char>,
+    numeric_and_base: bool,
+) -> i32 {
+    fn class(c: char) -> u8 {
+        match c {
+            c if c.is_whitespace() || c.is_ascii_punctuation() => 0,
+            c if c.is_ascii_digit() => 1,
+            c if c.is_alphabetic() => 2,
+            _ => 3,
+        }
+    }
+    fn primary(c: char) -> (u8, char) {
+        (class(c), c.to_lowercase().next().unwrap_or(c))
+    }
+    let (a, b): (Vec<char>, Vec<char>) = (a.collect(), b.collect());
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        if numeric_and_base && a[i].is_ascii_digit() && b[j].is_ascii_digit() {
+            let run =
+                |s: &[char], k: usize| k + s[k..].iter().take_while(|c| c.is_ascii_digit()).count();
+            let (ei, ej) = (run(&a, i), run(&b, j));
+            let trim =
+                |s: &[char]| -> Vec<char> { s.iter().copied().skip_while(|&c| c == '0').collect() };
+            let (x, y) = (trim(&a[i..ei]), trim(&b[j..ej]));
+            let order = x.len().cmp(&y.len()).then_with(|| x.cmp(&y));
+            if order.is_ne() {
+                return order as i32;
+            }
+            (i, j) = (ei, ej);
+            continue;
+        }
+        let order = primary(a[i]).cmp(&primary(b[j]));
+        if order.is_ne() {
+            return order as i32;
+        }
+        (i, j) = (i + 1, j + 1);
+    }
+    let order = (a.len() - i).cmp(&(b.len() - j));
+    if order.is_ne() {
+        return order as i32;
+    }
+    if numeric_and_base {
+        return a.iter().cmp(b.iter()) as i32;
+    }
+    // Tertiary: lowercase before uppercase at the first difference in case.
+    for (x, y) in a.iter().zip(b.iter()) {
+        if x.is_uppercase() != y.is_uppercase() {
+            return (x.is_uppercase() as i32) - (y.is_uppercase() as i32);
+        }
+    }
+    // Total: strings that collate equal but differ are ordered by their bytes.
+    a.iter().cmp(b.iter()) as i32
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__collateUTF8(
+    is_numeric_and_base: bool,
+    a: *const u8,
+    a_len: usize,
+    b: *const u8,
+    b_len: usize,
+) -> i32 {
+    // SAFETY: the caller passes two live slices, as pointers and lengths.
+    let (a, b) = unsafe {
+        (
+            core::slice::from_raw_parts(a, a_len),
+            core::slice::from_raw_parts(b, b_len),
+        )
+    };
+    collate(
+        String::from_utf8_lossy(a).chars(),
+        String::from_utf8_lossy(b).chars(),
+        is_numeric_and_base,
+    )
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__collateUTF16(
+    is_numeric_and_base: bool,
+    a: *const u16,
+    a_len: usize,
+    b: *const u16,
+    b_len: usize,
+) -> i32 {
+    // SAFETY: the caller passes two live slices, as pointers and lengths.
+    let (a, b) = unsafe {
+        (
+            core::slice::from_raw_parts(a, a_len),
+            core::slice::from_raw_parts(b, b_len),
+        )
+    };
+    let chars = |s: &[u16]| {
+        char::decode_utf16(s.iter().copied())
+            .map(|c| c.unwrap_or('\u{FFFD}'))
+            .collect::<Vec<_>>()
+    };
+    collate(
+        chars(a).into_iter(),
+        chars(b).into_iter(),
+        is_numeric_and_base,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    fn cmp(a: &str, b: &str, numeric: bool) -> i32 {
+        super::collate(a.chars(), b.chars(), numeric)
+    }
+
+    #[test]
+    fn collation_stand_in_orders_like_cldr_root_on_ascii() {
+        for (a, b) in [
+            ("_c", "c"),
+            ("a", "B"),
+            ("b", "B"),
+            ("react", "react/compiler-runtime"),
+            ("a-b", "a1"),
+            ("a1", "ab"),
+        ] {
+            assert_eq!(cmp(a, b, false), -1, "{a} < {b}");
+            assert_eq!(cmp(b, a, false), 1, "{b} > {a}");
+        }
+        assert_eq!(cmp("same", "same", false), 0);
+        assert_eq!(cmp("a10", "a2", false), -1);
+        assert_eq!(cmp("a2", "a10", true), -1);
+        // Never equal for different strings, in either mode: ties fall back to the bytes.
+        assert_eq!(cmp("A2", "a02", true), -1);
+        assert_eq!(cmp("a02", "A2", true), 1);
+        // A non-ASCII pair keeps one order, both ways round.
+        assert_eq!(cmp("a", "\u{e4}", false), -1);
+        assert_eq!(cmp("\u{e4}", "a", false), 1);
+        assert_eq!(cmp("\u{212a}", "K", false), 1); // Kelvin sign: same letter and case as K, so the bytes decide
+    }
 }

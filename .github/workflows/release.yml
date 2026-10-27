@@ -28,7 +28,7 @@ jobs:
         with: { toolchain: nightly-2026-09-15, components: "rust-src", targets: "${{ matrix.target }}" }
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.4.2" }
+        with: { bun-version: "1.4.4" }
       - run: bun install --frozen-lockfile
       - name: Setup zig (cross legs; plain tarball, no node20 action — 0.1.x release.yml:95-106)
         if: matrix.setup_zig
@@ -52,7 +52,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with: { key: core-cf }
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.4.2" }
+        with: { bun-version: "1.4.4" }
       - run: bun install --frozen-lockfile
       # worker-build's version has ONE source: npm/core-cf/package.json brust.workerBuild (core-cf-check --versions pins it to Cargo.toml).
       - id: wb
@@ -75,7 +75,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.4.2" }
+        with: { bun-version: "1.4.4" }
       - run: bun install --frozen-lockfile
       - name: Lockstep — every @brust/* package carries the same version (F88)
         run: bun scripts/release-check.ts "$(bun -e "console.log(require('./packages/brust/package.json').version)")"
@@ -118,7 +118,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.4.2" }
+        with: { bun-version: "1.4.4" }
       - run: bun install --frozen-lockfile
       - name: Guard — every @brust/* version must equal the tag (F88) and the commit must be on main
         run: |
