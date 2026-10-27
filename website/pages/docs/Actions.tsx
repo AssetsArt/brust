@@ -94,16 +94,23 @@ const MIDDLEWARE = `// api.ts
 import { type ActionMiddleware, client } from '@brust/core/client'
 import type { App } from './actions'
 
+let generation = 0 // counts renewals; a call that failed before the last one just retries
 let renewing: Promise<boolean> | undefined
-const renewSession = () =>
-  (renewing ??= fetch('/_brust/action/session/refresh', { method: 'POST' })
-    .then((r) => r.ok)
-    .finally(() => { renewing = undefined }))
+const renewSession = (seen: number) =>
+  seen !== generation
+    ? Promise.resolve(true)
+    : (renewing ??= fetch('/_brust/action/session/refresh', { method: 'POST' })
+        .then((r) => {
+          if (r.ok) generation++
+          return r.ok
+        })
+        .finally(() => { renewing = undefined }))
 
 const renew: ActionMiddleware = async (req, next) => {
+  const seen = generation
   const res = await next(req)
   if (res.status !== 401) return res
-  return (await renewSession()) ? next(req) : res // the SAME req, sent again
+  return (await renewSession(seen)) ? next(req) : res // the SAME req, sent again
 }
 
 const org: ActionMiddleware = (req, next) => {

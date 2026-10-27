@@ -48,24 +48,29 @@ function session() {
       jar.set(kv!.slice(0, i), kv!.slice(i + 1))
     }
   }
+  let generation = 0
   let renewing: Promise<boolean> | undefined
   let renewals = 0
-  const renewSession = () =>
-    (renewing ??= (async () => {
-      renewals++
-      const res = await fetch(`${base}/refresh`, { method: 'POST' })
-      store(res)
-      return res.ok
-    })().finally(() => { renewing = undefined }))
+  const renewSession = (seen: number) =>
+    seen !== generation
+      ? Promise.resolve(true)
+      : (renewing ??= (async () => {
+          renewals++
+          const res = await fetch(`${base}/refresh`, { method: 'POST' })
+          store(res)
+          if (res.ok) generation++
+          return res.ok
+        })().finally(() => { renewing = undefined }))
   const withCookies = (req: Request) => {
     const r = new Request(req)
     if (jar.size) r.headers.set('cookie', [...jar].map(([k, v]) => `${k}=${v}`).join('; '))
     return r
   }
   const renew: ActionMiddleware = async (req, next) => {
+    const seen = generation
     const res = await next(req)
     if (res.status !== 401) return res
-    return (await renewSession()) ? next(req) : res
+    return (await renewSession(seen)) ? next(req) : res
   }
   const cookies: ActionMiddleware = async (req, next) => {
     const res = await next(withCookies(req))
