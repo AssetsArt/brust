@@ -259,10 +259,13 @@ impl ActionsConfig {
         if let Some(r) = RESERVED.iter().find(|r| under(p, r) || under(r, p)) {
             return Err(format!("prefix {p:?} overlaps the reserved path {r:?}"));
         }
-        if let Some(rt) = m.routes.iter().find(|rt| {
-            let head = rt.pattern.split('{').next().unwrap_or("");
-            under(head.trim_end_matches('/'), p) || under(head, p)
-        }) {
+        // F470: a route under the prefix answers GET/HEAD of its own paths (the pipeline); the prefix itself stays the
+        // actions app's mount point, and a `{*rest}` route there would take every GET from it.
+        if let Some(rt) = m
+            .routes
+            .iter()
+            .find(|rt| rt.pattern == *p || (under(&rt.pattern, p) && rt.pattern.contains("{*")))
+        {
             return Err(format!("prefix {p:?} shadows route {:?}", rt.pattern));
         }
         self.validate_limits()
@@ -470,11 +473,17 @@ mod tests {
     }
 
     #[test]
-    fn actions_prefix_may_not_shadow_a_route() {
+    fn actions_prefix_may_not_be_a_route_or_hold_a_rest_route() {
         let m = fixture_manifest();
-        let e = with_prefix("/pokemon").validate(&m).unwrap_err();
-        assert!(e.contains(r#"shadows route "/pokemon/{name}""#), "{e}");
+        // F470: a route under the prefix is fine (it answers GET there); the prefix itself is not
+        assert_eq!(with_prefix("/pokemon").validate(&m), Ok(()));
+        let e = with_prefix("/tenant").validate(&m).unwrap_err();
+        assert!(e.contains(r#"shadows route "/tenant""#), "{e}");
         assert_eq!(with_prefix("/poke").validate(&m), Ok(()));
+        let mut rest = fixture_manifest();
+        rest.routes[1].pattern = "/pokemon/{*rest}".into();
+        let e = with_prefix("/pokemon").validate(&rest).unwrap_err();
+        assert!(e.contains(r#"shadows route "/pokemon/{*rest}""#), "{e}");
     }
 
     /// R3: `/_brust/cache/stats` keeps its exact shape — every key, in order — after the move.

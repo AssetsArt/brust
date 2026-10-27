@@ -1,8 +1,9 @@
 // Loader response headers (F464, the Assets Art B-3 needs): a layout that sends `no-store` for every page under it (and
 // is cached by route config, which it must override), a logout that sets two cookies on a redirect, a page with a CSP,
 // a page that sets a set-cookie on a cached route, a loader that tries to set a server-owned name, and a plain cached
-// page as the control.
-import { defineRoutes, redirect } from '@brust/core/routes'
+// page as the control. F466/F467: httpError answers with its content type (JSON object, asked HTML, a refused
+// header name in its own options) and a cached page with `Vary: Cookie` is not stored.
+import { defineRoutes, httpError, redirect } from '@brust/core/routes'
 import Leaf from './Leaf'
 import Root from './Root'
 
@@ -49,6 +50,37 @@ export const routes = defineRoutes([
         loader: ({ res }) => {
           res.headers.append('Set-Cookie', 'seen=1; Path=/')
           return { name: 'cookie' }
+        },
+        cache,
+      },
+      {
+        path: '/err-json',
+        Component: Leaf,
+        loader: ({ res }) => {
+          res.headers.set('X-Chain', 'kept')
+          return httpError(401, { error: 'unauthorized' }, { headers: { 'Content-Type': 'text/evil', 'X-Why': 'expired' } })
+        },
+      },
+      {
+        path: '/err-html',
+        Component: Leaf,
+        loader: () => httpError(400, '<b>no</b>', { contentType: 'text/html; charset=utf-8' }),
+      },
+      {
+        path: '/vary-cookie',
+        Component: Leaf,
+        loader: ({ res }) => {
+          res.headers.set('Vary', 'Cookie')
+          return { name: 'vary-cookie' }
+        },
+        cache,
+      },
+      {
+        path: '/vary-encoding',
+        Component: Leaf,
+        loader: ({ res }) => {
+          res.headers.set('Vary', 'Accept-Encoding')
+          return { name: 'vary-encoding' }
         },
         cache,
       },

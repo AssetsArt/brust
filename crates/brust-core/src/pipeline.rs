@@ -35,7 +35,7 @@ use crate::protocol::{
 };
 use crate::render::{
     Overlay, RenderError, Renderer, ensure_doctype, hoist_head_into, inject_css_into,
-    inject_document_assets_with_root_into, use_ids,
+    inject_document_assets_with_root_into, inject_generator_into, use_ids,
 };
 use crate::routing::routes::{Search, decode_search};
 use crate::static_rules::{IMMUTABLE, asset_lookup_key, is_hashed, safe_rel};
@@ -62,6 +62,16 @@ impl std::fmt::Display for CacheOutcome {
             Self::None => "-",
         })
     }
+}
+
+/// F470: `full` matches a page or loader route (not the catch-all) whose own pattern lies under the actions prefix.
+fn routed_under<H: Host>(s: &Core<H>, a: &crate::config::ActionsConfig, full: &str) -> bool {
+    s.routes.match_route(full).is_some_and(|m| {
+        !m.not_found && {
+            let route = &s.manifest.routes[s.routes.route_index(m.route_id)];
+            !route.catch_all && a.is_under(&route.pattern)
+        }
+    })
 }
 
 /// What the per-request log line needs from the page branch.
@@ -96,12 +106,16 @@ pub async fn handle<H: Host>(
         return c.preflight_response(acao, headers);
     }
 
-    // ----- actions (M3-F E3): the whole prefix subtree, any method, before the method gate and the
-    // `/_brust/` static root (the default prefix lives under it). The body is read ONLY here.
-    if let Some(a) = &s.actions
-        && a.is_under(&crate::routing::routes::normalize_request_path(path_only))
-    {
-        return crate::actions::handle(s, a, &rq, incoming, method == "HEAD").await;
+    // ----- actions (M3-F E3): the prefix subtree, before the method gate and the `/_brust/` static root (the
+    // default prefix lives under it). The body is read ONLY here. F470: a GET/HEAD that a route declared under the
+    // prefix matches (`/auth/{provider}/callback`) is that page's; the catch-all never counts, and a route declared
+    // outside the prefix (`/{a}/{b}`) does not take a path of the actions app.
+    if let Some(a) = &s.actions {
+        let norm = crate::routing::routes::normalize_request_path(path_only);
+        let read = method == "GET" || method == "HEAD";
+        if a.is_under(&norm) && !(read && routed_under(s, a, full)) {
+            return crate::actions::handle(s, a, &rq, incoming, method == "HEAD").await;
+        }
     }
 
     // L16 (R16.3): an actions-only deployment has no pages; its own paths stay (`/ping`, stats).
@@ -392,6 +406,7 @@ async fn page<H: Host>(
             Ok(LoaderResponse::Verdict(Verdict::HttpError {
                 status,
                 body,
+                content_type,
                 headers,
             })) => {
                 if !(400..=599).contains(&status) {
@@ -399,7 +414,8 @@ async fn page<H: Host>(
                     return body::error_500();
                 }
                 loader_headers(&route.id, headers, &mut extra);
-                return body::resp(status, "text/plain", &extra, body.into_bytes());
+                let content_type = http_error_content_type(&route.id, content_type);
+                return body::resp(status, &content_type, &extra, body.into_bytes());
             }
             Ok(LoaderResponse::Error { error }) => {
                 // A plan in the cell means the loader succeeded and the worker's job batch failed
@@ -824,6 +840,9 @@ fn render_document<H: Host>(
     )?;
     ensure_doctype(&mut out);
     hoist_head_into(&mut out);
+    if let Some(tag) = &s.generator_meta {
+        inject_generator_into(&mut out, tag);
+    }
     inject_css_into(&mut out, &route.css);
     inject_document_assets_with_root_into(
         &mut out,
@@ -1958,10 +1977,25 @@ const REFUSED_HEADERS: [&str; 5] = [
     "location",
 ];
 
+/// F466: the `Content-Type` of an `httpError` answer. The worker always names one; the older wire has none, and
+/// a value that is not a valid header value falls back too, so the answer never goes out without a type.
+fn http_error_content_type(route: &str, asked: Option<String>) -> String {
+    const DEFAULT: &str = "text/plain; charset=utf-8";
+    match asked {
+        Some(ct) if http::HeaderValue::from_str(&ct).is_ok() && !ct.trim().is_empty() => ct,
+        Some(ct) => {
+            tracing::error!(route, content_type = %ct, "httpError contentType is not a valid header value; using text/plain");
+            DEFAULT.into()
+        }
+        None => DEFAULT.into(),
+    }
+}
+
 /// A loader's `res.headers` onto `extra`, in order, repeated names kept. A refused name, or a name or value
 /// that is not a valid header, is dropped with an error log (the worker refuses the names first; an invalid
 /// value never fails the page). Returns whether the response may still be stored: not with `Set-Cookie`,
-/// a `Cache-Control` carrying `no-store` or `private`, or `Vary: *`.
+/// a `Cache-Control` carrying `no-store` or `private`, or a `Vary` naming any field but `Accept-Encoding`
+/// (`Vary: *` included).
 fn loader_headers(route: &str, headers: Headers, extra: &mut Vec<(String, String)>) -> bool {
     let mut cacheable = true;
     for (k, v) in headers.0 {
@@ -1979,12 +2013,16 @@ fn loader_headers(route: &str, headers: Headers, extra: &mut Vec<(String, String
             v.split(',')
                 .map(|t| t.split('=').next().unwrap_or("").trim())
         };
+        // F467: the cache key carries no request header, so a response that varies on any field but the
+        // encoding (brust handles that one itself) would be served to everyone. Decided here, on the loader's own
+        // headers, before the server appends its `Vary: Accept-Encoding`.
         if k.eq_ignore_ascii_case("set-cookie")
+            || (k.eq_ignore_ascii_case("vary")
+                && tokens().any(|t| !t.is_empty() && !t.eq_ignore_ascii_case("accept-encoding")))
             || (k.eq_ignore_ascii_case("cache-control")
                 && tokens().any(|t| {
                     t.eq_ignore_ascii_case("no-store") || t.eq_ignore_ascii_case("private")
                 }))
-            || (k.eq_ignore_ascii_case("vary") && tokens().any(|t| t == "*"))
         {
             cacheable = false;
         }

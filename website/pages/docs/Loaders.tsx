@@ -143,7 +143,7 @@ export default function Loaders({ blocks, demo }: LoadersData) {
           <code>notFound(data)</code> renders the route's own page with status 404, its data merged over the parent loaders' data.
         </li>
         <li>
-          <code>httpError</code> takes a string body (plain text) or an object (JSON). A thrown <code>Error</code> is a 500, with the message in the server log.
+          <code>httpError</code> takes a string body (sent as <code>text/plain; charset=utf-8</code>) or an object (sent as <code>application/json; charset=utf-8</code>). The third argument can name another type, <code>{'{ contentType }'}</code>, and add <code>headers</code>; a server-owned name there (see Response headers) is dropped with a warning, in <code>brust dev</code> too. A thrown <code>Error</code> is a 500, with the message in the server log.
         </li>
         <li>
           A response that carries <code>Set-Cookie</code> is never stored in the page cache.
@@ -168,7 +168,7 @@ export default function Loaders({ blocks, demo }: LoadersData) {
           throws in <code>brust dev</code>, and in production it is dropped with a warning that names it.
         </li>
         <li>
-          The page cache never stores a response with <code>Set-Cookie</code>, a <code>Cache-Control</code> with <code>no-store</code> or <code>private</code>, or <code>Vary: *</code>.
+          The page cache never stores a response with <code>Set-Cookie</code>, a <code>Cache-Control</code> with <code>no-store</code> or <code>private</code>, or a <code>Vary</code> that names any field other than <code>Accept-Encoding</code> (<code>Vary: *</code>, <code>Cookie</code> and <code>Accept-Language</code> included): the cache key holds no request header, so such a page would be served to everyone.
         </li>
         <li>
           <code>Cache-Control: no-store</code> also keeps the page out of the browser's navigation cache (see <a href="/docs/navigation#prefetch">Navigation</a>).
