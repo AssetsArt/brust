@@ -5,7 +5,7 @@ mod common;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use brust_server::{ActionsConfig, CrossSite, start};
+use brust_server::{ActionsConfig, CrossSite, StreamConfig, StreamRoute, start};
 use common::*;
 use serde_json::{Value, json};
 
@@ -1404,4 +1404,110 @@ fn cross_site_posts_get_the_403_whatever_the_framing() {
     }
     assert!(bad.is_empty(), "not the documented 403: {bad:#?}");
     assert_eq!(fake.fetch_count(), 0);
+}
+
+// ---- F475: streamed bodies of `[actions] stream` routes ----
+
+/// A server whose `POST /team` streams, bounded by `max_bytes` / `idle_ms`.
+fn stream_server(max_bytes: u64, idle_ms: u64) -> (Arc<FakeBun>, Arc<brust_server::Server>) {
+    let fake = fake().with_fetch(ok);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            max_body_bytes: 1024,
+            stream: StreamConfig {
+                routes: vec![StreamRoute::parse("POST /team").unwrap()],
+                max_bytes,
+                idle_ms,
+                ..StreamConfig::default()
+            },
+            ..ActionsConfig::default()
+        },
+        None,
+    );
+    (fake, s)
+}
+
+#[test]
+fn streamed_body_reaches_the_app_byte_exact_past_max_body_bytes() {
+    let (fake, s) = stream_server(1 << 20, 30_000);
+    let chunks: Vec<Vec<u8>> = (0..300).map(|i| vec![(i % 251) as u8; 1024]).collect();
+    let (status, _, body) = request_chunked(&s, "POST", URL, &[], chunks.clone());
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(fake.last_fetch_body(), Some(chunks.concat()));
+    let a1 = last(&fake);
+    assert!(a1["body"]["stream"]["length"].is_null(), "{a1}");
+    assert!(a1["body"]["stream"]["token"].is_u64(), "{a1}");
+    // A declared length is carried and met.
+    let want = vec![7u8; 600_000];
+    let (status, _, _) = request_body(&s, "POST", URL, &[], want.clone());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["body"]["stream"]["length"], 600_000);
+    assert_eq!(fake.last_fetch_body(), Some(want));
+}
+
+#[test]
+fn streamed_declared_length_over_the_ceiling_is_413_before_any_call() {
+    let (fake, s) = stream_server(4096, 30_000);
+    let (status, h, body) = request_body(&s, "POST", URL, &[], vec![b'a'; 4097]);
+    assert_eq!((status, body.as_slice()), (413, &b"payload too large"[..]));
+    assert_eq!(hdr(&h, "connection"), Some("close"));
+    assert_eq!(fake.fetch_count(), 0);
+    let (status, _, _) = request_body(&s, "POST", URL, &[], vec![b'a'; 4096]);
+    assert_eq!(status, 200);
+}
+
+#[test]
+fn streamed_body_past_the_ceiling_mid_stream_replaces_the_answer_with_413() {
+    let (fake, s) = stream_server(4096, 30_000);
+    let (status, h, body) = request_chunked(&s, "POST", URL, &[], vec![vec![b'a'; 1024]; 8]);
+    assert_eq!((status, body.as_slice()), (413, &b"payload too large"[..]));
+    assert_eq!(hdr(&h, "connection"), Some("close"));
+    // The app was called and saw at most the ceiling.
+    assert_eq!(fake.fetch_count(), 1);
+    assert!(fake.last_fetch_body().unwrap().len() <= 4096);
+}
+
+#[test]
+fn unlisted_route_and_method_stay_buffered_under_max_body_bytes() {
+    let (fake, s) = stream_server(1 << 20, 30_000);
+    for (m, url) in [("POST", "/_brust/action/other"), ("PUT", URL)] {
+        let (status, _, _) = request_body(&s, m, url, &[], vec![b'a'; 1025]);
+        assert_eq!(status, 413, "{m} {url}");
+        let (status, _, _) = request_body(&s, m, url, &[], b"{}".to_vec());
+        assert_eq!(status, 200, "{m} {url}");
+        assert_eq!(last(&fake)["body"], json!({"text": "{}"}), "{m} {url}");
+    }
+}
+
+#[test]
+fn stalled_stream_is_408_and_a_stream_over_max_streams_is_503() {
+    // One slot → max_streams defaults to 1.
+    let (fake, s) = stream_server(1 << 20, 300);
+    let s2 = Arc::clone(&s);
+    let stalled = std::thread::spawn(move || request_open_body(&s2, "POST", URL, &[]));
+    let t0 = Instant::now();
+    while fake.fetch_count() == 0 {
+        assert!(
+            t0.elapsed() < Duration::from_secs(2),
+            "the stalled stream never reached the app"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (status, h, _) = request_body(&s, "POST", URL, &[], b"late".to_vec());
+    assert_eq!(status, 503);
+    assert_eq!(hdr(&h, "retry-after"), Some("1"));
+    assert_eq!(
+        fake.fetch_count(),
+        1,
+        "a refused stream never calls the app"
+    );
+    let (status, h, body) = stalled.join().unwrap();
+    assert_eq!((status, body.as_slice()), (408, &b"request timeout"[..]));
+    assert_eq!(hdr(&h, "connection"), Some("close"));
+    assert_eq!(fake.last_fetch_body(), Some(b"x".to_vec()));
+    // The admission was released with the stream.
+    let (status, _, _) = request_body(&s, "POST", URL, &[], b"after".to_vec());
+    assert_eq!(status, 200);
 }

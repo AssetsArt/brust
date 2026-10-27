@@ -10,10 +10,11 @@ use crate::body::{self, header_str};
 use crate::config::{ActionsConfig, CrossSite};
 use crate::core::Core;
 use crate::cors::ResolvedCors;
-use crate::host::{ActionCall, ActionReply, CallError, Host, ReadErr, RequestHead};
+use crate::host::{ActionBody, ActionCall, ActionReply, CallError, Host, ReadErr, RequestHead};
 use crate::protocol::{FetchBody, FetchResponse};
 
-/// One request under the prefix → one `fetch` worker call. `body` is read only here, and never for GET/HEAD (R4).
+/// One request under the prefix → one `fetch` worker call. `body` is read only here, and never for GET/HEAD (R4); a
+/// `stream`-listed route's body is not read here at all (F475): the app pulls it during the call.
 pub(crate) async fn handle<H: Host>(
     s: &Core<H>,
     a: &ActionsConfig,
@@ -58,17 +59,23 @@ pub(crate) async fn handle<H: Host>(
         );
         return body::error_403_cross_site(method);
     }
-    let bytes = if method == "GET" || method == "HEAD" {
-        None
+    let body = if method == "GET" || method == "HEAD" {
+        ActionBody::None
+    } else if H::STREAM_BODY && a.streams(method, full) {
+        // F475: the declared length is refused over the ceiling before a byte is read; without one the running count
+        // enforces it. hyper already refused a malformed or conflicting Content-Length.
+        let declared =
+            header_str(rq.headers, "content-length").and_then(|v| v.trim().parse::<u64>().ok());
+        match declared {
+            Some(n) if n > a.stream.max_bytes => return closing(body::error_413()),
+            Some(0) => ActionBody::None,
+            _ => ActionBody::Stream { body, declared },
+        }
     } else {
         match s.host.read_body(body, a.max_body_bytes).await {
-            Ok(b) if b.is_empty() => None,
-            Ok(b) => Some(b),
-            Err(ReadErr::TooLarge) => return body::error_413(),
-            Err(ReadErr::Io) => return body::error_400(),
-            Err(ReadErr::Slow) => {
-                return body::resp(408, "text/plain", &[], b"request timeout".to_vec());
-            }
+            Ok(b) if b.is_empty() => ActionBody::None,
+            Ok(b) => ActionBody::Buffered(b),
+            Err(e) => return read_err_response(e),
         }
     };
     let r = s
@@ -78,16 +85,28 @@ pub(crate) async fn handle<H: Host>(
             full,
             headers: rq.headers,
             authority: rq.authority,
-            body: bytes,
+            body,
         })
         .await;
     // R11: a worker call, never a loader call.
-    if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
+    if !matches!(
+        r,
+        Err(CallError::NoWorkers | CallError::Timeout | CallError::StreamsFull)
+    ) {
         s.worker_calls.incr();
     }
     let resp = match r {
         Ok(r) => reply_to_response(r),
         Err(e @ (CallError::NoWorkers | CallError::Timeout)) => body::error_503(&e.to_string()),
+        Err(e @ CallError::StreamsFull) => body::resp(
+            503,
+            "text/plain",
+            &[("retry-after".into(), "1".into())],
+            e.to_string().into_bytes(),
+        ),
+        // F475: whatever the app answered, a failed stream answers as the buffered read would have, and the
+        // connection closes (the rest of the body is never read).
+        Err(CallError::BodyAborted(e)) => closing(read_err_response(e)),
         Err(CallError::Deadline) => {
             s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
             body::error_504("call deadline exceeded")
@@ -104,6 +123,22 @@ pub(crate) async fn handle<H: Host>(
         "action"
     );
     if head { body::head_only(resp) } else { resp }
+}
+
+/// A body that could not be read: 413 over the cap, 400 broken, 408 too slow.
+fn read_err_response(e: ReadErr) -> Response<Bytes> {
+    match e {
+        ReadErr::TooLarge => body::error_413(),
+        ReadErr::Io => body::error_400(),
+        ReadErr::Slow => body::resp(408, "text/plain", &[], b"request timeout".to_vec()),
+    }
+}
+
+/// F475: answer and close; the unread rest of a streamed body is not drained.
+fn closing(mut r: Response<Bytes>) -> Response<Bytes> {
+    r.headers_mut()
+        .insert(http::header::CONNECTION, HeaderValue::from_static("close"));
+    r
 }
 
 /// F87 / spec E10: may a request with these headers mutate through an action? `host` is the request authority

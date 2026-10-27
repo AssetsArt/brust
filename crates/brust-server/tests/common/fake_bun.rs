@@ -481,6 +481,39 @@ impl RenderDispatch for FakeBunHandle {
                 Ok(bytes.len() as u32)
             });
         }
+        // F475: a streamed body is pulled to the end like the real bridge's `pulledBody` (recorded as the
+        // heap body); a failed pull answers the 500 an app's rejected read would, which the server replaces.
+        if kind == CallKind::Fetch && req["body"]["stream"].is_object() {
+            let f = Arc::clone(f);
+            return Box::pin(async move {
+                let token = req["body"]["stream"]["token"]
+                    .as_u64()
+                    .expect("stream token") as u32;
+                let st = f
+                    .bound
+                    .get()
+                    .and_then(|(w, id)| w.upgrade().map(|s| (s, *id)))
+                    .and_then(|(s, id)| brust_server::fetch_stream(&s, id, slot, token))
+                    .expect("FakeBun: a streamed body needs a bound fake and the call's token");
+                let mut got = Vec::new();
+                let failed = loop {
+                    match st.pull().await {
+                        brust_server::Pull::Chunk(b) => got.extend_from_slice(&b),
+                        brust_server::Pull::End => break false,
+                        brust_server::Pull::Abort(_) => break true,
+                    }
+                };
+                drop(st);
+                *f.last_fetch_body.lock().unwrap() = Some(got);
+                let bytes = if failed {
+                    super::frame(500, &[("content-type", "text/plain")], b"read failed")
+                } else {
+                    f.reply(kind, req, slot)
+                };
+                f.write(slot, &bytes);
+                Ok(bytes.len() as u32)
+            });
+        }
         if let Some(mut gate) = f.gate.clone() {
             // Parked: the reply is built and written only when the gate opens, as a
             // real worker settling late would (the claim is held until this settles).

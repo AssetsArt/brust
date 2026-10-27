@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use brust_core::body::is_framing_header;
 use brust_core::cache::local::{LocalJobs, LocalL1};
 use brust_core::host::{
-    ActionCall, ActionReply, CallError, Clock, Host, JsClock, ReadErr, StaticRoot,
+    ActionBody, ActionCall, ActionReply, CallError, Clock, Host, JsClock, ReadErr, StaticRoot,
 };
 use brust_core::l2::{L2Counters, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta};
 use brust_core::plan::{PlanSeed, PlannedCall};
@@ -185,7 +185,10 @@ impl Host for WasmHost {
 
     /// The app's `action(Request)`; its `Response` stays here and the core gets `Built` with its
     /// status and headers (R4).
-    async fn action(&self, call: ActionCall<'_>) -> Result<ActionReply, CallError> {
+    async fn action(
+        &self,
+        call: ActionCall<'_, worker::Request>,
+    ) -> Result<ActionReply, CallError> {
         let js = |e| CallError::BadResponse(js_string(e));
         let headers = web_sys::Headers::new().map_err(js)?;
         for (n, v) in call.headers {
@@ -205,8 +208,9 @@ impl Host for WasmHost {
         let init = web_sys::RequestInit::new();
         init.set_method(call.method);
         init.set_headers(&headers);
+        // `STREAM_BODY` is off here: core hands a buffered body or none.
         if !matches!(call.method, "GET" | "HEAD")
-            && let Some(b) = &call.body
+            && let ActionBody::Buffered(b) = &call.body
         {
             init.set_body(&js_sys::Uint8Array::from(&b[..]));
         }

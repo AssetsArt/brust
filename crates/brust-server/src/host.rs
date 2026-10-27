@@ -2,12 +2,16 @@
 //! dispatch seam, `dist/` on the local disk, hyper bodies and tokio timers.
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use brust_core::body::{header_str, is_framing_header};
 use brust_core::config::ACTION_INLINE_BODY_BYTES;
-use brust_core::host::{ActionCall, ActionReply, CallError, Clock, Host, ReadErr, StaticRoot};
+use brust_core::config::StreamConfig;
+use brust_core::host::{
+    ActionBody, ActionCall, ActionReply, CallError, Clock, Host, ReadErr, StaticRoot,
+};
 use brust_core::plan::{PlanCell, PlanSeed, PlannedCall};
 use brust_core::protocol::{
     FetchBody, FetchRequest, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse,
@@ -26,6 +30,7 @@ use crate::dispatch::{
 };
 use crate::pool::{PlanBox, WorkerPool};
 use crate::server::static_assets::static_asset_response;
+use crate::stream_body::{Admission, StreamBody, StreamLimits};
 use brust_core::l2::{L2Counters, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta};
 
 /// The worker pool, the served `dist/` and the two call timeouts.
@@ -38,6 +43,21 @@ pub(crate) struct NativeHost {
     pub(crate) max_loader_response_bytes: usize,
     /// The cache adapter's `(get_timeout, max_body_bytes)`; `None` = no L2 calls.
     pub(crate) l2: Option<(Duration, usize)>,
+    /// F475: the `[actions]` stream bounds (its `routes` are core's) and the streams in flight.
+    pub(crate) stream: StreamConfig,
+    pub(crate) streams: Arc<AtomicUsize>,
+}
+
+impl NativeHost {
+    /// F475: admit one more streamed body, or `None` when `max_streams` (default: a quarter of the
+    /// live worker slots, at least 1) are in flight.
+    fn admit_stream(&self) -> Option<Admission> {
+        let cap = self
+            .stream
+            .max_streams
+            .map_or_else(|| (self.pool.slot_total() / 4).max(1), |n| n as usize);
+        Admission::try_new(&self.streams, cap)
+    }
 }
 
 impl Clock for NativeHost {
@@ -60,6 +80,7 @@ impl Host for NativeHost {
     type L1 = L1Cache;
     type Jobs = JobCache;
     const PLAN_OFFER: bool = true;
+    const STREAM_BODY: bool = true;
 
     /// The seed rides the claimed slot's plan cell (one `Box`); after the call the cell holds the
     /// plan `plan_in_call` built, or nothing (declined, or not offered).
@@ -101,14 +122,42 @@ impl Host for NativeHost {
     }
 
     /// One `fetch` worker call. A body over [`ACTION_INLINE_BODY_BYTES`] waits in the call's cell
-    /// for `takeFetchBody` (F82); a smaller one crosses inline as text or base64 (R2).
-    async fn action(&self, call: ActionCall<'_>) -> Result<ActionReply, CallError> {
+    /// for `takeFetchBody` (F82); a smaller one crosses inline as text or base64 (R2). A streamed
+    /// body (F475) is admitted under `max_streams` before a byte is read, then waits unread in the
+    /// cell for `pullFetchBody`; if it failed, that reason replaces the app's answer.
+    async fn action(&self, call: ActionCall<'_, Incoming>) -> Result<ActionReply, CallError> {
+        let mut stream = None;
         let (fb, heap_body) = match call.body {
-            None => (None, None),
-            Some(b) if b.len() > ACTION_INLINE_BODY_BYTES => {
+            ActionBody::None => (None, None),
+            ActionBody::Stream { body, declared } => {
+                let admit = self.admit_stream().ok_or(CallError::StreamsFull)?;
+                let limits = StreamLimits {
+                    max: self.stream.max_bytes,
+                    idle: Duration::from_millis(self.stream.idle_ms),
+                    total: Duration::from_millis(self.stream.total_ms),
+                    call_timeout: self.call_timeout,
+                };
+                let st = Arc::new(StreamBody::new(
+                    Box::pin(
+                        body.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                            Box::new(e)
+                        }),
+                    ),
+                    declared,
+                    limits,
+                    admit,
+                ));
+                let fb = FetchBody::Stream {
+                    length: declared,
+                    token: st.token,
+                };
+                stream = Some(st);
+                (Some(fb), None)
+            }
+            ActionBody::Buffered(b) if b.len() > ACTION_INLINE_BODY_BYTES => {
                 (Some(FetchBody::Heap(b.len())), Some(b))
             }
-            Some(b) => (
+            ActionBody::Buffered(b) => (
                 Some(brust_core::actions::encode_body(
                     header_str(call.headers, "content-type")
                         .as_deref()
@@ -153,15 +202,26 @@ impl Host for NativeHost {
                 None,
             ),
         };
-        call_worker_fetch(
+        let r = call_worker_fetch(
             &self.pool,
             self.claim_timeout,
             self.call_timeout,
             &req,
             heap_body,
+            stream.clone(),
         )
-        .await
-        .map(ActionReply::Fetch)
+        .await;
+        let Some(st) = stream else {
+            return r.map(ActionReply::Fetch);
+        };
+        match st.abort() {
+            Some(ReadErr::TooLarge) => {
+                st.discard(DISCARD_AFTER_REFUSAL, DISCARD_TIMEOUT).await;
+                Err(CallError::BodyAborted(ReadErr::TooLarge))
+            }
+            Some(e) => Err(CallError::BodyAborted(e)),
+            None => r.map(ActionReply::Fetch),
+        }
     }
 
     /// `/_brust/<rel>` serves `dist/client/` only (`safe_rel` admits `client/<file>`), `/public/`

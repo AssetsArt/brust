@@ -22,6 +22,7 @@ pub use brust_core::config::{
     ACTION_INLINE_BODY_BYTES, ActionCredentials, ActionsClient, ActionsConfig, CorsConfig,
     CrossSite, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES,
     DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs, InvalidateResult, MAX_ACTION_BYTES, Stats,
+    StreamConfig, StreamRoute,
 };
 use brust_core::core::Core;
 

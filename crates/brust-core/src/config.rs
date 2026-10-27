@@ -73,6 +73,12 @@ pub const MAX_ACTION_BYTES: usize = 67_108_864;
 /// F82: a request body of at most this many bytes crosses inline (`text`/`b64`); larger goes by
 /// heap transfer. Equals the worker's SAB slot size.
 pub const ACTION_INLINE_BODY_BYTES: usize = 262_144;
+/// F475: `max_stream_bytes` default (256 MiB) and hard max (4 GiB), `stream_idle_ms` and
+/// `stream_total_ms` defaults.
+pub const DEFAULT_MAX_STREAM_BYTES: u64 = 268_435_456;
+pub const MAX_STREAM_BYTES: u64 = 4_294_967_296;
+pub const DEFAULT_STREAM_IDLE_MS: u64 = 30_000;
+pub const DEFAULT_STREAM_TOTAL_MS: u64 = 900_000;
 /// Paths the actions prefix may not overlap in either direction (R7).
 const RESERVED: &[&str] = &["/ping", "/public", "/_brust/client", "/_brust/cache"];
 
@@ -83,6 +89,91 @@ pub struct ActionsConfig {
     pub max_body_bytes: usize,
     pub max_response_bytes: usize,
     pub cross_site: CrossSite,
+    /// F475: the routes whose request body streams to the app instead of being buffered.
+    pub stream: StreamConfig,
+}
+
+/// F475 `[actions] stream = ["POST /upload", "PUT /files/*"]` and its bounds. A listed request's body
+/// is not read before the call: the app pulls it (`{ parse: 'none' }`), up to `max_bytes`, with no
+/// pause over `idle_ms` and the whole call within `total_ms`; at most `max_streams` at once
+/// (`None` = a quarter of the live worker slots, at least 1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamConfig {
+    pub routes: Vec<StreamRoute>,
+    pub max_bytes: u64,
+    pub idle_ms: u64,
+    pub total_ms: u64,
+    pub max_streams: Option<u32>,
+}
+
+impl Default for StreamConfig {
+    fn default() -> Self {
+        Self {
+            routes: Vec::new(),
+            max_bytes: DEFAULT_MAX_STREAM_BYTES,
+            idle_ms: DEFAULT_STREAM_IDLE_MS,
+            total_ms: DEFAULT_STREAM_TOTAL_MS,
+            max_streams: None,
+        }
+    }
+}
+
+/// One `stream` entry, `"<METHOD> <path>"` with the path relative to the prefix. A `:name` segment
+/// matches one segment; a final `*` matches one or more.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamRoute {
+    pub method: String,
+    pub path: String,
+}
+
+impl StreamRoute {
+    /// Parse `"POST /upload"`. Only POST, PUT and PATCH carry a streamed body.
+    pub fn parse(entry: &str) -> Result<Self, String> {
+        let (m, p) = entry
+            .trim()
+            .split_once(' ')
+            .ok_or_else(|| format!("stream entry {entry:?} must be \"<METHOD> <path>\""))?;
+        let (method, path) = (m.to_ascii_uppercase(), p.trim().to_string());
+        if !matches!(method.as_str(), "POST" | "PUT" | "PATCH") {
+            return Err(format!(
+                "stream entry {entry:?}: method must be POST, PUT or PATCH"
+            ));
+        }
+        let segs: Vec<&str> = path.split('/').skip(1).collect();
+        let bad_star = segs
+            .iter()
+            .enumerate()
+            .any(|(i, s)| s.contains('*') && (*s != "*" || i + 1 != segs.len()));
+        if !path.starts_with('/') || (path != "/" && segs.iter().any(|s| s.is_empty())) || bad_star
+        {
+            return Err(format!(
+                "stream entry {entry:?}: path must start with '/', have no empty segment, and use '*' only as the last segment"
+            ));
+        }
+        Ok(Self { method, path })
+    }
+
+    /// Does `method` + `rel` (the request path relative to the prefix, no query) name this route?
+    pub fn matches(&self, method: &str, rel: &str) -> bool {
+        if !method.eq_ignore_ascii_case(&self.method) {
+            return false;
+        }
+        let mut want = self.path.split('/').skip(1);
+        let mut got = rel.split('/').skip(1);
+        loop {
+            match (want.next(), got.next()) {
+                (None, None) => return true,
+                (Some("*"), Some(g)) => return !g.is_empty(),
+                (Some(w), Some(g)) if w.starts_with(':') => {
+                    if g.is_empty() {
+                        return false;
+                    }
+                }
+                (Some(w), Some(g)) if w == g => {}
+                _ => return false,
+            }
+        }
+    }
 }
 
 /// F87 / spec E10: what Rust does with a mutating action request whose browser-declared site is foreign.
@@ -102,6 +193,7 @@ impl Default for ActionsConfig {
             max_body_bytes: DEFAULT_MAX_ACTION_BODY_BYTES,
             max_response_bytes: DEFAULT_MAX_ACTION_RESPONSE_BYTES,
             cross_site: CrossSite::default(),
+            stream: StreamConfig::default(),
         }
     }
 }
@@ -225,6 +317,24 @@ impl ActionsConfig {
         under(path, &self.prefix)
     }
 
+    /// F475: is a request with this method and path (`path?query` as received, already under the
+    /// prefix) on the `stream` list?
+    pub fn streams(&self, method: &str, full: &str) -> bool {
+        if self.stream.routes.is_empty() {
+            return false;
+        }
+        let path = full.split_once('?').map_or(full, |(p, _)| p);
+        let rel = if self.prefix == "/" {
+            path
+        } else {
+            match &path[self.prefix.len().min(path.len())..] {
+                "" => "/",
+                r => r,
+            }
+        };
+        self.stream.routes.iter().any(|r| r.matches(method, rel))
+    }
+
     pub fn is_default_prefix(&self) -> bool {
         self.prefix == DEFAULT_ACTION_PREFIX
     }
@@ -279,6 +389,16 @@ impl ActionsConfig {
             return Err(format!(
                 "maxResponseBytes must be in {ACTION_INLINE_BODY_BYTES}..={MAX_ACTION_BYTES}"
             ));
+        }
+        let st = &self.stream;
+        if !(1..=MAX_STREAM_BYTES).contains(&st.max_bytes) {
+            return Err(format!("maxStreamBytes must be in 1..={MAX_STREAM_BYTES}"));
+        }
+        if st.idle_ms == 0 || st.total_ms == 0 {
+            return Err("streamIdleMs and streamTotalMs must be at least 1".into());
+        }
+        if st.max_streams == Some(0) {
+            return Err("maxStreams must be at least 1".into());
         }
         Ok(())
     }
@@ -470,6 +590,76 @@ mod tests {
             let e = resp(n).validate(&m).expect_err("resp bounds");
             assert!(e.contains("maxResponseBytes"), "{e}");
         }
+    }
+
+    #[test]
+    fn stream_routes_parse_and_match() {
+        let r = |e: &str| StreamRoute::parse(e).unwrap();
+        assert_eq!(
+            r("post /upload"),
+            StreamRoute {
+                method: "POST".into(),
+                path: "/upload".into()
+            }
+        );
+        for bad in [
+            "GET /x",
+            "POST",
+            "POST upload",
+            "POST /a//b",
+            "POST /a/*/b",
+            "POST /a*",
+            "POST /a/",
+        ] {
+            assert!(StreamRoute::parse(bad).is_err(), "{bad:?}");
+        }
+        assert!(r("POST /upload").matches("post", "/upload"));
+        assert!(!r("POST /upload").matches("PUT", "/upload"));
+        assert!(!r("POST /upload").matches("POST", "/upload/x"));
+        assert!(r("PUT /files/*").matches("PUT", "/files/a"));
+        assert!(r("PUT /files/*").matches("PUT", "/files/a/b"));
+        assert!(!r("PUT /files/*").matches("PUT", "/files"));
+        assert!(!r("PUT /files/*").matches("PUT", "/files/"));
+        assert!(r("PATCH /a/:id/b").matches("PATCH", "/a/7/b"));
+        assert!(!r("PATCH /a/:id/b").matches("PATCH", "/a//b"));
+        assert!(r("POST /").matches("POST", "/"));
+    }
+
+    #[test]
+    fn streams_matches_relative_to_the_prefix_without_the_query() {
+        let mut a = with_prefix("/api");
+        a.stream.routes = vec![StreamRoute::parse("POST /upload").unwrap()];
+        assert!(a.streams("POST", "/api/upload?x=1"));
+        assert!(!a.streams("POST", "/api/uploadx"));
+        assert!(!a.streams("POST", "/api"));
+        let mut root = with_prefix("/");
+        root.stream.routes = vec![StreamRoute::parse("POST /").unwrap()];
+        assert!(root.streams("POST", "/"));
+        let mut at = with_prefix("/api");
+        at.stream.routes = vec![StreamRoute::parse("POST /").unwrap()];
+        assert!(at.streams("POST", "/api"));
+        assert!(!ActionsConfig::default().streams("POST", "/_brust/action/x"));
+    }
+
+    #[test]
+    fn stream_limits_are_validated() {
+        let m = fixture_manifest();
+        let with = |f: fn(&mut StreamConfig)| {
+            let mut a = ActionsConfig::default();
+            f(&mut a.stream);
+            a.validate(&m)
+        };
+        assert_eq!(with(|s| s.max_bytes = MAX_STREAM_BYTES), Ok(()));
+        assert!(
+            with(|s| s.max_bytes = MAX_STREAM_BYTES + 1)
+                .unwrap_err()
+                .contains("maxStreamBytes")
+        );
+        assert!(with(|s| s.max_bytes = 0).is_err());
+        assert!(with(|s| s.idle_ms = 0).is_err());
+        assert!(with(|s| s.total_ms = 0).is_err());
+        assert!(with(|s| s.max_streams = Some(0)).is_err());
+        assert_eq!(with(|s| s.max_streams = Some(1)), Ok(()));
     }
 
     #[test]

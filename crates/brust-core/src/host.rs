@@ -32,8 +32,8 @@ pub struct RequestHead<'a> {
     pub authority: Option<&'a str>,
 }
 
-/// Why a request body could not be read whole.
-#[derive(Debug, PartialEq, Eq)]
+/// Why a request body could not be read whole (or, F475, why a streamed body failed mid-call).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadErr {
     /// Over the cap: by the declared length (before any read) or while reading.
     TooLarge,
@@ -74,16 +74,32 @@ pub enum CallError {
     /// Request serialisation, an out-of-bounds length, or unparsable JSON.
     #[error("bad response: {0}")]
     BadResponse(String),
+    /// F475: `max_streams` streamed bodies are in flight — 503 + `Retry-After`, before a byte is read.
+    #[error("too many streamed request bodies")]
+    StreamsFull,
+    /// F475: the streamed body failed mid-call; the app's answer is replaced (413 / 408 / 400).
+    #[error("streamed request body failed: {0:?}")]
+    BodyAborted(ReadErr),
 }
 
 /// One action request, admitted: what the host forwards to the app.
-pub struct ActionCall<'a> {
+pub struct ActionCall<'a, B> {
     pub method: &'a str,
     pub full: &'a str,
     pub headers: &'a HeaderMap,
     pub authority: Option<&'a str>,
-    /// The whole request body; `None` for GET/HEAD and for an empty body.
-    pub body: Option<Bytes>,
+    pub body: ActionBody<B>,
+}
+
+/// An action request's body as the host forwards it.
+pub enum ActionBody<B> {
+    /// GET/HEAD, or an empty body.
+    None,
+    /// The whole body, read under `max_body_bytes`.
+    Buffered(Bytes),
+    /// F475: a `stream`-listed route's body, unread; the app pulls it. `declared` is the
+    /// `Content-Length`, already checked against `max_stream_bytes`.
+    Stream { body: B, declared: Option<u64> },
 }
 
 /// What a host's `action` answers.
@@ -211,6 +227,9 @@ pub trait Host: Clock {
     type Jobs: JobStore;
     /// Whether the loader call may be offered the job plan (M3-P P6): native `true`.
     const PLAN_OFFER: bool;
+    /// F475: whether a `stream`-listed action gets [`ActionBody::Stream`]; `false` = the list is
+    /// ignored and every body is buffered under `max_body_bytes`.
+    const STREAM_BODY: bool = false;
 
     /// The loader call. `offer`: plan the jobs inside the call; a planned call returns the plan.
     fn loader(
@@ -227,7 +246,10 @@ pub trait Host: Clock {
         cap: usize,
     ) -> impl Future<Output = Result<Bytes, ReadErr>>;
     /// One action request → the app's answer.
-    fn action(&self, call: ActionCall<'_>) -> impl Future<Output = Result<ActionReply, CallError>>;
+    fn action(
+        &self,
+        call: ActionCall<'_, Self::Body>,
+    ) -> impl Future<Output = Result<ActionReply, CallError>>;
     /// A static file under `root`; `rel` already passed `static_rules::safe_rel`. `None` = 404.
     fn static_file(
         &self,
