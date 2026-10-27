@@ -19,7 +19,7 @@ browser -- POST /_brust/action/team --> Rust (hyper): prefix? -> preflight/CORS 
 client code:  const api = client<App>();  await api.team.post({ id, name })   (Eden Treaty)
 ```
 
-- Rust owns HTTP. Everything under the prefix goes to your app; Rust has no action router of its own.
+- Rust owns HTTP. Everything under the prefix goes to your app, except a GET or HEAD that a page route under the prefix matches (see The prefix); Rust has no action router of its own.
 - Your app answers 404, 422 and the other errors itself (see Errors below).
 - The preflight answer, the CORS headers, the request-body cap (413) and the response-size limit (500) are implemented by the Rust server, not by your app. Your app never sees an over-cap body, and it does not need CORS code.
 
@@ -446,10 +446,47 @@ With the default prefix nothing is injected. The client resolves its prefix in t
 3. `globalThis.__BRUST_ACTION_PREFIX__`, if the page defined it. A base that comes from the page (`__BRUST_ACTION_BASE__`, section 11) pairs with this prefix, since both come from the same deployment's configuration.
 4. `/_brust/action`.
 
-The action app answers the **whole** prefix subtree, so a page route under the prefix would be unreachable. `brust build` refuses it:
+A page or loader route may sit under the prefix. Then:
+
+- A `GET` or `HEAD` that such a route matches is served by the route.
+- Every other request under the prefix goes to the actions app: any other method, and a `GET` that no route under the prefix matches. The `*` catch-all never counts, and neither does a route declared outside the prefix that happens to match (`/{a}/{b}` does not take `/auth/login`).
+- A `GET` action at the same path as such a route is never reached. The server warns at boot, naming each one:
 
 ```
-route <id> (<pattern>) lies under the actions prefix <prefix>: the actions app answers every path there
+[brust] warning: a route under the actions prefix answers GET there, so these GET actions are never reached: GET /auth/google/callback (route /auth/{provider}/callback)
+```
+
+For example, OAuth redirect URIs registered under `/auth`: the `GET` callback is a loader that sets the session cookie and redirects, and Apple's `form_post` callback, a `POST` to the same path, stays an action.
+
+```toml
+[actions]
+prefix = "/auth"
+```
+
+```tsx
+// routes.tsx
+{
+  path: '/auth/{provider}/callback',
+  Component: Callback,
+  loader: async ({ params, req, res }) => {
+    const sid = await signIn(params.provider, req.search.code)
+    res.headers.append('Set-Cookie', `sid=${sid}; Path=/; HttpOnly; Secure; SameSite=Lax`)
+    return redirect('/', 303)
+  },
+}
+```
+
+```ts
+// actions.ts: written without the prefix
+export default new Elysia({ adapter: brust() })
+  .post('/:provider/callback', ({ params, body }) => finishFormPost(params.provider, body))
+```
+
+`brust build` (and the server at boot) refuses two routes there: a route equal to the prefix (the actions app's mount point) and a `{*rest}` route under it (it would take every `GET`):
+
+```
+route <id> (<pattern>) is the actions prefix <prefix>: that path is the actions app's mount point
+route <id> (<pattern>) is a catch-all under the actions prefix <prefix>: it would take every GET there from the actions app
 ```
 
 A root `*` catch-all route is not refused. The Rust server forwards the path and query unchanged, prefix included, and the worker mounts your app under the prefix. So `request.url` inside a handler is the real URL, and your routes are written without the prefix (`/team`, not `/_brust/action/team`).

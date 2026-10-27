@@ -280,6 +280,9 @@ export default function Workers({ blocks }: WorkersData) {
       <p>
         <code>_headers</code> sets <code>X-Content-Type-Options: nosniff</code> and <code>X-Powered-By</code> on everything, <code>immutable</code> on <code>/_brust/client/*</code>, and per file on <code>/public/*</code>: <code>immutable</code> for names with a content hash, <code>max-age=3600</code> otherwise. A <code>_headers</code> file holds at most 100 rules; past that brust writes a single <code>/public/*</code> rule with <code>max-age=3600</code> and warns.
       </p>
+      <p>
+        Pages rendered by the Worker also carry <code>{'<meta name="generator" content="brust/<version>">'}</code> in their <code>&lt;head&gt;</code>, the same value as <code>X-Powered-By</code>.
+      </p>
 
       <h2 id="bindings">Bindings and cloudflare:workers</h2>
       <p>

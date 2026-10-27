@@ -135,6 +135,10 @@ export default function Deployment({ blocks, panels }: DeploymentData) {
       <CodeBlock code={blocks.ssg.code} lang={blocks.ssg.lang} file={blocks.ssg.file} html={blocks.ssg.html} />
       <CodeBlock code={blocks.tree.code} lang={blocks.tree.lang} file={blocks.tree.file} html={blocks.tree.html} />
       <ul>
+        {/* source: docs/static.md §3 (every page carries the generator meta, the X-Powered-By value; the app's own wins) */}
+        <li>
+          Every page carries <code>{'<meta name="generator" content="brust/<version>">'}</code> in its <code>&lt;head&gt;</code>, the value the server sends as <code>X-Powered-By</code>, so a static host that sets no such header still says what built the page. A page that wrote its own <code>{'<meta name="generator">'}</code> keeps it.
+        </li>
         {/* source: docs/static.md §3 ("There is no manifest, Jinja, jobs or actions file in it") */}
         <li>There is no manifest, template, job or actions file in <code>dist/static/</code>: only what a browser fetches.</li>
         {/* source: docs/static.md §5 and packages/brust/src/build/static.ts:248-249 (ssg-request-read; --strict makes it an error) */}

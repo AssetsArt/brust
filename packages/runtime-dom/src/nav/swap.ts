@@ -95,6 +95,13 @@ function tail(body: HTMLElement): ChildNode[] | null {
   return tag && out
 }
 
+/** The images `swapBody(doc)` will put in, before it runs: the changed level's, or the whole body's. */
+export function incomingImages(doc: Document): HTMLImageElement[] {
+  const b = readChain(doc)
+  const i = swapLevel(readChain(document), b)
+  return all(i && tail(document.body) && tail(doc.body) ? between(b![i]!) : [...doc.body.childNodes], 'img') as HTMLImageElement[]
+}
+
 /**
  * Swap the body to `doc`'s (§5.9): from the first level that changed, or the whole body (with the attributes of
  * `<html>` and `<body>`) when the root changed or a chain cannot be trusted. Returns the classic scripts of the new
