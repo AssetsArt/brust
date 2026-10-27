@@ -347,7 +347,7 @@ export default function Navigation({ blocks }: NavigationData) {
       <ul>
         <li>Everything slow happens first: the fetch, the new page's scripts and stylesheets. The old page is frozen for about one frame, never for a network wait.</li>
         <li>
-          The eager images of the new page get up to 100 ms to decode before the fade starts, so a hero image does not pop in after it. Mark images below the fold <code>loading="lazy"</code>: those are not waited for.
+          The eager images the navigation swaps in (a kept layout's are on screen already) get up to 100 ms to decode before the fade starts, so a hero image does not pop in after it. Mark images below the fold <code>loading="lazy"</code>: those are not waited for.
         </li>
         <li>Back and forward fade the same way. A navigation started during a transition skips it and lands on the newer page.</li>
         <li>
