@@ -35,7 +35,7 @@ use crate::protocol::{
 };
 use crate::render::{
     Overlay, RenderError, Renderer, ensure_doctype, hoist_head_into, inject_css_into,
-    inject_document_assets_with_root_into, use_ids,
+    inject_document_assets_with_root_into, inject_generator_into, use_ids,
 };
 use crate::routing::routes::{Search, decode_search};
 use crate::static_rules::{IMMUTABLE, asset_lookup_key, is_hashed, safe_rel};
@@ -826,6 +826,9 @@ fn render_document<H: Host>(
     )?;
     ensure_doctype(&mut out);
     hoist_head_into(&mut out);
+    if let Some(tag) = &s.generator_meta {
+        inject_generator_into(&mut out, tag);
+    }
     inject_css_into(&mut out, &route.css);
     inject_document_assets_with_root_into(
         &mut out,
