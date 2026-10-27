@@ -642,6 +642,121 @@ pub fn hoist_head_into(html: &mut String) {
     html.insert_str(head_end, &hoisted);
 }
 
+/// F468: the `<meta name="generator" content="…">` tag for the `generator` string (the `X-Powered-By` value), built once
+/// at boot. The content is escaped as an attribute value; the version is brust's own, but nothing is trusted to be safe.
+pub fn generator_meta_tag(generator: &str) -> String {
+    let mut t = String::with_capacity(generator.len() + 40);
+    t.push_str("<meta name=\"generator\" content=\"");
+    for c in generator.chars() {
+        match c {
+            '&' => t.push_str("&amp;"),
+            '"' => t.push_str("&quot;"),
+            '<' => t.push_str("&lt;"),
+            '>' => t.push_str("&gt;"),
+            c => t.push(c),
+        }
+    }
+    t.push_str("\">");
+    t
+}
+
+/// F468: a full document gets `tag` (see [`generator_meta_tag`]) just before its `</head>`, after the F399 hoist, so
+/// a `<meta name="generator">` the app wrote (or React hoisted) into the head is seen and wins: brust then adds none.
+/// A document with no `</head>` (its first element is `<html`) gets it right after the `<html …>` start tag, where a
+/// parser puts it into the implicit head. A fragment, anything else, is untouched. One tag per document, always.
+pub fn inject_generator_into(html: &mut String, tag: &str) {
+    let at = match find_ci(html, "</head>", 0) {
+        Some(h) => {
+            if has_generator_meta(&html[..h]) {
+                return;
+            }
+            h
+        }
+        None => {
+            let Some(open) = html_start(html) else {
+                return;
+            };
+            let name_end = open + "<html".len();
+            let Some(end) = tag_end(html, name_end) else {
+                return;
+            };
+            if has_generator_meta(&html[end..]) {
+                return;
+            }
+            end
+        }
+    };
+    html.insert_str(at, tag);
+}
+
+/// Index of the root `<html` start tag when the document's first element is it (after whitespace, comments and a
+/// doctype), else `None`.
+fn html_start(html: &str) -> Option<usize> {
+    let b = html.as_bytes();
+    let mut i = 0;
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if b[i..].starts_with(b"<!--") {
+            i += 4 + html[i + 4..].find("-->")? + 3;
+        } else if b.len() >= i + 9 && b[i..i + 9].eq_ignore_ascii_case(b"<!doctype") {
+            i = tag_end(html, i + 9)?;
+        } else {
+            break;
+        }
+    }
+    let rest = &b[i..];
+    (rest.len() > 5
+        && rest[..5].eq_ignore_ascii_case(b"<html")
+        && matches!(
+            rest[5],
+            b'>' | b'/' | b' ' | b'\t' | b'\n' | b'\r' | b'\x0c'
+        ))
+    .then_some(i)
+}
+
+/// Whether `html` holds a `<meta name="generator">` outside comments and raw-text elements.
+fn has_generator_meta(html: &str) -> bool {
+    let b = html.as_bytes();
+    let mut i = 0;
+    while let Some(k) = html[i..].find('<') {
+        let at = i + k;
+        if html[at..].starts_with("<!--") {
+            i = html[at + 4..]
+                .find("-->")
+                .map_or(html.len(), |e| at + 4 + e + 3);
+            continue;
+        }
+        let name_at = at + 1;
+        let name_end = (name_at..b.len())
+            .find(|&j| !(b[j].is_ascii_alphanumeric() || b[j] == b'-'))
+            .unwrap_or(b.len());
+        let name = html[name_at..name_end].to_ascii_lowercase();
+        let Some(end) = tag_end(html, name_end) else {
+            return false;
+        };
+        // `end` is past `at`, so every turn advances.
+        i = end;
+        match name.as_str() {
+            "meta" => {
+                if attr_value(&html[at..end], "name")
+                    .is_some_and(|v| v.trim().eq_ignore_ascii_case("generator"))
+                {
+                    return true;
+                }
+            }
+            "script" | "style" | "textarea" | "title" if !html[at..end].ends_with("/>") => {
+                i = find_ci(html, &format!("</{name}"), end)
+                    .and_then(|c| tag_end(html, c))
+                    .unwrap_or(html.len());
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Byte offset just past the `>` closing the tag whose name ends at `from`, skipping quoted attribute values.
 fn tag_end(html: &str, from: usize) -> Option<usize> {
     let b = html.as_bytes();
@@ -1808,5 +1923,113 @@ mod tests {
         let mut o = doc.to_string();
         inject_document_assets_into(&mut o, &old.routes[0].chain, &old, None, None);
         assert_eq!(o, doc);
+    }
+    const GEN: &str = "<meta name=\"generator\" content=\"brust/2.0.0-alpha.29\">";
+
+    fn with_generator(doc: &str) -> String {
+        let mut s = doc.to_string();
+        inject_generator_into(&mut s, GEN);
+        s
+    }
+
+    #[test]
+    fn a_full_document_gets_one_generator_meta_before_the_head_closes() {
+        assert_eq!(
+            with_generator(
+                "<!doctype html><html><head><title>T</title></head><body></body></html>"
+            ),
+            format!("<!doctype html><html><head><title>T</title>{GEN}</head><body></body></html>")
+        );
+        // An uppercase end tag, and an empty head.
+        assert_eq!(
+            with_generator("<html><head></HEAD><body></body></html>"),
+            format!("<html><head>{GEN}</HEAD><body></body></html>")
+        );
+        // No head at all: right after the `<html …>` start tag, where a parser makes the implicit head.
+        assert_eq!(
+            with_generator("<!doctype html><html lang=\"en\"><body><p>x</p></body></html>"),
+            format!("<!doctype html><html lang=\"en\">{GEN}<body><p>x</p></body></html>")
+        );
+    }
+
+    #[test]
+    fn a_fragment_gets_no_generator_meta() {
+        for f in [
+            "<p>frag</p>",
+            "<div><meta name=\"x\"></div>",
+            "",
+            "<!-- <html> --><p>x</p>",
+        ] {
+            assert_eq!(with_generator(f), f);
+        }
+    }
+
+    #[test]
+    fn the_apps_own_generator_wins_whatever_its_shape() {
+        for own in [
+            "<meta name=\"generator\" content=\"mine\">",
+            "<META NAME='Generator' CONTENT='mine'>",
+            "<meta content=\"mine\" name=generator>",
+            "<meta  name = \"generator\"  content=\"mine\"/>",
+        ] {
+            let doc = format!("<html><head><title>T</title>{own}</head><body></body></html>");
+            assert_eq!(with_generator(&doc), doc, "{own}");
+        }
+        // In a headless document too.
+        let doc = "<html><meta name=\"generator\" content=\"mine\"><body></body></html>";
+        assert_eq!(with_generator(doc), doc);
+    }
+
+    #[test]
+    fn a_generator_mentioned_in_a_comment_script_or_another_meta_does_not_count() {
+        for head in [
+            "<!-- <meta name=\"generator\" content=\"c\"> -->",
+            "<script>var s = '<meta name=\"generator\">'</script>",
+            "<style>/* <meta name=\"generator\"> */</style>",
+            "<title><meta name=\"generator\"></title>",
+            "<meta name=\"description\" content=\"generator\">",
+            "<meta property=\"generator\" content=\"x\">",
+        ] {
+            let doc = format!("<html><head>{head}</head><body></body></html>");
+            assert_eq!(
+                with_generator(&doc),
+                format!("<html><head>{head}{GEN}</head><body></body></html>"),
+                "{head}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_unclosed_tag_or_comment_in_the_head_does_not_loop_or_panic() {
+        for doc in [
+            "<html><head><meta name=\"generator\"</head>",
+            "<html><head><!-- never closed</head><body>",
+            "<html><head><script>never closed</head>",
+            "<html><head><",
+            "<html><head></head",
+        ] {
+            let _ = with_generator(doc);
+        }
+    }
+
+    #[test]
+    fn the_hoisted_generator_meta_of_a_body_is_the_apps_own() {
+        // F399 moves a meta a component rendered in the body into the head; the generator check runs after.
+        let mut doc =
+            "<html><head><title>T</title></head><body><meta name=\"generator\" content=\"mine\"><p>x</p></body></html>"
+                .to_string();
+        hoist_head_into(&mut doc);
+        inject_generator_into(&mut doc, GEN);
+        assert_eq!(doc.matches("name=\"generator\"").count(), 1, "{doc}");
+        assert!(doc.contains("content=\"mine\""), "{doc}");
+    }
+
+    #[test]
+    fn the_generator_content_is_escaped_as_an_attribute() {
+        assert_eq!(generator_meta_tag("brust/2.0.0-alpha.29"), GEN);
+        assert_eq!(
+            generator_meta_tag("a\"b&c<d>e"),
+            "<meta name=\"generator\" content=\"a&quot;b&amp;c&lt;d&gt;e\">"
+        );
     }
 }

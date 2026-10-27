@@ -49,6 +49,8 @@ dist/static/_redirects            one line per redirect()
 dist/static/ssg.json              pages, redirects, skipped routes, the 404 route, warnings
 ```
 
+Every page carries `<meta name="generator" content="brust/<version>">` in its `<head>`, the value the server sends as `X-Powered-By`, so a static host that sets no such header still says what built the page. A page that wrote its own `<meta name="generator">` keeps it.
+
 There is no manifest, Jinja, jobs or actions file in it. Assets follow the same rules as the Workers target: only the files the native host would serve are copied.
 
 Without a `*` route, the build writes a minimal `404.html` and warns `ssg-404`. Without any `404.html`, Cloudflare Pages switches to SPA mode and answers every unknown path with the home page.

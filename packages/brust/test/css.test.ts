@@ -119,8 +119,11 @@ test('R19.3: the server links the route CSS right after <head> / <meta charset>,
         .find((r) => r.pattern === pattern)!
         .css!.map((f) => `<link rel="stylesheet" href="/_brust/${f}" data-brust-css>`)
         .join('')
-    const home = (await (await fetch(`${base}/`)).text()).trimStart()
-    expect(home).toStartWith(`<!doctype html><html lang="en"><head><meta charSet="utf-8">${links('/')}<title>css fixture</title><link rel="stylesheet" href="/public/user.css"></head>`)
+    const homeRes = await fetch(`${base}/`)
+    const home = (await homeRes.text()).trimStart()
+    // F468: the generator meta (the X-Powered-By string) is the last thing in the head, after every author tag
+    const gen = `<meta name="generator" content="${homeRes.headers.get('x-powered-by')}">`
+    expect(home).toStartWith(`<!doctype html><html lang="en"><head><meta charSet="utf-8">${links('/')}<title>css fixture</title><link rel="stylesheet" href="/public/user.css">${gen}</head>`)
     expect(home).toContain('<header>top</header>')
     const bare = await (await fetch(`${base}/bare`)).text()
     // the native page's static className is the module's class
