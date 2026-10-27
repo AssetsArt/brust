@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { Elysia } from 'elysia'
-import { loadActionsApp, mountActions } from '../src/actions/load'
+import { brust } from '../src/actions/elysia'
+import { loadActionsApp, mountActions, shadowedGetActions } from '../src/actions/load'
 import { prefixError } from '../src/actions/prefix'
 import app from './fixtures/actions/app'
 
@@ -96,4 +97,20 @@ describe('prefixError', () => {
     for (const p of ['', 'api', '/', '/api/', '//a', '/a/../b', '/a b', '/_brust', '/_brust/client'])
       expect(typeof prefixError(p)).toBe('string')
   })
+})
+
+test('shadowedGetActions: the GET actions a route under the prefix hides (F470)', () => {
+  const a = mountActions(
+    new Elysia({ adapter: brust() })
+      .get('/google/callback', () => 'g')
+      .get('/:provider/start', () => 's')
+      .post('/apple/callback', () => 'a')
+      .get('/session', () => 'x'),
+    '/auth',
+  )
+  expect(shadowedGetActions(a, ['/', '/auth/{provider}/callback', '/auth/{provider}/start', '/other/session'], '/auth')).toEqual([
+    'GET /auth/google/callback (route /auth/{provider}/callback)',
+    'GET /auth/:provider/start (route /auth/{provider}/start)',
+  ])
+  expect(shadowedGetActions(a, ['/', '/elsewhere'], '/auth')).toEqual([])
 })

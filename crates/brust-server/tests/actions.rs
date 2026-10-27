@@ -876,6 +876,61 @@ fn api_prefix_routes_actions() {
     assert_eq!(fake.fetch_count(), 1);
 }
 
+// ---- F470: page and loader routes under the actions prefix ----
+
+fn prefixed(prefix: &str) -> (Arc<FakeBun>, Arc<brust_server::Server>) {
+    let fake = fake().with_fetch(echo);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            prefix: prefix.into(),
+            ..ActionsConfig::default()
+        },
+        None,
+    );
+    (fake, s)
+}
+
+#[test]
+fn a_get_route_under_the_prefix_is_the_page_and_every_other_request_the_actions_app() {
+    let (fake, s) = prefixed("/pokemon");
+    // GET and HEAD of /pokemon/{name}: the loader route, not the actions app
+    let (status, h, b) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(status, 200, "{b}");
+    assert_eq!(cache_hdr(&h), Some("MISS"));
+    assert!(b.contains("pikachu"), "{b}");
+    let (status, _, body) = request_body(&s, "HEAD", "/pokemon/pikachu", &[], Vec::new());
+    assert_eq!((status, body.len()), (200, 0));
+    assert_eq!(fake.fetch_count(), 0);
+    // POST at the same path: the action
+    let (status, _, _) = request_body(&s, "POST", "/pokemon/pikachu", &[], b"{}".to_vec());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["url"], "/pokemon/pikachu");
+    assert_eq!(fake.fetch_count(), 1);
+    // a GET no route matches (the prefix itself, a deeper path): the catch-all does not take it, the actions app does
+    for path in ["/pokemon", "/pokemon/a/b"] {
+        let (status, _, b) = get(&s, path, &[]);
+        assert_eq!(status, 200, "{path}: {b}");
+        assert_eq!(last(&fake)["url"], path);
+    }
+    assert_eq!(fake.fetch_count(), 3);
+}
+
+#[test]
+fn a_route_declared_outside_the_prefix_does_not_take_a_path_under_it() {
+    // /pokemon/{name} matches /pokemon/pikachu, but its pattern is not under /pokemon/pikachu
+    let (fake, s) = prefixed("/pokemon/pikachu");
+    let (status, _, _) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["url"], "/pokemon/pikachu");
+    // outside the prefix the route still serves
+    let (status, _, b) = get(&s, "/pokemon/eevee", &[]);
+    assert_eq!(status, 200, "{b}");
+    assert!(b.contains("eevee"), "{b}");
+    assert_eq!(fake.fetch_count(), 1);
+}
+
 /// The app's URL parser would resolve these out of (or around) the path Rust admitted: 400, never forwarded.
 #[test]
 fn dot_segments_and_backslashes_are_400() {

@@ -88,7 +88,7 @@ test('notFound carries the store; redirect/httpError/error do not', async () => 
     }),
     jobs: {},
   })
-  expect(await he.loader(ctx())).toEqual({ verdict: 'httpError', status: 403, body: 'no' })
+  expect(await he.loader(ctx())).toEqual({ verdict: 'httpError', status: 403, body: 'no', contentType: 'text/plain; charset=utf-8' })
   const er = makeHandlers({
     leaves: leaves(() => {
       touch()

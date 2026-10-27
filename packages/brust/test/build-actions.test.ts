@@ -68,8 +68,7 @@ test('a relative import of the entry is bundled', async () => {
 
 // ---- build-level: manifest.actions, the route/prefix shadow check, the browser guard ----
 
-const ROUTES = (extra = '') =>
-  `import { defineRoutes } from '@brust/core/routes'\nimport Home from './Home'\n${extra}export const routes = defineRoutes([{ path: '/', Component: Home }${extra ? ', { path: "/api/docs", Component: Home }' : ''}])\n`
+const ROUTES = () => `import { defineRoutes } from '@brust/core/routes'\nimport Home from './Home'\nexport const routes = defineRoutes([{ path: '/', Component: Home }])\n`
 const NATIVE_HOME = `import { useState } from 'react'\nexport default function Home() {\n  const [n, setN] = useState(0)\n  return <button onClick={() => setN(n + 1)}>n={n}</button>\n}\n`
 
 /** A throwaway app inside the package (so `elysia` and `@brust/core/elysia` resolve). */
@@ -114,18 +113,18 @@ test('a missing entry file fails before anything is written', async () => {
   expect(readFileSync(join(out, 'manifest.json'), 'utf8')).toBe('{"old":true}')
 }, 60_000)
 
-test('a literal route under the prefix is refused; a root catch-all is not', async () => {
+test('routes under the prefix build (literal and {param}); the prefix itself and a {*rest} route under it are refused; a root catch-all is not', async () => {
   const toml = '[actions]\nprefix = "/api"\n'
-  const bad = app({ 'brust.toml': toml, 'actions.ts': HELLO, 'routes.tsx': ROUTES('// docs\n') })
-  await expect(build(bad, join(bad, 'dist'))).rejects.toMatchObject({
-    rule: 'actions-prefix',
-    message: expect.stringContaining('lies under the actions prefix /api'),
-  })
-  const ok = app({
-    'brust.toml': toml,
-    'actions.ts': HELLO,
-    'routes.tsx': `import { defineRoutes } from '@brust/core/routes'\nimport Home from './Home'\nexport const routes = defineRoutes([{ path: '/', Component: Home }, { path: '*', Component: Home }])\n`,
-  })
+  const routes = (paths: string[]) =>
+    `import { defineRoutes } from '@brust/core/routes'\nimport Home from './Home'\nexport const routes = defineRoutes([${paths.map((p) => `{ path: ${JSON.stringify(p)}, Component: Home }`).join(', ')}])\n`
+  for (const [path, message] of [
+    ['/api', 'is the actions prefix /api'],
+    ['/api/files/{*rest}', 'is a catch-all under the actions prefix /api'],
+  ] as const) {
+    const bad = app({ 'brust.toml': toml, 'actions.ts': HELLO, 'routes.tsx': routes(['/', path]) })
+    await expect(build(bad, join(bad, 'dist'))).rejects.toMatchObject({ rule: 'actions-prefix', message: expect.stringContaining(message) })
+  }
+  const ok = app({ 'brust.toml': toml, 'actions.ts': HELLO, 'routes.tsx': routes(['/', '/api/docs', '/api/{provider}/callback', '*']) })
   await build(ok, join(ok, 'dist'))
   expect(existsSync(join(ok, 'dist', 'actions.js'))).toBe(true)
 }, 60_000)

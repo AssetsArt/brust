@@ -79,6 +79,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
         let (mut ok, mut data, mut headers) = (None::<bool>, None::<Node>, None::<Headers>);
         let (mut verdict, mut location, mut status) = (None::<String>, None::<String>, None::<u16>);
         let (mut body, mut error) = (None::<String>, None::<String>);
+        let mut content_type = None::<String>;
         let (mut planned, mut results) = (None::<bool>, None::<Vec<JobResult>>);
         let mut store = None::<Node>;
         while let Some(k) = m.next_key::<std::borrow::Cow<'de, str>>()? {
@@ -90,6 +91,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 "location" => location = Some(m.next_value()?),
                 "status" => status = Some(m.next_value()?),
                 "body" => body = Some(m.next_value()?),
+                "contentType" => content_type = m.next_value::<Option<String>>()?,
                 "error" => error = Some(m.next_value()?),
                 "planned" => planned = Some(m.next_value()?),
                 "results" => results = Some(m.next_value()?),
@@ -135,6 +137,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 return Ok(LoaderResponse::Verdict(Verdict::HttpError {
                     status,
                     body: body.unwrap_or_default(),
+                    content_type,
                     headers: headers.unwrap_or_default(),
                 }));
             }
@@ -251,6 +254,10 @@ pub enum Verdict {
         status: u16,
         #[serde(default)]
         body: String,
+        /// The `Content-Type` the loader asked for (`httpError(status, body, { contentType })`, or the worker's
+        /// default for the body kind). Absent on the older wire: the pipeline answers `text/plain; charset=utf-8`.
+        #[serde(default, rename = "contentType")]
+        content_type: Option<String>,
         #[serde(default)]
         headers: Headers,
     },
@@ -549,6 +556,7 @@ mod tests {
             LoaderResponse::Verdict(Verdict::HttpError {
                 status: 403,
                 body: String::new(),
+                content_type: None,
                 headers: h
             })
         );
@@ -601,6 +609,7 @@ mod tests {
             LoaderResponse::Verdict(Verdict::HttpError {
                 status: 418,
                 body: "teapot".into(),
+                content_type: None,
                 headers: Headers::default()
             })
         );
@@ -609,6 +618,32 @@ mod tests {
             LoaderResponse::Verdict(Verdict::HttpError {
                 status: 500,
                 body: String::new(),
+                content_type: None,
+                headers: Headers::default()
+            })
+        );
+    }
+
+    /// F466: the worker's `contentType` is carried; the older wire (no field) and an explicit `null` parse as `None`.
+    #[test]
+    fn loader_http_error_carries_content_type() {
+        assert_eq!(
+            loader(
+                json!({"verdict": "httpError", "status": 401, "body": "{\"e\":1}", "contentType": "application/json; charset=utf-8"})
+            ),
+            LoaderResponse::Verdict(Verdict::HttpError {
+                status: 401,
+                body: "{\"e\":1}".into(),
+                content_type: Some("application/json; charset=utf-8".into()),
+                headers: Headers::default()
+            })
+        );
+        assert_eq!(
+            loader(json!({"verdict": "httpError", "status": 401, "contentType": null})),
+            LoaderResponse::Verdict(Verdict::HttpError {
+                status: 401,
+                body: String::new(),
+                content_type: None,
                 headers: Headers::default()
             })
         );
