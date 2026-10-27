@@ -264,7 +264,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "bun_alloc"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "allocator-api2",
  "bun_mimalloc_sys",
@@ -276,7 +276,7 @@ dependencies = [
 [[package]]
 name = "bun_analytics"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bitflags",
  "bun_core",
@@ -287,7 +287,7 @@ dependencies = [
 [[package]]
 name = "bun_ast"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bitflags",
  "bstr",
@@ -311,7 +311,7 @@ dependencies = [
 [[package]]
 name = "bun_base64"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_alloc",
  "bun_core",
@@ -324,7 +324,7 @@ dependencies = [
 [[package]]
 name = "bun_boringssl_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_core",
  "bun_opaque",
@@ -333,7 +333,7 @@ dependencies = [
 [[package]]
 name = "bun_collections"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "allocator-api2",
  "bun_alloc",
@@ -350,7 +350,7 @@ dependencies = [
 [[package]]
 name = "bun_core"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -374,7 +374,7 @@ dependencies = [
 [[package]]
 name = "bun_core_macros"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_output_tags",
  "proc-macro2",
@@ -385,7 +385,7 @@ dependencies = [
 [[package]]
 name = "bun_crash_handler"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bitflags",
  "bstr",
@@ -411,7 +411,7 @@ dependencies = [
 [[package]]
 name = "bun_dispatch"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -421,7 +421,7 @@ dependencies = [
 [[package]]
 name = "bun_dotenv"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -439,7 +439,7 @@ dependencies = [
 [[package]]
 name = "bun_errno"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_core",
  "bun_libuv_sys",
@@ -451,7 +451,7 @@ dependencies = [
 [[package]]
 name = "bun_hash"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_highway",
 ]
@@ -459,7 +459,7 @@ dependencies = [
 [[package]]
 name = "bun_highway"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
 ]
@@ -467,7 +467,7 @@ dependencies = [
 [[package]]
 name = "bun_http_types"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -482,7 +482,7 @@ dependencies = [
 [[package]]
 name = "bun_install_types"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bitflags",
  "bstr",
@@ -497,7 +497,7 @@ dependencies = [
 [[package]]
 name = "bun_io"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bitflags",
  "bstr",
@@ -520,7 +520,7 @@ dependencies = [
 [[package]]
 name = "bun_js_parser"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bitflags",
  "bstr",
@@ -535,7 +535,6 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_react_compiler",
- "bun_sema",
  "bun_url",
  "bun_wyhash",
  "bytemuck",
@@ -549,7 +548,7 @@ dependencies = [
 [[package]]
 name = "bun_js_printer"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -573,7 +572,7 @@ dependencies = [
 [[package]]
 name = "bun_libuv_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_core",
  "bun_windows_sys",
@@ -585,7 +584,7 @@ dependencies = [
 [[package]]
 name = "bun_mimalloc_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_opaque",
 ]
@@ -593,12 +592,12 @@ dependencies = [
 [[package]]
 name = "bun_opaque"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 
 [[package]]
 name = "bun_options_types"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_ast",
@@ -621,12 +620,12 @@ dependencies = [
 [[package]]
 name = "bun_output_tags"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 
 [[package]]
 name = "bun_parsers"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -644,7 +643,7 @@ dependencies = [
 [[package]]
 name = "bun_paths"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -659,7 +658,7 @@ dependencies = [
 [[package]]
 name = "bun_perf"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_core",
  "bun_sys",
@@ -668,7 +667,7 @@ dependencies = [
 [[package]]
 name = "bun_ptr"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -685,6 +684,7 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
+ "bun_threading",
  "enumset",
  "rustc-hash",
  "smallvec",
@@ -693,33 +693,15 @@ dependencies = [
 [[package]]
 name = "bun_safety"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_core",
-]
-
-[[package]]
-name = "bun_sema"
-version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_alloc",
- "bun_collections",
- "bun_core",
- "bun_paths",
- "bun_threading",
- "bun_wyhash",
- "hashbrown 0.15.5",
- "rustc-hash",
- "smallvec",
 ]
 
 [[package]]
 name = "bun_semver"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -731,12 +713,12 @@ dependencies = [
 [[package]]
 name = "bun_simdutf_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 
 [[package]]
 name = "bun_sourcemap"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_alloc",
@@ -760,7 +742,7 @@ dependencies = [
 [[package]]
 name = "bun_spawn_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_analytics",
@@ -777,7 +759,7 @@ dependencies = [
 [[package]]
 name = "bun_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bitflags",
  "bstr",
@@ -801,7 +783,7 @@ dependencies = [
 [[package]]
 name = "bun_threading"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_alloc",
  "bun_collections",
@@ -818,7 +800,7 @@ dependencies = [
 [[package]]
 name = "bun_url"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_alloc",
  "bun_collections",
@@ -832,7 +814,7 @@ dependencies = [
 [[package]]
 name = "bun_uws_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bitflags",
  "bstr",
@@ -854,7 +836,7 @@ dependencies = [
 [[package]]
 name = "bun_which"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
  "bun_core",
@@ -865,12 +847,12 @@ dependencies = [
 [[package]]
 name = "bun_windows_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 
 [[package]]
 name = "bun_wyhash"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bstr",
 ]
@@ -878,7 +860,7 @@ dependencies = [
 [[package]]
 name = "bun_zlib"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_alloc",
  "bun_collections",
@@ -890,7 +872,7 @@ dependencies = [
 [[package]]
 name = "bun_zlib_sys"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_core",
 ]
@@ -898,7 +880,7 @@ dependencies = [
 [[package]]
 name = "bun_zstd"
 version = "0.0.0"
-source = "git+https://github.com/oven-sh/bun?rev=620b50f6abea3413a30235c5885bfe8cbffd592d#620b50f6abea3413a30235c5885bfe8cbffd592d"
+source = "git+https://github.com/oven-sh/bun?rev=38afee6c84fcf48c0edb2466aa4b27d287a59c30#38afee6c84fcf48c0edb2466aa4b27d287a59c30"
 dependencies = [
  "bun_core",
  "bun_opaque",
