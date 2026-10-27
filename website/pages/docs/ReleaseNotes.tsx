@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-29', title: '2.0.0-alpha.29' },
       { id: 'alpha-28', title: '2.0.0-alpha.28' },
       { id: 'alpha-27', title: '2.0.0-alpha.27' },
       { id: 'alpha-26', title: '2.0.0-alpha.26' },
@@ -51,6 +52,54 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-29">2.0.0-alpha.29 · 27 October 2026</h2>
+      {/* source: the pull requests of the alpha.29 batch: #409 (F471), #407 (F470), #404 (F468), #403 (F469), #406 (F466, F467), #405 (F462, F463); behaviour in docs/actions.md, docs/navigation.md, docs/cache-adapters.md */}
+      <p>The actions client can now renew a token and send a call again, a route can sit under the actions prefix, every page names the brust version that served it, and the navigation progress line is thinner by default. One behaviour change: a loader that sends <code>Vary: Accept</code> is no longer cached.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: #409 (F471); docs/actions.md section 6 (Middleware, Typed routes); packages/brust/src/actions/client.ts */}
+        <li>
+          <strong>Action client middleware: <code>client&lt;App&gt;({'{ middleware: [...] }'})</code> (#409).</strong> A middleware is <code>(req, next) =&gt; Response</code> (<code>ActionMiddleware</code>), placed between Eden and the transport. <code>middleware[0]</code> is the outermost: <code>[a, b]</code> runs <code>a</code>, then <code>b</code>, then the transport, and the response comes back through <code>b</code>, then <code>a</code>. <code>next</code> may be called any number of times and each call sends its own copy of the request, so a retry sends the same JSON or multipart body again. A link can answer without calling <code>next</code>, and then nothing is sent. A link that throws is a network failure: the call resolves with <code>status: 503</code> (or throws, with <code>throwHttpError</code>). The same code runs in a page and in a loader. The docs carry a token-renewal recipe that renews once for all calls that fail together and then sends the failing call again, and a recipe that adds a custom header to every call. The new &ldquo;Typed routes&rdquo; example shows Elysia <code>t</code> schemas for the body and each response, and cookies set on a typed <code>status()</code> answer: every <code>Set-Cookie</code> reaches the client and <code>error.value</code> keeps its type. See <a href="/docs/actions">Actions</a>.
+        </li>
+        {/* source: #407 (F470); docs/actions.md (The prefix); packages/brust/src/build/index.ts, packages/brust/src/actions/load.ts */}
+        <li>
+          <strong>A page or loader route may sit under the actions prefix (#407).</strong> A <code>GET</code> or <code>HEAD</code> that a route whose own pattern is under the prefix matches is served by the route. Every other method, and a <code>GET</code> that no such route matches, still go to the actions app; the <code>*</code> catch-all never counts, and neither does a route outside the prefix. Build and boot now refuse only the prefix itself and a <code>{'{*rest}'}</code> route under it. A <code>GET</code> action that a route shadows is named in a warning at boot. Example: an OAuth <code>GET</code> callback at <code>/auth/{'{provider}'}/callback</code> is a loader that sets the session cookie and redirects, while Apple&apos;s <code>form_post</code> to the same path stays an action.
+        </li>
+        {/* source: #404 (F468); docs and tests on that PR */}
+        <li>
+          <strong>Every full document carries <code>&lt;meta name=&quot;generator&quot; content=&quot;brust/&lt;version&gt;&quot;&gt;</code> (#404).</strong> A tag the app writes itself wins. A fragment, such as a navigation payload, gets none. The default static 404 page has it too.
+        </li>
+        {/* source: #403 (F469); docs/navigation.md section 6 */}
+        <li>
+          <strong>The progress line is a 2px line that moves toward 80% (#403).</strong> It runs to the end and fades at <code>success</code> or <code>error</code>. Its height is <code>--brust-progress-height</code>, and your own CSS for the bar now wins over the built-in rule. <code>data-brust-progress=&quot;off&quot;</code> on <code>&lt;html&gt;</code> still turns it off.
+        </li>
+      </ul>
+
+      <h3>Breaking</h3>
+      <ul>
+        {/* source: #406 (F467); docs/cache-adapters.md (What is stored); the Caching and Loaders docs pages */}
+        <li>
+          <strong>A response whose <code>Vary</code> names a field other than <code>Accept-Encoding</code> is no longer cached (#406).</strong> The cache key holds no request header, so a page that varies on <code>Cookie</code> or <code>Accept-Language</code> would have been served to everyone. A loader that sends <code>Vary: Accept</code> loses caching; drop the header if the page does not vary, or accept that it is rendered per request.
+        </li>
+      </ul>
+
+      <h3>Fixes</h3>
+      <ul>
+        {/* source: #406 (F466); the Loaders docs page */}
+        <li>
+          <strong>The content type of <code>httpError()</code> reaches the wire.</strong> A string body is <code>text/plain; charset=utf-8</code> and an object body is <code>application/json; charset=utf-8</code> by default, and <code>{'{ contentType }'}</code> names another. A server-owned name in the <code>headers</code> of <code>httpError()</code> is dropped with a warning in <code>brust dev</code> as well, instead of failing the request with a 500 that hid the error the loader meant to send (#406).
+        </li>
+        {/* source: #405 (F462); packages/runtime-dom/src/nav/nav.ts */}
+        <li>
+          <strong>An old page&apos;s island no longer reads the next page&apos;s store seeds during a navigation.</strong> The seed tags of the next page wait until the old ones are done (#405).
+        </li>
+        {/* source: #405 (F463); docs/navigation.md section 7 */}
+        <li>
+          <strong>The transition&apos;s image preload scans only the level that is swapped.</strong> The eager images of a layout that stays are on screen already and no longer take part in the 100 ms decode wait (#405).
+        </li>
+      </ul>
 
       <h2 id="alpha-28">2.0.0-alpha.28 · 26 October 2026</h2>
       {/* source: lane f464-loader-headers, #401 (F464), not merged at the time of writing; the Loaders docs page and docs/navigation.md section 5 on that branch; #400 (F465) */}
