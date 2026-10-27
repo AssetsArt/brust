@@ -60,6 +60,8 @@ function samePath(a: string, b: string): boolean {
 }
 
 const STREAM_METHODS = new Set(['POST', 'PUT', 'PATCH'])
+/** A route answers `method`: its own, or every method (Elysia 2's `.all()` registers `*`; `ALL` too). */
+const answers = (route: string, method: string) => route === method || route === 'ALL' || route === '*'
 
 /** Could one request path match both `listed` (a stream entry, prefix included) and `route` (an Elysia path)? A
  * parameter on either side matches any one segment; a final `*` on either side matches one or more. */
@@ -90,12 +92,12 @@ export function streamRouteCheck(app: AnyElysia, entries: string[], prefix: stri
     return { entry: e, method: m!.toUpperCase(), path: full(p!) }
   })
   const routes = app.routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, none: parsesNone(r) }))
-  const missing = listed.filter((l) => !routes.some((r) => r.none && r.method === l.method && samePath(r.path, l.path))).map((l) => l.entry)
+  const missing = listed.filter((l) => !routes.some((r) => r.none && answers(r.method, l.method) && samePath(r.path, l.path))).map((l) => l.entry)
   const parsed = routes
-    .filter((r) => !r.none && listed.some((l) => l.method === r.method && overlaps(l.path, r.path)))
+    .filter((r) => !r.none && listed.some((l) => answers(r.method, l.method) && overlaps(l.path, r.path)))
     .map((r) => `${r.method} ${r.path}`)
   const unlisted = routes
-    .filter((r) => r.none && STREAM_METHODS.has(r.method) && !listed.some((l) => l.method === r.method && samePath(r.path, l.path)))
+    .filter((r) => r.none && (STREAM_METHODS.has(r.method) || answers(r.method, '')) && !listed.some((l) => answers(r.method, l.method) && samePath(r.path, l.path)))
     .map((r) => `${r.method} ${r.path}`)
   return { missing, parsed, unlisted }
 }

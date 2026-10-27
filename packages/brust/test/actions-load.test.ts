@@ -147,6 +147,13 @@ test('streamRouteCheck: a parsing route a listed :param or * entry can reach is 
     '/api',
   )
   expect(streamRouteCheck(a, ['PUT /files/*', 'POST /u/:id'], '/api').parsed).toEqual(['PUT /api/files/special', 'PUT /api/files/a/b', 'POST /api/u/me'])
+  // A parsing .all() route answers the listed method too.
+  const all = mountActions(new Elysia({ adapter: brust() }).post('/w/:id', { parse: 'none' }, () => 'w').all('/w/me', () => 'me'), '/api')
+  expect(streamRouteCheck(all, ['POST /w/:id'], '/api').parsed).toEqual(['* /api/w/me'])
+  // A parse-none .all() route satisfies an entry and is reported when unlisted.
+  const any = mountActions(new Elysia({ adapter: brust() }).all('/any', { parse: 'none' }, () => 'a'), '/api')
+  expect(streamRouteCheck(any, ['PUT /any'], '/api')).toEqual({ missing: [], parsed: [], unlisted: [] })
+  expect(streamRouteCheck(any, [], '/api').unlisted).toEqual(['* /api/any'])
   // An entry for a static path reaches a parsing :param route too.
   const b = mountActions(new Elysia({ adapter: brust() }).post('/v/me', { parse: 'none' }, () => 'me').post('/v/:id', () => 'v'), '/api')
   expect(streamRouteCheck(b, ['POST /v/me'], '/api').parsed).toEqual(['POST /api/v/:id'])
