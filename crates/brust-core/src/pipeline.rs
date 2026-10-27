@@ -112,7 +112,8 @@ pub async fn handle<H: Host>(
     // outside the prefix (`/{a}/{b}`) does not take a path of the actions app.
     if let Some(a) = &s.actions {
         let norm = crate::routing::routes::normalize_request_path(path_only);
-        if a.is_under(&norm) && !((method == "GET" || method == "HEAD") && routed_under(s, a, full)) {
+        let read = method == "GET" || method == "HEAD";
+        if a.is_under(&norm) && !(read && routed_under(s, a, full)) {
             return crate::actions::handle(s, a, &rq, incoming, method == "HEAD").await;
         }
     }
