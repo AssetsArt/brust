@@ -51,6 +51,9 @@ export interface BrowserCtx {
   cssMaps?: Map<string, Record<string, string>>
   /** F411: `<dist>/client`, where an imported asset is written (see `cssPlugin`). */
   clientDir?: string
+  /** F480: load-time writers shipped into an island chunk (F230), by real path: why each is there. A server-only import
+   * reached through one names that chain in `server-only-in-client`. */
+  loadWriters?: Map<string, string>
 }
 
 /** `file` sits under `root`. */
@@ -178,14 +181,43 @@ function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean 
  * offending import is stubbed so the bundler gets as far as it can; `browserBuild` then throws
  * `server-only-in-client` naming every `<importer> imports <spec>`. */
 function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
+  const writers = ctx.loadWriters ?? new Map<string, string>()
+  // F480: who first imported each file (real paths), kept only while a load writer ships, to name the writer chain.
+  const importerOf = new Map<string, string>()
+  const real = (f: string) => {
+    try {
+      return realpathSync(f)
+    } catch {
+      return f
+    }
+  }
+  const noteImport = (spec: string, importer: string) => {
+    const from = real(ctx.sourceOf.get(importer) ?? importer)
+    try {
+      const file = real(isAbsolute(spec) ? spec : Bun.resolveSync(spec, dirname(from)))
+      if (!importerOf.has(file)) importerOf.set(file, from)
+    } catch {}
+  }
+  const writerChain = (importer: string): string => {
+    const seen = new Set<string>()
+    for (let f: string | undefined = real(ctx.sourceOf.get(importer) ?? importer); f !== undefined && !seen.has(f); f = importerOf.get(f)) {
+      seen.add(f)
+      const why = writers.get(f)
+      if (why !== undefined) return ` (${why})`
+    }
+    return ''
+  }
   return {
     name: 'brust-server-only',
     setup(b) {
       b.onResolve({ filter: /.*/ }, (a) => {
         if (!a.importer || a.path.startsWith('/_brust/')) return undefined
         if (a.path === '@brust/core') return { path: BROWSER_ENTRY }
-        if (!isServerOnly(a.path, a.importer, ctx)) return undefined
-        const msg = `${relative(ctx.appRoot, ctx.sourceOf.get(a.importer) ?? a.importer)} imports ${a.path}`
+        if (!isServerOnly(a.path, a.importer, ctx)) {
+          if (writers.size > 0) noteImport(a.path, a.importer)
+          return undefined
+        }
+        const msg = `${relative(ctx.appRoot, ctx.sourceOf.get(a.importer) ?? a.importer)} imports ${a.path}${writerChain(a.importer)}`
         if (!violations.includes(msg)) violations.push(msg)
         return { path: a.path, namespace: SERVER_ONLY_NS }
       })
