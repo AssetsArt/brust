@@ -588,6 +588,7 @@ test('the cache: a prefetch serves later hovers and the click at any time in 5 m
   // the same contract on a hit: loading set at load, cleared at success
   expect(events.map((e) => e[2])).toEqual([false, true, false])
   t += 5 * 60e3 // stale: dropped on read
+  ;(window as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL('http://localhost/a') // F479: not on /b, the page the link names
   focus(a)
   expect(fetched).toEqual(['http://localhost/b', 'http://localhost/b'])
   now.mockRestore()
@@ -651,6 +652,143 @@ test('clearCache() empties it; the LRU holds 32 documents', async () => {
   await bridge().navigate('/p1')
   await bridge().navigate('/p0')
   expect(fetched.length).toBe(34)
+})
+
+// ---- F479: a minimum gap between two prefetches of one URL; the current page is not prefetched ----------------
+
+const gapped = (now: ReturnType<typeof spyOn>, t0 = 1e12) => {
+  const clock = { t: t0 }
+  now.mockImplementation(() => clock.t)
+  return clock
+}
+
+test('prefetch gap: a page the cache does not keep is prefetched once per 10 s; the click always fetches', async () => {
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')), headers: { 'cache-control': 'no-store' } }
+  const now = spyOn(Date, 'now')
+  const c = gapped(now)
+  const a = $('#to-b')!
+  focus(a)
+  await settle()
+  focus(a)
+  c.t += 9e3
+  focus(a)
+  expect(fetched).toEqual(['http://localhost/b'])
+  c.t += 1e3 // 10 s since the first fetch
+  focus(a)
+  await settle()
+  expect(fetched.length).toBe(2)
+  click(a) // a navigation never waits on the gap: no-store is not kept, so it fetches
+  await settle()
+  expect(fetched.length).toBe(3)
+  expect(names()).toEqual(['click', 'load', 'success'])
+  now.mockRestore()
+})
+
+test('prefetch gap: a navigation counts as a fetch, so a hover right after it fetches nothing', async () => {
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')), headers: { 'cache-control': 'no-store' } }
+  pages['/a'] = { html: doc(app('1', 'a', '<a id="back" href="/b">b</a>')) }
+  const now = spyOn(Date, 'now')
+  const c = gapped(now)
+  await bridge().navigate('/b')
+  expect(fetched).toEqual(['http://localhost/b'])
+  await bridge().navigate('/a') // leave /b: a link to it is a link to another page again
+  const back = $('#back')!
+  fetched = []
+  focus(back)
+  expect(fetched).toEqual([])
+  c.t += 10e3
+  focus(back)
+  expect(fetched).toEqual(['http://localhost/b'])
+  now.mockRestore()
+})
+
+test('prefetch gap: data-brust-prefetch-gap="0" restores a prefetch per hover; "3" is 3 s; a non-number is 10 s', async () => {
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')), headers: { 'cache-control': 'no-store' } }
+  const now = spyOn(Date, 'now')
+  const c = gapped(now)
+  const a = $('#to-b')!
+  const gap = (v: string) => document.documentElement.setAttribute('data-brust-prefetch-gap', v)
+  gap('0')
+  focus(a)
+  await settle()
+  focus(a)
+  await settle()
+  expect(fetched.length).toBe(2)
+  gap('3')
+  fetched = []
+  c.t += 1e3
+  focus(a) // 1 s after the last fetch
+  expect(fetched.length).toBe(0)
+  c.t += 2e3
+  focus(a)
+  await settle()
+  expect(fetched.length).toBe(1)
+  gap('soon')
+  c.t += 9e3
+  focus(a)
+  expect(fetched.length).toBe(1)
+  c.t += 1e3
+  focus(a)
+  expect(fetched.length).toBe(2)
+  document.documentElement.removeAttribute('data-brust-prefetch-gap')
+  now.mockRestore()
+})
+
+test('prefetch gap: clearCache() lets the next hover fetch', async () => {
+  start()
+  pages['/b'] = { html: doc(app('1', 'b')), headers: { 'cache-control': 'no-store' } }
+  const now = spyOn(Date, 'now')
+  gapped(now)
+  const a = $('#to-b')!
+  focus(a)
+  await settle()
+  focus(a)
+  expect(fetched.length).toBe(1)
+  bridge().clearCache()
+  focus(a)
+  expect(fetched.length).toBe(2)
+  now.mockRestore()
+})
+
+test('a link to the page on screen is not prefetched, and a click on it still navigates', async () => {
+  start()
+  pages['/a'] = { html: doc(app('1', 'a')) }
+  const self = document.createElement('a')
+  self.setAttribute('href', '/a?x=1')
+  const same = document.createElement('a')
+  same.setAttribute('href', '/a')
+  document.body.append(self, same)
+  focus(same)
+  expect(fetched).toEqual([])
+  focus(self) // another URL (the query is part of it)
+  expect(fetched).toEqual(['http://localhost/a?x=1'])
+  click(same)
+  await settle()
+  expect(names()).toEqual(['click', 'load', 'success'])
+})
+
+test('prefetch gap: the record holds 32 URLs, oldest out', async () => {
+  start()
+  for (let i = 0; i < 34; i++) pages['/p' + i] = { html: doc(app('1', 'p' + i)), headers: { 'cache-control': 'no-store' } }
+  const now = spyOn(Date, 'now')
+  gapped(now)
+  const link = (i: number) => {
+    const l = document.createElement('a')
+    l.setAttribute('href', '/p' + i)
+    document.body.append(l)
+    return l
+  }
+  const links = Array.from({ length: 34 }, (_, i) => link(i))
+  for (const l of links) focus(l) // 34 fetches; /p0 and /p1 fall out of the record
+  expect(fetched.length).toBe(34)
+  focus(links[33]!) // still remembered
+  expect(fetched.length).toBe(34)
+  focus(links[0]!) // forgotten: fetched again
+  expect(fetched.length).toBe(35)
+  now.mockRestore()
 })
 
 test('the progress bar: only after 150 ms of loading, outside <body>, done at success; off and cache hits never show it', async () => {
