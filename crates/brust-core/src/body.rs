@@ -14,14 +14,22 @@
 use bytes::Bytes;
 use http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode};
 
-/// Framing headers hyper owns and recomputes itself: `Content-Length`,
+/// Framing headers hyper owns and recomputes itself on a RESPONSE: `Content-Length`,
 /// `Transfer-Encoding`, `Connection`. The typed builders never emit these (and
 /// the cache-HIT / SAB-meta paths strip them from stored bytes), so all three
-/// skip-lists delegate here. Case-insensitive.
+/// skip-lists delegate here. Case-insensitive. A request's list is
+/// [`is_request_hop_header`].
 pub fn is_framing_header(name: &str) -> bool {
     name.eq_ignore_ascii_case("content-length")
         || name.eq_ignore_ascii_case("transfer-encoding")
         || name.eq_ignore_ascii_case("connection")
+}
+
+/// Request headers that stop at the server (F474): hyper de-chunks the body, so `Transfer-Encoding` no longer
+/// describes what the action reads, and `Connection` is hop-by-hop. `Content-Length` is not here: it is the client's
+/// own count of the bytes the action reads, and a chunked request has none. Case-insensitive.
+pub fn is_request_hop_header(name: &str) -> bool {
+    name.eq_ignore_ascii_case("transfer-encoding") || name.eq_ignore_ascii_case("connection")
 }
 
 /// Generic typed-Response builder: `(status, content-type, extra-headers, body)`.
@@ -223,6 +231,17 @@ mod tests {
 
     fn body_bytes(r: Response<Bytes>) -> Vec<u8> {
         r.into_body().to_vec()
+    }
+
+    #[test]
+    fn a_request_keeps_its_content_length() {
+        assert!(!is_request_hop_header("content-length"));
+        assert!(!is_request_hop_header("Content-Length"));
+        assert!(is_request_hop_header("Transfer-Encoding"));
+        assert!(is_request_hop_header("connection"));
+        assert!(!is_request_hop_header("content-type"));
+        // the response side is unchanged
+        assert!(is_framing_header("Content-Length"));
     }
 
     #[test]
