@@ -68,3 +68,20 @@ test('[build] server_only still parses alongside [actions]', async () => {
   expect(c.serverOnly).toEqual(['lib/server', '@acme/db'])
   expect(c.actions?.prefix).toBe('/rpc')
 })
+
+test('stream: entries normalised, bounds defaulted; no list (or an empty one) = no stream key (F475)', async () => {
+  const c = await loadBuildConfig(tmpApp('[actions]\nstream = ["post /upload", "PUT /files/*"]\n'))
+  expect(c.actions?.stream).toEqual({ stream: ['POST /upload', 'PUT /files/*'], maxStreamBytes: 268435456, streamIdleMs: 30000, streamTotalMs: 900000 })
+  const d = await loadBuildConfig(tmpApp('[actions]\nstream = ["POST /u"]\nmax_stream_bytes = 4294967296\nstream_idle_ms = 5\nstream_total_ms = 6\nmax_streams = 2\n'))
+  expect(d.actions?.stream).toEqual({ stream: ['POST /u'], maxStreamBytes: 4294967296, streamIdleMs: 5, streamTotalMs: 6, maxStreams: 2 })
+  expect('stream' in ((await loadBuildConfig(tmpApp('[actions]\nstream = []\n'))).actions ?? {})).toBe(false)
+  expect('stream' in ((await loadBuildConfig(tmpApp('[actions]\nmax_stream_bytes = 5\n'))).actions ?? {})).toBe(false)
+})
+
+test('invalid stream values fail with BuildError config (F475)', async () => {
+  await fails('[actions]\nstream = "POST /u"\n', 'actions.stream must be an array of "<METHOD> <path>" strings')
+  await fails('[actions]\nstream = ["GET /u"]\n', 'actions.stream entry method must be POST, PUT or PATCH (got "GET /u")')
+  await fails('[actions]\nmax_stream_bytes = 4294967297\n', 'actions.max_stream_bytes must be an integer in 1..4294967296 (got 4294967297)')
+  await fails('[actions]\nstream_idle_ms = 0\n', 'actions.stream_idle_ms must be an integer in 1..4294967295 (got 0)')
+  await fails('[actions]\nmax_streams = 0\n', 'actions.max_streams must be an integer in 1..4294967295 (got 0)')
+})

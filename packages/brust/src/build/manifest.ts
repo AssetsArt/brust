@@ -69,6 +69,12 @@ export interface ActionsRecord {
   maxBodyBytes: number
   maxResponseBytes: number
   crossSite: 'reject' | 'allow'
+  /** F475: `[actions] stream` and its bounds; all absent without a `stream` list. */
+  stream?: string[]
+  maxStreamBytes?: number
+  streamIdleMs?: number
+  streamTotalMs?: number
+  maxStreams?: number
 }
 
 /** The manifest format the Rust loader accepts (`MANIFEST_VERSION` in brust-core `manifest.rs`): the one place TS names it. */

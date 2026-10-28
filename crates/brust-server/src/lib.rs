@@ -11,6 +11,7 @@ pub mod http;
 mod pipeline;
 pub mod pool;
 pub mod server;
+pub mod stream_body;
 
 pub use brust_core::{inputs, l2, manifest, protocol, render, routing};
 
@@ -23,13 +24,14 @@ pub mod bench {
     };
 }
 
-pub use actions::{put_fetch_reply, take_fetch_body};
+pub use actions::{fetch_stream, put_fetch_reply, take_fetch_body};
 pub use config::{
     ACTION_INLINE_BODY_BYTES, ActionCredentials, ActionsClient, ActionsConfig, Config, CorsConfig,
     CrossSite, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES,
     DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs, InvalidateResult, MAX_ACTION_BYTES, Server,
-    Stats,
+    Stats, StreamConfig, StreamRoute,
 };
 pub use dispatch::{CallKind, DispatchError, RenderDispatch};
 pub use pipeline::{PLAN_DECLINED, plan_in_call, plan_in_call_buf};
 pub use server::{Tuning, start};
+pub use stream_body::{Pull, StreamBody};

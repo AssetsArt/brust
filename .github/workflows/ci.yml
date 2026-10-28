@@ -425,6 +425,8 @@ jobs:
       - run: bun test --timeout 180000 tests/server/actions-standalone.chromium.test.ts
       # F471: client({ middleware }) against a real actions-only server: renew + retry, two Set-Cookie on a typed 401.
       - run: bun test --timeout 180000 tests/server/action-middleware.test.ts
+      # F475: a 96 MiB streamed upload is read byte-exact with flat server RSS; 413 past the ceiling mid-stream; 503 over max_streams.
+      - run: bun test --timeout 300000 tests/server/action-stream.test.ts
       # F474: an action sees the client's Content-Length (and none on a chunked request), under `brust start` and `brust dev`.
       - run: bun test --timeout 180000 tests/server/action-content-length.test.ts
       - run: bun test --timeout 180000 tests/server/cross-site-form.chromium.test.ts

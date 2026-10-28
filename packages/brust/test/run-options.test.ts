@@ -39,3 +39,11 @@ test('manifest.cache → l2 { adapter, getTimeoutMs, maxBodyBytes, namespace, bu
   expect(o.l2).toEqual({ adapter: 'custom', getTimeoutMs: 50, maxBodyBytes: 1048576, namespace: 'n', buildId: '0123456789abcdef' })
   expect('l2' in startOptions(base, '/d', { cache: null }, 'v')).toBe(false)
 })
+
+test('actions stream keys are forwarded only with a stream list (F475)', () => {
+  const a = { entry: 'actions.js', prefix: '/api', maxBodyBytes: 1 }
+  const o = startOptions(base, '/d', { actions: { ...a, stream: ['POST /up'], maxStreamBytes: 9, streamIdleMs: 8, streamTotalMs: 7 } }, 'v')
+  expect(o.actions).toEqual({ prefix: '/api', maxBodyBytes: 1, stream: ['POST /up'], maxStreamBytes: 9, streamIdleMs: 8, streamTotalMs: 7 })
+  const none = startOptions(base, '/d', { actions: { ...a, stream: [], maxStreamBytes: 9, streamIdleMs: 8, streamTotalMs: 7, maxStreams: 2 } }, 'v')
+  expect(none.actions).toEqual({ prefix: '/api', maxBodyBytes: 1 })
+})

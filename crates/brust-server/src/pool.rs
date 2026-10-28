@@ -365,6 +365,11 @@ impl WorkerPool {
         self.entries.read().clone()
     }
 
+    /// The render slots of every registered worker (F475's default `max_streams` is a quarter).
+    pub(crate) fn slot_total(&self) -> usize {
+        self.entries.read().iter().map(|e| e.slot_len()).sum()
+    }
+
     /// Start the call-deadline sweeper on the current tokio runtime unless it runs (M3-P P7, R3):
     /// one task wakes every armed slot whose deadline passed, every [`SWEEP_TICK`], instead of a
     /// tokio timer per call. Started by the first armed call; it ends with the pool, and if its

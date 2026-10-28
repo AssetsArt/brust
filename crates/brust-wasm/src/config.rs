@@ -157,6 +157,8 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
                 CfCrossSite::Reject => CrossSite::Reject,
                 CfCrossSite::Allow => CrossSite::Allow,
             },
+            // F475: Workers stream through the platform (lane B); until then every body is buffered.
+            stream: Default::default(),
         }),
         actions_client: None,
         https: true,
