@@ -423,6 +423,25 @@ test('cache (human bug 2): hover, leave, hover again is one request; back to vis
   await close()
 })
 
+test('prefetch gap (F479): a no-store page is hovered twice for one request; the click still fetches it', async () => {
+  const { page, close } = await open('/')
+  const hits = documents(page)
+  await page.route('**/b/one', async (r) => {
+    if (r.request().resourceType() !== 'fetch') return r.continue()
+    const res = await r.fetch()
+    await r.fulfill({ response: res, headers: { ...res.headers(), 'cache-control': 'no-store' } })
+  })
+  await page.hover('nav a[href="/b/one"]')
+  await Bun.sleep(300)
+  await page.mouse.move(900, 650)
+  await page.hover('nav a[href="/b/one"]')
+  await Bun.sleep(300)
+  expect(hits).toEqual(['/b/one']) // alpha.31: a request per hover
+  await follow(page, '/b/one') // a navigation never waits on the gap, and the click's own focus prefetch adds nothing
+  expect(hits).toEqual(['/b/one', '/b/one'])
+  await close()
+})
+
 test('cache: a no-store page and a 404 are fetched again; data-brust-cache="0" is no cache', async () => {
   const { page, close } = await open('/')
   const hits = documents(page)

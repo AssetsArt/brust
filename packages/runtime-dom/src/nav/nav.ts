@@ -52,14 +52,21 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
   }
 
   // ---- the page cache (§10.1): an LRU of 32 documents by URL without its hash, filled by prefetches and navigations,
-  // fresh for 5 minutes (`data-brust-cache` seconds), any age for back/forward; a fetch in flight (at: Infinity) is shared
+  // fresh for 5 minutes (`data-brust-cache` seconds), any age for back/forward; a fetch in flight (at: Infinity) is shared.
+  // `seen` (F479): when each URL was last fetched, kept or not (32 of them, oldest out): a prefetch of one fetched less than
+  // `data-brust-prefetch-gap` seconds ago (10; 0 = no gap) does nothing. It gates prefetches only; a navigation never waits.
   const cache = new Map<string, [Promise<Got>, number]>()
+  const seen = new Map<string, number>()
+  const gap = () => { const s = html.getAttribute('data-brust-prefetch-gap'); return s == null || isNaN(+s) ? 1e4 : +s * 1e3 }
   const ttl = () => { const s = html.getAttribute('data-brust-cache'); return s == null || isNaN(+s) ? 3e5 : +s * 1e3 }
   const get = (u: string, any?: boolean, init?: RequestInit): Promise<Got> => {
     const k = noHash(u)
     let e = cache.get(k)
     cache.delete(k)
     if (!e || !(any || Date.now() - e[1] < ttl())) {
+      seen.delete(k)
+      seen.set(k, Date.now())
+      if (seen.size > 32) seen.delete(seen.keys().next().value!)
       const p = fetch(k, init).then(async (r) => ({ status: r.status, url: r.url, type: r.headers.get('content-type') ?? '', text: await r.text(), no: r.status >= 400 || /no-store/i.test(r.headers.get('cache-control') ?? '') }))
       const f = (e = [p, Infinity])
       const drop = () => cache.get(k) === f && cache.delete(k)
@@ -117,7 +124,9 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
   const prefetch = (t: EventTarget | null) => {
     const l = target(t)
     const c = (navigator as { connection?: { saveData?: boolean; effectiveType?: string } }).connection
-    if (!l || l[0].closest('[data-brust-prefetch="false"]') || c?.saveData || /2g/.test(c?.effectiveType ?? '')) return
+    if (!l || l[0].closest('[data-brust-prefetch="false"]') || c?.saveData || /2g/.test(c?.effectiveType ?? '') || sameDoc(l[1], location.href)) return
+    const at = seen.get(noHash(l[1]))
+    if (at != null && Date.now() - at < gap()) return
     get(l[1], false, { priority: 'low' } as RequestInit).catch(() => {})
   }
 
@@ -249,7 +258,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
     location[o?.replace ? 'replace' : 'assign'](url)
     return Promise.resolve()
   }
-  g[KEY] = { navigate, clearCache: () => cache.clear() }
+  g[KEY] = { navigate, clearCache: () => (cache.clear(), seen.clear()) }
 
   on(document, 'click', (e: MouseEvent) => {
     if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return

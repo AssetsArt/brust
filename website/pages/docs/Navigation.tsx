@@ -185,6 +185,12 @@ export default function Navigation({ blocks }: NavigationData) {
           </tr>
           <tr>
             <td>
+              <code>data-brust-prefetch-gap="&lt;seconds&gt;"</code>
+            </td>
+            <td>On <code>&lt;html&gt;</code>: the least time between two prefetches of the same URL (default 10). <code>0</code> prefetches on every hover.</td>
+          </tr>
+          <tr>
+            <td>
               <code>data-brust-progress="off"</code>
             </td>
             <td>On <code>&lt;html&gt;</code>: no progress bar.</td>
@@ -206,7 +212,13 @@ export default function Navigation({ blocks }: NavigationData) {
       <h2 id="prefetch">Prefetch and the page cache</h2>
       <p>
         brust fetches a link's page when you show intent: after 65 ms of hover, on focus, or at once on <code>touchstart</code>. Prefetch is off when the browser asks to save data or is on a <code>2g</code> connection, and for the opt-outs above. A
-        prefetch fires no events.
+        prefetch fires no events, and a link to the page you are on is not prefetched.
+      </p>
+      <p>
+        <b>The prefetch gap.</b> A page the cache does not keep (<code>no-store</code>, below) would be fetched again by every hover, and again by the click. So brust remembers when each URL was last fetched, by a prefetch or a navigation, kept or not, and a
+        prefetch of a URL fetched less than 10 seconds ago does nothing. <code>&lt;html data-brust-prefetch-gap="30"&gt;</code> sets the gap in seconds; <code>0</code> prefetches on every hover. The gap holds back prefetches only: a click,{' '}
+        <code>navigate()</code> and back/forward never wait for it, and a <code>no-store</code> page is still never shown from memory. A mutation through <code>@brust/core/client</code> and <code>clearNavigationCache()</code> clear the record with the cache.
+        It holds the last 32 URLs.
       </p>
       <p>Every fetched page, prefetched or navigated to, goes into a page cache in memory, one per tab:</p>
       <ul>
