@@ -30,6 +30,7 @@ A plain primary-button click on an `<a href>` to the same origin (`http:` or `ht
 | `data-brust-persist="<key>"` | any element | If the old and the new page both have an element with the same key, the live old element is moved into the new page and is never disposed (a playing video, an open chat widget). |
 | `data-brust-once` | a classic `<script>` | The script runs on the first load of the tab only (an analytics loader), not again when a navigation brings it back. |
 | `data-brust-cache="<seconds>"` | `<html>` | How long a fetched page stays fresh in the page cache (default 300). `0` turns the cache off. See §5. |
+| `data-brust-prefetch-gap="<seconds>"` | `<html>` | The least time between two prefetches of the same URL (default 10). `0` prefetches on every hover. See §5. |
 | `data-brust-progress="off"` | `<html>` | No progress bar. See §6. |
 | `data-brust-transition="off"` | `<html>` | No page transition. See §7. |
 
@@ -39,7 +40,9 @@ A classic `<script>` in the head that is new to the page runs. After a whole-bod
 
 ## 5. Prefetch and the page cache
 
-brust fetches a link's page when you show intent: after 65 ms of hover, on focus, or at once on `touchstart`. Prefetch is off when the browser asks to save data (`saveData`, or a `2g` connection) and for the opt-outs above. Prefetches fire no events.
+brust fetches a link's page when you show intent: after 65 ms of hover, on focus, or at once on `touchstart`. Prefetch is off when the browser asks to save data (`saveData`, or a `2g` connection) and for the opt-outs above. Prefetches fire no events. A link to the page you are on is not prefetched.
+
+**The prefetch gap.** A page the cache does not keep (`no-store`, see below) would be fetched again by every hover, and again by the click. So brust remembers when each URL was last fetched, by a prefetch or by a navigation, kept or not, and a prefetch of a URL fetched less than 10 seconds ago does nothing. `<html data-brust-prefetch-gap="30">` sets the gap in seconds; `0` prefetches on every hover, as before. The gap holds back prefetches only: a click, `navigate()` and back/forward never wait for it, and a `no-store` page is still never shown from memory. A mutation through `@brust/core/client` and `clearNavigationCache()` clear the record with the cache, so the next hover fetches. The record holds the last 32 URLs.
 
 Every fetched page, prefetched or navigated to, goes into a page cache in memory, one per tab:
 
