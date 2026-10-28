@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-32', title: '2.0.0-alpha.32' },
       { id: 'alpha-31', title: '2.0.0-alpha.31' },
       { id: 'alpha-30', title: '2.0.0-alpha.30' },
       { id: 'alpha-29', title: '2.0.0-alpha.29' },
@@ -54,6 +55,18 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-32">2.0.0-alpha.32 · 28 October 2026</h2>
+      {/* source: #419 (F479); docs/navigation.md sections 4 and 5 */}
+      <p>Hovering links no longer sends a request on every hover. Nothing breaks. See <a href="/docs/navigation">Navigation</a>.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: #419 (F479); docs/navigation.md sections 4 and 5 */}
+        <li>
+          <strong>A URL that was fetched a moment ago is not prefetched again (#419).</strong> A URL fetched less than 10 seconds ago, by a prefetch or by a navigation, is skipped by the next prefetch. <code>&lt;html data-brust-prefetch-gap=&quot;&lt;seconds&gt;&quot;&gt;</code> sets the gap and <code>0</code> turns it off. It matters for pages the cache does not keep: a response with <code>Cache-Control: no-store</code>, an error, or any page after a mutation cleared the cache, which used to be fetched again on every hover and then again on the click. Clicks, <code>navigate()</code> and back or forward are unchanged and always fetch what they need, and a <code>no-store</code> page is still never shown from memory. A link to the page you are on is no longer prefetched.
+        </li>
+      </ul>
 
       <h2 id="alpha-31">2.0.0-alpha.31 · 28 October 2026</h2>
       {/* source: #413, #414, #415; docs/actions.md (Limits and the stream keys) */}
