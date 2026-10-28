@@ -49,7 +49,7 @@ pub(crate) struct Admission(Arc<AtomicUsize>);
 
 impl Admission {
     pub(crate) fn try_new(n: &Arc<AtomicUsize>, cap: usize) -> Option<Self> {
-        n.fetch_update(Ordering::AcqRel, Ordering::Acquire, |k| {
+        n.try_update(Ordering::AcqRel, Ordering::Acquire, |k| {
             (k < cap).then_some(k + 1)
         })
         .ok()
@@ -148,7 +148,7 @@ impl StreamBody {
             return Pull::Abort(e);
         }
         let Some(body) = g.as_mut() else {
-            return Pull::End;
+            return self.end();
         };
         let first = match tokio::time::timeout(self.limits.idle, next_data(body)).await {
             Err(_) => Err(ReadErr::Slow),
@@ -196,10 +196,9 @@ impl StreamBody {
             }
         }
         if ended {
+            // A short body still hands over what came; the abort is recorded and the next pull reports it.
             *g = None;
-            if let Pull::Abort(e) = self.end() {
-                return Pull::Abort(e);
-            }
+            self.end();
         }
         self.touch();
         Pull::Chunk(out.freeze())
@@ -323,15 +322,17 @@ mod tests {
         assert_eq!(st.pull().await, Pull::End);
         assert_eq!(st.pull().await, Pull::End);
         assert_eq!(st.abort(), None);
-        let big = (PULL_CHUNK_BYTES / 4096) + 4;
-        let (b, tx) = body(&vec![4096; big]);
+        // 16 KiB frames: a tokio channel yields Pending past its coop budget (128 polls), hyper's does not.
+        const F: usize = 16 << 10;
+        let big = (PULL_CHUNK_BYTES / F) + 4;
+        let (b, tx) = body(&vec![F; big]);
         drop(tx);
         let st = stream(b, None, 1 << 30);
         let Pull::Chunk(first) = st.pull().await else {
             panic!("a chunk")
         };
-        assert!(first.len() >= PULL_CHUNK_BYTES && first.len() < PULL_CHUNK_BYTES + 4096);
-        assert_eq!(drain(&st).await, (big * 4096 - first.len(), Pull::End));
+        assert!(first.len() >= PULL_CHUNK_BYTES && first.len() < PULL_CHUNK_BYTES + F);
+        assert_eq!(drain(&st).await, (big * F - first.len(), Pull::End));
     }
 
     #[tokio::test]

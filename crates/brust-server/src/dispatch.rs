@@ -506,6 +506,7 @@ pub(crate) fn decode_cache_get(
 
 /// The claimed round trip, the slot bytes decoded by `decode` INSIDE the claim (the slot is
 /// reused once it drops — F3).
+#[allow(clippy::too_many_arguments)]
 async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
     pool: &Arc<WorkerPool>,
     timeout: Duration,
