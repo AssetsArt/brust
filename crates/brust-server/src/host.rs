@@ -247,7 +247,8 @@ fn worker_request_headers<'a>(
     let mut pairs: Vec<(Cow<str>, Cow<str>)> = headers
         .iter()
         .filter(|(n, _)| {
-            !is_request_hop_header(n.as_str()) && n.as_str() != brust_core::trace::REQUEST_TOKEN_HEADER
+            !is_request_hop_header(n.as_str())
+                && n.as_str() != brust_core::trace::REQUEST_TOKEN_HEADER
         })
         .map(|(n, v)| {
             (
@@ -363,7 +364,10 @@ mod tests {
         h.insert("content-type", "application/zip".parse().unwrap());
         h.insert("content-length", "1024".parse().unwrap());
         let p = worker_request_headers(&h, None);
-        let cl = p.iter().find(|(n, _)| n == "content-length").map(|(_, v)| v.as_ref());
+        let cl = p
+            .iter()
+            .find(|(n, _)| n == "content-length")
+            .map(|(_, v)| v.as_ref());
         assert_eq!(cl, Some("1024"));
     }
 

@@ -32,11 +32,19 @@ pub fn header_map(pairs: impl IntoIterator<Item = (String, String)>) -> HeaderMa
 
 /// The headers an action's `Request` carries: the client's, less the hop-by-hop pair (F474: the client's
 /// `Content-Length` stays), and `host` from `:authority` when none was sent (R8). Non-UTF-8 values are lossy.
-pub fn action_request_headers(headers: &HeaderMap, authority: Option<&str>) -> Vec<(String, String)> {
+pub fn action_request_headers(
+    headers: &HeaderMap,
+    authority: Option<&str>,
+) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = headers
         .iter()
         .filter(|(n, _)| !brust_core::body::is_request_hop_header(n.as_str()))
-        .map(|(n, v)| (n.as_str().to_owned(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+        .map(|(n, v)| {
+            (
+                n.as_str().to_owned(),
+                String::from_utf8_lossy(v.as_bytes()).into_owned(),
+            )
+        })
         .collect();
     if !headers.contains_key(http::header::HOST)
         && let Some(au) = authority
@@ -85,16 +93,26 @@ mod tests {
         h.insert("connection", "keep-alive".parse().unwrap());
         let p = action_request_headers(&h, None);
         assert!(p.contains(&("content-length".into(), "1024".into())));
-        assert!(p.iter().all(|(n, _)| n != "transfer-encoding" && n != "connection"));
+        assert!(
+            p.iter()
+                .all(|(n, _)| n != "transfer-encoding" && n != "connection")
+        );
         // chunked: no length to keep, none invented
         h.remove("content-length");
-        assert!(action_request_headers(&h, None).iter().all(|(n, _)| n != "content-length"));
+        assert!(
+            action_request_headers(&h, None)
+                .iter()
+                .all(|(n, _)| n != "content-length")
+        );
     }
 
     #[test]
     fn an_action_request_takes_host_from_the_authority_when_none_was_sent() {
         let h = HeaderMap::new();
-        assert_eq!(action_request_headers(&h, Some("b.test")), [("host".to_string(), "b.test".to_string())]);
+        assert_eq!(
+            action_request_headers(&h, Some("b.test")),
+            [("host".to_string(), "b.test".to_string())]
+        );
         assert!(action_request_headers(&h, None).is_empty());
     }
 
