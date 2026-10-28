@@ -3,6 +3,8 @@ name: ci
 # current main, so a second run on the merge commit was pure duplication (5 wasted runs on 2026-10-10).
 # Docs-only changes commit straight to main and never need CI; a PR that touches docs AND code still runs.
 # workflow_dispatch is the manual escape hatch to run the whole suite on main (or any ref) on demand.
+# F478: a PR that touches nothing but website/ (and the ignored docs) runs `changes`, `addon` and `website` only; every other job is
+# skipped, so the run still concludes success. Any other path (.github/, packages/, crates/, the lockfile ...) runs everything.
 on:
   pull_request:
     branches: [main]
@@ -19,8 +21,37 @@ concurrency:
 env:
   CARGO_INCREMENTAL: "0"
 jobs:
+  # F478: does this PR touch anything but website/? `code` gates every job below except addon and website. On a PR the checkout is the
+  # merge commit, so HEAD^1..HEAD is exactly the PR's diff against the current main. Anything else (workflow_dispatch, a checkout that
+  # is not a merge) counts as code: the heavy jobs are skipped only when this job proves the diff is website-only.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+      - id: diff
+        run: |
+          code=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git rev-parse --verify -q HEAD^2 > /dev/null; then
+            code=false
+            files="$(git diff --name-only HEAD^1 HEAD)"
+            echo "$files"
+            while IFS= read -r f; do
+              case "$f" in
+                "") ;;
+                website/* | docs/* | *.md) ;;
+                *) code=true ;;
+              esac
+            done <<< "$files"
+          fi
+          echo "code=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
   rust:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +96,8 @@ jobs:
   # Making `cf` a required check is a human branch-protection setting.
   cf:
     runs-on: ubuntu-latest
-    needs: addon
+    needs: [addon, changes]
+    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
     env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
@@ -123,6 +155,8 @@ jobs:
         if: always()
   runtime-dom:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -136,7 +170,8 @@ jobs:
   # The battery and the browser harness drive the real `brustc` (built in the job).
   battery:
     runs-on: ubuntu-latest
-    needs: addon
+    needs: [addon, changes]
+    if: needs.changes.outputs.code == 'true'
     env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
@@ -169,6 +204,8 @@ jobs:
         if: always()
   browser:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
@@ -213,12 +250,32 @@ jobs:
         with: { name: addon-linux-x64, path: packages/brust/native, retention-days: 1, if-no-files-found: error }
       - run: sccache --show-stats
         if: always()
+  # F478: the docs site (website/) on its own, so a website-only PR does not run the server job. It runs on every PR: the site is
+  # TSX pages on the workspace @brust/core, so it takes the addon artifact like server does.
+  website:
+    runs-on: ubuntu-latest
+    needs: [addon, changes]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.4" }
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with: { name: addon-linux-x64, path: packages/brust/native }
+      # The artifact must add files only: the tracked native/.gitignore stays untouched, the tree stays clean.
+      - run: test -z "$(git status --porcelain)"
+      - run: bunx playwright install --with-deps chromium
+      # website/: the docs site (TSX pages on the workspace @brust/core); several files drive Chromium, so it runs after
+      # the browser install, and each file runs alone (each starts its own server; a combined run raced on ports).
+      - run: cd website && bun run typecheck && for f in test/*.test.ts; do bun test --timeout 180000 "$f" || exit 1; done
   # @brust/core: the napi addon (built with `napi build` on this runner), the package's unit
   # tests and the end-to-end run of the real CLI (build the fixture app, start it, assert from the
   # outside). The addon itself comes from the `addon` job (artifact); this job compiles no Rust.
   server:
     runs-on: ubuntu-latest
-    needs: addon
+    needs: [addon, changes]
+    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 60
     # cache-redis: the adapter's suites run against real servers; REQUIRED makes a missing URL a failure, not a skip.
     services:
@@ -291,9 +348,6 @@ jobs:
       - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/shadcn.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
       - run: cd packages/create-app && bun test --timeout 600000 test/scaffold.test.ts
       - run: bunx playwright install --with-deps chromium
-      # website/: the docs site (TSX pages on the workspace @brust/core); several files drive Chromium, so it runs after
-      # the browser install, and each file runs alone (each starts its own server; a combined run raced on ports).
-      - run: cd website && bun run typecheck && for f in test/*.test.ts; do bun test --timeout 180000 "$f" || exit 1; done
       - run: bun test --timeout 120000 tests/server/pokedex.test.ts
       - run: bun test --timeout 120000 tests/server/cache-adapter.test.ts
       - run: bun test --timeout 120000 tests/server/inner-html.test.ts
