@@ -1,6 +1,7 @@
 // F475 served: a `[actions] stream` route against a real `brust start` actions-only server. A 96 MiB chunked upload
 // reaches the app byte-exact while the server's resident set stays flat; a body past `max_stream_bytes` mid-stream is
-// answered 413 whatever the app said; a second upload over `max_streams = 1` is refused 503 before a byte is read. Run
+// answered 413 whatever the app said; a second upload over `max_streams = 1` is refused 503 before a byte is read; an
+// app that answers without reading a 32 MiB upload still has its answer reach a client that is writing. Run
 // alone: `bun test --timeout 300000 tests/server/action-stream.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
@@ -153,3 +154,11 @@ test('a second upload over max_streams = 1 is refused 503 + Retry-After; the fir
   expect(r.status).toBe(200)
   expect(r.body).toContain('"bytes":3072')
 }, 60_000)
+
+test('an app that answers 401 without reading a 32 MiB upload: the client still reads the 401', async () => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const r = await rawUpload('/guarded', 32, MiB)
+    expect(r.status).toBe(401)
+    expect(r.body).toContain('unauthorized')
+  }
+}, 120_000)

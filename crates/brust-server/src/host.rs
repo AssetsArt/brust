@@ -130,7 +130,10 @@ impl Host for NativeHost {
         let (fb, heap_body) = match call.body {
             ActionBody::None => (None, None),
             ActionBody::Stream { body, declared } => {
-                let admit = self.admit_stream().ok_or(CallError::StreamsFull)?;
+                let Some(admit) = self.admit_stream() else {
+                    read_out(body);
+                    return Err(CallError::StreamsFull);
+                };
                 let limits = StreamLimits {
                     max: self.stream.max_bytes,
                     idle: Duration::from_millis(self.stream.idle_ms),
@@ -216,12 +219,26 @@ impl Host for NativeHost {
         };
         match st.abort() {
             Some(ReadErr::TooLarge) => {
-                st.discard(DISCARD_AFTER_REFUSAL, DISCARD_TIMEOUT).await;
+                if let Some(b) = st.take_body() {
+                    read_out(b);
+                }
                 Err(CallError::BodyAborted(ReadErr::TooLarge))
             }
             Some(e) => Err(CallError::BodyAborted(e)),
-            None => r.map(ActionReply::Fetch),
+            // The app answered (or failed) without reading to the end, e.g. an auth check before the upload: the
+            // rest is read out after the answer, which closes the connection.
+            None => match st.take_body() {
+                Some(b) => {
+                    read_out(b);
+                    r.map(ActionReply::Unread)
+                }
+                None => r.map(ActionReply::Fetch),
+            },
         }
+    }
+
+    fn read_out(&self, body: Incoming) {
+        read_out(body);
     }
 
     /// `/_brust/<rel>` serves `dist/client/` only (`safe_rel` admits `client/<file>`), `/public/`
@@ -316,6 +333,26 @@ async fn inside_root(root: &std::path::Path, file: &std::path::Path) -> bool {
 /// in a reset: the bound is what keeps a refused upload from holding the connection.
 const DISCARD_AFTER_REFUSAL: usize = 1 << 20;
 const DISCARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// F475: a streamed body answered before it was read to the end (refused over the ceiling or `max_streams`, or
+/// the app answered first) is read and thrown away in the background for at most [`READ_OUT_AFTER_ANSWER`] while
+/// its answer, with `Connection: close`, goes out: hyper keeps the connection while the body is read, so a client
+/// still writing reads the answer before the close (F127). A bound in bytes, read before the answer, would not
+/// do: past it the close resets a client that is still writing, and the answer already on the wire is lost.
+fn read_out<B>(body: B)
+where
+    B: http_body::Body<Data = Bytes> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut b = std::pin::pin!(body);
+        let _ = tokio::time::timeout(READ_OUT_AFTER_ANSWER, async {
+            while let Some(Ok(_)) = b.frame().await {}
+        })
+        .await;
+    });
+}
+
+const READ_OUT_AFTER_ANSWER: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The whole body, at most `cap` bytes. A declared Content-Length over the cap is refused before any byte is kept; a
 /// chunked body is refused the moment it passes the cap; the whole read must finish within `deadline`. A refused body

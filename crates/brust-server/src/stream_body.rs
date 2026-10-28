@@ -112,9 +112,13 @@ impl StreamBody {
     }
 
     /// The call deadline (the slot's): the app may be silent for the call timeout (or, while a pull
-    /// waits on the client, `stream_idle_ms`) after the last pull, never past `stream_total_ms`.
+    /// waits on the client, `stream_idle_ms`) after the last pull, never past `stream_total_ms`. Once
+    /// the body ended whole, the app has the call timeout from its last pull, as a buffered call.
     pub(crate) fn deadline(&self) -> Instant {
         let last = self.started + Duration::from_millis(self.last_ms.load(Ordering::Relaxed));
+        if self.done.load(Ordering::Acquire) {
+            return last + self.limits.call_timeout;
+        }
         let quiet = self.limits.call_timeout.max(self.limits.idle);
         (last + quiet).min(self.started + self.limits.total)
     }
@@ -143,7 +147,7 @@ impl StreamBody {
     pub async fn pull(&self) -> Pull {
         self.touch();
         let mut g = self.body.lock().await;
-        // A failed stream stays failed; past the ceiling its body is kept only for `discard`.
+        // A failed stream stays failed; past the ceiling its body is kept only for `take_body`.
         if let Some(e) = self.abort() {
             return Pull::Abort(e);
         }
@@ -204,23 +208,11 @@ impl StreamBody {
         Pull::Chunk(out.freeze())
     }
 
-    /// After a refusal past the ceiling, read and throw away up to `max` more bytes for at most `wait`, so the
-    /// client has finished sending when the 413 closes the connection (F127: otherwise the kernel resets it and
-    /// the client may never see the 413). Then the body is dropped.
-    pub(crate) async fn discard(&self, max: usize, wait: Duration) {
-        let mut g = self.body.lock().await;
-        let Some(body) = g.as_mut() else { return };
-        let mut n = 0usize;
-        let _ = tokio::time::timeout(wait, async {
-            while n < max {
-                match next_data(body).await {
-                    Ok(Some(d)) => n += d.len(),
-                    _ => return,
-                }
-            }
-        })
-        .await;
-        *g = None;
+    /// The body the app left unread, taken out to be read out after the answer (F127); `None` when it ended or
+    /// failed, or when a pull still holds it (that pull ends it). Taking it leaves this stream at its end, so the
+    /// admission goes with the call while the read-out runs on its own.
+    pub(crate) fn take_body(&self) -> Option<DynBody> {
+        self.body.try_lock().ok()?.take()
     }
 
     /// Count `d` against the ceiling and the declared length.
@@ -343,10 +335,9 @@ mod tests {
         assert_eq!(drain(&st).await.1, Pull::Abort(ReadErr::TooLarge));
         assert_eq!(st.abort(), Some(ReadErr::TooLarge));
         assert_eq!(st.pull().await, Pull::Abort(ReadErr::TooLarge));
-        // The refused body is kept for the bounded read-out, then dropped.
-        assert!(st.body.lock().await.is_some());
-        st.discard(1 << 20, Duration::from_secs(1)).await;
-        assert!(st.body.lock().await.is_none());
+        // The refused body is kept for the read-out after the answer.
+        assert!(st.take_body().is_some());
+        assert!(st.take_body().is_none());
         // Exactly the ceiling is fine.
         let (b, tx) = body(&[1024; 4]);
         drop(tx);
@@ -405,10 +396,28 @@ mod tests {
         drain(&st).await;
         st.note_deadline();
         assert_eq!(st.abort(), None);
+        // After the end the app has the call timeout from its last pull, not `stream_idle_ms` (N1).
+        let last = st.started + Duration::from_millis(st.last_ms.load(Ordering::Relaxed));
+        assert_eq!(st.deadline(), last + Duration::from_secs(5));
         let (b, _tx) = body(&[10]);
         let st = stream(b, None, 1 << 20);
         st.note_deadline();
         assert_eq!(st.abort(), Some(ReadErr::Slow));
+    }
+
+    #[tokio::test]
+    async fn only_a_body_left_unread_is_taken() {
+        // Ended by the app's pulls: nothing left.
+        let (b, tx) = body(&[10]);
+        drop(tx);
+        let st = stream(b, None, 1 << 20);
+        drain(&st).await;
+        assert!(st.take_body().is_none());
+        // Never pulled: taken once, after which a pull sees the end.
+        let (b, _tx) = body(&[10]);
+        let st = stream(b, None, 1 << 20);
+        assert!(st.take_body().is_some());
+        assert!(st.take_body().is_none());
     }
 
     #[test]

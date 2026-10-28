@@ -1410,7 +1410,14 @@ fn cross_site_posts_get_the_403_whatever_the_framing() {
 
 /// A server whose `POST /team` streams, bounded by `max_bytes` / `idle_ms`.
 fn stream_server(max_bytes: u64, idle_ms: u64) -> (Arc<FakeBun>, Arc<brust_server::Server>) {
-    let fake = fake().with_fetch(ok);
+    stream_server_with(fake().with_fetch(ok), max_bytes, idle_ms)
+}
+
+fn stream_server_with(
+    fake: Arc<FakeBun>,
+    max_bytes: u64,
+    idle_ms: u64,
+) -> (Arc<FakeBun>, Arc<brust_server::Server>) {
     let s = boot_actions(
         Arc::clone(&fake),
         &fx(),
@@ -1433,9 +1440,11 @@ fn stream_server(max_bytes: u64, idle_ms: u64) -> (Arc<FakeBun>, Arc<brust_serve
 fn streamed_body_reaches_the_app_byte_exact_past_max_body_bytes() {
     let (fake, s) = stream_server(1 << 20, 30_000);
     let chunks: Vec<Vec<u8>> = (0..300).map(|i| vec![(i % 251) as u8; 1024]).collect();
-    let (status, _, body) = request_chunked(&s, "POST", URL, &[], chunks.clone());
+    let (status, h, body) = request_chunked(&s, "POST", URL, &[], chunks.clone());
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     assert_eq!(fake.last_fetch_body(), Some(chunks.concat()));
+    // Read to its end: the connection stays open for the next request.
+    assert_eq!(hdr(&h, "connection"), None);
     let a1 = last(&fake);
     assert!(a1["body"]["stream"]["length"].is_null(), "{a1}");
     assert!(a1["body"]["stream"]["token"].is_u64(), "{a1}");
@@ -1510,4 +1519,114 @@ fn stalled_stream_is_408_and_a_stream_over_max_streams_is_503() {
     // The admission was released with the stream.
     let (status, _, _) = request_body(&s, "POST", URL, &[], b"after".to_vec());
     assert_eq!(status, 200);
+}
+
+/// B1 (F127 on the streamed paths): every answer that leaves a streamed body unread reads it out (bounded) after
+/// the answer, so a client still writing a body larger than the socket buffers reads the answer, not a reset.
+fn assert_survives(r: Raw, status: &str, attempt: usize) -> String {
+    assert_eq!(
+        r.write_err, None,
+        "attempt {attempt}: the client's write failed (the server closed first)"
+    );
+    let resp = r
+        .response
+        .unwrap_or_else(|k| panic!("attempt {attempt}: reading the answer failed: {k:?}"));
+    assert!(
+        resp.starts_with(&format!("HTTP/1.1 {status}")),
+        "attempt {attempt}: {resp:?}"
+    );
+    resp.to_ascii_lowercase()
+}
+
+#[test]
+fn streamed_declared_length_over_the_ceiling_is_read_out_so_the_413_survives() {
+    let (fake, s) = stream_server(1024, 30_000);
+    for attempt in 0..50 {
+        let r = raw_exchange(
+            &s,
+            &format!(
+                "POST {URL} HTTP/1.1\r\nhost: fx\r\ncontent-length: {}\r\n\r\n",
+                300 * 1024
+            ),
+            &[vec![b'a'; 300 * 1024]],
+            None,
+        );
+        let resp = assert_survives(r, "413", attempt);
+        assert!(resp.contains("connection: close"), "{resp}");
+    }
+    assert_eq!(fake.fetch_count(), 0);
+}
+
+fn unauthorized(_: Value) -> Vec<u8> {
+    frame(401, &[("content-type", "text/plain")], b"no")
+}
+
+#[test]
+fn an_app_answering_without_reading_the_stream_is_read_out_so_its_answer_survives() {
+    let (fake, s) = stream_server_with(
+        fake().with_fetch(unauthorized).reading_at_most(0),
+        1 << 20,
+        30_000,
+    );
+    for attempt in 0..50 {
+        let body: Vec<Vec<u8>> = (0..300).map(|_| chunk(1024)).collect();
+        let r = raw_exchange(
+            &s,
+            &format!("POST {URL} HTTP/1.1\r\nhost: fx\r\ntransfer-encoding: chunked\r\n\r\n"),
+            &body,
+            Some(b"0\r\n\r\n"),
+        );
+        let resp = assert_survives(r, "401", attempt);
+        assert!(resp.contains("connection: close"), "{resp}");
+    }
+    assert_eq!(fake.fetch_count(), 50);
+    // A body that never ends: the answer does not wait for it.
+    let r = raw_exchange(
+        &s,
+        &format!("POST {URL} HTTP/1.1\r\nhost: fx\r\ntransfer-encoding: chunked\r\n\r\n"),
+        &[chunk(10)],
+        None,
+    );
+    let resp = assert_survives(r, "401", 0);
+    assert!(resp.contains("connection: close"), "{resp}");
+}
+
+#[test]
+fn a_stream_over_max_streams_is_read_out_so_the_503_survives() {
+    // One slot → max_streams defaults to 1; a first stream left open holds it.
+    use std::io::{Read, Write};
+    let (fake, s) = stream_server(1 << 20, 30_000);
+    let mut held = std::net::TcpStream::connect(s.local_addr()).unwrap();
+    held.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    held.write_all(
+        format!("POST {URL} HTTP/1.1\r\nhost: fx\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n1\r\nx\r\n")
+            .as_bytes(),
+    )
+    .unwrap();
+    let t0 = Instant::now();
+    while fake.fetch_count() == 0 {
+        assert!(
+            t0.elapsed() < Duration::from_secs(2),
+            "the held stream never reached the app"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for attempt in 0..20 {
+        let body: Vec<Vec<u8>> = (0..300).map(|_| chunk(1024)).collect();
+        let r = raw_exchange(
+            &s,
+            &format!("POST {URL} HTTP/1.1\r\nhost: fx\r\ntransfer-encoding: chunked\r\n\r\n"),
+            &body,
+            Some(b"0\r\n\r\n"),
+        );
+        let resp = assert_survives(r, "503", attempt);
+        assert!(resp.contains("retry-after: 1"), "{resp}");
+        assert!(resp.contains("connection: close"), "{resp}");
+    }
+    assert_eq!(fake.fetch_count(), 1);
+    // The held stream ends and is answered.
+    held.write_all(b"0\r\n\r\n").unwrap();
+    let mut got = String::new();
+    let _ = held.read_to_string(&mut got);
+    assert!(got.starts_with("HTTP/1.1 200"), "{got:?}");
 }

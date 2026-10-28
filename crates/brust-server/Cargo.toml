@@ -42,6 +42,8 @@ tracing-subscriber = "0.3"
 hyper = { version = "1", features = ["client"] }
 hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+# The shared test harness lifts the open-file soft limit (every test boots its own server).
+libc.workspace = true
 
 # Render-path micro-bench on the real pokedex templates (plan m2p Task 1).
 # `cargo bench -p brust-server --bench render`

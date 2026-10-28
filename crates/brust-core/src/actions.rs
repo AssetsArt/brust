@@ -67,7 +67,11 @@ pub(crate) async fn handle<H: Host>(
         let declared =
             header_str(rq.headers, "content-length").and_then(|v| v.trim().parse::<u64>().ok());
         match declared {
-            Some(n) if n > a.stream.max_bytes => return closing(body::error_413()),
+            Some(n) if n > a.stream.max_bytes => {
+                // Read out after the 413, so it reaches a client still writing before the close (F127).
+                s.host.read_out(body);
+                return closing(body::error_413());
+            }
             Some(0) => ActionBody::None,
             _ => ActionBody::Stream { body, declared },
         }
@@ -78,6 +82,7 @@ pub(crate) async fn handle<H: Host>(
             Err(e) => return read_err_response(e),
         }
     };
+    let streamed = matches!(body, ActionBody::Stream { .. });
     let r = s
         .host
         .action(ActionCall {
@@ -95,6 +100,7 @@ pub(crate) async fn handle<H: Host>(
     ) {
         s.worker_calls.incr();
     }
+    let failed = r.is_err();
     let resp = match r {
         Ok(r) => reply_to_response(r),
         Err(e @ (CallError::NoWorkers | CallError::Timeout)) => body::error_503(&e.to_string()),
@@ -106,7 +112,7 @@ pub(crate) async fn handle<H: Host>(
         ),
         // F475: whatever the app answered, a failed stream answers as the buffered read would have, and the
         // connection closes (the rest of the body is never read).
-        Err(CallError::BodyAborted(e)) => closing(read_err_response(e)),
+        Err(CallError::BodyAborted(e)) => read_err_response(e),
         Err(CallError::Deadline) => {
             s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
             body::error_504("call deadline exceeded")
@@ -115,6 +121,13 @@ pub(crate) async fn handle<H: Host>(
             tracing::error!(path = full, error = %e, "action call failed");
             body::error_500()
         }
+    };
+    // F475: a streamed call that failed (503 over `max_streams`, 408/413/400, 504, 500) may have left its body
+    // unread past the bounded read-out: the connection is not reused.
+    let resp = if streamed && failed {
+        closing(resp)
+    } else {
+        resp
     };
     tracing::debug!(
         target: "brust::request",
@@ -134,7 +147,7 @@ fn read_err_response(e: ReadErr) -> Response<Bytes> {
     }
 }
 
-/// F475: answer and close; the unread rest of a streamed body is not drained.
+/// F475: answer and close; the host reads out the unread rest of a streamed body for a bounded time only.
 fn closing(mut r: Response<Bytes>) -> Response<Bytes> {
     r.headers_mut()
         .insert(http::header::CONNECTION, HeaderValue::from_static("close"));
@@ -246,6 +259,7 @@ fn b64(b: &[u8]) -> String {
 fn reply_to_response(r: ActionReply) -> Response<Bytes> {
     match r {
         ActionReply::Fetch(f) => response_from_fetch(f),
+        ActionReply::Unread(f) => closing(response_from_fetch(f)),
         ActionReply::Built(r) => r,
     }
 }

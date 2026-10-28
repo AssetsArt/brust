@@ -29,6 +29,25 @@ use serde_json::{Value, json};
 #[allow(unused_imports)]
 pub use fake_bun::{FakeBun, FakeBunHandle, FakeEntry, FakeL2, Gate};
 
+/// Every test boots its own server (a runtime, a listener, its connections) and a binary runs its tests in
+/// parallel: lift the soft open-file limit toward the hard one once, or a shell at the macOS default (256) fails
+/// boots and accepts with EMFILE ("Too many open files").
+fn raise_fd_limit() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        #[cfg(unix)]
+        // SAFETY: plain getrlimit/setrlimit on a zeroed, owned struct.
+        unsafe {
+            let mut l: libc::rlimit = std::mem::zeroed();
+            // macOS refuses a soft limit over OPEN_MAX (10240) even when the hard one is unlimited.
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut l) == 0 && l.rlim_cur < 10240 {
+                l.rlim_cur = l.rlim_max.min(10240);
+                libc::setrlimit(libc::RLIMIT_NOFILE, &l);
+            }
+        }
+    });
+}
+
 /// The A2 frame a `fetch` responder answers: `[u32 LE meta_len][meta JSON {status, headers}][body]`.
 pub fn frame(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
     let meta = serde_json::to_vec(&json!({"status": status, "headers": headers}))
@@ -102,6 +121,7 @@ pub fn fake() -> Arc<FakeBun> {
 }
 
 pub fn config(dist_dir: &Path) -> Config {
+    raise_fd_limit();
     Config {
         addr: "127.0.0.1:0".parse().unwrap(),
         dist_dir: dist_dir.to_path_buf(),

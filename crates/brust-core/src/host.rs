@@ -106,6 +106,9 @@ pub enum ActionBody<B> {
 pub enum ActionReply {
     /// The app's answer as data (native: the A2 frame); core validates it (`response_from_fetch`).
     Fetch(FetchResponse),
+    /// F475: the app answered without reading its streamed body to the end; the host reads out the rest after
+    /// the answer, and core sends it with `Connection: close`.
+    Unread(FetchResponse),
     /// The host built the response; core returns it as is apart from `Core::finish`. A host may
     /// carry the body out of band in `Extensions` (Workers keeps the JS `Response` host-side).
     Built(http::Response<Bytes>),
@@ -245,6 +248,11 @@ pub trait Host: Clock {
         body: Self::Body,
         cap: usize,
     ) -> impl Future<Output = Result<Bytes, ReadErr>>;
+    /// F475: a streamed body answered unread (refused before the call): read it out after the answer, so a client
+    /// still writing sees the answer before the connection closes. Default: dropped.
+    fn read_out(&self, body: Self::Body) {
+        drop(body);
+    }
     /// One action request → the app's answer.
     fn action(
         &self,

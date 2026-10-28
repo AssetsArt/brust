@@ -52,6 +52,9 @@ pub struct FakeBun {
     bound: OnceLock<(Weak<Server>, u32)>,
     /// Runs between `plan_in_call` and the reply ([`FakeBun::with_after_plan`]).
     after_plan: Option<Box<dyn Fn() + Send + Sync>>,
+    /// F475: a streamed body is pulled until this many bytes have come, then the app answers
+    /// ([`FakeBun::reading_at_most`]); `None` = to the end.
+    stream_read: Option<usize>,
     /// The cache adapter `cache` calls go to ([`FakeBun::with_l2`]); shared across fakes.
     pub l2: Option<Arc<FakeL2>>,
     pub cache_calls: AtomicU32,
@@ -100,6 +103,7 @@ impl FakeBun {
             no_plan: false,
             bound: OnceLock::new(),
             after_plan: None,
+            stream_read: None,
             l2: None,
             cache_calls: AtomicU32::new(0),
             last_cache: Mutex::new(None),
@@ -187,6 +191,14 @@ impl FakeBun {
     pub fn with_after_plan(self: Arc<Self>, f: impl Fn() + Send + Sync + 'static) -> Arc<Self> {
         let mut b = Arc::into_inner(self).expect("with_after_plan before the fake is shared");
         b.after_plan = Some(Box::new(f));
+        Arc::new(b)
+    }
+
+    /// F475: the app answers after reading at most `n` bytes of a streamed body (an auth or quota
+    /// check before the upload), leaving the rest unread.
+    pub fn reading_at_most(self: Arc<Self>, n: usize) -> Arc<Self> {
+        let mut b = Arc::into_inner(self).expect("reading_at_most before the fake is shared");
+        b.stream_read = Some(n);
         Arc::new(b)
     }
 
@@ -497,6 +509,9 @@ impl RenderDispatch for FakeBunHandle {
                     .expect("FakeBun: a streamed body needs a bound fake and the call's token");
                 let mut got = Vec::new();
                 let failed = loop {
+                    if f.stream_read.is_some_and(|n| got.len() >= n) {
+                        break false;
+                    }
                     match st.pull().await {
                         brust_server::Pull::Chunk(b) => got.extend_from_slice(&b),
                         brust_server::Pull::End => break false,
