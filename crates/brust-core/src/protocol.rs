@@ -312,7 +312,7 @@ pub struct JobResult {
     pub error: Option<String>,
 }
 
-/// A1 `fetch` request: `{ method, url, headers: [[k,v]…], body: {text}|{b64}|null, req }`. `headers`
+/// A1 `fetch` request: `{ method, url, headers: [[k,v]…], body: {text}|{b64}|{heap}|{stream}|null, req }`. `headers`
 /// are PAIRS (repeated names survive; `req.headers` is an object and collapses them — F5). `url` =
 /// path + query as received.
 #[derive(Serialize)]
@@ -332,6 +332,12 @@ pub enum FetchBody {
     B64(String),
     /// F82: more than the inline threshold; the bytes cross by heap transfer (`takeFetchBody`).
     Heap(usize),
+    /// F475: `{"stream": {"length": n|null, "token": t}}`, a streamed body the worker pulls with
+    /// `pullFetchBody(slot, token)`; `length` is the declared `Content-Length`, if any.
+    Stream {
+        length: Option<u64>,
+        token: u32,
+    },
 }
 
 /// A2 meta `{ status, headers: [[k,v]…] }`; unknown keys ignored.

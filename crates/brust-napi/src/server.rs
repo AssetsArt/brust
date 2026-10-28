@@ -1,5 +1,6 @@
 //! Server bindings: `startServer`, `registerWorker`, `untilReady`, `beginDrain`,
-//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs`, `planJobsBuf`, `takeFetchBody`, `putFetchReply`
+//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs`, `planJobsBuf`, `takeFetchBody`, `putFetchReply`,
+//! `pullFetchBody`
 //! over `brust_server`.
 //!
 //! The CURRENT server lives in a `RwLock<Option<Arc<Server>>>` rather than a
@@ -12,14 +13,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use napi::bindgen_prelude::{FnArgs, Function, Promise, Uint8Array};
+use napi::Env;
+use napi::bindgen_prelude::{
+    AsyncBlock, AsyncBlockBuilder, Either, FnArgs, Function, Promise, Uint8Array,
+};
 use napi_derive::napi;
 use parking_lot::RwLock;
 
 use brust_server::{
     ActionCredentials, ActionsClient, ActionsConfig, Config, CorsConfig, CrossSite,
     DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES,
-    InvalidateArgs, Server, Tuning, start,
+    InvalidateArgs, Server, StreamConfig, StreamRoute, Tuning, start,
 };
 
 use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
@@ -112,6 +116,16 @@ pub struct NapiActionsOptions {
     pub max_response_bytes: Option<u32>,
     /// `"reject"` (default) or `"allow"` (F87): cross-site mutating action requests.
     pub cross_site: Option<String>,
+    /// F475: `["POST /upload", "PUT /files/*"]`, relative to the prefix: these bodies stream.
+    pub stream: Option<Vec<String>>,
+    /// F475: the streamed-body ceiling (default 268435456, at most 4294967296).
+    pub max_stream_bytes: Option<i64>,
+    /// F475: the longest wait for the client's next byte (default 30000).
+    pub stream_idle_ms: Option<u32>,
+    /// F475: the whole streamed call (default 900000).
+    pub stream_total_ms: Option<u32>,
+    /// F475: streamed bodies at once (default a quarter of the worker slots, at least 1).
+    pub max_streams: Option<u32>,
 }
 
 /// L16: what the page tells the browser client. `credentials`: `"same-origin"` (default), `"include"` or `"omit"`.
@@ -152,8 +166,22 @@ fn cors_config(c: NapiCorsOptions) -> CorsConfig {
 }
 
 /// Absent keys take the `brust-server` defaults.
-fn actions_config(a: NapiActionsOptions) -> ActionsConfig {
-    ActionsConfig {
+fn actions_config(a: NapiActionsOptions) -> Result<ActionsConfig, String> {
+    let d = StreamConfig::default();
+    let stream = StreamConfig {
+        routes: a
+            .stream
+            .unwrap_or_default()
+            .iter()
+            .map(|e| StreamRoute::parse(e))
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("actions: {e}"))?,
+        max_bytes: a.max_stream_bytes.map_or(d.max_bytes, |n| n.max(0) as u64),
+        idle_ms: a.stream_idle_ms.map_or(d.idle_ms, u64::from),
+        total_ms: a.stream_total_ms.map_or(d.total_ms, u64::from),
+        max_streams: a.max_streams,
+    };
+    Ok(ActionsConfig {
         prefix: a.prefix.unwrap_or_else(|| DEFAULT_ACTION_PREFIX.into()),
         max_body_bytes: a
             .max_body_bytes
@@ -165,7 +193,8 @@ fn actions_config(a: NapiActionsOptions) -> ActionsConfig {
             Some("allow") => CrossSite::Allow,
             _ => CrossSite::Reject,
         },
-    }
+        stream,
+    })
 }
 
 /// The cache adapter (`[cache]`, cache-adapter lane A); built by `brust start` from `manifest.cache`.
@@ -252,7 +281,11 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
         job_cache_capacity: opts.job_cache_capacity.map_or(1000, u64::from),
         generator: opts.generator,
         cors: opts.cors.map(cors_config),
-        actions: opts.actions.map(actions_config),
+        actions: opts
+            .actions
+            .map(actions_config)
+            .transpose()
+            .map_err(napi::Error::from_reason)?,
         actions_client: opts
             .actions_client
             .map(actions_client)
@@ -338,6 +371,42 @@ pub fn plan_jobs_buf(slot: u32, buf: Uint8Array) -> String {
 pub fn take_fetch_body(slot: u32) -> Option<Uint8Array> {
     let (s, id) = BOUND.with_borrow(bound)?;
     brust_server::take_fetch_body(&s, id, slot).map(Uint8Array::new)
+}
+
+/// F475: the next chunk of the streamed request body of the calling worker's in-flight `fetch`
+/// call for `slot`, whose A1 carried `token`. Resolves with the bytes, `null` at the end, or the
+/// reason the stream failed (`"max_stream_bytes"`, `"idle"`, `"io"`); never rejects. The stream is
+/// looked up here, on the worker's JS thread where `BOUND` is that worker's binding; only the read
+/// runs off it.
+#[napi(ts_return_type = "Promise<Uint8Array | string | null>")]
+pub fn pull_fetch_body(
+    env: Env,
+    slot: u32,
+    token: u32,
+) -> napi::Result<AsyncBlock<Option<Either<Uint8Array, String>>>> {
+    let stream = BOUND
+        .with_borrow(bound)
+        .and_then(|(s, id)| brust_server::fetch_stream(&s, id, slot, token));
+    AsyncBlockBuilder::new(async move {
+        let Some(st) = stream else {
+            return Ok(Some(Either::B("io".to_string())));
+        };
+        Ok(match st.pull().await {
+            brust_server::Pull::Chunk(b) => Some(Either::A(Uint8Array::new(Vec::from(b)))),
+            brust_server::Pull::End => None,
+            brust_server::Pull::Abort(e) => Some(Either::B(abort_code(e).to_string())),
+        })
+    })
+    .build(&env)
+}
+
+/// The reason string `pullFetchBody` resolves with for a failed stream.
+fn abort_code(e: brust_core::host::ReadErr) -> &'static str {
+    match e {
+        brust_core::host::ReadErr::TooLarge => "max_stream_bytes",
+        brust_core::host::ReadErr::Slow => "idle",
+        brust_core::host::ReadErr::Io => "io",
+    }
 }
 
 /// F82: hand Rust the response body of the calling worker's in-flight `fetch` call for `slot`
@@ -534,23 +603,59 @@ mod tests {
             max_body_bytes: None,
             max_response_bytes: None,
             cross_site: None,
+            stream: None,
+            max_stream_bytes: None,
+            stream_idle_ms: None,
+            stream_total_ms: None,
+            max_streams: None,
         };
-        assert_eq!(actions_config(none), ActionsConfig::default());
+        assert_eq!(actions_config(none), Ok(ActionsConfig::default()));
         assert_eq!(ActionsConfig::default().max_response_bytes, 8_388_608);
         let set = NapiActionsOptions {
             prefix: Some("/api".into()),
             max_body_bytes: Some(1024),
             max_response_bytes: Some(1 << 20),
             cross_site: Some("allow".into()),
+            stream: Some(vec!["post /up".into(), "PUT /files/*".into()]),
+            max_stream_bytes: Some(4_294_967_296),
+            stream_idle_ms: Some(5),
+            stream_total_ms: Some(6),
+            max_streams: Some(2),
         };
         assert_eq!(
             actions_config(set),
-            ActionsConfig {
+            Ok(ActionsConfig {
                 prefix: "/api".into(),
                 max_body_bytes: 1024,
                 max_response_bytes: 1 << 20,
                 cross_site: CrossSite::Allow,
-            }
+                stream: StreamConfig {
+                    routes: vec![
+                        StreamRoute::parse("POST /up").unwrap(),
+                        StreamRoute::parse("PUT /files/*").unwrap(),
+                    ],
+                    max_bytes: 4_294_967_296,
+                    idle_ms: 5,
+                    total_ms: 6,
+                    max_streams: Some(2),
+                },
+            })
+        );
+        let bad = NapiActionsOptions {
+            prefix: None,
+            max_body_bytes: None,
+            max_response_bytes: None,
+            cross_site: None,
+            stream: Some(vec!["GET /x".into()]),
+            max_stream_bytes: None,
+            stream_idle_ms: None,
+            stream_total_ms: None,
+            max_streams: None,
+        };
+        let e = actions_config(bad).unwrap_err();
+        assert!(
+            e.starts_with("actions: ") && e.contains("POST, PUT or PATCH"),
+            "{e}"
         );
     }
 

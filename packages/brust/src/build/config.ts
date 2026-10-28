@@ -6,7 +6,21 @@
 // such an import in client code, and every browser bundle refuses to include it.
 import { statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { ACTION_CREDENTIALS, type ActionCredentials, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, MAX_ACTION_BYTES, baseUrlError, prefixError } from '../actions/prefix'
+import {
+  ACTION_CREDENTIALS,
+  type ActionCredentials,
+  DEFAULT_ACTION_PREFIX,
+  DEFAULT_MAX_BODY_BYTES,
+  DEFAULT_MAX_RESPONSE_BYTES,
+  DEFAULT_MAX_STREAM_BYTES,
+  DEFAULT_STREAM_IDLE_MS,
+  DEFAULT_STREAM_TOTAL_MS,
+  MAX_ACTION_BYTES,
+  MAX_STREAM_BYTES,
+  baseUrlError,
+  prefixError,
+  streamEntryError,
+} from '../actions/prefix'
 import { ADAPTER_NAMES, BUILTINS, installHint } from '../cache-adapter/load'
 import { BuildError } from './errors'
 
@@ -15,6 +29,8 @@ import { BuildError } from './errors'
 //   entry = "actions.ts"   prefix = "/_brust/action"   max_body_bytes = 1048576  max_response_bytes = 8388608   cross_site = "reject" | "allow" (F87)
 //   base_url = "https://api.example.com"  credentials = "same-origin" | "include" | "omit"   (L16: the browser client's target; runtime settings, validated here too)
 // `prefix = "/"` is accepted only for an actions-only build (L16 R16.4).
+// F475: stream = ["POST /upload", "PUT /files/*"] (relative to the prefix; each a `{ parse: 'none' }` route) streams those bodies
+//   max_stream_bytes = 268435456 (<= 4294967296)  stream_idle_ms = 30000  stream_total_ms = 900000  max_streams = <workers x slots / 4>
 // `ACTION_INLINE_BODY_BYTES` (Rust): the inline/heap threshold of an action body, independent of the response slot size (`slotBytes`).
 const MIN_RESPONSE_BYTES = 262_144
 
@@ -29,6 +45,17 @@ export interface ActionsBuildConfig {
   credentials: ActionCredentials
   /** `entry` was written in brust.toml (a missing file is then an error, never a page-only build). */
   entryExplicit: boolean
+  /** F475: the streamed routes and their bounds; absent = no `stream` list (or an empty one). */
+  stream?: ActionsStreamConfig
+}
+
+/** F475 `[actions] stream` and its bounds, as the manifest carries them. */
+export interface ActionsStreamConfig {
+  stream: string[]
+  maxStreamBytes: number
+  streamIdleMs: number
+  streamTotalMs: number
+  maxStreams?: number
 }
 
 // [cloudflare] (M4-CF; only read by `--target cloudflare`, validated always so errors surface early):
@@ -293,7 +320,33 @@ function parseActions(file: string, raw: unknown, actionsOnly: boolean): Actions
       throw new BuildError('config', `${file}: actions.credentials must be one of ${ACTION_CREDENTIALS.join(', ')} (got ${JSON.stringify(t.credentials)})`)
     credentials = t.credentials as ActionCredentials
   }
-  return { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite, baseUrl, credentials, entryExplicit: t.entry !== undefined }
+  const stream = parseStream(file, t)
+  return { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite, baseUrl, credentials, entryExplicit: t.entry !== undefined, ...(stream ? { stream } : {}) }
+}
+
+/** F475: `stream` + its bounds; the bounds are validated even without a list, and dropped with it. */
+function parseStream(file: string, t: Record<string, unknown>): ActionsStreamConfig | undefined {
+  const int = (key: string, min: number, max: number, dflt: number): number => {
+    const n = t[key]
+    if (n === undefined) return dflt
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < min || n > max) throw new BuildError('config', `${file}: actions.${key} must be an integer in ${min}..${max} (got ${String(n)})`)
+    return n
+  }
+  const maxStreamBytes = int('max_stream_bytes', 1, MAX_STREAM_BYTES, DEFAULT_MAX_STREAM_BYTES)
+  const streamIdleMs = int('stream_idle_ms', 1, U32_MAX, DEFAULT_STREAM_IDLE_MS)
+  const streamTotalMs = int('stream_total_ms', 1, U32_MAX, DEFAULT_STREAM_TOTAL_MS)
+  const maxStreams = t.max_streams === undefined ? undefined : int('max_streams', 1, U32_MAX, 1)
+  if (t.stream === undefined) return undefined
+  if (!Array.isArray(t.stream)) throw new BuildError('config', `${file}: actions.stream must be an array of "<METHOD> <path>" strings`)
+  const stream: string[] = []
+  for (const e of t.stream) {
+    const why = streamEntryError(e)
+    if (why) throw new BuildError('config', `${file}: actions.stream entry ${why}`)
+    const [m, p] = (e as string).trim().split(/ +/)
+    stream.push(`${m!.toUpperCase()} ${p}`)
+  }
+  if (stream.length === 0) return undefined
+  return { stream, maxStreamBytes, streamIdleMs, streamTotalMs, ...(maxStreams !== undefined ? { maxStreams } : {}) }
 }
 
 const DEFAULT_ENTRY = 'actions.ts'

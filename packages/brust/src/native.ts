@@ -64,13 +64,22 @@ export interface ActionsClientOptions {
   credentials?: 'same-origin' | 'include' | 'omit'
 }
 /** napi `NapiActionsOptions`; defaults `/_brust/action`, 1048576, 8388608. */
-export interface ActionsOptions {
+export interface ActionsOptions extends StreamOptions {
   prefix?: string
   maxBodyBytes?: number
   /** F82: response body cap (bytes). Default 8388608. */
   maxResponseBytes?: number
   /** F87: cross-site mutating requests. Default `reject`. */
   crossSite?: 'reject' | 'allow'
+}
+/** F475: the streamed action bodies (napi `NapiActionsOptions`): `["POST /upload"]` relative to the prefix, and the bounds
+ * (defaults 268435456 bytes, 30000 ms idle, 900000 ms in all, a quarter of the worker slots at once). */
+export interface StreamOptions {
+  stream?: string[]
+  maxStreamBytes?: number
+  streamIdleMs?: number
+  streamTotalMs?: number
+  maxStreams?: number
 }
 export type WorkerFn = (kind: 'loader' | 'jobs' | 'fetch' | 'cache', requestJson: string, slot: number) => Promise<number>
 export interface NativeBinding {
@@ -89,6 +98,9 @@ export interface NativeBinding {
   takeFetchBody(slot: number): Uint8Array | null
   /** F82 — hand Rust a response body too large for the slot; false = declined. Never throws. */
   putFetchReply(slot: number, body: Uint8Array): boolean
+  /** F475 — the next chunk of the in-flight `fetch` call's streamed body (A1 `{stream: {token}}`): bytes, `null` at the end,
+   * or why it failed (`max_stream_bytes` | `idle` | `io`). Never rejects. */
+  pullFetchBody(slot: number, token: number): Promise<Uint8Array | string | null>
   /** cache adapter R10 — a foreign broadcast event: tier 1 + the floor at `seq`; never re-published. */
   cacheReplay(args: InvalidateArgs, seq: number | null): InvalidateResult
   /** cache adapter R9 — bump `stats.l2[name]`; false = unknown name / no adapter / no server. Never throws. */
@@ -126,6 +138,7 @@ export const planJobs = (slot: number, len: number): string => native().planJobs
 export const planJobsBuf = (slot: number, buf: Uint8Array): string => native().planJobsBuf(slot, buf)
 export const takeFetchBody = (slot: number): Uint8Array | null => native().takeFetchBody(slot)
 export const putFetchReply = (slot: number, body: Uint8Array): boolean => native().putFetchReply(slot, body)
+export const pullFetchBody = (slot: number, token: number): Promise<Uint8Array | string | null> => native().pullFetchBody(slot, token)
 export const cacheReplay = (args: InvalidateArgs, seq: number | null): InvalidateResult => native().cacheReplay(args, seq)
 export const cacheL2Count = (name: string): boolean => native().cacheL2Count(name)
 export const cacheClear = (): number => native().cacheClear()

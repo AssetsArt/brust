@@ -43,3 +43,61 @@ export function shadowedGetActions(app: AnyElysia, patterns: string[], prefix: s
   }
   return out
 }
+
+/** F475: the route parses nothing (`{ parse: 'none' }`): Elysia 2 keeps `'none'`, Elysia 1 kept `[{ fn: 'none' }]`. */
+function parsesNone(r: { hooks?: unknown }): boolean {
+  const p = (r.hooks as { parse?: unknown } | undefined)?.parse
+  const none = (x: unknown) => x === 'none' || (x as { fn?: unknown } | null)?.fn === 'none'
+  return Array.isArray(p) ? p.some(none) : none(p)
+}
+
+/** Same route path: segments equal, a parameter (`:x`, `{x}`) matches a parameter, `*` matches `*`. */
+function samePath(a: string, b: string): boolean {
+  const x = a.split('/')
+  const y = b.split('/')
+  const param = (s: string) => /^(:|\{)/.test(s)
+  return x.length === y.length && x.every((s, i) => s === y[i] || (param(s) && param(y[i]!)))
+}
+
+const STREAM_METHODS = new Set(['POST', 'PUT', 'PATCH'])
+/** A route answers `method`: its own, or every method (Elysia 2's `.all()` registers `*`; `ALL` too). */
+const answers = (route: string, method: string) => route === method || route === 'ALL' || route === '*'
+
+/** Could one request path match both `listed` (a stream entry, prefix included) and `route` (an Elysia path)? A
+ * parameter on either side matches any one segment; a final `*` on either side matches one or more. */
+function overlaps(listed: string, route: string): boolean {
+  const a = listed.split('/')
+  const b = route.split('/')
+  const param = (s: string) => /^(:|\{)/.test(s)
+  for (let i = 0; ; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x === undefined || y === undefined) return x === y
+    if ((x === '*' && i === a.length - 1) || (y === '*' && i === b.length - 1)) return x !== '' && y !== ''
+    if (x !== y && !param(x) && !param(y)) return false
+  }
+}
+
+/**
+ * F475: `[actions] stream` against the app. `missing`: listed entries with no `{ parse: 'none' }` route of that method and
+ * path. `parsed`: routes that parse their body although a listed entry can match their path (a static route under a
+ * `:param` or `*` entry). Both fail boot: Rust would stream those bodies up to `max_stream_bytes` into a route that parses
+ * them whole, past `max_body_bytes`. `unlisted`: `{ parse: 'none' }` POST/PUT/PATCH routes not on the list (their bodies
+ * stay buffered, capped at `max_body_bytes`).
+ */
+export function streamRouteCheck(app: AnyElysia, entries: string[], prefix: string): { missing: string[]; parsed: string[]; unlisted: string[] } {
+  const full = (p: string) => (prefix === '/' ? p : p === '/' ? prefix : prefix + p)
+  const listed = entries.map((e) => {
+    const [m, p] = e.trim().split(/ +/)
+    return { entry: e, method: m!.toUpperCase(), path: full(p!) }
+  })
+  const routes = app.routes.map((r) => ({ method: r.method.toUpperCase(), path: r.path, none: parsesNone(r) }))
+  const missing = listed.filter((l) => !routes.some((r) => r.none && answers(r.method, l.method) && samePath(r.path, l.path))).map((l) => l.entry)
+  const parsed = routes
+    .filter((r) => !r.none && listed.some((l) => answers(r.method, l.method) && overlaps(l.path, r.path)))
+    .map((r) => `${r.method} ${r.path}`)
+  const unlisted = routes
+    .filter((r) => r.none && (STREAM_METHODS.has(r.method) || answers(r.method, '')) && !listed.some((l) => answers(r.method, l.method) && samePath(r.path, l.path)))
+    .map((r) => `${r.method} ${r.path}`)
+  return { missing, parsed, unlisted }
+}

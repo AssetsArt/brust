@@ -2,6 +2,7 @@ import { afterEach, expect, spyOn, test } from 'bun:test'
 import {
   type FetchRequest,
   getActionsApp,
+  pulledBody,
   readFramed,
   type HeapIo,
   runFetch,
@@ -336,4 +337,77 @@ test("makeDispatch(h, view, 1)('fetch', json, 0) answers a frame; loader/jobs ne
   expect(meta.status).toBe(201)
   expect(dec.decode(body)).toBe('via dispatch')
   expect(called).toBe(0)
+})
+
+// ---- streamed request body (F475) ----
+
+/** A pull channel over `chunks`, then `end` (null = a clean end, a string = the failure reason); records the pulls. */
+const puller = (chunks: Uint8Array[], end: string | null = null) => {
+  const calls: { slot: number; token: number }[] = []
+  let i = 0
+  const pullBody = async (slot: number, token: number) => {
+    calls.push({ slot, token })
+    return i < chunks.length ? chunks[i++]! : end
+  }
+  return { pullBody, calls }
+}
+
+test('streamed body: the app reads every chunk in order; pulls carry the slot and the token', async () => {
+  const parts = [bytes(1000), bytes(70_000), bytes(5)]
+  let got: Uint8Array | null = null
+  setActionsApp({
+    async fetch(req) {
+      got = new Uint8Array(await req.arrayBuffer())
+      return new Response('ok')
+    },
+  })
+  const view = twoSlots()
+  const { pullBody, calls } = puller(parts)
+  const n = await runFetch(JSON.stringify(fr({ body: { stream: { length: 71_005, token: 7 } } })), view, 1, 2, mkIo({ pullBody }).io)
+  expect(readFramed(view, 1, 2, n).meta.status).toBe(200)
+  expect(Buffer.from(got as unknown as Uint8Array).equals(Buffer.concat(parts))).toBe(true)
+  expect(calls).toEqual(Array.from({ length: 4 }, () => ({ slot: 1, token: 7 })))
+})
+
+test('streamed body: nothing is pulled before the app reads, and only one chunk ahead of each read', async () => {
+  const { pullBody, calls } = puller([bytes(3), bytes(4)])
+  const body = pulledBody(() => pullBody(0, 1))
+  await Bun.sleep(5)
+  expect(calls).toHaveLength(0)
+  const r = body.getReader()
+  expect((await r.read()).value?.length).toBe(3)
+  await Bun.sleep(5)
+  expect(calls).toHaveLength(1)
+  expect((await r.read()).value?.length).toBe(4)
+  expect((await r.read()).done).toBe(true)
+})
+
+test('streamed body: a failed pull rejects the app read with a TypeError naming the bound', async () => {
+  for (const [why, msg] of [
+    ['max_stream_bytes', 'exceeds max_stream_bytes'],
+    ['idle', 'stalled longer than stream_idle_ms'],
+    ['io', 'broke off or ended short'],
+  ] as const) {
+    const { pullBody } = puller([bytes(2)], why)
+    const r = pulledBody(() => pullBody(0, 1)).getReader()
+    await r.read()
+    const e = await r.read().then(
+      () => null,
+      (x) => x as Error,
+    )
+    expect(e).toBeInstanceOf(TypeError)
+    expect(e?.message).toContain(msg)
+  }
+})
+
+test('streamed body without a pull channel → 500 brust: action failed', async () => {
+  setActionsApp({ fetch: () => new Response('never') })
+  const view = twoSlots()
+  const err = quiet()
+  try {
+    const n = await runFetch(JSON.stringify(fr({ body: { stream: { length: null, token: 1 } } })), view, 0, 2, mkIo().io)
+    expect(readFramed(view, 0, 2, n).meta.status).toBe(500)
+  } finally {
+    err.mockRestore()
+  }
 })

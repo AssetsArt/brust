@@ -1,0 +1,6 @@
+[actions]
+entry = "actions.ts"
+prefix = "/"
+stream = ["POST /upload", "POST /guarded"]
+max_stream_bytes = 100663296
+max_streams = 1

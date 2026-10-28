@@ -61,3 +61,13 @@ test('doClass adds exactly one BrustCacheDO re-export; without it the entry is u
   expect(withDo.replace('export { BrustCacheDO } from "@brust/cache-cloudflare/do"\n', '')).toBe(without)
   expect(cfEntrySource({ ...base, doClass: false })).toBe(cfEntrySource(base))
 })
+
+// F475: the Worker's CONFIG carries the stream list and its ceiling, and nothing the platform owns.
+test('cfActions: no list = the old block; a list sends the routes and the ceiling, not the timeouts', async () => {
+  const { cfActions } = await import('../src/build/cloudflare')
+  const a = { prefix: '/api', maxBodyBytes: 1024 }
+  expect(cfActions(a)).toEqual({ prefix: '/api', maxBodyBytes: 1024, maxResponseBytes: 8388608, crossSite: 'reject' })
+  expect(cfActions({ ...a, stream: [] })).toEqual(cfActions(a))
+  const s = cfActions({ ...a, stream: ['POST /upload'], maxStreamBytes: 4096, streamIdleMs: 1, streamTotalMs: 2, maxStreams: 3 } as typeof a)
+  expect(s).toEqual({ prefix: '/api', maxBodyBytes: 1024, maxResponseBytes: 8388608, crossSite: 'reject', stream: ['POST /upload'], maxStreamBytes: 4096 })
+})

@@ -1,9 +1,12 @@
 //! The native half of the actions transport (F82): the heap request body and the oversize reply
 //! of a `fetch` call cross through the claimed slot's `FetchCell`, on the worker's JS thread.
+use std::sync::Arc;
+
 use bytes::Bytes;
 
 use crate::config::Server;
 use crate::dispatch::{CacheCell, FetchCell};
+use crate::stream_body::StreamBody;
 
 /// F82, on the worker's JS thread inside its `fetch` call for `slot`: the heap request body, once.
 /// `None`: no such worker, the slot is not in a call, it is not a `fetch` call, no heap body was
@@ -21,6 +24,20 @@ pub fn take_fetch_body(s: &Server, worker: u32, slot: u32) -> Option<Vec<u8>> {
     .ok()
     .flatten()?;
     Some(Vec::from(taken))
+}
+
+/// F475, on the worker's JS thread inside its `fetch` call for `slot`: the call's streamed body,
+/// when `token` is the one its A1 carried. The caller pulls it off the JS thread; holding the `Arc`
+/// keeps a later call on the same slot out of reach (the token is checked here, under the claim).
+pub fn fetch_stream(s: &Server, worker: u32, slot: u32, token: u32) -> Option<Arc<StreamBody>> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let entry = s.core.host.pool.entry(worker)?;
+        let g = entry.claimed_plan_cell(slot)?.lock();
+        let st = g.as_ref()?.downcast_ref::<FetchCell>()?.stream.as_ref()?;
+        (st.token == token).then(|| Arc::clone(st))
+    }))
+    .ok()
+    .flatten()
 }
 
 /// F82 + L10: hand Rust a response body too large for the slot. `false` = declined.

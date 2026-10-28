@@ -38,6 +38,7 @@ use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerEntry, WorkerPool};
 use crate::protocol::{
     CacheReplyMeta, CacheRequest, CacheSetMeta, FetchMeta, FetchRequest, FetchResponse,
 };
+use crate::stream_body::StreamBody;
 pub use brust_core::host::CallError;
 use brust_core::l2::{L2Lookup, L2Page, L2SetMeta};
 
@@ -211,6 +212,7 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
         kind,
         req,
         seed,
+        None,
         |bytes, claim| {
             // L10: a reply too large for the slot is the 5-byte heap marker; the body is the claim's heap reply.
             let heap;
@@ -264,21 +266,26 @@ pub(crate) fn decode_heap_marker(b: &[u8]) -> Result<Option<u32>, CallError> {
 pub struct FetchCell {
     pub(crate) body: Option<bytes::Bytes>,
     pub(crate) reply: Arc<parking_lot::Mutex<Option<bytes::Bytes>>>,
+    /// F475: the streamed request body the worker pulls (`pull_fetch_body`); `None` otherwise.
+    pub(crate) stream: Option<Arc<StreamBody>>,
 }
 
 /// One `fetch` round trip (A1 in, A2 out). Never planned. `heap_body` is a request body over the
-/// inline threshold; it waits in the call's [`FetchCell`] for the worker to take.
+/// inline threshold; it waits in the call's [`FetchCell`] for the worker to take. `stream` (F475)
+/// waits there for the worker to pull and moves the call's deadline as it is read.
 pub async fn call_worker_fetch(
     pool: &Arc<WorkerPool>,
     timeout: Duration,
     call_timeout: Duration,
     req: &FetchRequest<'_>,
     heap_body: Option<bytes::Bytes>,
+    stream: Option<Arc<StreamBody>>,
 ) -> Result<FetchResponse, CallError> {
     let reply = Arc::new(parking_lot::Mutex::new(None));
     let cell = FetchCell {
         body: heap_body,
         reply: Arc::clone(&reply),
+        stream: stream.clone(),
     };
     call_worker_decoded(
         pool,
@@ -287,6 +294,7 @@ pub async fn call_worker_fetch(
         CallKind::Fetch,
         req,
         Some(Box::new(cell)),
+        stream,
         move |b, _| decode_fetch_reply(b, &reply),
     )
     .await
@@ -392,6 +400,7 @@ pub async fn call_worker_cache_get(
         CallKind::Cache,
         &CacheRequest::Get { key },
         Some(Box::new(cell)),
+        None,
         move |b, _| decode_cache_get(b, &reply),
     )
     .await
@@ -433,6 +442,7 @@ pub async fn call_worker_cache_set(
         CallKind::Cache,
         &req,
         Some(Box::new(cell)),
+        None,
         |b, _| {
             let (m, _) = frame_parts::<CacheReplyMeta>(b)?;
             match (m.ok, m.error) {
@@ -496,6 +506,7 @@ pub(crate) fn decode_cache_get(
 
 /// The claimed round trip, the slot bytes decoded by `decode` INSIDE the claim (the slot is
 /// reused once it drops — F3).
+#[allow(clippy::too_many_arguments)]
 async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
     pool: &Arc<WorkerPool>,
     timeout: Duration,
@@ -503,6 +514,7 @@ async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
     kind: CallKind,
     req: &Req,
     seed: Option<PlanBox>,
+    stream: Option<Arc<StreamBody>>,
     decode: D,
 ) -> Result<(R, Option<PlanBox>), CallError>
 where
@@ -550,10 +562,14 @@ where
     // the deadline lives in the claimed slot and the pool's sweeper wakes it — no tokio timer per call.
     let mut fut = Detach(Some(call));
     let mut deadline = SlotDeadline {
-        at: std::time::Instant::now() + call_timeout,
+        at: stream.as_ref().map_or_else(
+            || std::time::Instant::now() + call_timeout,
+            |s| s.deadline(),
+        ),
         call_timeout,
         entry: stamped,
         slot: stamped_slot,
+        stream,
     };
     deadline.entry.arm_deadline(deadline.slot, deadline.at);
     let r = std::future::poll_fn(|cx| {
@@ -584,18 +600,29 @@ struct Elapsed;
 /// The deadline of one claimed call (M3-P P7, R3). Ready iff now >= `at`, where `at` starts as
 /// `call_timeout` after the call and moves to `call_timeout` after the jobs-phase stamp when that
 /// is later (the S7 per-phase rule, unchanged). Pending parks the waker in the claimed slot, which
-/// the pool's sweeper wakes once the armed deadline passed.
+/// the pool's sweeper wakes once the armed deadline passed. A streamed call (F475) moves `at`
+/// with each pull instead ([`StreamBody::deadline`]), the same re-arm on expiry.
 struct SlotDeadline {
     at: std::time::Instant,
     call_timeout: Duration,
     entry: Arc<WorkerEntry>,
     slot: u32,
+    stream: Option<Arc<StreamBody>>,
 }
 
 impl SlotDeadline {
     fn poll(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Elapsed> {
         let now = std::time::Instant::now();
-        if now >= self.at {
+        if now >= self.at
+            && let Some(s) = &self.stream
+        {
+            self.at = s.deadline();
+            if now >= self.at {
+                s.note_deadline();
+                return Poll::Ready(Elapsed);
+            }
+            self.entry.arm_deadline(self.slot, self.at);
+        } else if now >= self.at {
             match self.entry.jobs_phase_since(self.slot) {
                 Some(t) if t + self.call_timeout > self.at => {
                     self.at = t + self.call_timeout;
@@ -984,6 +1011,7 @@ mod tests {
             Duration::from_secs(5),
             &fetch_request(),
             None,
+            None,
         )
         .await
         .expect("round trip");
@@ -1048,6 +1076,7 @@ mod tests {
             Duration::from_secs(5),
             &fetch_request(),
             Some(bytes::Bytes::from_static(b"big")),
+            None,
         )
         .await
         .expect("round trip");
@@ -1069,6 +1098,7 @@ mod tests {
             Duration::from_millis(100),
             Duration::from_secs(5),
             &fetch_request(),
+            None,
             None,
         )
         .await;
@@ -1293,6 +1323,8 @@ mod tests {
             call_timeout: Duration::from_secs(1),
             max_loader_response_bytes: 1 << 20,
             l2: Some((Duration::from_millis(50), 1 << 20)),
+            stream: Default::default(),
+            streams: Arc::default(),
         };
         let n = Arc::new(brust_core::l2::L2Counters::default());
         host.l2_set(brust_core::l2::L2Key("k".into()), l2_page(), l2_meta(), &n);

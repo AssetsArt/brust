@@ -40,9 +40,44 @@ impl Capped {
     }
 }
 
+/// F475: the bytes of a streamed request body so far against `max_stream_bytes`. The body itself passes through
+/// untouched; this only counts (host-tested).
+pub struct StreamCount {
+    max: u64,
+    seen: u64,
+}
+
+impl StreamCount {
+    pub fn new(max: u64) -> Self {
+        Self { max, seen: 0 }
+    }
+
+    /// Count a chunk of `n` bytes; `TooLarge` the moment the total passes the ceiling.
+    pub fn push(&mut self, n: u64) -> Result<(), ReadErr> {
+        self.seen = self.seen.saturating_add(n);
+        if self.seen > self.max {
+            return Err(ReadErr::TooLarge);
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stream_is_counted_against_the_ceiling() {
+        let mut c = StreamCount::new(10);
+        assert_eq!(c.push(4), Ok(()));
+        assert_eq!(c.push(6), Ok(()));
+        assert_eq!(c.push(1), Err(ReadErr::TooLarge));
+        // once over, always over
+        assert_eq!(c.push(0), Err(ReadErr::TooLarge));
+        let mut c = StreamCount::new(u64::MAX);
+        assert_eq!(c.push(u64::MAX), Ok(()));
+        assert_eq!(c.push(1), Ok(()));
+    }
 
     #[test]
     fn declared_length_over_the_cap_is_too_large() {

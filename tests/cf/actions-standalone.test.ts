@@ -16,6 +16,7 @@ const CF = join(APP, 'dist/cf')
 const OUT = process.env.BRUST_CF_OUT ?? '/tmp/m4cf-worker-crate'
 const ENV = { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' }
 const PAGE = 'https://app.example'
+const STREAM_MAX = 2 * 1024 * 1024
 
 const freePort = () =>
   new Promise<number>((ok, fail) => {
@@ -43,7 +44,7 @@ describe.skipIf(!ENABLED)('actions-only Worker on wrangler dev', () => {
     rmSync(RUN, { recursive: true, force: true })
     mkdirSync(RUN, { recursive: true })
     cpSync(join(FIX, 'api'), APP, { recursive: true })
-    writeFileSync(join(APP, 'brust.toml'), `[actions]\nentry = "actions.ts"\nprefix = "/"\n\n[cors]\norigins = ["${PAGE}"]\ncredentials = true\n`)
+    writeFileSync(join(APP, 'brust.toml'), `[actions]\nentry = "actions.ts"\nprefix = "/"\n\nstream = ["POST /upload"]\nmax_stream_bytes = ${STREAM_MAX}\n\n[cors]\norigins = ["${PAGE}"]\ncredentials = true\n`)
     const b = Bun.spawnSync([process.execPath, join(REPO, 'packages/brust/src/cli.ts'), 'build', '--actions-only', '--target', 'cloudflare'], {
       cwd: APP,
       env: { ...process.env, BRUST_CORE_CF_DIR: core, BRUST_PORT: '', BRUST_ADDR: '' },
@@ -119,5 +120,42 @@ describe.skipIf(!ENABLED)('actions-only Worker on wrangler dev', () => {
     const r = await get('/team', { method: 'OPTIONS', headers: { origin: PAGE, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' } })
     expect(r.status).toBe(204)
     expect(r.headers.get('access-control-allow-origin')).toBe(PAGE)
+  })
+
+  test('6 F474: an action sees the Content-Length the client sent, and reads the same number of bytes', async () => {
+    const body = Uint8Array.from({ length: 1024 }, (_, i) => (i * 31 + 7) & 0xff)
+    const r = await get('/echo', { method: 'POST', headers: { 'content-type': 'application/zip', origin: PAGE }, body })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ contentLength: '1024', bytes: 1024 })
+  })
+
+  // F475 lane B: a listed route's body is the platform's own stream, counted against max_stream_bytes (2 MiB here). The
+  // idle/total timeouts and max_streams are not enforced on Workers.
+  test('7 F475: a streamed upload under the ceiling is read chunk by chunk, byte-exact', async () => {
+    let n = 1_500_000
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        c.enqueue(new Uint8Array(250_000))
+        if ((n -= 250_000) <= 0) c.close()
+      },
+    })
+    const r = await get('/upload', { method: 'POST', headers: { 'content-type': 'application/octet-stream', origin: PAGE }, body, duplex: 'half' } as RequestInit)
+    expect(r.status).toBe(200)
+    expect(((await r.json()) as { bytes: number }).bytes).toBe(1_500_000)
+  })
+
+  test('8 F475: past max_stream_bytes the answer is a 413, declared up front or counted mid-stream', async () => {
+    const headers = { 'content-type': 'application/octet-stream', origin: PAGE }
+    const declared = await get('/upload', { method: 'POST', headers, body: new Uint8Array(3 * 1024 * 1024) })
+    expect(declared.status).toBe(413)
+    let n = 3 * 1024 * 1024
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        c.enqueue(new Uint8Array(256 * 1024))
+        if ((n -= 256 * 1024) <= 0) c.close()
+      },
+    })
+    const counted = await get('/upload', { method: 'POST', headers, body, duplex: 'half' } as RequestInit)
+    expect(counted.status).toBe(413)
   })
 })

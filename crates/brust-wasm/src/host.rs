@@ -3,11 +3,12 @@
 //! Static files are Workers Static Assets' (a miss reaches core's 404).
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use brust_core::body::is_framing_header;
 use brust_core::cache::local::{LocalJobs, LocalL1};
 use brust_core::host::{
-    ActionCall, ActionReply, CallError, Clock, Host, JsClock, ReadErr, StaticRoot,
+    ActionBody, ActionCall, ActionReply, CallError, Clock, Host, JsClock, ReadErr, StaticRoot,
 };
 use brust_core::l2::{L2Counters, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta};
 use brust_core::plan::{PlanSeed, PlannedCall};
@@ -23,8 +24,8 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
 use crate::bridge::{js_action, js_jobs, js_loader, js_string};
-use crate::capped::Capped;
-use crate::head::action_url;
+use crate::capped::{Capped, StreamCount};
+use crate::head::{action_request_headers, action_url};
 
 /// The `Extensions` mark of a `Built` action reply whose body is the app's JS `Response`, kept in
 /// `WasmHost::replies` until the adapter answers with it (R4).
@@ -40,6 +41,8 @@ pub struct WasmHost {
     next: Cell<u64>,
     /// The cache adapter bridge `install` returned (cache-adapter R11, R14); `None` = no L2.
     cache: RefCell<Option<CacheBridge>>,
+    /// F475: `max_stream_bytes`, the ceiling a streamed request body is counted against.
+    stream_max: u64,
 }
 
 /// The JS side of the cache adapter (`server-handlers.ts` `install` → `{ cache }`):
@@ -66,6 +69,14 @@ impl CacheBridge {
 }
 
 impl WasmHost {
+    /// A host whose streamed request bodies are counted against `stream_max` bytes.
+    pub fn with_stream_max(stream_max: u64) -> Self {
+        Self {
+            stream_max,
+            ..Self::default()
+        }
+    }
+
     /// The app's response held for `id`.
     pub fn take(&self, id: ReplyId) -> Option<web_sys::Response> {
         self.replies.borrow_mut().remove(&id.0)
@@ -139,10 +150,47 @@ fn bad(e: impl std::fmt::Display) -> CallError {
     CallError::BadResponse(e.to_string())
 }
 
+/// F475: the incoming request body, passed to the app as the platform's own stream. Chunks stay JS values (nothing is
+/// copied into wasm memory); only their `byteLength` is read, to count them against `max`. Past it the app's read
+/// rejects and `aborted` says why, so the answer is replaced by a 413 (as on the native host).
+fn counted_body(
+    raw: web_sys::ReadableStream,
+    max: u64,
+    aborted: Rc<Cell<Option<ReadErr>>>,
+) -> Result<web_sys::ReadableStream, CallError> {
+    let src = wasm_streams::ReadableStream::from_raw(raw.unchecked_into());
+    let src = src
+        .try_into_stream()
+        .map_err(|_| CallError::BadResponse("the request body is already locked".into()))?;
+    let mut count = StreamCount::new(max);
+    let counted = src.map(move |chunk| {
+        let v = chunk?;
+        let n = js_sys::Reflect::get(&v, &"byteLength".into())
+            .ok()
+            .and_then(|n| n.as_f64())
+            .unwrap_or(0.0) as u64;
+        match count.push(n) {
+            Ok(()) => Ok(v),
+            Err(e) => {
+                aborted.set(Some(e));
+                Err(wasm_bindgen::JsValue::from_str(
+                    "the request body is over max_stream_bytes",
+                ))
+            }
+        }
+    });
+    Ok(wasm_streams::ReadableStream::from_stream(counted)
+        .into_raw()
+        .unchecked_into())
+}
+
 impl Host for WasmHost {
     type Body = worker::Request;
     type L1 = LocalL1<JsClock>;
     type Jobs = LocalJobs<JsClock>;
+    /// F475: a listed route's body passes through to the app, counted (the idle/total timeouts and
+    /// `max_streams` are the platform's here).
+    const STREAM_BODY: bool = true;
     /// Loader and jobs are two direct in-isolate calls (spec R4).
     const PLAN_OFFER: bool = false;
 
@@ -185,36 +233,40 @@ impl Host for WasmHost {
 
     /// The app's `action(Request)`; its `Response` stays here and the core gets `Built` with its
     /// status and headers (R4).
-    async fn action(&self, call: ActionCall<'_>) -> Result<ActionReply, CallError> {
+    async fn action(
+        &self,
+        call: ActionCall<'_, worker::Request>,
+    ) -> Result<ActionReply, CallError> {
         let js = |e| CallError::BadResponse(js_string(e));
         let headers = web_sys::Headers::new().map_err(js)?;
-        for (n, v) in call.headers {
-            if is_framing_header(n.as_str()) {
-                continue;
-            }
-            headers
-                .append(n.as_str(), &String::from_utf8_lossy(v.as_bytes()))
-                .map_err(js)?;
-        }
-        // R8: HTTP/2 carries the host in `:authority`, not a `host` header.
-        if !call.headers.contains_key(http::header::HOST)
-            && let Some(au) = call.authority
-        {
-            headers.append("host", au).map_err(js)?;
+        for (n, v) in action_request_headers(call.headers, call.authority) {
+            headers.append(&n, &v).map_err(js)?;
         }
         let init = web_sys::RequestInit::new();
         init.set_method(call.method);
         init.set_headers(&headers);
-        if !matches!(call.method, "GET" | "HEAD")
-            && let Some(b) = &call.body
-        {
-            init.set_body(&js_sys::Uint8Array::from(&b[..]));
+        let aborted: Rc<Cell<Option<ReadErr>>> = Rc::new(Cell::new(None));
+        if !matches!(call.method, "GET" | "HEAD") {
+            match &call.body {
+                ActionBody::Buffered(b) => init.set_body(&js_sys::Uint8Array::from(&b[..])),
+                ActionBody::Stream { body, .. } => {
+                    if let Some(raw) = body.inner().body() {
+                        let counted = counted_body(raw, self.stream_max, aborted.clone())?;
+                        init.set_body(&counted);
+                    }
+                }
+                ActionBody::None => {}
+            }
         }
         let url = action_url(call.headers, call.authority, call.full);
         let req = web_sys::Request::new_with_str_and_init(&url, &init).map_err(js)?;
         let p = js_action(&req).map_err(|e| CallError::Rejected(js_string(e)))?;
-        let resp: web_sys::Response = JsFuture::from(p)
-            .await
+        let answered = JsFuture::from(p).await;
+        // A body that went past the ceiling fails the call whatever the app answered (413, as on the native host).
+        if let Some(e) = aborted.get() {
+            return Err(CallError::BodyAborted(e));
+        }
+        let resp: web_sys::Response = answered
             .map_err(|e| CallError::Rejected(js_string(e)))?
             .dyn_into()
             .map_err(|_| CallError::BadResponse("action answered a non-Response".into()))?;

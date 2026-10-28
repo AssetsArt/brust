@@ -40,8 +40,12 @@ fn boot() -> Result<(), String> {
     let (cfg, stats, epoch_cfg) = (parsed.core, parsed.stats, parsed.epoch);
     let loaded = Manifest::from_parts(&bridge::manifest(), &bridge::templates())
         .map_err(|e| format!("manifest: {e}"))?;
-    let core: &'static Core<WasmHost> =
-        Box::leak(Box::new(Core::new(WasmHost::default(), loaded, cfg)?));
+    let stream_max = cfg.actions.as_ref().map_or(0, |a| a.stream.max_bytes);
+    let core: &'static Core<WasmHost> = Box::leak(Box::new(Core::new(
+        WasmHost::with_stream_max(stream_max),
+        loaded,
+        cfg,
+    )?));
     CORE.with(|c| c.set(core))
         .map_err(|_| "booted twice".to_string())?;
     STATS.with(|s| s.set(stats));

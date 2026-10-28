@@ -1,7 +1,7 @@
 //! `brust-app.js`'s `CONFIG` (contract v1) → `CoreConfig` + the stats gate (host-tested).
 
 use brust_core::cache::local::{WORKERS_JOB_CAPACITY, WORKERS_L1_CAPACITY};
-use brust_core::config::{ActionsConfig, CorsConfig, CrossSite};
+use brust_core::config::{ActionsConfig, CorsConfig, CrossSite, StreamConfig, StreamRoute};
 use brust_core::core::CoreConfig;
 use brust_core::l2::L2Config;
 use serde::Deserialize;
@@ -78,6 +78,12 @@ struct CfActions {
     max_body_bytes: usize,
     max_response_bytes: usize,
     cross_site: CfCrossSite,
+    /// F475: the `[actions] stream` list and its ceiling. Workers ignore the idle/total timeouts and
+    /// `max_streams` (the platform bounds the request), so the build does not send them.
+    #[serde(default)]
+    stream: Vec<String>,
+    #[serde(default)]
+    max_stream_bytes: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -137,6 +143,30 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
             )
         }
     };
+    let actions = c
+        .actions
+        .map(|a| -> Result<ActionsConfig, String> {
+            let mut stream = StreamConfig::default();
+            for e in &a.stream {
+                stream
+                    .routes
+                    .push(StreamRoute::parse(e).map_err(|e| format!("CONFIG: actions.{e}"))?);
+            }
+            if let Some(n) = a.max_stream_bytes {
+                stream.max_bytes = n;
+            }
+            Ok(ActionsConfig {
+                prefix: a.prefix,
+                max_body_bytes: a.max_body_bytes,
+                max_response_bytes: a.max_response_bytes,
+                cross_site: match a.cross_site {
+                    CfCrossSite::Reject => CrossSite::Reject,
+                    CfCrossSite::Allow => CrossSite::Allow,
+                },
+                stream,
+            })
+        })
+        .transpose()?;
     let core = CoreConfig {
         l1_capacity: c.l1_capacity.unwrap_or(WORKERS_L1_CAPACITY),
         job_cache_capacity: c.job_cache_capacity.unwrap_or(WORKERS_JOB_CAPACITY),
@@ -149,15 +179,7 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
             max_age_seconds: c.max_age_seconds,
         }),
         generator: c.generator,
-        actions: c.actions.map(|a| ActionsConfig {
-            prefix: a.prefix,
-            max_body_bytes: a.max_body_bytes,
-            max_response_bytes: a.max_response_bytes,
-            cross_site: match a.cross_site {
-                CfCrossSite::Reject => CrossSite::Reject,
-                CfCrossSite::Allow => CrossSite::Allow,
-            },
-        }),
+        actions,
         actions_client: None,
         https: true,
         l2,
@@ -192,6 +214,44 @@ mod tests {
             ("/_brust/action", 1024)
         );
         assert_eq!(a.cross_site, CrossSite::Reject);
+    }
+
+    #[test]
+    fn a_stream_list_and_its_ceiling_map_to_the_core_config() {
+        let json = OK.replace(
+            "\"crossSite\":\"reject\"",
+            "\"crossSite\":\"reject\",\"stream\":[\"POST /upload\",\"put /files/*\"],\"maxStreamBytes\":1048576",
+        );
+        let a = parse(&json).unwrap().0.actions.unwrap();
+        assert_eq!(a.stream.max_bytes, 1_048_576);
+        let routes: Vec<_> = a
+            .stream
+            .routes
+            .iter()
+            .map(|r| (r.method.as_str(), r.path.as_str()))
+            .collect();
+        assert_eq!(routes, [("POST", "/upload"), ("PUT", "/files/*")]);
+        assert!(a.streams("PUT", "/_brust/action/files/a/b"));
+        // no list: nothing streams, and the ceiling is the default
+        let a = parse(OK).unwrap().0.actions.unwrap();
+        assert!(a.stream.routes.is_empty());
+        assert_eq!(
+            a.stream.max_bytes,
+            brust_core::config::DEFAULT_MAX_STREAM_BYTES
+        );
+    }
+
+    #[test]
+    fn a_bad_stream_entry_names_itself() {
+        let json = OK.replace(
+            "\"crossSite\":\"reject\"",
+            "\"crossSite\":\"reject\",\"stream\":[\"GET /x\"]",
+        );
+        let e = parse(&json).unwrap_err();
+        assert!(
+            e.contains("GET /x") && e.contains("POST, PUT or PATCH"),
+            "{e}"
+        );
     }
 
     #[test]

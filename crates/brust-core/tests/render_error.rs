@@ -50,7 +50,7 @@ impl Host for TestHost {
     async fn read_body(&self, _body: (), _cap: usize) -> Result<Bytes, ReadErr> {
         Ok(Bytes::new())
     }
-    async fn action(&self, _call: ActionCall<'_>) -> Result<ActionReply, CallError> {
+    async fn action(&self, _call: ActionCall<'_, ()>) -> Result<ActionReply, CallError> {
         Err(CallError::Rejected("no actions".into()))
     }
     async fn static_file(

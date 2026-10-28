@@ -2,12 +2,16 @@
 //! dispatch seam, `dist/` on the local disk, hyper bodies and tokio timers.
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use brust_core::body::{header_str, is_framing_header};
+use brust_core::body::{header_str, is_request_hop_header};
 use brust_core::config::ACTION_INLINE_BODY_BYTES;
-use brust_core::host::{ActionCall, ActionReply, CallError, Clock, Host, ReadErr, StaticRoot};
+use brust_core::config::StreamConfig;
+use brust_core::host::{
+    ActionBody, ActionCall, ActionReply, CallError, Clock, Host, ReadErr, StaticRoot,
+};
 use brust_core::plan::{PlanCell, PlanSeed, PlannedCall};
 use brust_core::protocol::{
     FetchBody, FetchRequest, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse,
@@ -26,6 +30,7 @@ use crate::dispatch::{
 };
 use crate::pool::{PlanBox, WorkerPool};
 use crate::server::static_assets::static_asset_response;
+use crate::stream_body::{Admission, StreamBody, StreamLimits};
 use brust_core::l2::{L2Counters, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta};
 
 /// The worker pool, the served `dist/` and the two call timeouts.
@@ -38,6 +43,21 @@ pub(crate) struct NativeHost {
     pub(crate) max_loader_response_bytes: usize,
     /// The cache adapter's `(get_timeout, max_body_bytes)`; `None` = no L2 calls.
     pub(crate) l2: Option<(Duration, usize)>,
+    /// F475: the `[actions]` stream bounds (its `routes` are core's) and the streams in flight.
+    pub(crate) stream: StreamConfig,
+    pub(crate) streams: Arc<AtomicUsize>,
+}
+
+impl NativeHost {
+    /// F475: admit one more streamed body, or `None` when `max_streams` (default: a quarter of the
+    /// live worker slots, at least 1) are in flight.
+    fn admit_stream(&self) -> Option<Admission> {
+        let cap = self
+            .stream
+            .max_streams
+            .map_or_else(|| (self.pool.slot_total() / 4).max(1), |n| n as usize);
+        Admission::try_new(&self.streams, cap)
+    }
 }
 
 impl Clock for NativeHost {
@@ -60,6 +80,7 @@ impl Host for NativeHost {
     type L1 = L1Cache;
     type Jobs = JobCache;
     const PLAN_OFFER: bool = true;
+    const STREAM_BODY: bool = true;
 
     /// The seed rides the claimed slot's plan cell (one `Box`); after the call the cell holds the
     /// plan `plan_in_call` built, or nothing (declined, or not offered).
@@ -101,14 +122,45 @@ impl Host for NativeHost {
     }
 
     /// One `fetch` worker call. A body over [`ACTION_INLINE_BODY_BYTES`] waits in the call's cell
-    /// for `takeFetchBody` (F82); a smaller one crosses inline as text or base64 (R2).
-    async fn action(&self, call: ActionCall<'_>) -> Result<ActionReply, CallError> {
+    /// for `takeFetchBody` (F82); a smaller one crosses inline as text or base64 (R2). A streamed
+    /// body (F475) is admitted under `max_streams` before a byte is read, then waits unread in the
+    /// cell for `pullFetchBody`; if it failed, that reason replaces the app's answer.
+    async fn action(&self, call: ActionCall<'_, Incoming>) -> Result<ActionReply, CallError> {
+        let mut stream = None;
         let (fb, heap_body) = match call.body {
-            None => (None, None),
-            Some(b) if b.len() > ACTION_INLINE_BODY_BYTES => {
+            ActionBody::None => (None, None),
+            ActionBody::Stream { body, declared } => {
+                let Some(admit) = self.admit_stream() else {
+                    read_out(body);
+                    return Err(CallError::StreamsFull);
+                };
+                let limits = StreamLimits {
+                    max: self.stream.max_bytes,
+                    idle: Duration::from_millis(self.stream.idle_ms),
+                    total: Duration::from_millis(self.stream.total_ms),
+                    call_timeout: self.call_timeout,
+                };
+                let st = Arc::new(StreamBody::new(
+                    Box::pin(
+                        body.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                            Box::new(e)
+                        }),
+                    ),
+                    declared,
+                    limits,
+                    admit,
+                ));
+                let fb = FetchBody::Stream {
+                    length: declared,
+                    token: st.token,
+                };
+                stream = Some(st);
+                (Some(fb), None)
+            }
+            ActionBody::Buffered(b) if b.len() > ACTION_INLINE_BODY_BYTES => {
                 (Some(FetchBody::Heap(b.len())), Some(b))
             }
-            Some(b) => (
+            ActionBody::Buffered(b) => (
                 Some(brust_core::actions::encode_body(
                     header_str(call.headers, "content-type")
                         .as_deref()
@@ -120,26 +172,7 @@ impl Host for NativeHost {
         };
         let full = call.full;
         let query = full.split_once('?').map_or("", |(_, q)| q);
-        let mut pairs: Vec<(Cow<str>, Cow<str>)> = call
-            .headers
-            .iter()
-            .filter(|(n, _)| {
-                !is_framing_header(n.as_str())
-                    && n.as_str() != brust_core::trace::REQUEST_TOKEN_HEADER
-            })
-            .map(|(n, v)| {
-                (
-                    Cow::Borrowed(n.as_str()),
-                    String::from_utf8_lossy(v.as_bytes()),
-                )
-            })
-            .collect();
-        // R8: HTTP/2 carries the host in `:authority`, not a `host` header.
-        if !call.headers.contains_key(http::header::HOST)
-            && let Some(au) = call.authority
-        {
-            pairs.push((Cow::Borrowed("host"), Cow::Owned(au.to_owned())));
-        }
+        let pairs = worker_request_headers(call.headers, call.authority);
         let req = FetchRequest {
             method: call.method,
             url: full,
@@ -153,15 +186,45 @@ impl Host for NativeHost {
                 None,
             ),
         };
-        call_worker_fetch(
+        let r = call_worker_fetch(
             &self.pool,
             self.claim_timeout,
             self.call_timeout,
             &req,
             heap_body,
+            stream.clone(),
         )
-        .await
-        .map(ActionReply::Fetch)
+        .await;
+        let Some(st) = stream else {
+            return r.map(ActionReply::Fetch);
+        };
+        match st.abort() {
+            Some(ReadErr::TooLarge) => {
+                if let Some(b) = st.take_body() {
+                    read_out(b);
+                }
+                Err(CallError::BodyAborted(ReadErr::TooLarge))
+            }
+            Some(e) => Err(CallError::BodyAborted(e)),
+            // The app answered (or failed) without reading to the end, e.g. an auth check before the upload: the
+            // rest is read out after the answer, which closes the connection. An abandoned pull may still hold the
+            // body, so it cannot be taken (F476 N1): the answer is `Unread` all the same, never keep-alive on a
+            // connection whose body is half read.
+            None => {
+                if let Some(b) = st.take_body() {
+                    read_out(b);
+                }
+                if st.ended() {
+                    r.map(ActionReply::Fetch)
+                } else {
+                    r.map(ActionReply::Unread)
+                }
+            }
+        }
+    }
+
+    fn read_out(&self, body: Incoming) {
+        read_out(body);
     }
 
     /// `/_brust/<rel>` serves `dist/client/` only (`safe_rel` admits `client/<file>`), `/public/`
@@ -257,6 +320,53 @@ async fn inside_root(root: &std::path::Path, file: &std::path::Path) -> bool {
 const DISCARD_AFTER_REFUSAL: usize = 1 << 20;
 const DISCARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// F475: a streamed body answered before it was read to the end (refused over the ceiling or `max_streams`, or
+/// the app answered first) is read and thrown away in the background for at most [`READ_OUT_AFTER_ANSWER`] while
+/// its answer, with `Connection: close`, goes out: hyper keeps the connection while the body is read, so a client
+/// still writing reads the answer before the close (F127). A bound in bytes, read before the answer, would not
+/// do: past it the close resets a client that is still writing, and the answer already on the wire is lost.
+fn read_out<B>(body: B)
+where
+    B: http_body::Body<Data = Bytes> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut b = std::pin::pin!(body);
+        let _ = tokio::time::timeout(READ_OUT_AFTER_ANSWER, async {
+            while let Some(Ok(_)) = b.frame().await {}
+        })
+        .await;
+    });
+}
+
+const READ_OUT_AFTER_ANSWER: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The headers an action's `Request` carries: the client's, less the hop-by-hop pair and the dev token (F474: the
+/// client's `Content-Length` stays), and `host` from `:authority` when HTTP/2 sent none (R8).
+fn worker_request_headers<'a>(
+    headers: &'a HeaderMap,
+    authority: Option<&str>,
+) -> Vec<(Cow<'a, str>, Cow<'a, str>)> {
+    let mut pairs: Vec<(Cow<str>, Cow<str>)> = headers
+        .iter()
+        .filter(|(n, _)| {
+            !is_request_hop_header(n.as_str())
+                && n.as_str() != brust_core::trace::REQUEST_TOKEN_HEADER
+        })
+        .map(|(n, v)| {
+            (
+                Cow::Borrowed(n.as_str()),
+                String::from_utf8_lossy(v.as_bytes()),
+            )
+        })
+        .collect();
+    if !headers.contains_key(http::header::HOST)
+        && let Some(au) = authority
+    {
+        pairs.push((Cow::Borrowed("host"), Cow::Owned(au.to_owned())));
+    }
+    pairs
+}
+
 /// The whole body, at most `cap` bytes. A declared Content-Length over the cap is refused before any byte is kept; a
 /// chunked body is refused the moment it passes the cap; the whole read must finish within `deadline`. A refused body
 /// is then drained (see [`DISCARD_AFTER_REFUSAL`]) before `TooLarge` is returned.
@@ -344,6 +454,43 @@ mod tests {
     }
 
     const T: std::time::Duration = std::time::Duration::from_secs(5);
+
+    fn names<'a>(p: &'a [(Cow<'_, str>, Cow<'_, str>)]) -> Vec<&'a str> {
+        p.iter().map(|(n, _)| n.as_ref()).collect()
+    }
+
+    #[test]
+    fn the_action_sees_the_clients_content_length() {
+        let mut h = HeaderMap::new();
+        h.insert("host", "a.test".parse().unwrap());
+        h.insert("content-type", "application/zip".parse().unwrap());
+        h.insert("content-length", "1024".parse().unwrap());
+        let p = worker_request_headers(&h, None);
+        let cl = p
+            .iter()
+            .find(|(n, _)| n == "content-length")
+            .map(|(_, v)| v.as_ref());
+        assert_eq!(cl, Some("1024"));
+    }
+
+    #[test]
+    fn a_chunked_request_has_no_content_length_and_the_hop_pair_stops_here() {
+        let mut h = HeaderMap::new();
+        h.insert("host", "a.test".parse().unwrap());
+        h.insert("transfer-encoding", "chunked".parse().unwrap());
+        h.insert("connection", "keep-alive".parse().unwrap());
+        h.insert("x-brust-dev-token", "t".parse().unwrap());
+        let p = worker_request_headers(&h, None);
+        assert_eq!(names(&p), ["host"]);
+    }
+
+    #[test]
+    fn host_comes_from_the_authority_when_http2_sent_none() {
+        let h = HeaderMap::new();
+        let p = worker_request_headers(&h, Some("b.test"));
+        assert_eq!(names(&p), ["host"]);
+        assert_eq!(p[0].1, "b.test");
+    }
 
     #[tokio::test]
     async fn read_capped_gives_up_on_a_trickled_body() {

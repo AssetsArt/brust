@@ -165,6 +165,12 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         call_timeout: Duration::from_millis(tuning.call_timeout_ms),
         max_loader_response_bytes: tuning.max_loader_response_bytes,
         l2: cfg.l2.as_ref().map(|l| (l.get_timeout, l.max_body_bytes)),
+        stream: cfg
+            .actions
+            .as_ref()
+            .map(|a| a.stream.clone())
+            .unwrap_or_default(),
+        streams: Arc::default(),
     };
     let core = Core::new(
         host,

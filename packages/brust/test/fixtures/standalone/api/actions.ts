@@ -10,6 +10,22 @@ const app = new Elysia({ adapter: brust() })
     return { saved: body.name }
   })
   .get('/team', ({ cookie }) => ({ team: cookie.team?.value ?? null }))
+  // F474: the body unread by Elysia; the action reports the framing it saw and the bytes it got.
+  .post('/echo', { parse: 'none' }, async ({ request }) => ({
+    contentLength: request.headers.get('content-length'),
+    bytes: (await request.arrayBuffer()).byteLength,
+  }))
+  // F475: listed in brust.toml `stream` where a test streams (tests/cf); the body is read chunk by chunk, never whole.
+  .post('/upload', { parse: 'none' }, async ({ request }) => {
+    let bytes = 0
+    const reader = request.body?.getReader()
+    if (reader) for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+    }
+    return { contentLength: request.headers.get('content-length'), bytes }
+  })
 
 export type App = typeof app
 export default app
