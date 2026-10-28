@@ -427,6 +427,8 @@ jobs:
       - run: bun test --timeout 180000 tests/server/action-middleware.test.ts
       # F475: a 96 MiB streamed upload is read byte-exact with flat server RSS; 413 past the ceiling mid-stream; 503 over max_streams.
       - run: bun test --timeout 300000 tests/server/action-stream.test.ts
+      # F475 lane B: `brust dev` admits a 160 MiB streamed upload (past Bun's 128 MiB default) and one that pauses 13 s (past its 10 s idle timeout).
+      - run: bun test --timeout 300000 tests/server/action-stream-dev.test.ts
       # F474: an action sees the client's Content-Length (and none on a chunked request), under `brust start` and `brust dev`.
       - run: bun test --timeout 180000 tests/server/action-content-length.test.ts
       - run: bun test --timeout 180000 tests/server/cross-site-form.chromium.test.ts

@@ -1,0 +1,5 @@
+# F475 lane B: a listed streamed route under `brust dev`; the ceiling (192 MiB) is above the dev proxy's old 128 MiB limit.
+[actions]
+prefix = "/api"
+stream = ["POST /upload"]
+max_stream_bytes = 201326592
