@@ -353,7 +353,7 @@ mod tests {
 
     const T: std::time::Duration = std::time::Duration::from_secs(5);
 
-    fn names(p: &[(Cow<str>, Cow<str>)]) -> Vec<&str> {
+    fn names<'a>(p: &'a [(Cow<'_, str>, Cow<'_, str>)]) -> Vec<&'a str> {
         p.iter().map(|(n, _)| n.as_ref()).collect()
     }
 
