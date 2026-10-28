@@ -272,6 +272,24 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         A store written inside an action is per-request and never reaches the page. Return the data and set the store in the browser with the reply, as <code>addMember</code> does.
       </Note>
 
+      <h3 id="streaming-uploads">Streaming uploads</h3>
+      {/* source: docs/actions.md §6 (stream keys) and §10 (Limits, Streaming uploads); crates/brust-core/src/actions.rs; crates/brust-wasm/src/host.rs; packages/brust/src/dev/proxy.ts */}
+      <p>
+        A request body is read whole before your code runs, up to <code>max_body_bytes</code> (1 MiB by default, 64 MiB at most). To take a larger upload, such as an archive, declare the route with <code>{'{ parse: \'none\' }'}</code> and list it in <code>brust.toml</code>:{' '}
+        <code>stream = ["POST /upload"]</code> (paths are relative to the prefix; <code>POST</code>, <code>PUT</code> or <code>PATCH</code>). Your handler then reads <code>request.body</code> as a stream, and the server reads the socket only as fast as you read it, so memory stays at about 2 MiB per upload whatever its size, up to <code>max_stream_bytes</code> (256 MiB by default, 4 GiB at most). A <code>{'{ parse: \'none\' }'}</code> route that is not listed stays buffered and capped, with a boot warning.
+      </p>
+      <ul>
+        <li>A <code>Content-Length</code> over <code>max_stream_bytes</code>, or a body that passes it, is a <strong>413</strong>; the body is counted as it arrives.</li>
+        <li>A client that sends nothing for <code>stream_idle_ms</code> (30 s) or an upload that runs past <code>stream_total_ms</code> (15 min) is a <strong>408</strong>. A body shorter than its <code>Content-Length</code> is a <strong>400</strong>; your read rejects, never a short success.</li>
+        <li>More than <code>max_streams</code> uploads at once (a quarter of the worker slots by default) is a <strong>503</strong> with <code>Retry-After: 1</code>, before a byte is read. An upload holds one worker slot while it runs.</li>
+        <li>The status is the server's, whatever your app answered. An app may answer early (an auth check before the upload); the server then reads and discards the rest for up to 2 seconds, so a client still sending reads the answer.</li>
+        <li>
+          On Cloudflare Workers the platform's own stream is passed through and counted against <code>max_stream_bytes</code>; the idle and total timeouts and <code>max_streams</code> are ignored. Cloudflare's request-body limit applies first: 100 MB on Free and Pro, 200 MB on Business, up to 5 GB on Enterprise (see{' '}
+          <a href="https://developers.cloudflare.com/workers/platform/limits/">Workers limits</a>).
+        </li>
+        <li>Under <code>brust dev</code> an upload of any allowed size passes through the dev server as it arrives.</li>
+      </ul>
+
       <Step n={6} id="separate" title="Actions on their own origin" />
       {/* source: docs/actions.md §11 (L16): pages and actions as two deployments on two origins */}
       <p>
