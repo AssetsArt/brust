@@ -8,7 +8,8 @@ export interface CfConfigJson {
   stats: boolean
   edgeCache: 'off'
   cors?: unknown
-  actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes: number; crossSite: 'reject' | 'allow' }
+  /** F475: `stream` + `maxStreamBytes` only when the app lists streamed routes; the idle/total timeouts and `maxStreams` are the platform's on Workers. */
+  actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes: number; crossSite: 'reject' | 'allow'; stream?: string[]; maxStreamBytes?: number }
   /** The cache adapter (optional under abi 1, cache adapters R13). */
   cache?: { adapter: string; getTimeoutMs: number; maxBodyBytes: number; namespace: string; buildId: string; epochIntervalMs: number }
 }

@@ -15,6 +15,17 @@ const app = new Elysia({ adapter: brust() })
     contentLength: request.headers.get('content-length'),
     bytes: (await request.arrayBuffer()).byteLength,
   }))
+  // F475: listed in brust.toml `stream` where a test streams (tests/cf); the body is read chunk by chunk, never whole.
+  .post('/upload', { parse: 'none' }, async ({ request }) => {
+    let bytes = 0
+    const reader = request.body?.getReader()
+    if (reader) for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+    }
+    return { contentLength: request.headers.get('content-length'), bytes }
+  })
 
 export type App = typeof app
 export default app

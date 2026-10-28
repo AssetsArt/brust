@@ -24,6 +24,8 @@ wasm-bindgen-futures = "0.4.79"
 js-sys = "0.3.106"
 web-sys = { version = "0.3.106", features = ["Request", "RequestInit", "Response", "ResponseInit", "Headers", "ReadableStream", "console"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# F475: the counted pass-through of a streamed request body (the version `worker` already uses).
+wasm-streams = "0.7"
 
 [lints]
 workspace = true
