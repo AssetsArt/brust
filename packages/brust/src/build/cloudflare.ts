@@ -76,7 +76,7 @@ export interface CfBuildCtx {
   /** the FINAL dist dir (`out` is a tmp sibling that is renamed to it): wrangler paths are relative to `<dist>/cf` */
   dist: string
   compiled: Map<string, Compiled>
-  manifest: { components: Record<string, { template: string }>; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null; cache?: CacheRecord }
+  manifest: { components: Record<string, { template: string }>; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow'; stream?: string[]; maxStreamBytes?: number } | null; cache?: CacheRecord }
   sourceOf: SourceOf
   actionsEntry: string | null
   /** L16 R16.3: an actions-only Worker: no pages (no routes entry, no jobs, no templates), no Static Assets. */
@@ -215,6 +215,17 @@ if (bad.length) { console.error(bad.join('\\n')); process.exit(1) }
   return { preload, smoke }
 }
 
+/** The `actions` block of the Worker's CONFIG. F475: the `stream` list and its ceiling only when the app lists streamed routes; the idle and total timeouts and `maxStreams` are the platform's on Workers, so they are not sent. */
+export function cfActions(a: NonNullable<CfBuildCtx['manifest']['actions']>): NonNullable<CfConfigJson['actions']> {
+  return {
+    prefix: a.prefix,
+    maxBodyBytes: a.maxBodyBytes,
+    maxResponseBytes: a.maxResponseBytes ?? 8_388_608,
+    crossSite: a.crossSite ?? 'reject',
+    ...(a.stream?.length ? { stream: a.stream, ...(a.maxStreamBytes !== undefined ? { maxStreamBytes: a.maxStreamBytes } : {}) } : {}),
+  }
+}
+
 export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepared): Promise<string[]> {
   const cfDir = join(out, 'cf')
   const stage = join(cfDir, '.stage')
@@ -250,7 +261,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     stats: p.cfg.stats,
     edgeCache: p.cfg.edgeCache,
     ...(cors ? { cors } : {}),
-    ...(a ? { actions: { prefix: a.prefix, maxBodyBytes: a.maxBodyBytes, maxResponseBytes: a.maxResponseBytes ?? 8_388_608, crossSite: a.crossSite ?? 'reject' } } : {}),
+    ...(a ? { actions: cfActions(a) } : {}),
     ...(cache ? { cache: { adapter: cache.adapter, getTimeoutMs: cache.getTimeoutMs, maxBodyBytes: cache.maxBodyBytes, namespace: cache.namespace, buildId: cache.buildId, epochIntervalMs: cache.epochIntervalMs } } : {}),
   }
   const entryPath = join(stage, 'brust-app.entry.js')

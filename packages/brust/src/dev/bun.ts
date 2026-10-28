@@ -150,6 +150,13 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       diag: () => diag,
       upstream: () => active?.port ?? null,
       meta: devMeta,
+      actionsPrefix: () => {
+        try {
+          return active ? ((JSON.parse(readFileSync(join(active.dir, 'manifest.json'), 'utf8')) as { actions?: { prefix?: string } | null }).actions?.prefix ?? null) : null
+        } catch {
+          return null
+        }
+      },
       onRequest(r) {
         tui.log(`${r.method} ${r.path} ${r.status} ${r.ms}ms${r.cache ? ` ${r.cache}` : ''}`)
         if (!r.path.startsWith('/_brust/')) {

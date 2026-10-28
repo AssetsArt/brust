@@ -16,6 +16,19 @@ export interface DevView {
   onRequest(r: { method: string; path: string; status: number; ms: number; cache: string | null; trace: unknown | null }): void
   /** The active build's `dev.json` (L14), or null before the first build. */
   meta(): unknown | null
+  /** F475: the active build's actions prefix, or null (no actions / before the first build). */
+  actionsPrefix(): string | null
+}
+
+/** F475: the largest `max_stream_bytes` (4 GiB), what the proxy admits: Bun's own default for `maxRequestBodySize` is 128 MiB,
+ * which would refuse a streamed upload the child itself admits. The child enforces the real ceilings (`max_body_bytes`,
+ * `max_stream_bytes`), as in production. */
+export const PROXY_MAX_BODY_BYTES = 2 ** 32
+
+/** Is `pathname` the actions prefix or under it? (`/` = everything.) */
+export function underPrefix(pathname: string, prefix: string): boolean {
+  if (prefix === '/') return true
+  return pathname === prefix || pathname.startsWith(`${prefix}/`)
 }
 
 /** One entry of the dev trace list (`/_brust/dev/traces`, newest last, at most [`MAX_TRACES`]). */
@@ -191,8 +204,15 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
   const server = Bun.serve<undefined>({
     hostname: o.hostname,
     port: o.port,
+    maxRequestBodySize: PROXY_MAX_BODY_BYTES,
     async fetch(req, srv) {
       const url = new URL(req.url)
+      // F475: a body-carrying call under the actions prefix may be a streamed upload that pauses or runs for minutes; Bun's
+      // 10 s idle timeout would cut it. The child owns the real bounds (`stream_idle_ms`, `stream_total_ms`).
+      if (req.method !== 'GET' && req.method !== 'HEAD' && req.body !== null) {
+        const prefix = view.actionsPrefix()
+        if (prefix !== null && underPrefix(url.pathname, prefix)) srv.timeout(req, 0)
+      }
       // DNS rebinding: a page on evil.example whose name resolves to 127.0.0.1 would otherwise read the app and the
       // source paths in build errors. Only the dev server's own names are answered.
       if (!allowed.has(hostName(req.headers.get('host') ?? ''))) return new Response('brust dev: unexpected Host header (set BRUST_DEV_ALLOWED_HOSTS to allow it)', { status: 421 })

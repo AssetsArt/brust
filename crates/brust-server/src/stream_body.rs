@@ -208,6 +208,11 @@ impl StreamBody {
         Pull::Chunk(out.freeze())
     }
 
+    /// Whether the app read the body to its end (a failed stream is not ended; `abort()` tells that apart).
+    pub(crate) fn ended(&self) -> bool {
+        self.done.load(Ordering::Acquire)
+    }
+
     /// The body the app left unread, taken out to be read out after the answer (F127); `None` when it ended or
     /// failed, or when a pull still holds it (that pull ends it). Taking it leaves this stream at its end, so the
     /// admission goes with the call while the read-out runs on its own.
@@ -403,6 +408,16 @@ mod tests {
         let st = stream(b, None, 1 << 20);
         st.note_deadline();
         assert_eq!(st.abort(), Some(ReadErr::Slow));
+    }
+
+    #[tokio::test]
+    async fn a_stream_is_ended_only_once_the_app_has_read_it_to_the_end() {
+        let (b, tx) = body(&[10]);
+        let st = stream(b, None, 1 << 20);
+        assert!(!st.ended());
+        drop(tx);
+        drain(&st).await;
+        assert!(st.ended());
     }
 
     #[tokio::test]
