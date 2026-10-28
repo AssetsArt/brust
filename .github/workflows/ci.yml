@@ -7,7 +7,7 @@ name: ci
 # skipped, so the run still concludes success. Any other path (.github/, packages/, crates/, the lockfile ...) runs everything.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, scratch/f478-base]
     paths-ignore: ["docs/**", "**.md"]
   workflow_dispatch:
 # A new push to the same PR cancels the run it supersedes.
