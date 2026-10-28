@@ -207,14 +207,19 @@ impl Host for NativeHost {
             }
             Some(e) => Err(CallError::BodyAborted(e)),
             // The app answered (or failed) without reading to the end, e.g. an auth check before the upload: the
-            // rest is read out after the answer, which closes the connection.
-            None => match st.take_body() {
-                Some(b) => {
+            // rest is read out after the answer, which closes the connection. An abandoned pull may still hold the
+            // body, so it cannot be taken (F476 N1): the answer is `Unread` all the same, never keep-alive on a
+            // connection whose body is half read.
+            None => {
+                if let Some(b) = st.take_body() {
                     read_out(b);
+                }
+                if st.ended() {
+                    r.map(ActionReply::Fetch)
+                } else {
                     r.map(ActionReply::Unread)
                 }
-                None => r.map(ActionReply::Fetch),
-            },
+            }
         }
     }
 
