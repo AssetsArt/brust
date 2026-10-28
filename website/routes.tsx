@@ -43,3 +43,5 @@ export const routes = defineRoutes([
   { path: '/docs/routes', Component: NotFoundPage, loader: async () => redirect('/docs/routing', 301) },
   { path: '*', Component: NotFoundPage },
 ])
+
+// f478 scratch: website-only change, throwaway
