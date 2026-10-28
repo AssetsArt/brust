@@ -1,6 +1,6 @@
 {
   "name": "@brust/cache-redis",
-  "version": "2.0.0-alpha.31",
+  "version": "2.0.0-alpha.32",
   "description": "brust cache adapter for Redis and Dragonfly (Bun RedisClient, no npm dependency)",
   "license": "MIT",
   "homepage": "https://brust.dev",
