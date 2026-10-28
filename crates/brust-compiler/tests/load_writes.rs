@@ -472,7 +472,10 @@ fn a_function_export_alone_handed_on_makes_no_writer() {
     let (_, lw) = app(
         "handed-fn-only",
         &[
-            ("lib/a.ts", "export function addrsOf(s: string) { return [s] }\n"),
+            (
+                "lib/a.ts",
+                "export function addrsOf(s: string) { return [s] }\n",
+            ),
             (
                 "lib/b.ts",
                 "export function probe(f: (s: string) => string[]) { return f('x') }\n",
@@ -525,4 +528,62 @@ fn a_reassigned_function_export_handed_on_is_written() {
         ],
     );
     assert_eq!(written(&lw), ["lib/a.ts#f"]);
+}
+
+/// F480 N2: a function reached through a barrel is followed to its declaration; `export *`, a namespace and package code
+/// stay fail closed.
+#[test]
+fn a_function_handed_on_through_a_barrel_is_followed_to_its_declaration() {
+    let (_, lw) = app(
+        "fn-barrel",
+        &[
+            (
+                "lib/apps.ts",
+                "export function addrsOf(s: string) { return [s] }\nexport const portOf = (s: string) => s.length\n",
+            ),
+            (
+                "lib/more.ts",
+                "export function hostOf(s: string) { return s }\n",
+            ),
+            (
+                "lib/index.ts",
+                "export { addrsOf as addrs } from './apps'\nimport { portOf } from './apps'\nexport { portOf }\nexport * from './more'\nexport * as ns from './more'\nexport { pick } from 'some-package'\n",
+            ),
+            ("lib/b.ts", "export function use(f: unknown) { return f }\n"),
+            (
+                "server/x.ts",
+                "import { addrs, portOf, hostOf, ns, pick } from '../lib/index'\nimport { use } from '../lib/b'\nuse(addrs)\nuse(portOf)\nuse(hostOf)\nuse(ns)\nuse(pick)\n",
+            ),
+        ],
+    );
+    assert_eq!(
+        written(&lw),
+        [
+            "lib/index.ts#hostOf",
+            "lib/index.ts#ns",
+            "lib/index.ts#pick"
+        ]
+    );
+}
+
+/// F480 N3: an anonymous default function (a declaration or an expression) is a function export too.
+#[test]
+fn an_anonymous_default_function_handed_on_is_not_written() {
+    let (_, lw) = app(
+        "fn-default-anon",
+        &[
+            (
+                "lib/a.ts",
+                "export default function (s: string) { return [s] }\n",
+            ),
+            ("lib/c.ts", "export default (s: string) => [s]\n"),
+            ("lib/d.ts", "export default { n: 1 }\n"),
+            ("lib/b.ts", "export function use(f: unknown) { return f }\n"),
+            (
+                "server/x.ts",
+                "import a from '../lib/a'\nimport c from '../lib/c'\nimport d from '../lib/d'\nimport { use } from '../lib/b'\nuse(a)\nuse(c)\nuse(d)\n",
+            ),
+        ],
+    );
+    assert_eq!(written(&lw), ["lib/d.ts#default"]);
 }

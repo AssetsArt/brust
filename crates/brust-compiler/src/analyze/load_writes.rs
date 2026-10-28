@@ -173,6 +173,8 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
     let mut package_made_keys: HashSet<u32> = HashSet::new();
     let mut primitive_keys: HashSet<u32> = HashSet::new();
     let mut function_keys: HashSet<u32> = HashSet::new();
+    // `export default function () {}` / `export default () => …`: a function no binding can reassign.
+    let mut default_function = false;
     // F274: the code a call of a top-level function runs (its body, shallow: a function nested in it does not run),
     // by the function's binding key: a declaration, or a `const f = () => …` / `function` expression.
     let mut fn_bodies: HashMap<u32, Walk> = HashMap::new();
@@ -322,6 +324,14 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
                             _ => None,
                         },
                     };
+                    default_function |= match &d.value {
+                        js_ast::StmtOrExpr::Stmt(s) => {
+                            matches!(&s.data, S::SFunction(f) if f.func.name.is_none())
+                        }
+                        js_ast::StmtOrExpr::Expr(e) => {
+                            matches!(e.data, E::EArrow(_) | E::EFunction(_))
+                        }
+                    };
                     match named {
                         Some(k) => {
                             decls.entry(k).or_insert(w);
@@ -433,11 +443,14 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
         .collect();
     // A function binding assigned anywhere in the module (`f = other`) is a value like any other.
     let reassigned: HashSet<u32> = all.assigned.iter().map(|r| key(*r)).collect();
-    let function = exports
+    let mut function: HashSet<String> = exports
         .iter()
         .filter(|(_, k)| k.is_some_and(|k| function_keys.contains(&k) && !reassigned.contains(&k)))
         .map(|(n, _)| n.clone())
         .collect();
+    if default_function {
+        function.insert("default".into());
+    }
     Scanned {
         path: path.to_string(),
         writes,
@@ -633,10 +646,7 @@ fn propagate(mods: &[Scanned]) -> LoadWrites {
         mods.iter()
             .any(|m| m.path == k.0 && m.primitive.contains(&k.1))
     };
-    let function = |k: &ExportKey| {
-        mods.iter()
-            .any(|m| m.path == k.0 && m.function.contains(&k.1))
-    };
+    let function = |k: &ExportKey| is_function(mods, k, &mut HashSet::new());
     // The writes that count: a method call into a package-made value, or a hand-off to its methods, is its API; a
     // function handed on is code to call (F480); a primitive cannot be written.
     let counted = |w: &Writes| -> BTreeSet<ExportKey> {
@@ -739,6 +749,29 @@ fn propagate(mods: &[Scanned]) -> LoadWrites {
         }
     }
     out
+}
+
+/// F480: `k` is a function export, followed through re-exports (`export { f } from './a'`, `import { f } from './a';
+/// export { f }`) to its declaration. Fails closed at `export *`, a namespace, package code (not scanned) or a module
+/// that did not resolve or parse.
+fn is_function(mods: &[Scanned], k: &ExportKey, seen: &mut HashSet<ExportKey>) -> bool {
+    if k.1 == "*" || !seen.insert(k.clone()) {
+        return false;
+    }
+    let Some(m) = mods.iter().find(|m| m.path == k.0) else {
+        return false;
+    };
+    if m.function.contains(&k.1) {
+        return true;
+    }
+    if let Some((_, t, name)) = m.follows.iter().find(|(alias, _, _)| *alias == k.1) {
+        return is_function(mods, &(t.clone(), name.clone()), seen);
+    }
+    m.exports
+        .iter()
+        .find(|(name, _)| *name == k.1)
+        .and_then(|(_, local)| m.imports.get(&(*local)?))
+        .is_some_and(|i| is_function(mods, i, seen))
 }
 
 /// The fallback (F230): a component whose compiled code would read a written export (a painted value, a client
