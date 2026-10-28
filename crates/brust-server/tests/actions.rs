@@ -364,7 +364,7 @@ fn page_route_never_reads_the_body() {
 }
 
 #[test]
-fn headers_cross_as_pairs_minus_framing() {
+fn headers_cross_as_pairs_minus_hop_by_hop() {
     let (fake, s) = server(echo);
     let (status, _, _) = request_body(
         &s,
@@ -382,9 +382,14 @@ fn headers_cross_as_pairs_minus_framing() {
         .map(|(_, v)| v.as_str())
         .collect();
     assert_eq!(dups, ["1", "2"]);
-    for f in ["content-length", "transfer-encoding", "connection"] {
+    for f in ["transfer-encoding", "connection"] {
         assert!(pairs.iter().all(|(k, _)| k != f), "{f} crossed: {pairs:?}");
     }
+    // F474: the client's own Content-Length crosses (the body is `{}`: 2 bytes).
+    assert!(
+        pairs.contains(&("content-length".into(), "2".into())),
+        "{pairs:?}"
+    );
     assert!(pairs.contains(&("host".into(), "fx".into())), "{pairs:?}");
     assert!(!r["req"]["headers"]["x-dup"].is_null(), "{}", r["req"]);
 
@@ -392,10 +397,10 @@ fn headers_cross_as_pairs_minus_framing() {
     assert_eq!(status, 200);
     let pairs: Vec<(String, String)> =
         serde_json::from_value(last(&fake)["headers"].clone()).unwrap();
-    assert!(
-        pairs.iter().all(|(k, _)| k != "transfer-encoding"),
-        "{pairs:?}"
-    );
+    // a chunked request has no Content-Length to keep, and none is invented
+    for f in ["transfer-encoding", "content-length"] {
+        assert!(pairs.iter().all(|(k, _)| k != f), "{f} crossed: {pairs:?}");
+    }
 }
 
 fn binary(_: Value) -> Vec<u8> {
