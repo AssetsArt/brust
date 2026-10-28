@@ -364,7 +364,7 @@ fn page_route_never_reads_the_body() {
 }
 
 #[test]
-fn headers_cross_as_pairs_minus_framing() {
+fn headers_cross_as_pairs_minus_hop_by_hop() {
     let (fake, s) = server(echo);
     let (status, _, _) = request_body(
         &s,
@@ -382,9 +382,14 @@ fn headers_cross_as_pairs_minus_framing() {
         .map(|(_, v)| v.as_str())
         .collect();
     assert_eq!(dups, ["1", "2"]);
-    for f in ["content-length", "transfer-encoding", "connection"] {
+    for f in ["transfer-encoding", "connection"] {
         assert!(pairs.iter().all(|(k, _)| k != f), "{f} crossed: {pairs:?}");
     }
+    // F474: the client's own Content-Length crosses (the body is `{}`: 2 bytes).
+    assert!(
+        pairs.contains(&("content-length".into(), "2".into())),
+        "{pairs:?}"
+    );
     assert!(pairs.contains(&("host".into(), "fx".into())), "{pairs:?}");
     assert!(!r["req"]["headers"]["x-dup"].is_null(), "{}", r["req"]);
 
@@ -392,10 +397,10 @@ fn headers_cross_as_pairs_minus_framing() {
     assert_eq!(status, 200);
     let pairs: Vec<(String, String)> =
         serde_json::from_value(last(&fake)["headers"].clone()).unwrap();
-    assert!(
-        pairs.iter().all(|(k, _)| k != "transfer-encoding"),
-        "{pairs:?}"
-    );
+    // a chunked request has no Content-Length to keep, and none is invented
+    for f in ["transfer-encoding", "content-length"] {
+        assert!(pairs.iter().all(|(k, _)| k != f), "{f} crossed: {pairs:?}");
+    }
 }
 
 fn binary(_: Value) -> Vec<u8> {
@@ -1448,11 +1453,23 @@ fn streamed_body_reaches_the_app_byte_exact_past_max_body_bytes() {
     let a1 = last(&fake);
     assert!(a1["body"]["stream"]["length"].is_null(), "{a1}");
     assert!(a1["body"]["stream"]["token"].is_u64(), "{a1}");
+    // F474 on the streamed path too: a chunked request has no Content-Length, and none is invented.
+    let pairs: Vec<(String, String)> = serde_json::from_value(a1["headers"].clone()).unwrap();
+    for f in ["transfer-encoding", "content-length", "connection"] {
+        assert!(pairs.iter().all(|(k, _)| k != f), "{f} crossed: {pairs:?}");
+    }
     // A declared length is carried and met.
     let want = vec![7u8; 600_000];
     let (status, _, _) = request_body(&s, "POST", URL, &[], want.clone());
     assert_eq!(status, 200);
     assert_eq!(last(&fake)["body"]["stream"]["length"], 600_000);
+    // ... and the client's own Content-Length crosses.
+    let pairs: Vec<(String, String)> =
+        serde_json::from_value(last(&fake)["headers"].clone()).unwrap();
+    assert!(
+        pairs.contains(&("content-length".into(), "600000".into())),
+        "{pairs:?}"
+    );
     assert_eq!(fake.last_fetch_body(), Some(want));
 }
 

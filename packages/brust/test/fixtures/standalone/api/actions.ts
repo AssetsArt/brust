@@ -10,6 +10,11 @@ const app = new Elysia({ adapter: brust() })
     return { saved: body.name }
   })
   .get('/team', ({ cookie }) => ({ team: cookie.team?.value ?? null }))
+  // F474: the body unread by Elysia; the action reports the framing it saw and the bytes it got.
+  .post('/echo', { parse: 'none' }, async ({ request }) => ({
+    contentLength: request.headers.get('content-length'),
+    bytes: (await request.arrayBuffer()).byteLength,
+  }))
 
 export type App = typeof app
 export default app

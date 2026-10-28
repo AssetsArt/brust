@@ -120,4 +120,11 @@ describe.skipIf(!ENABLED)('actions-only Worker on wrangler dev', () => {
     expect(r.status).toBe(204)
     expect(r.headers.get('access-control-allow-origin')).toBe(PAGE)
   })
+
+  test('6 F474: an action sees the Content-Length the client sent, and reads the same number of bytes', async () => {
+    const body = Uint8Array.from({ length: 1024 }, (_, i) => (i * 31 + 7) & 0xff)
+    const r = await get('/echo', { method: 'POST', headers: { 'content-type': 'application/zip', origin: PAGE }, body })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ contentLength: '1024', bytes: 1024 })
+  })
 })
