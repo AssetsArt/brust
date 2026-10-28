@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-31', title: '2.0.0-alpha.31' },
       { id: 'alpha-30', title: '2.0.0-alpha.30' },
       { id: 'alpha-29', title: '2.0.0-alpha.29' },
       { id: 'alpha-28', title: '2.0.0-alpha.28' },
@@ -53,6 +54,30 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-31">2.0.0-alpha.31 · 28 October 2026</h2>
+      {/* source: #413, #414, #415; docs/actions.md (Limits and the stream keys) */}
+      <p>An action can now take a streamed upload, so a large file no longer sits in memory. Two fixes come with it: an action sees the client&apos;s <code>Content-Length</code>, and an early answer reaches a client that is still sending. Nothing breaks. See <a href="/docs/actions">Actions</a>.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: #414 (native server), #415 (Cloudflare Workers and brust dev); docs/actions.md */}
+        <li>
+          <strong>Streamed uploads for actions (#414, #415).</strong> List the route in <code>[actions] stream = [&quot;POST /upload&quot;, ...]</code>, with paths relative to the prefix, and give the route <code>{'{ parse: \'none\' }'}</code>. Its <code>request.body</code> is then a real stream, and memory does not grow with the size of the upload. The limits are keys under <code>[actions]</code>: <code>max_stream_bytes</code> (default 256 MiB, at most 4 GiB), <code>stream_idle_ms</code> (30 s), <code>stream_total_ms</code> (15 min) and <code>max_streams</code> (default max(1, slots/4)). Answers: 413 past the ceiling, whether declared or reached mid-stream; 408 on a timeout; 400 on a short or broken body; 503 with <code>Retry-After: 1</code> when <code>max_streams</code> is full. Boot fails for a listed entry with no matching <code>parse: &apos;none&apos;</code> route, and a <code>parse: &apos;none&apos;</code> route that is not listed warns and is buffered, capped at <code>max_body_bytes</code>. It works on the native server, on Cloudflare Workers (counted against <code>max_stream_bytes</code>; the platform&apos;s body limit for your plan still applies) and under <code>brust dev</code>, where the proxy now admits bodies up to 4 GiB and does not cut a paused upload.
+        </li>
+      </ul>
+
+      <h3>Fixes</h3>
+      <ul>
+        {/* source: #413 */}
+        <li>
+          <strong>An action sees the client&apos;s <code>Content-Length</code> request header (#413).</strong> It was dropped, so <code>request.headers.get(&apos;content-length&apos;)</code> was <code>null</code>. It now arrives in <code>brust start</code>, <code>brust dev</code> and on Cloudflare.
+        </li>
+        {/* source: #414 */}
+        <li>
+          <strong>An answer sent before the upload was fully read reaches the client.</strong> A 413, a 503 or an early 401 used to reset a client that was still writing; the client now gets the answer (#414).
+        </li>
+      </ul>
 
       <h2 id="alpha-30">2.0.0-alpha.30 · 27 October 2026</h2>
       {/* source: #411 (F472) */}
