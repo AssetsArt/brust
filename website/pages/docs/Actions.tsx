@@ -285,7 +285,8 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         <li>The status is the server's, whatever your app answered. An app may answer early (an auth check before the upload); the server then reads and discards the rest for up to 2 seconds, so a client still sending reads the answer.</li>
         <li>
           On Cloudflare Workers the platform's own stream is passed through and counted against <code>max_stream_bytes</code>; the idle and total timeouts and <code>max_streams</code> are ignored. Cloudflare's request-body limit applies first: 100 MB on Free and Pro, 200 MB on Business, up to 5 GB on Enterprise (see{' '}
-          <a href="https://developers.cloudflare.com/workers/platform/limits/">Workers limits</a>).
+          <a href="https://developers.cloudflare.com/workers/platform/limits/">Workers limits</a>). A body that fails on its way in fails the call with 400 even if your app caught the error. An app that answers with the request body itself (<code>new Response(request.body)</code>) hands the stream on after the ceiling check,
+          so past the ceiling the response errors mid-flight instead of answering 413: read the body before you answer if you need the 413.
         </li>
         <li>Under <code>brust dev</code> an upload of any allowed size passes through the dev server as it arrives.</li>
       </ul>

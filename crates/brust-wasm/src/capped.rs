@@ -42,6 +42,7 @@ impl Capped {
 
 /// F475: the bytes of a streamed request body so far against `max_stream_bytes`. The body itself passes through
 /// untouched; this only counts (host-tested).
+#[derive(Debug)]
 pub struct StreamCount {
     max: u64,
     seen: u64,
@@ -60,11 +61,65 @@ impl StreamCount {
         }
         Ok(())
     }
+
+    /// F477: the decision for one chunk of the platform's stream. `len` is what was read of it: `Err` = the platform
+    /// failed the read (client gone, short body), `Ok(None)` = a chunk with no numeric `byteLength`, which cannot be
+    /// counted and so fails closed (`Io`) instead of passing the ceiling uncounted.
+    pub fn chunk(&mut self, len: Result<Option<f64>, ()>) -> Result<(), ReadErr> {
+        match len {
+            Err(()) => Err(ReadErr::Io),
+            Ok(Some(n)) if n.is_finite() && n >= 0.0 => self.push(n as u64),
+            Ok(_) => Err(ReadErr::Io),
+        }
+    }
+}
+
+/// F477: remember why a streamed body failed. The first `TooLarge` stays: the platform error that follows an aborted
+/// stream must not turn the 413 into a 400.
+pub fn note_abort(slot: &std::cell::Cell<Option<ReadErr>>, e: ReadErr) {
+    if slot.get() != Some(ReadErr::TooLarge) {
+        slot.set(Some(e));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn a_counted_chunk_passes_and_one_over_the_ceiling_is_too_large() {
+        let mut c = StreamCount::new(10);
+        assert_eq!(c.chunk(Ok(Some(6.0))), Ok(()));
+        assert_eq!(c.chunk(Ok(Some(4.0))), Ok(()));
+        assert_eq!(c.chunk(Ok(Some(1.0))), Err(ReadErr::TooLarge));
+    }
+
+    #[test]
+    fn a_platform_error_is_io() {
+        assert_eq!(StreamCount::new(10).chunk(Err(())), Err(ReadErr::Io));
+    }
+
+    #[test]
+    fn a_chunk_without_a_usable_byte_length_fails_closed() {
+        for len in [None, Some(f64::NAN), Some(f64::INFINITY), Some(-1.0)] {
+            let mut c = StreamCount::new(10);
+            assert_eq!(c.chunk(Ok(len)), Err(ReadErr::Io), "{len:?}");
+        }
+        // an uncounted chunk is not let through even when the ceiling is the largest there is
+        assert_eq!(StreamCount::new(u64::MAX).chunk(Ok(None)), Err(ReadErr::Io));
+    }
+
+    #[test]
+    fn io_does_not_overwrite_an_earlier_too_large() {
+        let slot = Cell::new(None);
+        note_abort(&slot, ReadErr::Io);
+        assert_eq!(slot.get(), Some(ReadErr::Io));
+        note_abort(&slot, ReadErr::TooLarge);
+        assert_eq!(slot.get(), Some(ReadErr::TooLarge));
+        note_abort(&slot, ReadErr::Io);
+        assert_eq!(slot.get(), Some(ReadErr::TooLarge));
+    }
 
     #[test]
     fn a_stream_is_counted_against_the_ceiling() {

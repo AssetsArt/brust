@@ -30,6 +30,25 @@ const BOOT_TIMEOUT_MS = 60_000
 const TAIL_LINES = 40
 const cliPath = join(import.meta.dir, '..', 'cli.ts')
 
+/** The `[actions] prefix` of the build in `dir` (its manifest), or null when there is none. */
+export function readActionsPrefix(dir: string): string | null {
+  try {
+    return (JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as { actions?: { prefix?: string } | null }).actions?.prefix ?? null
+  } catch {
+    return null
+  }
+}
+
+/** `read` once per active build: each build is booted as its own child in its own `g<n>` dir, so the child object changes exactly when the build does. */
+export function perBuild<C extends { dir: string }, T>(read: (dir: string) => T): (c: C | null) => T | null {
+  let last: [C, T] | undefined
+  return (c) => {
+    if (!c) return null
+    if (last?.[0] !== c) last = [c, read(c.dir)]
+    return last[1]
+  }
+}
+
 /** A free loopback port (bind port 0, read it, release it). */
 export function freePort(): number {
   const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('') })
@@ -134,6 +153,8 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       error: diag && state === 'error' ? `${diag.rule} ${diag.file ? `${diag.file}${diag.line ? `:${diag.line}` : ''} ` : ''}${diag.message}`.trim() : undefined,
     })
 
+  const prefixOf = perBuild<Child, string | null>(readActionsPrefix)
+
   const devMeta = (): unknown | null => {
     try {
       return active ? JSON.parse(readFileSync(join(active.dir, 'dev.json'), 'utf8')) : null
@@ -150,13 +171,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       diag: () => diag,
       upstream: () => active?.port ?? null,
       meta: devMeta,
-      actionsPrefix: () => {
-        try {
-          return active ? ((JSON.parse(readFileSync(join(active.dir, 'manifest.json'), 'utf8')) as { actions?: { prefix?: string } | null }).actions?.prefix ?? null) : null
-        } catch {
-          return null
-        }
-      },
+      actionsPrefix: () => prefixOf(active),
       onRequest(r) {
         tui.log(`${r.method} ${r.path} ${r.status} ${r.ms}ms${r.cache ? ` ${r.cache}` : ''}`)
         if (!r.path.startsWith('/_brust/')) {
