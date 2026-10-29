@@ -24,7 +24,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
 use crate::bridge::{js_action, js_jobs, js_loader, js_string};
-use crate::capped::{Capped, StreamCount};
+use crate::capped::{Capped, StreamCount, note_abort};
 use crate::head::{action_request_headers, action_url};
 
 /// The `Extensions` mark of a `Built` action reply whose body is the app's JS `Response`, kept in
@@ -152,7 +152,8 @@ fn bad(e: impl std::fmt::Display) -> CallError {
 
 /// F475: the incoming request body, passed to the app as the platform's own stream. Chunks stay JS values (nothing is
 /// copied into wasm memory); only their `byteLength` is read, to count them against `max`. Past it the app's read
-/// rejects and `aborted` says why, so the answer is replaced by a 413 (as on the native host).
+/// rejects and `aborted` says why, so the answer is replaced by a 413 (as on the native host). A platform error on the
+/// stream (client gone, short body) and a chunk that cannot be counted fail the call the same way (`Io`, a 400).
 fn counted_body(
     raw: web_sys::ReadableStream,
     max: u64,
@@ -164,18 +165,21 @@ fn counted_body(
         .map_err(|_| CallError::BadResponse("the request body is already locked".into()))?;
     let mut count = StreamCount::new(max);
     let counted = src.map(move |chunk| {
-        let v = chunk?;
-        let n = js_sys::Reflect::get(&v, &"byteLength".into())
-            .ok()
-            .and_then(|n| n.as_f64())
-            .unwrap_or(0.0) as u64;
-        match count.push(n) {
-            Ok(()) => Ok(v),
+        let len = match &chunk {
+            Ok(v) => Ok(js_sys::Reflect::get(v, &"byteLength".into())
+                .ok()
+                .and_then(|n| n.as_f64())),
+            Err(_) => Err(()),
+        };
+        match count.chunk(len) {
+            Ok(()) => chunk,
             Err(e) => {
-                aborted.set(Some(e));
-                Err(wasm_bindgen::JsValue::from_str(
-                    "the request body is over max_stream_bytes",
-                ))
+                note_abort(&aborted, e);
+                // the platform's own error goes on to the app as it was; the others say why
+                chunk.and(Err(wasm_bindgen::JsValue::from_str(match e {
+                    ReadErr::TooLarge => "the request body is over max_stream_bytes",
+                    _ => "a request body chunk has no byteLength",
+                })))
             }
         }
     });
