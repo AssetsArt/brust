@@ -1,7 +1,8 @@
 //! F230 (closes F219, ruled option C): one scan per build over every app module the server bundle loads. It finds the
 //! exports of an app module that ANOTHER app module writes: a member write or a mutating call through an import
 //! (`LABELS.a = 'patched'`, `list.push('y')`, through an alias `const l = list; l.push(…)`), or the import handed to app
-//! code or to a global that writes its argument (`register(LABELS)`, `Object.assign(LABELS, …)`). A value the
+//! code or to a global that writes its argument (`register(LABELS)`, `Object.assign(LABELS, …)`; F480: a function
+//! handed to app code is not, `probe(addrsOf)`, but a write into it as an object is). A value the
 //! compiler reads from such an export (a folded constant, a job or chunk import) would be the module as declared, not
 //! as the app sees it after the writer ran, so a component that reads one falls back (`module-written`) and renders
 //! with React, which runs every module of the app.
@@ -111,6 +112,9 @@ struct Scanned {
     load: Writes,
     /// Exports declared as a primitive (`export const MAX = 6`): nothing can write into one.
     primitive: HashSet<String>,
+    /// F480: exports declared as a function (`export function f`, `export const f = () => …`, never reassigned): handing
+    /// one to app code passes code to call, not an object to change; a write into it as an object still counts.
+    function: HashSet<String>,
     /// Exports made by a package call (`export const team = defineStore(…)`): the package owns the object and its
     /// methods change it (`team.members.set(…)`), which is what it is for; such a method call is not counted (an
     /// assignment into it is).
@@ -168,6 +172,9 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
     let mut module_keys: HashSet<u32> = HashSet::new();
     let mut package_made_keys: HashSet<u32> = HashSet::new();
     let mut primitive_keys: HashSet<u32> = HashSet::new();
+    let mut function_keys: HashSet<u32> = HashSet::new();
+    // `export default function () {}` / `export default () => …`: a function no binding can reassign.
+    let mut default_function = false;
     // F274: the code a call of a top-level function runs (its body, shallow: a function nested in it does not run),
     // by the function's binding key: a declaration, or a `const f = () => …` / `function` expression.
     let mut fn_bodies: HashMap<u32, Walk> = HashMap::new();
@@ -208,6 +215,7 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
                         let mut w = Walk::default();
                         w.stmt(stmt);
                         module_keys.insert(key(n.ref_));
+                        function_keys.insert(key(n.ref_));
                         decls.insert(key(n.ref_), w);
                         fn_bodies.insert(key(n.ref_), shallow_body(f.func.body.stmts.slice()));
                         if f.func.flags.contains(js_ast::flags::Function::IsExport) {
@@ -259,6 +267,11 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
                         }
                         if let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
                         {
+                            if matches!(l.kind, js_ast::S::Kind::KConst)
+                                && matches!(v.data, E::EArrow(_) | E::EFunction(_))
+                            {
+                                function_keys.insert(key(id.r#ref));
+                            }
                             match &v.data {
                                 E::EArrow(a) => {
                                     fn_bodies
@@ -299,7 +312,10 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
                     w.stmt(stmt);
                     let named = match &d.value {
                         js_ast::StmtOrExpr::Stmt(s) => match &s.data {
-                            S::SFunction(f) => f.func.name.as_ref().map(|n| key(n.ref_)),
+                            S::SFunction(f) => f.func.name.as_ref().map(|n| {
+                                function_keys.insert(key(n.ref_));
+                                key(n.ref_)
+                            }),
                             S::SClass(c) => c.class.class_name.as_ref().map(|n| key(n.ref_)),
                             _ => None,
                         },
@@ -307,6 +323,14 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
                             E::EIdentifier(id) => Some(key(id.ref_)),
                             _ => None,
                         },
+                    };
+                    default_function |= match &d.value {
+                        js_ast::StmtOrExpr::Stmt(s) => {
+                            matches!(&s.data, S::SFunction(f) if f.func.name.is_none())
+                        }
+                        js_ast::StmtOrExpr::Expr(e) => {
+                            matches!(e.data, E::EArrow(_) | E::EFunction(_))
+                        }
                     };
                     match named {
                         Some(k) => {
@@ -389,6 +413,7 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
         load_writes.method.extend(w.method);
         load_writes.other.extend(w.other);
         load_writes.handed.extend(w.handed);
+        load_writes.global.extend(w.global);
         callee_keys(body, &mut pending);
     }
     let load = load_writes;
@@ -416,12 +441,23 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
         .filter(|(_, k)| k.is_some_and(|k| primitive_keys.contains(&k)))
         .map(|(n, _)| n.clone())
         .collect();
+    // A function binding assigned anywhere in the module (`f = other`) is a value like any other.
+    let reassigned: HashSet<u32> = all.assigned.iter().map(|r| key(*r)).collect();
+    let mut function: HashSet<String> = exports
+        .iter()
+        .filter(|(_, k)| k.is_some_and(|k| function_keys.contains(&k) && !reassigned.contains(&k)))
+        .map(|(n, _)| n.clone())
+        .collect();
+    if default_function {
+        function.insert("default".into());
+    }
     Scanned {
         path: path.to_string(),
         writes,
         load,
         package_made,
         primitive,
+        function,
         decls: decls.iter().map(|(k, w)| (*k, reads_of(w))).collect(),
         default_reads: default_reads.as_ref().map(reads_of),
         imports,
@@ -433,8 +469,9 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
 
 /// The exports `w`'s code writes through an import of `imports`: a member write or a mutating call rooted at the
 /// import (through an alias the walk recorded), the import itself handed to app code (a local function, an app import,
-/// unknown code), or any chain of it handed to a global that writes its argument (`Object.assign(LABELS.a, …)`). A
-/// member of an import handed to app code is not counted (`fmt(LABELS.a)` is the usual read).
+/// unknown code; `propagate` drops a function export, F480), or any chain of it handed to a global that writes its
+/// argument (`Object.assign(LABELS.a, …)`). A member of an import handed to app code is not counted (`fmt(LABELS.a)` is
+/// the usual read).
 fn writes_of(
     w: &Walk,
     imports: &HashMap<u32, ExportKey>,
@@ -447,6 +484,8 @@ fn writes_of(
     // Handed on as is (an alias is not followed: `apply(r)` after `const r = await api.post()` hands a call's result),
     // with the callee's import when it is one (a method of a package-made value is package code).
     let mut handed_refs: Vec<(js_ast::Ref, Option<js_ast::Ref>)> = Vec::new();
+    // Handed to a global that writes its argument: a write whatever the import is (a function too).
+    let mut global_refs: Vec<js_ast::Ref> = Vec::new();
     written_refs.extend(w.member_written.iter().copied());
     written_refs.extend(w.member_writes.iter().map(|(r, _)| *r));
     for c in &w.calls {
@@ -460,7 +499,7 @@ fn writes_of(
         }
         if writing_global(&call.target, names) {
             if let Some(r) = call.args.first().and_then(chain_root) {
-                handed_refs.push((r, None));
+                global_refs.push(r);
             }
             continue;
         }
@@ -512,10 +551,15 @@ fn writes_of(
             Some((arg, callee.and_then(|c| imports.get(&key(c)).cloned())))
         })
         .collect();
+    let global = global_refs
+        .iter()
+        .filter_map(|r| imports.get(&key(*r)).cloned())
+        .collect();
     Writes {
         other: exports_of(&written_refs),
         method: exports_of(&method_refs),
         handed,
+        global,
     }
 }
 
@@ -527,6 +571,8 @@ struct Writes {
     other: BTreeSet<ExportKey>,
     /// An import handed to code that may write it: (the import, the callee's import when it is one).
     handed: BTreeSet<(ExportKey, Option<ExportKey>)>,
+    /// An import (a chain rooted at one) handed to a global that writes its argument (`Object.assign(f, …)`).
+    global: BTreeSet<ExportKey>,
 }
 
 /// A top-level statement whose code runs when the module loads: not an import or export clause, a function or class
@@ -600,19 +646,21 @@ fn propagate(mods: &[Scanned]) -> LoadWrites {
         mods.iter()
             .any(|m| m.path == k.0 && m.primitive.contains(&k.1))
     };
+    let function = |k: &ExportKey| is_function(mods, k, &mut HashSet::new());
     // The writes that count: a method call into a package-made value, or a hand-off to its methods, is its API; a
-    // primitive cannot be written.
+    // function handed on is code to call (F480); a primitive cannot be written.
     let counted = |w: &Writes| -> BTreeSet<ExportKey> {
         let method = w.method.iter().filter(|k| !package_made(k));
         let handed = w
             .handed
             .iter()
-            .filter(|(_, callee)| !callee.as_ref().is_some_and(package_made))
+            .filter(|(k, callee)| !callee.as_ref().is_some_and(package_made) && !function(k))
             .map(|(k, _)| k);
         w.other
             .iter()
             .chain(method)
             .chain(handed)
+            .chain(&w.global)
             .filter(|k| !primitive(k))
             .cloned()
             .collect()
@@ -701,6 +749,29 @@ fn propagate(mods: &[Scanned]) -> LoadWrites {
         }
     }
     out
+}
+
+/// F480: `k` is a function export, followed through re-exports (`export { f } from './a'`, `import { f } from './a';
+/// export { f }`) to its declaration. Fails closed at `export *`, a namespace, package code (not scanned) or a module
+/// that did not resolve or parse.
+fn is_function(mods: &[Scanned], k: &ExportKey, seen: &mut HashSet<ExportKey>) -> bool {
+    if k.1 == "*" || !seen.insert(k.clone()) {
+        return false;
+    }
+    let Some(m) = mods.iter().find(|m| m.path == k.0) else {
+        return false;
+    };
+    if m.function.contains(&k.1) {
+        return true;
+    }
+    if let Some((_, t, name)) = m.follows.iter().find(|(alias, _, _)| *alias == k.1) {
+        return is_function(mods, &(t.clone(), name.clone()), seen);
+    }
+    m.exports
+        .iter()
+        .find(|(name, _)| *name == k.1)
+        .and_then(|(_, local)| m.imports.get(&(*local)?))
+        .is_some_and(|i| is_function(mods, i, seen))
 }
 
 /// The fallback (F230): a component whose compiled code would read a written export (a painted value, a client
