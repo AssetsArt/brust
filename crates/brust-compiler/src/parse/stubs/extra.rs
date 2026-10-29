@@ -149,11 +149,13 @@ unsafe extern "C" fn Bun__collateUTF8(
             core::slice::from_raw_parts(b, b_len),
         )
     };
-    collate(
+    let order = collate(
         String::from_utf8_lossy(a).chars(),
         String::from_utf8_lossy(b).chars(),
         is_numeric_and_base,
-    )
+    );
+    // Invalid bytes all decode to U+FFFD: keep the order total by falling back to the raw bytes.
+    if order == 0 { a.cmp(b) as i32 } else { order }
 }
 
 #[unsafe(no_mangle)]
@@ -176,11 +178,13 @@ unsafe extern "C" fn Bun__collateUTF16(
             .map(|c| c.unwrap_or('\u{FFFD}'))
             .collect::<Vec<_>>()
     };
-    collate(
+    let order = collate(
         chars(a).into_iter(),
         chars(b).into_iter(),
         is_numeric_and_base,
-    )
+    );
+    // Lone surrogates all decode to U+FFFD: keep the order total by falling back to the raw code units.
+    if order == 0 { a.cmp(b) as i32 } else { order }
 }
 
 #[cfg(test)]
@@ -212,5 +216,27 @@ mod tests {
         assert_eq!(cmp("a", "\u{e4}", false), -1);
         assert_eq!(cmp("\u{e4}", "a", false), 1);
         assert_eq!(cmp("\u{212a}", "K", false), 1); // Kelvin sign: same letter and case as K, so the bytes decide
+    }
+
+    fn utf8(a: &[u8], b: &[u8]) -> i32 {
+        // SAFETY: both slices are live for the call.
+        unsafe { super::Bun__collateUTF8(false, a.as_ptr(), a.len(), b.as_ptr(), b.len()) }
+    }
+
+    fn utf16(a: &[u16], b: &[u16]) -> i32 {
+        // SAFETY: both slices are live for the call.
+        unsafe { super::Bun__collateUTF16(false, a.as_ptr(), a.len(), b.as_ptr(), b.len()) }
+    }
+
+    #[test]
+    fn invalid_input_still_has_a_total_order() {
+        // Lone surrogates and invalid bytes decode alike, but the raw order separates them, both ways round.
+        assert_eq!(utf16(&[0xD800], &[0xDC00]), -1);
+        assert_eq!(utf16(&[0xDC00], &[0xD800]), 1);
+        assert_eq!(utf8(&[0xFE], &[0xFF]), -1);
+        assert_eq!(utf8(&[0xFF], &[0xFE]), 1);
+        assert_eq!(utf16(&[0xD800], &[0xD800]), 0);
+        assert_eq!(utf8(&[0xFF], &[0xFF]), 0);
+        assert_eq!(utf8(b"abc", b"abc"), 0);
     }
 }

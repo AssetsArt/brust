@@ -436,3 +436,154 @@ fn a_top_level_call_of_a_same_module_function_is_a_load_writer() {
         ]
     );
 }
+
+/// F480 (Assets Art, alpha.32): `server/network.ts` handed `addrsOf`, a function of `lib/apps.ts`, to a function of
+/// `lib/network.ts`; `lib/apps.ts` was judged written, so the server-only writer was loaded into every island that
+/// imports it and the browser build refused it. A function handed on is code to call, not an object to change.
+#[test]
+fn a_function_export_handed_to_app_code_is_not_written() {
+    let (_, lw) = app(
+        "handed-fn",
+        &[
+            (
+                "lib/a.ts",
+                "export function fnFromA(s: string) { return [s] }\nexport const arrowFromA = (s: string) => [s]\nexport const exprFromA = function (s: string) { return [s] }\nexport default function defFromA() { return 1 }\nexport let letFromA = (s: string) => [s]\nexport class K { static n = 1 }\nexport const objFromA = { n: 1 }\n",
+            ),
+            ("lib/b.ts", "export function use(f: unknown) { return f }\n"),
+            (
+                "server/x.ts",
+                "import defFromA, { fnFromA, arrowFromA, exprFromA, letFromA, K, objFromA } from '../lib/a'\nimport { use } from '../lib/b'\nuse(fnFromA)\nuse(arrowFromA)\nuse(exprFromA)\nuse(defFromA)\nuse(letFromA)\nuse(K)\nuse(objFromA)\n",
+            ),
+        ],
+    );
+    // A `let` can be reassigned, a class can carry static state, an object is the old rule: still written.
+    assert_eq!(
+        written(&lw),
+        ["lib/a.ts#K", "lib/a.ts#letFromA", "lib/a.ts#objFromA"]
+    );
+    assert_eq!(
+        lw.writers,
+        [("server/x.ts".to_string(), vec!["lib/a.ts".to_string()])]
+    );
+}
+
+#[test]
+fn a_function_export_alone_handed_on_makes_no_writer() {
+    let (_, lw) = app(
+        "handed-fn-only",
+        &[
+            (
+                "lib/a.ts",
+                "export function addrsOf(s: string) { return [s] }\n",
+            ),
+            (
+                "lib/b.ts",
+                "export function probe(f: (s: string) => string[]) { return f('x') }\n",
+            ),
+            (
+                "server/x.ts",
+                "import { addrsOf } from '../lib/a'\nimport { probe } from '../lib/b'\nexport const status = probe(addrsOf)\n",
+            ),
+        ],
+    );
+    assert!(lw.is_empty(), "{:?}", written(&lw));
+    assert!(lw.writers.is_empty(), "{:?}", lw.writers);
+}
+
+#[test]
+fn a_write_into_a_function_export_as_an_object_still_counts() {
+    let (_, lw) = app(
+        "fn-object-writes",
+        &[
+            (
+                "lib/a.ts",
+                "export function f1() {}\nexport function f2() {}\nexport function f3() {}\nexport const f4 = () => 1\nexport function f5() {}\n",
+            ),
+            (
+                "server/x.ts",
+                "import { f1, f2, f3, f4, f5 } from '../lib/a'\nf1.cache = new Map()\nObject.assign(f2, { a: 1 })\nObject.defineProperty(f3, 'b', { value: 1 })\nconst g = f4\ng.c = 1\nconsole.log(f5)\n",
+            ),
+        ],
+    );
+    assert_eq!(
+        written(&lw),
+        ["lib/a.ts#f1", "lib/a.ts#f2", "lib/a.ts#f3", "lib/a.ts#f4"]
+    );
+}
+
+#[test]
+fn a_reassigned_function_export_handed_on_is_written() {
+    let (_, lw) = app(
+        "fn-reassigned",
+        &[
+            (
+                "lib/a.ts",
+                "export function f(s: string) { return s }\nexport function swap(g: typeof f) { f = g }\n",
+            ),
+            ("lib/b.ts", "export function use(x: unknown) { return x }\n"),
+            (
+                "server/x.ts",
+                "import { f } from '../lib/a'\nimport { use } from '../lib/b'\nuse(f)\n",
+            ),
+        ],
+    );
+    assert_eq!(written(&lw), ["lib/a.ts#f"]);
+}
+
+/// F480 N2: a function reached through a barrel is followed to its declaration; `export *`, a namespace and package code
+/// stay fail closed.
+#[test]
+fn a_function_handed_on_through_a_barrel_is_followed_to_its_declaration() {
+    let (_, lw) = app(
+        "fn-barrel",
+        &[
+            (
+                "lib/apps.ts",
+                "export function addrsOf(s: string) { return [s] }\nexport const portOf = (s: string) => s.length\n",
+            ),
+            (
+                "lib/more.ts",
+                "export function hostOf(s: string) { return s }\n",
+            ),
+            (
+                "lib/index.ts",
+                "export { addrsOf as addrs } from './apps'\nimport { portOf } from './apps'\nexport { portOf }\nexport * from './more'\nexport * as ns from './more'\nexport { pick } from 'some-package'\n",
+            ),
+            ("lib/b.ts", "export function use(f: unknown) { return f }\n"),
+            (
+                "server/x.ts",
+                "import { addrs, portOf, hostOf, ns, pick } from '../lib/index'\nimport { use } from '../lib/b'\nuse(addrs)\nuse(portOf)\nuse(hostOf)\nuse(ns)\nuse(pick)\n",
+            ),
+        ],
+    );
+    assert_eq!(
+        written(&lw),
+        [
+            "lib/index.ts#hostOf",
+            "lib/index.ts#ns",
+            "lib/index.ts#pick"
+        ]
+    );
+}
+
+/// F480 N3: an anonymous default function (a declaration or an expression) is a function export too.
+#[test]
+fn an_anonymous_default_function_handed_on_is_not_written() {
+    let (_, lw) = app(
+        "fn-default-anon",
+        &[
+            (
+                "lib/a.ts",
+                "export default function (s: string) { return [s] }\n",
+            ),
+            ("lib/c.ts", "export default (s: string) => [s]\n"),
+            ("lib/d.ts", "export default { n: 1 }\n"),
+            ("lib/b.ts", "export function use(f: unknown) { return f }\n"),
+            (
+                "server/x.ts",
+                "import a from '../lib/a'\nimport c from '../lib/c'\nimport d from '../lib/d'\nimport { use } from '../lib/b'\nuse(a)\nuse(c)\nuse(d)\n",
+            ),
+        ],
+    );
+    assert_eq!(written(&lw), ["lib/d.ts#default"]);
+}
