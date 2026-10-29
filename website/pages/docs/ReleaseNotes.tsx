@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-33', title: '2.0.0-alpha.33' },
       { id: 'alpha-32', title: '2.0.0-alpha.32' },
       { id: 'alpha-31', title: '2.0.0-alpha.31' },
       { id: 'alpha-30', title: '2.0.0-alpha.30' },
@@ -55,6 +56,34 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-33">2.0.0-alpha.33 · 29 October 2026</h2>
+      {/* source: #421, #423 */}
+      <p>Fixes for a build that failed on a server-only module and for streamed uploads on Cloudflare, and one small change to <code>brust dev</code>. Nothing breaks.</p>
+
+      <h3>Fixes</h3>
+      <ul>
+        {/* source: #421 */}
+        <li>
+          <strong>Passing an imported function to other code no longer marks its module as written (#421).</strong> A call such as <code>use(addrsOf)</code> in a server module used to make the build treat that module as written, so a server-only module was pulled into the client islands that import it and the build failed with &ldquo;server-only code in a browser bundle&rdquo;. That no longer happens, and re-exports through barrels are followed. Writing to a function as an object (<code>fn.x = ...</code>, <code>Object.assign(fn, ...)</code>) still counts, and so do <code>let</code> and <code>class</code> exports. When server-only code does reach a browser bundle this way, the error now names the chain: the island, the writer, and the module judged written.
+        </li>
+        {/* source: #423 */}
+        <li>
+          <strong>Cloudflare: a streamed action answers 400 when the upload fails midway (#423).</strong> If the platform&apos;s request body stream fails mid-upload (the client went away, or the body was short), the action now answers 400, as on the native server, even when the app caught the read error. A chunk with no byte length now fails closed instead of slipping past <code>max_stream_bytes</code>.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: #423 */}
+        <li>
+          <strong><code>brust dev</code> reads the actions prefix once per build instead of once per request (#423).</strong>
+        </li>
+        {/* source: #423; docs/actions.md */}
+        <li>
+          <strong>Docs: echoing <code>request.body</code> on Cloudflare (#423).</strong> An action that echoes <code>request.body</code> past the ceiling sees its response fail mid-flight. Read the body first if you need the 413. See <a href="/docs/actions">Actions</a>.
+        </li>
+      </ul>
 
       <h2 id="alpha-32">2.0.0-alpha.32 · 28 October 2026</h2>
       {/* source: #419 (F479); docs/navigation.md sections 4 and 5 */}
