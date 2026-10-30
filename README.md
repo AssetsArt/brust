@@ -36,6 +36,10 @@ bun run dev
 
 Runs on Bun with a Rust server, or on Cloudflare Workers. `brust build --target static` writes plain files for any static host.
 
+Start a brust app on Cloudflare Workers in one click (the blank starter, live at [template.brust.dev](https://template.brust.dev)):
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AssetsArt/templates/tree/brust-template/brust-template)
+
 ## Built with brust
 
 - [assetsart.com](https://assetsart.com): Assets Art, the serverless cloud platform from the team behind brust
