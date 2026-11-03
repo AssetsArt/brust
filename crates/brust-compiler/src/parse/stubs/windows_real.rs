@@ -6,7 +6,7 @@
 /// simdutf's `convert_valid_utf16le_to_utf8`: writes the UTF-8 form of `units` into `out` and
 /// returns the byte count. simdutf trusts "valid" input; a lone surrogate becomes U+FFFD (3 bytes,
 /// the width `simdutf__utf8_length_from_utf16le` in native.rs counts for it). `out` must hold the
-/// result (callers size it at 3 bytes per unit); a short `out` panics instead of overrunning.
+/// result (`utf8_len(units)` bytes at least); a short `out` panics instead of overrunning.
 pub(super) fn convert_valid_utf16le_to_utf8(units: &[u16], out: &mut [u8]) -> usize {
     let mut written = 0;
     for c in char::decode_utf16(units.iter().copied()) {
@@ -14,6 +14,14 @@ pub(super) fn convert_valid_utf16le_to_utf8(units: &[u16], out: &mut [u8]) -> us
         written += c.encode_utf8(&mut out[written..]).len();
     }
     written
+}
+
+/// The byte count `convert_valid_utf16le_to_utf8` writes: the same count as native.rs's
+/// `simdutf__utf8_length_from_utf16le` (a lone surrogate is 3 bytes).
+pub(super) fn utf8_len(units: &[u16]) -> usize {
+    char::decode_utf16(units.iter().copied())
+        .map(|c| c.map_or(3, char::len_utf8))
+        .sum()
 }
 
 /// `bun_core::strings::convert_utf16_to_utf8_in_buffer` (Windows wide paths) calls this.
@@ -27,14 +35,13 @@ unsafe extern "C" fn simdutf__convert_valid_utf16le_to_utf8(
     if len == 0 {
         return 0;
     }
-    // SAFETY: the caller passes `len` readable units and an `out` sized for the worst case
-    // (3 bytes per unit), as simdutf requires.
-    let (units, out) = unsafe {
-        (
-            core::slice::from_raw_parts(p, len),
-            core::slice::from_raw_parts_mut(out, len * 3),
-        )
-    };
+    // SAFETY: the caller passes `len` readable units.
+    let units = unsafe { core::slice::from_raw_parts(p, len) };
+    // The caller guarantees only that `out` holds the UTF-8 length of `units` (its assert is
+    // `out.len() >= simdutf__utf8_length_from_utf16le`), not 3 bytes per unit: slice exactly that.
+    let need = utf8_len(units);
+    // SAFETY: `out` is valid for writes of at least `need` bytes (the caller's contract above).
+    let out = unsafe { core::slice::from_raw_parts_mut(out, need) };
     convert_valid_utf16le_to_utf8(units, out)
 }
 
@@ -74,6 +81,16 @@ mod tests {
     fn lone_surrogates_become_replacement_chars() {
         assert_eq!(run(&[0x61, 0xD800, 0x62]), "a\u{FFFD}b".as_bytes());
         assert_eq!(run(&[0xDC00]), "\u{FFFD}".as_bytes());
+    }
+
+    #[test]
+    fn an_out_buffer_of_exactly_the_utf8_length_is_enough() {
+        for s in ["C:\\app\\index.tsx", "ไทย😀x", "a"] {
+            let mut units: Vec<u16> = s.encode_utf16().collect();
+            units.push(0xD800); // lone surrogate: 3 bytes
+            let mut out = vec![0u8; super::utf8_len(&units)];
+            assert_eq!(convert(&units, &mut out), out.len(), "{s}");
+        }
     }
 
     #[test]

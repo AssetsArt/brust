@@ -162,7 +162,7 @@ test('monorepo mode: blank without --brust-dep installs from file: + overrides a
   sh(['bun', join(REPO, 'packages/create-app/bin/create-app.ts'), 'mono-app', '--template', 'blank', '--dir', dir, '--yes'], work)
   const pkg = readPkg(dir)
   expect(pkg.dependencies['@brust/core']).toBe(`file:${REPO}/packages/brust`)
-  expect(Object.keys(pkg.overrides)).toHaveLength(8)
+  expect(Object.keys(pkg.overrides)).toHaveLength(9)
   sh(['bun', 'install'], dir)
   sh(['bun', 'run', 'build'], dir)
   expect(existsSync(join(dir, 'dist/manifest.json'))).toBe(true)
