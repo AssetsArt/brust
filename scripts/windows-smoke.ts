@@ -87,13 +87,12 @@ try {
   step('a client component importing a server_only module must fail the build and leave dist intact')
   const counter = join(dir, 'components/Counter.tsx')
   const counterSrc = readFileSync(counter, 'utf8')
-  // useEffect makes it a React island (shipped to the browser), the path build-server-only.test.ts T1 covers on POSIX.
+  // The shape build-server-only.test.ts T1 uses: useTransition + useReducer cannot lower native, so Counter is a React island shipped to the browser.
+  // (A useState + useEffect component lowers NATIVE: SECRET is then evaluated on the server and never bundled, so the build legitimately passes;
+  // checked on POSIX at a5f4391f.)
   writeFileSync(
     counter,
-    `import { SECRET } from '../lib/server/secret'\n${counterSrc
-      .replace("import { useState } from 'react'", "import { useEffect, useState } from 'react'")
-      .replace('const [count, setCount] = useState(0)', 'const [count, setCount] = useState(0)\n  useEffect(() => {}, [])')
-      .replace('count is {count}', 'count is {count} {SECRET.length}')}`,
+    "import { useReducer, useTransition } from 'react'\nimport { SECRET } from '../lib/server/secret'\n\nexport default function Counter() {\n  useTransition()\n  const [n, hit] = useReducer((c: number) => c + 1, 0)\n  return (\n    <button type=\"button\" onClick={() => hit()}>\n      count is {n} {SECRET.length}\n    </button>\n  )\n}\n",
   )
   const leak = Bun.spawnSync(['bun', 'run', 'build'], { cwd: dir, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
   const leakOut = leak.stdout.toString() + leak.stderr.toString()
