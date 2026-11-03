@@ -5,7 +5,7 @@
 // of a [build] server_only module must FAIL the build and leave dist usable (P3). A Windows stub that gets reached aborts the
 // process with its own symbol name, which fails this script (and so the job).
 // Run: bun scripts/windows-smoke.ts   (needs the addon built: cd packages/brust && bun run build)
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { host, hostNative, packAll, sh } from '../packages/create-app/test/helpers.ts'
@@ -14,16 +14,16 @@ const MARKER = 'SMOKE-SERVER-ONLY-MARKER-7f3a91'
 const THAI = 'สวัสดีชาวโลก ทดสอบภาษาไทย'
 const APP_DIR_NAME = 'แอป-é'
 const step = (s: string) => console.log(`\n[smoke] ${s}`)
+/** Throws (never `process.exit`s): the top-level catch below prints it, stops the server tree and exits 1, so a failure after start ends the step in seconds. */
 function check(cond: unknown, msg: string): asserts cond {
-  if (!cond) {
-    console.error(`[smoke] FAIL: ${msg}`)
-    process.exit(1)
-  }
+  if (!cond) throw new Error(msg)
 }
 
-/** `bun run start --port 0` in the app; resolves once `[brust] ready` is printed. `stop` ends the WHOLE process tree: on Windows a kill of the
- * `bun run` wrapper leaves the server it spawned running (it holds the app dir and the job's pipes open, which hung the previous run). */
-async function startServer(dir: string): Promise<{ base: string; stop: () => Promise<void> }> {
+/** `bun run start --port 0` in the app; resolves once `[brust] ready` is printed. `stop` is what a user's process manager does: a plain kill of
+ * the `bun run` wrapper (TerminateProcess on Windows: no process groups, no signal) and nothing else. F488: the server must notice its launcher
+ * is gone and exit by itself, so within 10 s the port refuses connections and the app dir can be renamed (a live server holds it: EBUSY).
+ * `cleanup` ends the whole tree with taskkill, only for the failure path. */
+async function startServer(dir: string): Promise<{ base: string; stop: () => Promise<void>; cleanup: () => void }> {
   const proc = Bun.spawn(['bun', 'run', 'start', '--port', '0', '--workers', '2'], { cwd: dir, stdin: 'ignore', stdout: 'pipe', stderr: 'inherit', env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' } })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
@@ -40,12 +40,25 @@ async function startServer(dir: string): Promise<{ base: string; stop: () => Pro
   return {
     base,
     stop: async () => {
-      if (process.platform === 'win32') Bun.spawnSync(['taskkill', '/PID', String(proc.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore' })
+      if (process.platform === 'win32') proc.kill()
       else proc.kill('SIGINT')
-      if ((await Promise.race([proc.exited, Bun.sleep(8000).then(() => undefined)])) === undefined) {
-        proc.kill('SIGKILL')
-        await proc.exited
+      if ((await Promise.race([proc.exited, Bun.sleep(8000).then(() => undefined)])) === undefined) throw new Error('the launcher did not exit')
+      if (process.platform !== 'win32') return
+      const t0 = Date.now()
+      let refused = false
+      while (!refused && Date.now() - t0 < 10_000) {
+        refused = await fetch(`${base}/`).then(() => false, () => true)
+        if (!refused) await Bun.sleep(250)
       }
+      check(refused, 'the server still answers 10 s after its launcher was killed (F488)')
+      console.log(`[smoke] the server exited ${Date.now() - t0} ms after the launcher kill`)
+      const moved = `${dir}-moved`
+      renameSync(dir, moved) // a running server keeps the dir busy
+      renameSync(moved, dir)
+    },
+    cleanup: () => {
+      if (process.platform === 'win32') Bun.spawnSync(['taskkill', '/PID', String(proc.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore' })
+      else proc.kill('SIGKILL')
     },
   }
 }
@@ -53,7 +66,8 @@ async function startServer(dir: string): Promise<{ base: string; stop: () => Pro
 // The runner's TEMP is an 8.3 short path (C:\Users\RUNNER~1\...): the same file under its short and its long spelling is two modules to Bun, so
 // elysia loads twice ("two copies of elysia"). Work under the long (real) path, as a user's checkout is.
 const work = realpathSync.native(mkdtempSync(join(tmpdir(), 'brust-smoke-')))
-let stop: (() => Promise<void>) | undefined
+let cleanup: (() => void) | undefined
+let failed = false
 try {
   step('pack create-app, core, runtime-dom; host native')
   const tgz = packAll(work)
@@ -88,7 +102,7 @@ try {
 
   step('bun run start on a free port; GET /')
   const app = await startServer(dir)
-  stop = app.stop
+  cleanup = app.cleanup
   const page = await fetch(`${app.base}/`)
   check(page.status === 200, `GET / is ${page.status}`)
   const html = await page.text()
@@ -105,9 +119,8 @@ try {
   const sl = await fetch(`${app.base}/_brust/action/secret-len`)
   check(sl.status === 200 && ((await sl.json()) as { n: number }).n === MARKER.length, 'the action that imports the server-only module does not answer')
 
-  step('stop the server, rebuild over the existing dist (the dist swap)')
+  step('stop the server with a plain kill of the launcher (F488), rebuild over the existing dist (the dist swap)')
   await app.stop()
-  stop = undefined
   sh(['bun', 'run', 'build'], dir)
   check(existsSync(join(dir, 'dist/manifest.json')), 'dist/manifest.json missing after the rebuild')
   const leftovers = readdirSync(dir).filter((f) => f.includes('.brust-'))
@@ -137,8 +150,11 @@ try {
   writeFileSync(counter, counterSrc)
 
   console.log('\n[smoke] OK')
+} catch (e) {
+  failed = true
+  console.error(`[smoke] FAIL: ${e instanceof Error ? e.message : String(e)}`)
 } finally {
-  await stop?.().catch(() => {})
+  cleanup?.()
   // Windows keeps a directory busy while a handle is open (an indexer, a just-exited child): retry, and never fail the run on cleanup.
   try {
     rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
@@ -146,4 +162,4 @@ try {
     console.warn(`[smoke] could not remove ${work}: ${(e as Error).message}`)
   }
 }
-process.exit(0) // a leaked child must not keep the job open; failures exit 1 above
+process.exit(failed ? 1 : 0) // a leaked child must not keep the job open
