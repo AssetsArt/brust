@@ -70,12 +70,15 @@ export async function watchLauncher(opts: LauncherWatchOptions): Promise<{ pids:
   let pids: number[]
   try {
     pids = launcherChain(await (opts.readTable ?? readProcTable)(), opts.self ?? process.pid)
-  } catch {
+  } catch (e) {
+    console.error(`[brust] launcher-watch DEBUG: table unreadable: ${String(e)}`)
     return none
   }
+  console.error(`[brust] launcher-watch DEBUG: chain=${JSON.stringify(pids)}`)
   if (pids.length === 0) return none
   const alive = opts.alive ?? pidAlive
   const timer = setInterval(() => {
+    console.error(`[brust] launcher-watch DEBUG: alive=${JSON.stringify(pids.map((p) => alive(p)))}`)
     const gone = pids.find((p) => !alive(p))
     if (gone === undefined) return
     clearInterval(timer)
