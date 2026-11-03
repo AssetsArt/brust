@@ -4,7 +4,7 @@
 import { afterAll, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { PRODUCTION, sourceDirPlugin } from '../src/build/bundle'
 import { CF_CONDITIONS } from '../src/build/cloudflare'
 import { clearResolveCache, resolveNative } from '../src/build/esm-resolve'
@@ -217,7 +217,7 @@ test('F242: a browser-target probe that cannot answer is an error naming the spe
   }
   // The same failure for the bun target keeps today's answer (and names it).
   const warnings: string[] = []
-  expect(resolveNative('nodey', root, 'bun', PRODUCTION, { timeoutMs: 1, warn: (m) => warnings.push(m) })).toContain('node_modules/nodey/')
+  expect(resolveNative('nodey', root, 'bun', PRODUCTION, { timeoutMs: 1, warn: (m) => warnings.push(m) }).replaceAll(sep, '/')).toContain('node_modules/nodey/')
   expect(warnings).toHaveLength(1)
 })
 
