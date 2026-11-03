@@ -273,12 +273,12 @@ async function buildInto(
     }
     const out = writes.filter((w) => [...w.mods].some((m) => reached.has(m)))
     for (const w of out) {
-      const mods = [...w.mods].filter((m) => reached.has(m)).map((m) => relative(appRoot, m)).join(', ')
-      o.log(`[brust] warning load-writer-in-client ${relative(appRoot, w.file)} is imported into the browser chunk of the React island ${c.id}: it changes ${mods} when it loads, and the island reads that module (F230). Its code ships to the browser: keep secrets and server-only code out of it, or write the value in the module that declares it`)
+      const mods = [...w.mods].filter((m) => reached.has(m)).map((m) => relPosix(appRoot, m)).join(', ')
+      o.log(`[brust] warning load-writer-in-client ${relPosix(appRoot, w.file)} is imported into the browser chunk of the React island ${c.id}: it changes ${mods} when it loads, and the island reads that module (F230). Its code ships to the browser: keep secrets and server-only code out of it, or write the value in the module that declares it`)
       // F480: a server-only import reached through this writer names the chain in `server-only-in-client`.
       ctx.loadWriters ??= new Map()
       if (!ctx.loadWriters.has(w.file))
-        ctx.loadWriters.set(w.file, `${relative(appRoot, w.file)} is loaded into the React island ${c.id} because it is judged to write ${mods} when it loads: F230 load writes`)
+        ctx.loadWriters.set(w.file, `${relPosix(appRoot, w.file)} is loaded into the React island ${c.id} because it is judged to write ${mods} when it loads: F230 load writes`)
     }
     return [...new Set(out.map((w) => w.file))]
   }

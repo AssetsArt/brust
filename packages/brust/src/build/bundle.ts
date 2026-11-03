@@ -87,6 +87,8 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
         return src === undefined ? undefined : { path: Bun.resolveSync(a.path, dirname(src)) }
       })
       b.onResolve({ filter: /^[^./]/ }, (a) => {
+        // A Windows absolute path (`D:\app\x.tsx`) starts with a letter, so it lands here too; it is no package, and a resolve from `appRoot` would join the two (a symlinked cwd made them differ).
+        if (isAbsolute(a.path)) return undefined
         // A package source imported as itself (a React component revived from it): its bare imports are the package's.
         const own = sourceOf.has(a.importer) ? undefined : packageDirOf(a.importer)
         if (own !== undefined && !matchesExternal(a.path, external)) return { path: resolveNative(a.path, own, target, PRODUCTION, probe) }
