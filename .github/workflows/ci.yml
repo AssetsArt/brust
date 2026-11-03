@@ -277,7 +277,7 @@ jobs:
           restore-keys: cargo-reg-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       # TEMP (F484 N2 evidence, removed before review): force the link past unresolved externals and keep the map of what /OPT:REF kept.
-      - run: cargo rustc -p brust-napi --lib -- -C link-arg=/FORCE:UNRESOLVED -C link-arg=/MAP:D:/napi.map > /d/link.log 2>&1; echo "exit $?"; tail -5 /d/link.log
+      - run: cargo rustc -p brust-napi --lib -- -C link-arg=/FORCE:UNRESOLVED -C link-arg=/MAP:napi.map > link.log 2>&1; echo "exit $?"; tail -5 link.log; ls -l napi.map
         continue-on-error: true
       - uses: actions/upload-artifact@v4
         if: always()
@@ -286,8 +286,8 @@ jobs:
           retention-days: 3
           if-no-files-found: warn
           path: |
-            D:/napi.map
-            D:/link.log
+            napi.map
+            link.log
       - run: cd packages/brust && bun run build:debug
       - run: ls -l packages/brust/native && test -f packages/brust/native/brust.win32-x64-msvc.node
       # The generated loader (CommonJS inside a "type": "module" package, so Bun only, as brust itself) picks the
