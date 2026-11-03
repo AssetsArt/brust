@@ -110,5 +110,10 @@ try {
   console.log('\n[smoke] OK')
 } finally {
   await stop?.().catch(() => {})
-  rmSync(work, { recursive: true, force: true })
+  // Windows keeps a directory busy while a handle is open (an indexer, a just-exited child): retry, and never fail the run on cleanup.
+  try {
+    rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (e) {
+    console.warn(`[smoke] could not remove ${work}: ${(e as Error).message}`)
+  }
 }
