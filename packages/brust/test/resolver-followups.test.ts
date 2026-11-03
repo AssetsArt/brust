@@ -124,7 +124,7 @@ test('F223: sourceDirPlugin carries the Worker conditions to what a package sour
   put(staged, 'import "dep"\n')
   clearResolveCache()
   const picked: string[] = []
-  const onLoad = { name: 'o', setup: (b: Bun.PluginBuilder) => void b.onLoad({ filter: /node_modules\/dep/ }, (a) => (picked.push(a.path), { contents: '', loader: 'js' })) }
+  const onLoad = { name: 'o', setup: (b: Bun.PluginBuilder) => void b.onLoad({ filter: /node_modules[\\/]dep/ }, (a) => (picked.push(a.path), { contents: '', loader: 'js' })) }
   const sourceOf = new Map([[staged, join(host, 'src.ts')]])
   const res = await Bun.build({ entrypoints: [staged], target: 'browser', conditions: [...CF_CONDITIONS], define: PRODUCTION, plugins: [sourceDirPlugin(sourceOf, root, [], 'browser', [...CF_CONDITIONS]), onLoad] })
   expect(res.success, res.logs.join('\n')).toBe(true)
