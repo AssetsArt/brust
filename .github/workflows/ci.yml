@@ -295,7 +295,11 @@ jobs:
       - run: cd packages/brust && bun test test/win-paths.test.ts test/routes.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/build-config-cache.test.ts test/build-cache.test.ts test/ssg.test.ts test/dev-unit.test.ts test/config-l10.test.ts test/pkg-src.test.ts test/source-roots.test.ts test/build-server-only.test.ts test/build-store.test.ts test/build-actions.test.ts test/handlers.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
-      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/shadcn.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
+      # create-app: only the files whose assertions do not assume POSIX. Skipped on Windows on purpose (they pass on Linux): cli.test.ts (regex on
+      # the printed `cd /abs/app`), shadcn.test.ts (runs the printed lines through a real `sh`; the win32 argv is unit-tested there on Linux),
+      # sync-template.test.ts (`relative()` compared with a `/` path), pack.test.ts (tarball paths + the exec bit), scaffold.test.ts (npm install
+      # of workerd and the cloudflare cases; scripts/windows-smoke.ts below covers scaffold -> build -> start instead).
+      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/tailwind.test.ts
       # C2 + A2(4): scaffold -> build -> start -> fetch -> stop -> rebuild, in a non-ASCII dir with Thai text. A reached Windows stub aborts by name and fails here.
       - run: bun scripts/windows-smoke.ts
       - run: sccache --show-stats
