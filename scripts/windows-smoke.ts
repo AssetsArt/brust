@@ -97,6 +97,12 @@ try {
   )
   const leak = Bun.spawnSync(['bun', 'run', 'build'], { cwd: dir, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
   const leakOut = leak.stdout.toString() + leak.stderr.toString()
+  if (leak.exitCode === 0) {
+    const chunksDir = join(dir, 'dist/client')
+    const hits = existsSync(chunksDir) ? readdirSync(chunksDir).filter((f) => f.endsWith('.js') && readFileSync(join(chunksDir, f), 'utf8').includes(MARKER)) : []
+    console.error(`[smoke] build output:\n${leakOut}\n[smoke] chunks containing the marker: ${JSON.stringify(hits)}`)
+    console.error(`[smoke] manifest tiers: ${JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(readFileSync(join(dir, 'dist/manifest.json'), 'utf8')).components as Record<string, { tier?: unknown }>).map(([k, v]) => [k, typeof v.tier === 'string' ? v.tier : Object.keys(v.tier ?? {})])))}`)
+  }
   check(leak.exitCode !== 0, 'the build with a client import of a server_only module SUCCEEDED (server-only guard open)')
   check(/server-only/.test(leakOut), `the failed build does not name server-only:\n${leakOut}`)
   check(existsSync(join(dir, 'dist/manifest.json')), 'a failed build destroyed dist')

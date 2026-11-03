@@ -158,3 +158,14 @@ test('N1: a relative path or an alias that resolves into node_modules/server-onl
   expect(e?.message).toContain('lib/secret.ts imports ../node_modules/server-only/index.js')
   expect(leaked(dir)).toEqual([])
 })
+
+// F486: the `[build] server_only` PREFIX list (not the marker package) refuses an island that imports a listed path (the
+// guard P3 normalises for Windows backslashes; scripts/windows-smoke.ts proves it on a Windows runner).
+test('P3: [build] server_only = ["lib/server"] refuses an island importing lib/server/secret.ts', async () => {
+  const plain = `export const SECRET = '${SECRET}'\nexport function label() { return 'v' + SECRET.length }\n`
+  const dir = app('prefix', { 'lib/server/secret.ts': plain, 'Tip.tsx': TIP.replace('./lib/secret', './lib/server/secret'), 'Page.tsx': PAGE, 'routes.tsx': ROUTES, 'brust.toml': '[build]\nserver_only = ["lib/server"]\n' }, 'empty')
+  const e = await refusal(dir)
+  expect(e?.rule ?? e?.message).toContain('server-only-in-client')
+  expect(e?.message).toContain('Tip.tsx imports ./lib/server/secret')
+  expect(leaked(dir)).toEqual([])
+})
