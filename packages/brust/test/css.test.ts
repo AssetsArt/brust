@@ -322,4 +322,12 @@ test('F490: fail closed on a url() that still names a file on this machine; /pub
   ].join('')
   expect(leakedLocalPaths(css, roots)).toEqual(['C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\x\\Inter Var.woff2', 'D:\\a\\y.png', '/srv/app/img/z.png'])
   expect(leakedLocalPaths('.f{background:url(/images/logo.png)}', roots)).toEqual([])
+  // a root URL that happens to be a real file on the build machine is still a root URL (review: no existsSync clause)
+  const real = join(tmpdir(), 'brust-f490-root-url.png')
+  writeFileSync(real, 'x')
+  try {
+    expect(leakedLocalPaths(`.h{background:url(${real})}.i{background:url(/tmp/x)}.j{background:url(/fonts/x.woff2)}.k{background:url(/tmp-assets/a.png)}`, roots)).toEqual([])
+  } finally {
+    rmSync(real, { force: true })
+  }
 })

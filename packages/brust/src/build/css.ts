@@ -10,7 +10,6 @@
 //   absolute `/public/*` and `/_brust/*` stay as written.
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { BunPlugin } from 'bun'
 import type { FlatRoute } from '../routes'
@@ -152,16 +151,17 @@ function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Arra
   })
 }
 
-/** F490 fail closed: a `url()` left in the built CSS that still names a local file (a Windows drive or UNC path, or a
- * `/…` path that exists on disk or lies under the app, the dist or the temp/home dirs) would ship the machine's path
- * and 404 in the browser, so the build fails instead. `/public/…`, `/_brust/…` and a plain root-relative URL pass. */
+/** F490 fail closed: a `url()` left in the built CSS that still names a file on this machine would ship the machine's
+ * path and 404 in the browser, so the build fails instead. A leak is a Windows drive or UNC path, or a `/…` path under
+ * the app root or the dist dir (`roots`). Any other root URL passes, even one that happens to exist on the build
+ * machine (`url(/tmp/x)`, `url(/fonts/x.woff2)`): only the app's own files are known to be local. */
 export function leakedLocalPaths(text: string, roots: string[]): string[] {
   const out: string[] = []
   for (const m of text.matchAll(SOURCE_URL)) {
     const v = cssUnescape(m[2]!)
     if (v.startsWith('/public/') || v.startsWith('/_brust/') || !localAbsolute(v)) continue
     const posix = v.replaceAll('\\', '/')
-    const local = !v.startsWith('/') || existsSync(v) || roots.some((r) => posix === r || posix.startsWith(`${r}/`))
+    const local = !v.startsWith('/') || roots.some((r) => posix === r || posix.startsWith(`${r}/`))
     if (local && !out.includes(v)) out.push(v)
   }
   return out
@@ -287,7 +287,7 @@ export async function buildCss(
     )
   }
   for (const [i, t] of css) css.set(i, emitSourceAssets(t, assets, suffixed))
-  const roots = [appRoot, dist, tmpdir(), homedir()].flatMap((r) => [r, real(r)]).map((r) => r.replaceAll('\\', '/').replace(/\/+$/, '')).filter((r) => r !== '')
+  const roots = [appRoot, dist].flatMap((r) => [r, real(r)]).map((r) => r.replaceAll('\\', '/').replace(/\/+$/, '')).filter((r) => r !== '')
   const leaks = [...css].flatMap(([i, t]) => leakedLocalPaths(t, roots).map((p) => `url(${p}) in ${sources[i]}`))
   if (leaks.length > 0)
     throw new BuildError('css-asset-path', `${leaks.join('; ')}: the built CSS would name a file on this machine; reference it relative to the stylesheet or as /public/…`)
