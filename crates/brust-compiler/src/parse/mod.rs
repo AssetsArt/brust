@@ -94,7 +94,9 @@ fn stack_bottom() -> Option<usize> {
 fn stack_bottom() -> Option<usize> {
     let (mut low, mut high) = (0usize, 0usize);
     // SAFETY: both out-pointers are valid for writes; the call only reads the calling thread's TEB.
-    unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadStackLimits(&mut low, &mut high) };
+    unsafe {
+        windows_sys::Win32::System::Threading::GetCurrentThreadStackLimits(&mut low, &mut high)
+    };
     (low != 0 && high > low).then_some(low)
 }
 
