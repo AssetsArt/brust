@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.png binary
+*.woff2 binary
+*.wasm binary
+*.node binary
+*.ico binary
+*.sqlite binary
