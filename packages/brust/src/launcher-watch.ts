@@ -70,19 +70,13 @@ export async function watchLauncher(opts: LauncherWatchOptions): Promise<{ pids:
   let pids: number[]
   try {
     const rows = await (opts.readTable ?? readProcTable)()
-    const me = rows.find((r) => r.pid === (opts.self ?? process.pid))
-    console.error(`[brust] launcher-watch DEBUG: rows=${rows.length} self=${opts.self ?? process.pid} me=${JSON.stringify(me)} parent=${JSON.stringify(rows.find((r) => r.pid === me?.ppid))}`)
-    console.error(`[brust] launcher-watch DEBUG: family=${JSON.stringify(rows.filter((r) => /bun|brust|cmd|node|bash|pwsh|powershell/i.test(r.name)).map((r) => [r.pid, r.ppid, r.name]))}`)
     pids = launcherChain(rows, opts.self ?? process.pid)
-  } catch (e) {
-    console.error(`[brust] launcher-watch DEBUG: table unreadable: ${String(e)}`)
+  } catch {
     return none
   }
-  console.error(`[brust] launcher-watch DEBUG: chain=${JSON.stringify(pids)}`)
   if (pids.length === 0) return none
   const alive = opts.alive ?? pidAlive
   const timer = setInterval(() => {
-    console.error(`[brust] launcher-watch DEBUG: alive=${JSON.stringify(pids.map((p) => alive(p)))}`)
     const gone = pids.find((p) => !alive(p))
     if (gone === undefined) return
     clearInterval(timer)

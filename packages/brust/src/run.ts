@@ -196,21 +196,24 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   process.on('SIGINT', () => onSignal(130))
   process.on('SIGTERM', () => onSignal(143))
 
-  try {
-    await untilReady(cfg.bootTimeoutMs)
-  } catch (e) {
-    fail(`workers not ready: ${String((e as Error).message ?? e)} (BRUST_BOOT_TIMEOUT_MS=${cfg.bootTimeoutMs})`)
-  }
-  ready = true
-  console.log(`[brust] ready (${workers} worker${workers === 1 ? '' : 's'})`)
   // F488 (Windows only): a killed `bun run start` wrapper leaves this process running; drain when the launchers are gone (same path as Ctrl+C).
-  void watchLauncher({
+  // Started BEFORE the workers finish booting and awaited before `ready`: reading the process table (PowerShell) takes seconds on a loaded
+  // runner, and a launcher killed while it was still being read would be missed (run 41654464674: the table showed no wrapper at all).
+  const launcherWatch = watchLauncher({
     onGone: (pid) => {
       if (exiting) return
       console.error(`[brust] launcher (pid ${pid}) exited: shutting down`)
       onSignal(130)
     },
   })
+  try {
+    await untilReady(cfg.bootTimeoutMs)
+  } catch (e) {
+    fail(`workers not ready: ${String((e as Error).message ?? e)} (BRUST_BOOT_TIMEOUT_MS=${cfg.bootTimeoutMs})`)
+  }
+  await launcherWatch
+  ready = true
+  console.log(`[brust] ready (${workers} worker${workers === 1 ? '' : 's'})`)
   if (opts.onReady) {
     let code = 1
     try {
