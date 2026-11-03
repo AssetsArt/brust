@@ -199,7 +199,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   // F488 (Windows only): a killed `bun run start` wrapper leaves this process running; drain when the launchers are gone (same path as Ctrl+C).
   // Started BEFORE the workers finish booting and awaited before `ready`: reading the process table (PowerShell) takes seconds on a loaded
   // runner, and a launcher killed while it was still being read would be missed (run 41654464674: the table showed no wrapper at all).
-  const launcherWatch = watchLauncher({
+  // Not for a one-shot (`opts.onReady`: `brust build --target static` renders and exits): it would only add the PowerShell wait to every build.
+  const launcherWatch = opts.onReady ? undefined : watchLauncher({
     onGone: (pid) => {
       if (exiting) return
       console.error(`[brust] launcher (pid ${pid}) exited: shutting down`)
