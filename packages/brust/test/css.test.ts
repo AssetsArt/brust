@@ -6,9 +6,10 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { loadBuildConfig } from '../src/build/config'
-import { buildCss, CssGraph, cssPlugin, routeCssSources } from '../src/build/css'
+import { buildCss, CssGraph, cssPlugin, cssUnescape, leakedLocalPaths, localAbsolute, routeCssSources } from '../src/build/css'
+import { posixOf } from '../src/build/posix'
 import { flattenRoutes, type Route } from '../src/routes'
 
 const fixture = join(import.meta.dir, 'fixtures/css-app')
@@ -205,7 +206,8 @@ test('the import walk: chain order, depth-first, first occurrence, cycles, packa
   ])
   const leaves = flattenRoutes([{ Component: L, children: [{ path: '/', Component: P }] }] as Route[]).leaves
   const got = routeCssSources(leaves, (l) => l.chain.flatMap((n) => (n.Component ? [files.get(n.Component)!] : [])), [join(d, 'g.css')], new CssGraph())
-  expect(got.get('r1')!.map((p) => p.slice(d.length + 1))).toEqual(['g.css', 'l.css', 'a.css', 'b.css', 'node_modules/ui/style.css', 'p.css'])
+  // the walk hands back file system paths (native spelling); compare them `/`-spelled (F490)
+  expect(got.get('r1')!.map((p) => posixOf(p.slice(d.length + 1)))).toEqual(['g.css', 'l.css', 'a.css', 'b.css', 'node_modules/ui/style.css', 'p.css'])
 })
 
 test('cssPlugin: a module is its frozen map, plain CSS is empty, an unbuilt module fails the build', async () => {
@@ -301,3 +303,38 @@ test('F393: a ?query / #fragment on a url() asset is kept verbatim on the rewrit
     expect(readdirSync(join(dist, 'client')).filter((f) => f.endsWith('.woff2')).length).toBe(1)
   }
 }, 60_000)
+
+test('F490: a url() value is unescaped as CSS, and a local absolute path is recognised in both spellings', () => {
+  expect(cssUnescape('C:\\\\Users\\\\me\\\\Inter Var.woff2')).toBe('C:\\Users\\me\\Inter Var.woff2')
+  expect(cssUnescape('a\\20 b\\"c')).toBe('a b"c')
+  expect(cssUnescape('/srv/app/x.png')).toBe('/srv/app/x.png')
+  // review N2: an escape above U+10FFFF, a surrogate or zero is U+FFFD, not a RangeError
+  expect(cssUnescape('/public/\\ffffff.png')).toBe('/public/\ufffd.png')
+  expect(cssUnescape('a\\d800 b\\0 c')).toBe('a\ufffdb\ufffdc')
+  for (const p of ['/srv/app/x.png', 'C:\\a\\x.png', 'd:/a/x.png', '\\\\host\\share\\x.png']) expect(localAbsolute(p), p).toBe(true)
+  for (const p of ['./x.png', 'x.png', 'data:image/png;base64,AA', 'https://cdn.example/x.png', 'C:x.png']) expect(localAbsolute(p), p).toBe(false)
+})
+
+test('F490: fail closed on a url() that still names a file on this machine; /public, /_brust and plain root URLs pass', () => {
+  const roots = ['C:/Users/RUNNER~1/AppData/Local/Temp', '/srv/app']
+  const css = [
+    '.a{background:url("C:\\\\Users\\\\RUNNER~1\\\\AppData\\\\Local\\\\Temp\\\\x\\\\Inter Var.woff2")}',
+    '.b{background:url(D:\\\\a\\\\y.png)}',
+    '.c{background:url(/srv/app/img/z.png)}',
+    '.d{background:url(/public/bg.png)}.e{background:url(/_brust/client/y.png)}.f{background:url(/images/logo.png)}.g{background:url(./k-1a0e0ecf84.png)}',
+  ].join('')
+  expect(leakedLocalPaths(css, roots)).toEqual(['C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\x\\Inter Var.woff2', 'D:\\a\\y.png', '/srv/app/img/z.png'])
+  expect(leakedLocalPaths('.f{background:url(/images/logo.png)}', roots)).toEqual([])
+  // a root URL that happens to be a real file on the build machine is still a root URL (review: no existsSync clause)
+  const real = join(tmpdir(), 'brust-f490-root-url.png')
+  writeFileSync(real, 'x')
+  try {
+    // `/`-spelled so the value survives CSS unescaping on Windows too (a raw C:\\Users\\… would read \\A as an escape, review N1).
+    // There it is a drive path, which is refused by design; on POSIX it is a root URL, which passes.
+    const url = posixOf(real)
+    expect(leakedLocalPaths(`.h{background:url(${url})}`, roots)).toEqual(sep === '/' ? [] : [url])
+    expect(leakedLocalPaths('.i{background:url(/tmp/x)}.j{background:url(/fonts/x.woff2)}.k{background:url(/tmp-assets/a.png)}', roots)).toEqual([])
+  } finally {
+    rmSync(real, { force: true })
+  }
+})

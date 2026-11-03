@@ -4,7 +4,7 @@
 import { afterAll, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { PRODUCTION, sourceDirPlugin } from '../src/build/bundle'
 import { CF_CONDITIONS } from '../src/build/cloudflare'
 import { clearResolveCache, resolveNative } from '../src/build/esm-resolve'
@@ -124,7 +124,7 @@ test('F223: sourceDirPlugin carries the Worker conditions to what a package sour
   put(staged, 'import "dep"\n')
   clearResolveCache()
   const picked: string[] = []
-  const onLoad = { name: 'o', setup: (b: Bun.PluginBuilder) => void b.onLoad({ filter: /node_modules\/dep/ }, (a) => (picked.push(a.path), { contents: '', loader: 'js' })) }
+  const onLoad = { name: 'o', setup: (b: Bun.PluginBuilder) => void b.onLoad({ filter: /node_modules[\\/]dep/ }, (a) => (picked.push(a.path), { contents: '', loader: 'js' })) }
   const sourceOf = new Map([[staged, join(host, 'src.ts')]])
   const res = await Bun.build({ entrypoints: [staged], target: 'browser', conditions: [...CF_CONDITIONS], define: PRODUCTION, plugins: [sourceDirPlugin(sourceOf, root, [], 'browser', [...CF_CONDITIONS]), onLoad] })
   expect(res.success, res.logs.join('\n')).toBe(true)
@@ -217,7 +217,7 @@ test('F242: a browser-target probe that cannot answer is an error naming the spe
   }
   // The same failure for the bun target keeps today's answer (and names it).
   const warnings: string[] = []
-  expect(resolveNative('nodey', root, 'bun', PRODUCTION, { timeoutMs: 1, warn: (m) => warnings.push(m) })).toContain('node_modules/nodey/')
+  expect(resolveNative('nodey', root, 'bun', PRODUCTION, { timeoutMs: 1, warn: (m) => warnings.push(m) }).replaceAll(sep, '/')).toContain('node_modules/nodey/')
   expect(warnings).toHaveLength(1)
 })
 

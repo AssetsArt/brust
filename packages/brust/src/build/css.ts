@@ -122,8 +122,22 @@ const ASSET_FILE = /\.(?:woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|svg|ico)$/i
 
 const SOURCE_URL = /url\(\s*(["']?)([^"')]+?)\1\s*\)/g
 
+/** A `url()` value as the file system spells it: CSS escapes undone (Bun prints a Windows path as `C:\\Users\\…`). */
+/** CSS Syntax 4.3.7: an escaped code point that is zero, a surrogate or above U+10FFFF is U+FFFD (never a RangeError). */
+const cssCodePoint = (n: number): number => (n === 0 || n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff) ? 0xfffd : n)
+
+export function cssUnescape(s: string): string {
+  return s.replace(/\\(?:([0-9a-fA-F]{1,6})\s?|([^\n0-9a-fA-F]))/g, (_m, h: string | undefined, c: string | undefined) =>
+    h !== undefined ? String.fromCodePoint(cssCodePoint(Number.parseInt(h, 16))) : c!,
+  )
+}
+
+/** F490: an absolute local path in either spelling: POSIX `/…`, a Windows drive `C:\…` / `C:/…`, or a UNC `\\host\…`. */
+export const localAbsolute = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\')
+
 /** F393: a `url()` that is the absolute path of a file on disk (see the `loader` in `buildCss`) becomes a
- * hashed `./<name>-<hex10>.<ext>` client asset at any size. `/public/…` and `/_brust/…` stay as written. */
+ * hashed `./<name>-<hex10>.<ext>` client asset at any size. `/public/…` and `/_brust/…` stay as written.
+ * F490: on Windows that path is `C:\\…` (CSS-escaped), so the value is unescaped and both spellings are taken. */
 function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Array }[], suffixed: Map<string, string>): string {
   const emit = (path: string, suffix: string) => {
     const { name, bytes } = hashedAsset(path)
@@ -133,10 +147,27 @@ function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Arra
   return text.replace(SOURCE_URL, (whole, _q: string, path: string) => {
     const abs = suffixed.get(path)
     if (abs !== undefined) return emit(abs, path.slice(path.search(/[?#]/)))
-    const ext = extname(path).toLowerCase()
-    if (!path.startsWith('/') || !SERVED_ASSET_EXT.includes(ext) || path.startsWith('/public/') || path.startsWith('/_brust/') || !existsSync(path)) return whole
-    return emit(path, '')
+    const file = cssUnescape(path)
+    const ext = extname(file).toLowerCase()
+    if (!localAbsolute(file) || !SERVED_ASSET_EXT.includes(ext) || file.startsWith('/public/') || file.startsWith('/_brust/') || !existsSync(file)) return whole
+    return emit(file, '')
   })
+}
+
+/** F490 fail closed: a `url()` left in the built CSS that still names a file on this machine would ship the machine's
+ * path and 404 in the browser, so the build fails instead. A leak is a Windows drive or UNC path, or a `/…` path under
+ * the app root or the dist dir (`roots`). Any other root URL passes, even one that happens to exist on the build
+ * machine (`url(/tmp/x)`, `url(/fonts/x.woff2)`): only the app's own files are known to be local. */
+export function leakedLocalPaths(text: string, roots: string[]): string[] {
+  const out: string[] = []
+  for (const m of text.matchAll(SOURCE_URL)) {
+    const v = cssUnescape(m[2]!)
+    if (v.startsWith('/public/') || v.startsWith('/_brust/') || !localAbsolute(v)) continue
+    const posix = v.replaceAll('\\', '/')
+    const local = !v.startsWith('/') || roots.some((r) => posix === r || posix.startsWith(`${r}/`))
+    if (local && !out.includes(v)) out.push(v)
+  }
+  return out
 }
 
 /** F393: a `url()` asset with a `?query` / `#fragment` (`?v=3`, `?#iefix`, an SVG font's `#id`) is not given
@@ -259,6 +290,10 @@ export async function buildCss(
     )
   }
   for (const [i, t] of css) css.set(i, emitSourceAssets(t, assets, suffixed))
+  const roots = [appRoot, dist].flatMap((r) => [r, real(r)]).map((r) => r.replaceAll('\\', '/').replace(/\/+$/, '')).filter((r) => r !== '')
+  const leaks = [...css].flatMap(([i, t]) => leakedLocalPaths(t, roots).map((p) => `url(${p}) in ${sources[i]}`))
+  if (leaks.length > 0)
+    throw new BuildError('css-asset-path', `${leaks.join('; ')}: the built CSS would name a file on this machine; reference it relative to the stylesheet or as /public/…`)
   for (const a of assets) writeFileSync(join(dist, 'client', a.name), a.bytes)
   for (const [i, src] of sources.entries()) {
     let text = css.get(i)
