@@ -32,6 +32,10 @@ minijinja.workspace = true
 thiserror.workspace = true
 mimalloc = { version = "0.1", optional = true }
 
+# parse/mod.rs stack_bottom(): the compiler thread's real stack bounds on Windows.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
+
 [dev-dependencies]
 brust-jinja.workspace = true
 brust-core.workspace = true

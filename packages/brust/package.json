@@ -52,7 +52,8 @@
       "x86_64-unknown-linux-gnu",
       "aarch64-unknown-linux-gnu",
       "x86_64-unknown-linux-musl",
-      "aarch64-unknown-linux-musl"
+      "aarch64-unknown-linux-musl",
+      "x86_64-pc-windows-msvc"
     ]
   },
   "dependencies": {
@@ -106,6 +107,7 @@
     "@brust/native-linux-arm64-gnu": "workspace:*",
     "@brust/native-linux-x64-musl": "workspace:*",
     "@brust/native-linux-arm64-musl": "workspace:*",
+    "@brust/native-win32-x64-msvc": "workspace:*",
     "@brust/core-cf": "workspace:*"
   }
 }

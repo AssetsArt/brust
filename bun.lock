@@ -112,6 +112,10 @@
       "name": "@brust/native-linux-x64-musl",
       "version": "2.0.0-alpha.33",
     },
+    "npm/win32-x64-msvc": {
+      "name": "@brust/native-win32-x64-msvc",
+      "version": "2.0.0-alpha.33",
+    },
     "packages/brust": {
       "name": "@brust/core",
       "version": "2.0.0-alpha.33",
@@ -146,6 +150,7 @@
         "@brust/native-linux-arm64-musl": "workspace:*",
         "@brust/native-linux-x64-gnu": "workspace:*",
         "@brust/native-linux-x64-musl": "workspace:*",
+        "@brust/native-win32-x64-msvc": "workspace:*",
       },
       "peerDependencies": {
         "@elysia/eden": "^2.0.0-rc.0",
@@ -375,6 +380,8 @@
     "@brust/native-linux-x64-gnu": ["@brust/native-linux-x64-gnu@workspace:npm/linux-x64-gnu"],
 
     "@brust/native-linux-x64-musl": ["@brust/native-linux-x64-musl@workspace:npm/linux-x64-musl"],
+
+    "@brust/native-win32-x64-msvc": ["@brust/native-win32-x64-msvc@workspace:npm/win32-x64-msvc"],
 
     "@brust/runtime-dom": ["@brust/runtime-dom@workspace:packages/runtime-dom"],
 

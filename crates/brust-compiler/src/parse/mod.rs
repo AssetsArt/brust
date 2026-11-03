@@ -87,9 +87,20 @@ fn stack_bottom() -> Option<usize> {
     }
 }
 
+/// Lowest usable address of the current thread's stack. Windows reserves the whole
+/// stack up front (Rust's `thread::Builder::stack_size` passes it as a reservation),
+/// so the low limit is the bottom of the 256 MiB compiler stack, not of the committed part.
+#[cfg(all(feature = "bun-stubs", windows))]
+fn stack_bottom() -> Option<usize> {
+    let (mut low, mut high) = (0usize, 0usize);
+    // SAFETY: both out-pointers are valid for writes; the call only reads the calling thread's TEB.
+    unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadStackLimits(&mut low, &mut high) };
+    (low != 0 && high > low).then_some(low)
+}
+
 #[cfg(all(
     feature = "bun-stubs",
-    not(any(target_os = "macos", target_os = "linux"))
+    not(any(target_os = "macos", target_os = "linux", windows))
 ))]
 fn stack_bottom() -> Option<usize> {
     None

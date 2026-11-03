@@ -35,7 +35,7 @@ test('monorepo + target under a workspace glob (examples/demo) → workspace:*',
   expect(resolveBrustDep({ targetDir: join(root, 'examples/demo'), pkgRoot })).toEqual({ kind: 'workspace', spec: 'workspace:*' })
 })
 
-test('monorepo + target outside → file:<root>/packages/brust + overrides for runtime-dom, core-cf and the six natives', () => {
+test('monorepo + target outside → file:<root>/packages/brust + overrides for runtime-dom, core-cf and the seven natives', () => {
   const { root, pkgRoot } = fakeRepo()
   const d = resolveBrustDep({ targetDir: join(tmpdir(), 'elsewhere-app'), pkgRoot })
   expect(d.kind).toBe('file')
