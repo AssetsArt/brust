@@ -25,11 +25,11 @@ const json = (body: unknown): RequestInit => ({
 })
 
 beforeAll(async () => {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}`)
   // `bun test` sets NODE_ENV=test and run.ts keeps an explicit value; pin what a deployed `brust start` has.
   const env = { ...process.env, NODE_ENV: 'production', BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
-  proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '2'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
+  proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '2'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
   while (!/\[brust\] ready/.test(stdout)) {

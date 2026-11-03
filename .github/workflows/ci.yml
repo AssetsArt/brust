@@ -288,18 +288,25 @@ jobs:
       # The 7 natives release-check/dep tests (platform list, 6 -> 7).
       - run: bun test scripts/release-check.test.ts packages/create-app/test/dep.test.ts
       - run: cargo test -p brust-compiler
-      # packages/brust unit files that need no Linux-only tooling: no redis/dragonfly (cache-redis, cache-adapter-*), no Chromium
-      # (tests/server/*.chromium), no wrangler/workerd (cf-*, scaffold --cloudflare), no Docker services. Skipped on purpose: the
-      # cf-* files (workerd), cache-redis, and everything under tests/server (Chromium). Each server-starting file runs alone.
+      # packages/brust and create-app test files on Windows. scripts/ci-wiring.test.ts fails when a test file of either package
+      # is neither run by a windows job nor named in a `# windows-skip: <path> <reason>` line below (F489). tests/server/* stay
+      # Linux-only (Chromium, redis, workerd); scripts/windows-smoke.ts covers scaffold -> build -> start here.
+      # windows-skip: packages/brust/test/cf-dev.test.ts the fake wrangler is a #!/bin/sh script and the test drives the SIGTERM restart (POSIX-only)
+      # windows-skip: packages/brust/test/lifecycle.test.ts SIGTERM drain is POSIX-only (F486 C4); Windows stop is lane win-stop (F488)
+      # windows-skip: packages/brust/test/css.test.ts PRODUCT-BUG F489: a bare url() asset keeps the absolute Windows path, a small one is not hashed
+      # windows-skip: packages/brust/test/font-import.test.ts PRODUCT-BUG F489: the font url() is not rewritten to ./face-<hash>.woff2 (same as css.test.ts)
+      # windows-skip: packages/brust/test/pkg-src-dist.test.ts PRODUCT-BUG F489: resolveNative answers the __brust_resolve__.ts probe, not the package file
+      # windows-skip: packages/brust/test/resolver-followups.test.ts PRODUCT-BUG F489: the cached resolver answers compare / and \ spellings
+      # windows-skip: packages/create-app/test/shadcn.test.ts the round trips run the printed lines through a real sh and #!/bin/sh stubs (POSIX shell)
+      # windows-skip: packages/create-app/test/pack.test.ts asserts the tarball's exec bit and lists it with sh/tar (the exec bit is POSIX-only)
+      # windows-skip: packages/create-app/test/scaffold.test.ts npm install of workerd and the cloudflare cases; scripts/windows-smoke.ts covers the scaffold
       - run: cd packages/brust && bun run typecheck
       - run: cd packages/brust && bun test test/win-paths.test.ts test/launcher-watch.test.ts test/routes.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/build-config-cache.test.ts test/build-cache.test.ts test/ssg.test.ts test/dev-unit.test.ts test/config-l10.test.ts test/pkg-src.test.ts test/source-roots.test.ts test/build-server-only.test.ts test/build-store.test.ts test/build-actions.test.ts test/handlers.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
-      # create-app: only the files whose assertions do not assume POSIX. Skipped on Windows on purpose (they pass on Linux): cli.test.ts (regex on
-      # the printed `cd /abs/app`), shadcn.test.ts (runs the printed lines through a real `sh`; the win32 argv is unit-tested there on Linux),
-      # sync-template.test.ts (`relative()` compared with a `/` path), pack.test.ts (tarball paths + the exec bit), scaffold.test.ts (npm install
-      # of workerd and the cloudflare cases; scripts/windows-smoke.ts below covers scaffold -> build -> start instead).
-      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/tailwind.test.ts
+      # F489: the rest, each file alone (several start a server or build a fixture app; one process per file keeps ports and dirs apart).
+      - run: cd packages/brust && for f in test/actions-bridge.test.ts test/actions-client-middleware.test.ts test/actions-client.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-napi.test.ts test/actions-standalone.test.ts test/actions-typed-cookies.test.ts test/actions-typed-routes-doc.test.ts test/attr-parity-react.test.ts test/build-cn-fold.test.ts test/build-eval.test.ts test/build-island-children.test.ts test/build-island-slots.test.ts test/build-job-import.test.ts test/build-manifest-stores.test.ts test/build-manifest.test.ts test/build-member-import.test.ts test/build-named-islands.test.ts test/build-prop-path-children.test.ts test/build-props-pattern.test.ts test/build-safety.test.ts test/cache-adapter-bridge.test.ts test/cache-adapter-memory.test.ts test/cache-adapter-runtime.test.ts test/cache.test.ts test/cf-assets.test.ts test/cf-build.test.ts test/cf-cache-bindings.test.ts test/cf-config.test.ts test/cf-core.test.ts test/cf-entry.test.ts test/cf-wrangler.test.ts test/css-module-fold.test.ts test/dev-proxy-actions.test.ts test/e2e-actions.test.ts test/e2e-child-chunks.test.ts test/e2e-child-literals.test.ts test/e2e-external-island.test.ts test/e2e-module-const.test.ts test/e2e-store.test.ts test/fetch-in-scope.test.ts test/idle-workers.test.ts test/live-style-real.test.ts test/lucide-native.test.ts test/napi-server.test.ts test/navigate.test.ts test/navigation-store.test.ts test/package-helpers.test.ts test/package-name.test.ts test/prop-path-children-revive.test.ts test/react-cache-start.test.ts test/run-options.test.ts test/runtime-features.test.ts test/shadcn-init-extends.test.ts test/shadcn-init-lazy.test.ts test/shadcn-init-registry.test.ts test/shadcn-init.test.ts test/state-from-children.test.ts test/store-exports.test.ts test/store-server-context.test.ts test/tailwind.test.ts test/tsconfig-paths.test.ts test/worker-store.test.ts test/worker.test.ts test/esm-resolve.test.ts test/load-writer-handed.test.ts test/static-actions.test.ts test/static.test.ts; do bun test --timeout 180000 "$f" || exit 1; done
+      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/tailwind.test.ts test/sync-template.test.ts test/cli.test.ts
       # C2 + A2(4): scaffold -> build -> start -> fetch -> stop -> rebuild, in a non-ASCII dir with Thai text. A reached Windows stub aborts by name and fails here.
       - run: bun scripts/windows-smoke.ts
       - run: sccache --show-stats

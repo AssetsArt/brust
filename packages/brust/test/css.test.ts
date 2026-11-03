@@ -20,7 +20,7 @@ let manifest: Manifest
 let buildOut = ''
 
 function build(cwd: string, ...args: string[]) {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
   return { code: b.exitCode, stdout: b.stdout.toString(), stderr: b.stderr.toString() }
 }
 function tmp(files: Record<string, string | Uint8Array>): string {
@@ -100,7 +100,7 @@ test('R19.4/L20: the classes are in the CSS; a template folds them to literals (
 
 test('R19.3: the server links the route CSS right after <head> / <meta charset>, before the author tags; no head: first', async () => {
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
-  const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: fixture, env, stdout: 'pipe', stderr: 'inherit' })
+  const proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1'], { cwd: fixture, env, stdout: 'pipe', stderr: 'inherit' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
   let log = ''
@@ -158,7 +158,7 @@ test('review N1: a url() asset of a type the server does not serve is css-asset-
 
 test('review N3: brust dev (BRUST_BUILD_MODE=development) keeps CSS readable; brust build minifies', () => {
   const dev = variant('dev', () => {})
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: dev, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_BUILD_MODE: 'development' } })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx'], { cwd: dev, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_BUILD_MODE: 'development' } })
   expect([b.exitCode, b.stderr.toString()]).toEqual([0, ''])
   const m = JSON.parse(readFileSync(join(dev, 'dist/manifest.json'), 'utf8')) as Manifest
   const layout = readFileSync(join(dev, 'dist', m.routes[0]!.css![1]!), 'utf8')
@@ -250,7 +250,7 @@ test('--target cloudflare: the stylesheets are Static Assets and the worker bund
   const cfCore = join(import.meta.dir, 'fixtures/cf-core')
   const out = mkdtempSync(join(tmpdir(), 'brust-css-cf-'))
   temps.push(out)
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out, '--force'], { cwd: fixture, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_CORE_CF_DIR: cfCore } })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out, '--force'], { cwd: fixture, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_CORE_CF_DIR: cfCore } })
   expect([b.exitCode, b.stderr.toString()]).toEqual([0, ''])
   const assets = readdirSync(join(out, 'cf/assets/_brust/client')).filter((f) => f.endsWith('.css'))
   expect(assets.length).toBe(9)

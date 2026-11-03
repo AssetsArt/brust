@@ -15,7 +15,7 @@ beforeAll(() => {
   // Inside the package (gitignored `dist/`) so jobs.js resolves `react` from node_modules.
   dist = join(entries, 'dist')
   rmSync(dist, { recursive: true, force: true })
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', dist], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--out-dir', dist], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}`)
 }, 120_000)
 
@@ -42,7 +42,7 @@ function start(entry: string, extraEnv: Record<string, string> = {}): Started {
     ...extraEnv,
   }
   delete env.NODE_ENV
-  const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'pipe' })
+  const proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'pipe' })
   let out = ''
   let err = ''
   const pump = async (s: ReadableStream<Uint8Array>, add: (t: string) => void) => {

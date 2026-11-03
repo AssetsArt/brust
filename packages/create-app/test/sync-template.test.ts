@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { excluded, syncTemplate } from '../scripts/sync-template.ts'
 
 const repo = join(import.meta.dir, '../../..')
@@ -79,7 +79,7 @@ test('examples/pokedex is unchanged by a sync', () => {
   const before = Bun.spawnSync(['git', 'status', '--porcelain', 'examples/pokedex'], { cwd: repo }).stdout.toString()
   syncTemplate({ from: FROM, to: join(tmp(), 'out'), overlay: OVERLAY })
   expect(Bun.spawnSync(['git', 'status', '--porcelain', 'examples/pokedex'], { cwd: repo }).stdout.toString()).toBe(before)
-  expect(relative(repo, FROM)).toBe('examples/pokedex')
+  expect(relative(repo, FROM).split(sep).join('/')).toBe('examples/pokedex')
 })
 
 test('local Cloudflare state never reaches the template; the D1 files do', () => {

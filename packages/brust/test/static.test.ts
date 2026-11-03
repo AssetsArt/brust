@@ -19,7 +19,7 @@ function build(cwd: string, ...args: string[]) {
   return buildEnv(cwd, {}, ...args)
 }
 function buildEnv(cwd: string, extra: Record<string, string>, ...args: string[]) {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'static', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_PORT: '', BRUST_ADDR: '', ...extra } })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--target', 'static', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_PORT: '', BRUST_ADDR: '', ...extra } })
   return { code: b.exitCode, stdout: b.stdout.toString(), stderr: b.stderr.toString() }
 }
 
@@ -27,7 +27,7 @@ function buildEnv(cwd: string, extra: Record<string, string>, ...args: string[])
 function variant(name: string, edit: (dir: string) => void): string {
   const dir = join(import.meta.dir, `fixtures/.static-${name}`)
   rmSync(dir, { recursive: true, force: true })
-  cpSync(fixture, dir, { recursive: true, filter: (src) => !src.includes('/dist') })
+  cpSync(fixture, dir, { recursive: true, filter: (src) => !/[\\/]dist/.test(src) })
   copies.push(dir)
   edit(dir)
   return dir
@@ -136,7 +136,7 @@ test('F392: every written page starts with <!doctype html> exactly once (a root 
 
 test('every page is byte-identical to what brust start serves from the same dist', async () => {
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
-  const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: fixture, env, stdout: 'pipe', stderr: 'inherit' })
+  const proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1'], { cwd: fixture, env, stdout: 'pipe', stderr: 'inherit' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
   let log = ''

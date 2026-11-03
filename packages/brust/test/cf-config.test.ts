@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadBuildConfig } from '../src/build/config'
+import { posixOf } from '../src/build/posix'
 
 const dirs: string[] = []
 function tmpApp(toml?: string, files: Record<string, string> = {}): string {
@@ -52,7 +53,7 @@ test('every key parses', async () => {
   )
   const c = (await loadBuildConfig(d)).cloudflare
   expect(c).toMatchObject({ name: 'my-app', compatibilityDate: '2026-09-01', l1Capacity: 64, jobCacheCapacity: 8, stats: true, edgeCache: 'off' })
-  expect(Object.entries(c?.alias ?? {}).map(([k, v]) => [k.endsWith('lib/db.ts'), v.endsWith('lib/db.cf.ts')])).toEqual([[true, true]])
+  expect(Object.entries(c?.alias ?? {}).map(([k, v]) => [posixOf(k).endsWith('lib/db.ts'), posixOf(v).endsWith('lib/db.cf.ts')])).toEqual([[true, true]])
 })
 
 test('bad types are config errors', async () => {

@@ -14,14 +14,14 @@ const dist = join(fixture, 'dist')
 const copies: string[] = []
 
 function build(cwd: string, env: Record<string, string> = {}) {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'static'], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_PORT: '', BRUST_ADDR: '', BRUST_CORE_CF_DIR: core, ...env } })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--target', 'static'], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_PORT: '', BRUST_ADDR: '', BRUST_CORE_CF_DIR: core, ...env } })
   return { code: b.exitCode, stdout: b.stdout.toString(), stderr: b.stderr.toString() }
 }
 
 function variant(name: string, edit: (dir: string) => void): string {
   const dir = join(import.meta.dir, `fixtures/.static-actions-${name}`)
   rmSync(dir, { recursive: true, force: true })
-  cpSync(fixture, dir, { recursive: true, filter: (src) => !src.includes('/dist') })
+  cpSync(fixture, dir, { recursive: true, filter: (src) => !/[\\/]dist/.test(src) })
   copies.push(dir)
   edit(dir)
   return dir
