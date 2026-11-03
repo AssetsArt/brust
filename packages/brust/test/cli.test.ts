@@ -42,14 +42,14 @@ test('brust build with a nested catch-all exits 1 with `error nested-catch-all`'
 })
 
 test('dist-dir: BRUST_DIST_DIR beats --dist-dir (env > flags, as config.ts)', () => {
-  const p = Bun.spawnSync([bin, 'start', '--dist-dir', '/nonexistent-flag'], {
+  const p = Bun.spawnSync([process.execPath, bin, 'start', '--dist-dir', '/nonexistent-flag'], {
     cwd: import.meta.dir,
     stdout: 'pipe',
     stderr: 'pipe',
     env: { ...process.env, BRUST_PORT: '', BRUST_DIST_DIR: '/nonexistent-env' },
   })
   expect(p.exitCode).toBe(1)
-  expect(p.stderr.toString()).toContain('/nonexistent-env/manifest.json')
+  expect(p.stderr.toString()).toMatch(/nonexistent-env[\\/]manifest\.json/)
 })
 
 test('usage: --help exits 0, an unknown command exits 2', () => {
