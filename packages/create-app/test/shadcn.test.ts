@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { brustArgv, runShadcn, shq } from '../src/shadcn.ts'
+import { brustArgv, brustHint, runShadcn, shq } from '../src/shadcn.ts'
 
 function go(failOn?: string, workspace = false) {
   const calls: string[][] = []
@@ -72,4 +72,11 @@ test('P6 (F485): POSIX runs the .bin shim by path; Windows runs the package bin 
   expect(w[0]).toBe('C:\\bun\\bun.exe')
   expect(w).toHaveLength(2)
   expect(w[1]!.replaceAll('\\', '/')).toContain('node_modules/@brust/core/bin/brust')
+})
+
+test('F485: the printed retry hint names the win32 command on Windows and the shim elsewhere', () => {
+  expect(brustHint('/p/app', 'linux')).toBe('node_modules/.bin/brust')
+  const h = brustHint('C:\\p\\app', 'win32', 'C:\\bun\\bun.exe')
+  expect(h.startsWith('C:\\bun\\bun.exe ')).toBe(true)
+  expect(h.replaceAll('\\', '/')).toContain('node_modules/@brust/core/bin/brust')
 })

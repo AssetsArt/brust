@@ -30,6 +30,10 @@ test('escapes: `..\\x`, a bare `..`, another drive and an absolute path are outs
   expect(escapes('c:x\\y.ts', W)).toBe(true)
 })
 
+test('P4 store-module D:foo (win32): relative() of a drive-relative path from an app on C: is another drive, so it escapes', () => {
+  expect(escapes('D:\\cwd\\foo', '\\')).toBe(true)
+})
+
 test('P3 (security): a backslashed server-only path is refused, a sibling and an outside path are not matched', () => {
   const serverOnly = ['lib/server', 'secrets.ts']
   expect(inServerOnlyPrefix('lib\\server\\db.ts', serverOnly, W)).toBe(true)
