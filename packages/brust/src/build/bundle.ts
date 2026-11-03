@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { escapes, inServerOnlyPrefix, posixOf } from './posix'
+import { escapes, inServerOnlyPrefix, posixOf, relPosix } from './posix'
 import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
@@ -217,7 +217,7 @@ function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
           if (writers.size > 0) noteImport(a.path, a.importer)
           return undefined
         }
-        const msg = `${relative(ctx.appRoot, ctx.sourceOf.get(a.importer) ?? a.importer)} imports ${a.path}${writerChain(a.importer)}`
+        const msg = `${relPosix(ctx.appRoot, ctx.sourceOf.get(a.importer) ?? a.importer)} imports ${a.path}${writerChain(a.importer)}`
         if (!violations.includes(msg)) violations.push(msg)
         return { path: a.path, namespace: SERVER_ONLY_NS }
       })

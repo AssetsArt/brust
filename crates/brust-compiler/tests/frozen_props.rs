@@ -17,7 +17,10 @@ fn tree(parent: &str, child: &str, mid: &str) -> ComponentIR {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("C.tsx"), child).unwrap();
     std::fs::write(dir.join("M.tsx"), mid).unwrap();
-    let path = dir.join("T.tsx").to_string_lossy().into_owned();
+    let path = dir
+        .join("T.tsx")
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
     let src = parent.to_string();
     run_on_compiler_thread(move || {
         analyze_source(

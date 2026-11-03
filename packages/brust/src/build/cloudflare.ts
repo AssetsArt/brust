@@ -5,6 +5,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { dirname, join, relative } from 'node:path'
+import { relPosix } from './posix'
 import type { BunPlugin } from 'bun'
 import { BrustConfigError, type CorsConfig, loadCors } from '../config'
 import { layoutAssets } from './cf-assets'
@@ -102,7 +103,7 @@ function cfGuard(appRoot: string, violations: string[]): BunPlugin {
     name: 'brust-cf-guard',
     setup(b) {
       b.onResolve({ filter: /^bun(:.*)?$/ }, (a) => {
-        violations.push(`${relative(appRoot, a.importer) || a.importer} imports ${a.path}`)
+        violations.push(`${relPosix(appRoot, a.importer) || a.importer} imports ${a.path}`)
         return { path: a.path, external: true }
       })
       b.onResolve({ filter: /^[a-z_]+(\/[a-z_/]+)?$/ }, (a) => (BUILTINS.has(a.path) ? { path: `node:${a.path}`, external: true } : undefined))

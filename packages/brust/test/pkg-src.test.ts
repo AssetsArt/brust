@@ -4,7 +4,7 @@
 import { afterAll, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { integrityGaps, PKG_SRC_DIR, preparePackageSources, skeleton } from '../src/build/pkg-src'
 
 const cleanup: string[] = []
@@ -141,15 +141,15 @@ test('review F1: a hostile package.json name or version never moves a write out 
   const outside = join(root, '..', `escape-${Date.now()}`)
   cleanup.push(outside)
   for (const [spec, pj] of [
-    ['evil-ver', { version: `1/../../../../${outside.split('/').pop()}` }],
-    ['evil-name', { name: `a/../../../../../${outside.split('/').pop()}/b` }],
+    ['evil-ver', { version: `1/../../../../${basename(outside)}` }],
+    ['evil-name', { name: `a/../../../../../${basename(outside)}/b` }],
     ['evil-abs', { name: outside, version: outside }],
   ] as const) {
     pkg(root, spec, { 'src/leaf.tsx': LEAF }, { pj })
     const r = preparePackageSources(root, [spec])
     const entry = r.scopes['']?.[spec]
     expect(entry).toMatch(/^\.brust\/pkg-src\/p-[0-9a-f]{16}\/src\/leaf\.tsx$/)
-    expect(realpathSync(join(root, entry!)).startsWith(join(root, PKG_SRC_DIR) + '/')).toBe(true)
+    expect(realpathSync(join(root, entry!)).startsWith(join(root, PKG_SRC_DIR) + sep)).toBe(true)
   }
   expect(existsSync(outside)).toBe(false)
 })
