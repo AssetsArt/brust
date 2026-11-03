@@ -78,12 +78,18 @@ pub fn rewrite(parent: &str, spec: &str) -> Option<(String, String)> {
         return None;
     }
     let active = ACTIVE.with(|a| a.borrow().clone())?;
-    let parent = if parent.starts_with('/') {
-        Path::new(parent)
+    let parent = if Path::new(parent).is_absolute() {
+        let rel = Path::new(parent)
             .strip_prefix(&active.root)
             .ok()?
             .to_string_lossy()
-            .into_owned()
+            .into_owned();
+        // A Windows path comes back `\`-separated; module paths are `/` everywhere (F486).
+        if cfg!(windows) {
+            rel.replace('\\', "/")
+        } else {
+            rel
+        }
     } else {
         parent.to_string()
     };
