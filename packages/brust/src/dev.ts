@@ -1,7 +1,8 @@
 // `brust dev [entry] --target cloudflare [-- <wrangler args>]` (M4-CF R10): build, run `wrangler dev` on the
 // generated project, rebuild + restart wrangler on a source change. No HMR. Each build runs in a child
 // process: a failed build keeps the old wrangler, and module caches never leak between builds.
-import { join, relative, resolve } from 'node:path'
+import { delimiter, join, relative, resolve } from 'node:path'
+import { posixOf } from './build/posix'
 import { BuildError } from './build/errors'
 import { loadBuildConfig } from './build/config'
 import { broadRootWarnings, defaultIgnored, type WatchLoop, watchLoop } from './dev/watch'
@@ -21,7 +22,7 @@ const DEBOUNCE_MS = 300
 function wranglerBin(appRoot: string): string {
   const fake = process.env.BRUST_WRANGLER
   if (fake) return fake
-  const found = Bun.which('wrangler', { PATH: `${join(appRoot, 'node_modules', '.bin')}:${process.env.PATH ?? ''}` })
+  const found = Bun.which('wrangler', { PATH: `${join(appRoot, 'node_modules', '.bin')}${delimiter}${process.env.PATH ?? ''}` })
   if (!found) throw new BuildError('cf-dev', 'wrangler not found (bun add -d wrangler)')
   return found
 }
@@ -71,7 +72,7 @@ export async function runDev(o: DevOptions): Promise<number> {
   const loop: WatchLoop = watchLoop({
     root: appRoot,
     extraRoots,
-    ignored: (rel) => defaultIgnored(rel, relative(appRoot, dist)),
+    ignored: (rel) => defaultIgnored(rel, posixOf(relative(appRoot, dist))),
     debounceMs: DEBOUNCE_MS,
     async run() {
       o.log('[brust] change detected; rebuilding')
@@ -91,6 +92,7 @@ export async function runDev(o: DevOptions): Promise<number> {
     loop.close()
     void stopChild().then(() => exitCode(0))
   }
+  // F485 P12: on Windows Ctrl+C (SIGINT) reaches this handler; SIGTERM handlers rarely fire and a kill ends the process without a drain.
   process.on('SIGINT', stop)
   process.on('SIGTERM', stop)
   return done

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runShadcn, shq } from '../src/shadcn.ts'
+import { brustArgv, runShadcn, shq } from '../src/shadcn.ts'
 
 function go(failOn?: string, workspace = false) {
   const calls: string[][] = []
@@ -65,3 +65,11 @@ async function replay(which: 'finish' | 'again' | 'workspace'): Promise<void> {
 test('round trip: the "Finish with" line, run by a real sh, passes the exact hostile args and expands nothing', () => replay('finish'))
 test('round trip: the "Run again" line, run by a real sh, passes the exact hostile args and expands nothing', () => replay('again'))
 test('round trip: the workspace line, run by a real sh, passes the exact hostile args', () => replay('workspace'))
+
+test('P6 (F485): POSIX runs the .bin shim by path; Windows runs the package bin script through the running Bun', () => {
+  expect(brustArgv('/p/app', 'linux')).toEqual(['/p/app/node_modules/.bin/brust'])
+  const w = brustArgv('C:\\p\\app', 'win32', 'C:\\bun\\bun.exe')
+  expect(w[0]).toBe('C:\\bun\\bun.exe')
+  expect(w).toHaveLength(2)
+  expect(w[1]!.replaceAll('\\', '/')).toContain('node_modules/@brust/core/bin/brust')
+})

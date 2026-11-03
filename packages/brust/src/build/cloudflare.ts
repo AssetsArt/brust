@@ -117,7 +117,7 @@ function cfAlias(alias: Record<string, string>, sourceOf: SourceOf): BunPlugin {
     setup(b) {
       if (Object.keys(alias).length === 0) return
       b.onResolve({ filter: /.*/ }, (a) => {
-        if (a.importer === '' || a.importer.includes('/node_modules/')) return undefined
+        if (a.importer === '' || /[\\/]node_modules[\\/]/.test(a.importer)) return undefined
         let abs: string
         try {
           abs = Bun.resolveSync(a.path, dirname(sourceOf.get(a.importer) ?? a.importer))

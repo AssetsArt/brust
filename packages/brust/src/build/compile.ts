@@ -4,6 +4,7 @@
 // A component several trees reach keeps one compile, chosen by role, not by route order (F75).
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, sep } from 'node:path'
+import { nativeOf, relPosix } from './posix'
 import { type CompiledComponent, type CompiledTree, compileTree, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
@@ -196,7 +197,7 @@ export function compileApp(opts: {
       )
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
-      const rel = relative(appRoot, file)
+      const rel = relPosix(appRoot, file) // G5: the Rust resolver assumes `/`
       const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, sourceRoots, opts.loadWrites)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
@@ -226,7 +227,7 @@ export function compileApp(opts: {
     ir.stores ??= []
     compiled.set(c.id, {
       id: c.id,
-      file: `${appRoot}/${c.source}`,
+      file: nativeOf(`${appRoot}/${c.source}`), // the spelling Bun.resolveSync returns: these are Map keys and `===` operands
       ir,
       jinja: c.jinja,
       serverTs: c.serverTs,

@@ -15,6 +15,13 @@ export const spawnRunner: Runner = async (argv, cwd) => {
   }
 }
 
+/** F485 P6: how to start the project's own brust CLI. POSIX runs the `.bin` shim by path (unchanged); Windows has no
+ * executable `brust` there (a `.exe`/`.cmd` shim), so the package's bin script runs through the running Bun. */
+export function brustArgv(targetDir: string, platform: string = process.platform, execPath: string = process.execPath): string[] {
+  if (platform === 'win32') return [execPath, join(targetDir, 'node_modules', '@brust', 'core', 'bin', 'brust')]
+  return [join(targetDir, 'node_modules/.bin/brust')]
+}
+
 /** POSIX single-quoting: nothing inside expands when the printed command is pasted into a shell. */
 export const shq = (s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`)
 
@@ -33,7 +40,7 @@ export async function runShadcn(o: { targetDir: string; components: string[]; wo
     out(`create-app: bun install failed (exit ${install}); the project is created. Finish with: ${by}`)
     return install
   }
-  const init = await o.run([join(targetDir, 'node_modules/.bin/brust'), 'shadcn', 'init', ...components], targetDir)
+  const init = await o.run([...brustArgv(targetDir), 'shadcn', 'init', ...components], targetDir)
   if (init !== 0) {
     out(`create-app: brust shadcn init failed (exit ${init}); the project is created. Run again: cd ${shq(targetDir)} && node_modules/.bin/brust shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`)
   }

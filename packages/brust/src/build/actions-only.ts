@@ -2,12 +2,14 @@
 // the same Rust admission (method gate, body caps, `Content-Encoding`, the cross-site guard, CORS), every other
 // path a 404 problem+json. With `--target cloudflare` it also writes `<out>/cf/`: a Worker serving only actions
 // (no Static Assets). The routes entry is neither read nor required.
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { buildActions } from './bundle'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import type { ActionsBuildConfig, BuildConfig } from './config'
 import { BuildError } from './errors'
+import { escapes } from './posix'
+import { swapDist } from './swap'
 import { MANIFEST_VERSION, type ManifestJson } from './manifest'
 
 const MARKER = '.brust'
@@ -28,7 +30,7 @@ export async function runActionsOnly(o: {
   if (o.target === 'static') throw new BuildError('actions-only', '--actions-only builds no pages: it cannot be combined with --target static')
   const entry = resolve(appRoot, actions.entry)
   const rel = relative(appRoot, entry)
-  if (isAbsolute(actions.entry) || rel === '..' || rel.startsWith('../') || isAbsolute(rel) || !o.statOk(entry))
+  if (isAbsolute(actions.entry) || escapes(rel) || !o.statOk(entry))
     throw new BuildError('actions-entry', `actions.entry ${actions.entry} is not a file inside the app`)
   o.assertSafeOutDir(dist, appRoot, [entry])
   if (config.cache) o.log('[brust] actions-only: [cache] and route options do not apply (ignored)')
@@ -72,13 +74,7 @@ export async function runActionsOnly(o: {
       for (const w of warnings) o.log(w)
     }
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
-    if (existsSync(dist)) {
-      const old = join(dirname(dist), `.${basename(dist)}.brust-old`)
-      rmSync(old, { recursive: true, force: true })
-      renameSync(dist, old)
-      renameSync(tmp, dist)
-      rmSync(old, { recursive: true, force: true })
-    } else renameSync(tmp, dist)
+    swapDist(tmp, dist)
   } catch (e) {
     rmSync(tmp, { recursive: true, force: true })
     throw e

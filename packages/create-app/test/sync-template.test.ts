@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import { syncTemplate } from '../scripts/sync-template.ts'
+import { excluded, syncTemplate } from '../scripts/sync-template.ts'
 
 const repo = join(import.meta.dir, '../../..')
 const FROM = join(repo, 'examples/pokedex')
@@ -118,4 +118,12 @@ test('global CSS: the scaffold has app.css at the root, imported by the layout a
   const readme = readFileSync(join(to, 'README.md.tmpl'), 'utf8')
   expect(readme).not.toContain('public/app.css')
   expect(readme).not.toContain('@tailwindcss/cli')
+})
+
+test('P10 (F485): excluded() reads `\\` and `/` paths alike', () => {
+  expect(excluded('node_modules\\x\\y.js', true)).toBe(true)
+  expect(excluded('dist\\a.js', true)).toBe(true)
+  expect(excluded('src\\node_modules\\x.js', false)).toBe(true)
+  expect(excluded('data\\team.sqlite', false)).toBe(true)
+  expect(excluded('src\\Page.tsx', true)).toBe(false)
 })

@@ -1,8 +1,9 @@
 // `wrangler.jsonc` for `dist/cf/` (M4-CF R5, R6, R7): the user's app-root config merged with the keys brust owns.
 // Pure apart from `readUserWrangler`. Never adds an `account_id`; copies one only if the user wrote it.
 import { existsSync } from 'node:fs'
-import { isAbsolute, join, relative } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { BuildError } from './errors'
+import { relPosix } from './posix'
 
 type Json = Record<string, unknown>
 export interface UserWrangler {
@@ -49,7 +50,7 @@ export function workerNameOf(pkgName: string): string {
 }
 
 function rebase(o: MergeOpts, p: string): string {
-  return isAbsolute(p) ? p : relative(o.cfDir, join(o.appRoot, p))
+  return isAbsolute(p) ? p : relPosix(o.cfDir, join(o.appRoot, p))
 }
 
 function assertNoAssetsBinding(v: unknown, path: string): void {

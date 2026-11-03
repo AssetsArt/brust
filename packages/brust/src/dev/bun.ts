@@ -9,6 +9,7 @@ import { loadConfig } from '../config'
 import { type Diag, parseBuildError, parseWarnings } from './diag'
 import { tierCounts } from './devtools-data'
 import { type DevProxy, startProxy } from './proxy'
+import { openCommand } from './open'
 import { HOTKEYS, Tui, type TuiOut, tuiMode } from './tui'
 import { loadBuildConfig } from '../build/config'
 import { broadRootWarnings, changeLine, defaultIgnored, watchLoop } from './watch'
@@ -373,13 +374,14 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       for (const k of b.toString()) {
         if (k === 'q' || k === '\x03') void stop()
         else if (k === 'r') proxy.broadcast({ type: 'reload' })
-        else if (k === 'o') Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', url], { stdout: 'ignore', stderr: 'ignore' })
+        else if (k === 'o') Bun.spawn(openCommand(url), { stdout: 'ignore', stderr: 'ignore' })
         else if (k === 'w') for (const w of warnings.length ? warnings : ['no warnings']) tui.log(`warning ${w}`)
         else if (k === 'c') tui.clear()
       }
     })
     ;(out as unknown as NodeJS.WriteStream).on?.('resize', () => tui.resize())
   }
+  // F485 P12: on Windows Ctrl+C (SIGINT) reaches this handler; SIGTERM handlers rarely fire and a kill ends the process without a drain.
   process.on('SIGINT', () => void stop())
   process.on('SIGTERM', () => void stop())
 
