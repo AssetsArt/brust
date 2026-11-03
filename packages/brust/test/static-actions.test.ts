@@ -21,7 +21,7 @@ function build(cwd: string, env: Record<string, string> = {}) {
 function variant(name: string, edit: (dir: string) => void): string {
   const dir = join(import.meta.dir, `fixtures/.static-actions-${name}`)
   rmSync(dir, { recursive: true, force: true })
-  cpSync(fixture, dir, { recursive: true, filter: (src) => !src.includes('/dist') })
+  cpSync(fixture, dir, { recursive: true, filter: (src) => !/[\\/]dist/.test(src) })
   copies.push(dir)
   edit(dir)
   return dir
