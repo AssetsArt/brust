@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { host, hostNative, packAll, sh, startApp } from '../packages/create-app/test/helpers.ts'
+import { host, hostNative, packAll, sh } from '../packages/create-app/test/helpers.ts'
 
 const MARKER = 'SMOKE-SERVER-ONLY-MARKER-7f3a91'
 const THAI = 'สวัสดีชาวโลก ทดสอบภาษาไทย'
@@ -18,6 +18,35 @@ function check(cond: unknown, msg: string): asserts cond {
   if (!cond) {
     console.error(`[smoke] FAIL: ${msg}`)
     process.exit(1)
+  }
+}
+
+/** `bun run start --port 0` in the app; resolves once `[brust] ready` is printed. `stop` ends the WHOLE process tree: on Windows a kill of the
+ * `bun run` wrapper leaves the server it spawned running (it holds the app dir and the job's pipes open, which hung the previous run). */
+async function startServer(dir: string): Promise<{ base: string; stop: () => Promise<void> }> {
+  const proc = Bun.spawn(['bun', 'run', 'start', '--port', '0', '--workers', '2'], { cwd: dir, stdin: 'ignore', stdout: 'pipe', stderr: 'inherit', env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' } })
+  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
+  const dec = new TextDecoder()
+  let out = ''
+  while (!/\[brust\] ready/.test(out)) {
+    const { done, value } = await reader.read()
+    if (done) throw new Error(`bun run start exited before ready:\n${out}`)
+    out += dec.decode(value, { stream: true })
+  }
+  const base = `http://${/listening on (\S+)/.exec(out)![1]}`
+  void (async () => {
+    for (;;) if ((await reader.read()).done) return
+  })()
+  return {
+    base,
+    stop: async () => {
+      if (process.platform === 'win32') Bun.spawnSync(['taskkill', '/PID', String(proc.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore' })
+      else proc.kill('SIGINT')
+      if ((await Promise.race([proc.exited, Bun.sleep(8000).then(() => undefined)])) === undefined) {
+        proc.kill('SIGKILL')
+        await proc.exited
+      }
+    },
   }
 }
 
@@ -58,7 +87,7 @@ try {
   check(existsSync(join(dir, 'dist/manifest.json')), 'dist/manifest.json missing after build')
 
   step('bun run start on a free port; GET /')
-  const app = await startApp(dir)
+  const app = await startServer(dir)
   stop = app.stop
   const page = await fetch(`${app.base}/`)
   check(page.status === 200, `GET / is ${page.status}`)
@@ -117,3 +146,4 @@ try {
     console.warn(`[smoke] could not remove ${work}: ${(e as Error).message}`)
   }
 }
+process.exit(0) // a leaked child must not keep the job open; failures exit 1 above
