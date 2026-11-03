@@ -39,11 +39,11 @@ test('monorepo + target outside → file:<root>/packages/brust + overrides for r
   const { root, pkgRoot } = fakeRepo()
   const d = resolveBrustDep({ targetDir: join(tmpdir(), 'elsewhere-app'), pkgRoot })
   expect(d.kind).toBe('file')
-  expect(d.spec).toBe(`file:${root}/packages/brust`)
+  expect(d.spec).toBe(`file:${fileSpecPath(root)}/packages/brust`)
   expect(Object.keys(d.overrides!).sort()).toEqual(['@brust/runtime-dom', '@brust/core-cf', ...PLATS.map((p) => `@brust/native-${p}`)].sort())
-  expect(d.overrides!['@brust/runtime-dom']).toBe(`file:${root}/packages/runtime-dom`)
-  expect(d.overrides!['@brust/core-cf']).toBe(`file:${root}/npm/core-cf`)
-  expect(d.overrides!['@brust/native-darwin-arm64']).toBe(`file:${root}/npm/darwin-arm64`)
+  expect(d.overrides!['@brust/runtime-dom']).toBe(`file:${fileSpecPath(root)}/packages/runtime-dom`)
+  expect(d.overrides!['@brust/core-cf']).toBe(`file:${fileSpecPath(root)}/npm/core-cf`)
+  expect(d.overrides!['@brust/native-darwin-arm64']).toBe(`file:${fileSpecPath(root)}/npm/darwin-arm64`)
 })
 
 test('a root package.json with another name is not a monorepo', () => {
