@@ -22,7 +22,7 @@ export function relPosix(base: string, file: string, s: string = sep): string {
 /** A `relative()` result that does not lie inside its base: `..`, `../x`, or an absolute path (another drive on Windows). */
 export function escapes(rel: string, s: string = sep): boolean {
   const p = posixOf(rel, s)
-  return p === '..' || p.startsWith('../') || isAbsolute(rel) || /^[A-Za-z]:/.test(p)
+  return p === '..' || p.startsWith('../') || isAbsolute(rel) || (s !== '/' && /^[A-Za-z]:/.test(p)) // `c:x` is a legal POSIX dir name
 }
 
 /** `[build] server_only` (spec §8.2): is the app-root-relative `rel` inside a listed prefix? Prefixes are `/`-spelled

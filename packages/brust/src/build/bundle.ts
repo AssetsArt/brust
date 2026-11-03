@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { inServerOnlyPrefix, posixOf } from './posix'
+import { escapes, inServerOnlyPrefix, posixOf } from './posix'
 import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
@@ -778,7 +778,7 @@ export async function buildJobs(
       imports.push(`import * as S${i} from ${JSON.stringify(p)}`) // a package module, external in jobs.js
       continue
     }
-    if (isAbsolute(p) || posixOf(p).split('/').includes('..') || !isFile(resolve(appRoot, p))) {
+    if (isAbsolute(p) || posixOf(p).split('/').includes('..') || escapes(relative(appRoot, resolve(appRoot, p))) || !isFile(resolve(appRoot, p))) {
       throw new BuildError('store-module', `store module ${p} is not a file inside the app (${appRoot})`)
     }
     imports.push(`import * as S${i} from ${JSON.stringify(resolve(appRoot, p))}`)

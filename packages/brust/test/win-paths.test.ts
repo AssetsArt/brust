@@ -26,6 +26,8 @@ test('escapes: `..\\x`, a bare `..`, another drive and an absolute path are outs
   expect(escapes('lib\\x.ts', W)).toBe(false)
   expect(escapes('lib/x.ts', '/')).toBe(false)
   expect(escapes('..foo/x.ts', '/')).toBe(false) // a dir named `..foo` is inside
+  expect(escapes('c:x/y.ts', '/')).toBe(false) // a drive-looking dir name is legal on POSIX
+  expect(escapes('c:x\\y.ts', W)).toBe(true)
 })
 
 test('P3 (security): a backslashed server-only path is refused, a sibling and an outside path are not matched', () => {
@@ -35,6 +37,7 @@ test('P3 (security): a backslashed server-only path is refused, a sibling and an
   expect(inServerOnlyPrefix('lib\\client\\ui.ts', serverOnly, W)).toBe(false)
   expect(inServerOnlyPrefix('..\\lib\\server\\db.ts', serverOnly, W)).toBe(false)
   expect(inServerOnlyPrefix('lib/server/db.ts', serverOnly, '/')).toBe(true) // POSIX unchanged
+  expect(inServerOnlyPrefix('c:x/k.ts', ['c:x'], '/')).toBe(true)
 })
 
 test('P7: the open-browser command per platform', () => {
