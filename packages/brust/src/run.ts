@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { type BrustConfig, type ConfigOverrides, loadConfig } from './config'
+import { watchLauncher } from './launcher-watch'
 import { beginDrain, localAddr, type StartOptions, type StreamOptions, startServer, untilReady } from './native'
 import { DEFAULT_MAX_LOADER_RESPONSE_BYTES } from './worker'
 
@@ -202,6 +203,14 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   }
   ready = true
   console.log(`[brust] ready (${workers} worker${workers === 1 ? '' : 's'})`)
+  // F488 (Windows only): a killed `bun run start` wrapper leaves this process running; drain when the launchers are gone (same path as Ctrl+C).
+  void watchLauncher({
+    onGone: (pid) => {
+      if (exiting) return
+      console.error(`[brust] launcher (pid ${pid}) exited: shutting down`)
+      onSignal(130)
+    },
+  })
   if (opts.onReady) {
     let code = 1
     try {

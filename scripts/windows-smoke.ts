@@ -5,7 +5,7 @@
 // of a [build] server_only module must FAIL the build and leave dist usable (P3). A Windows stub that gets reached aborts the
 // process with its own symbol name, which fails this script (and so the job).
 // Run: bun scripts/windows-smoke.ts   (needs the addon built: cd packages/brust && bun run build)
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { host, hostNative, packAll, sh } from '../packages/create-app/test/helpers.ts'
@@ -19,46 +19,11 @@ function check(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg)
 }
 
-type Row = { pid: number; ppid: number; name: string; cmd: string }
-/** F488 S1 probe (temporary): the Windows process table, via Win32_Process. */
-function procTable(): Row[] {
-  const r = Bun.spawnSync(['powershell', '-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress'], { stdout: 'pipe', stderr: 'pipe' })
-  const rows = JSON.parse(r.stdout.toString() || '[]') as { ProcessId: number; ParentProcessId: number; Name: string; CommandLine: string | null }[]
-  return rows.map((x) => ({ pid: x.ProcessId, ppid: x.ParentProcessId, name: x.Name, cmd: (x.CommandLine ?? '').slice(0, 160) }))
-}
-function descendants(rows: Row[], root: number): Row[] {
-  const out: Row[] = []
-  const seen = new Set([root])
-  for (let grew = true; grew; ) {
-    grew = false
-    for (const r of rows) if (seen.has(r.ppid) && !seen.has(r.pid)) (seen.add(r.pid), out.push(r), (grew = true))
-  }
-  return out
-}
-function probeChain(wrapper: number, base: string): Promise<void> {
-  const show = (t: string, rows: Row[]) => console.log(`[probe] ${t}\n${rows.map((r) => `  pid=${r.pid} ppid=${r.ppid} ${r.name} :: ${r.cmd}`).join('\n')}`)
-  const before = procTable()
-  const me = before.find((r) => r.pid === wrapper)
-  show('wrapper + descendants after ready', [...(me ? [me] : []), ...descendants(before, wrapper)])
-  const chain: Row[] = []
-  for (let r = before.find((x) => x.pid === process.pid); r && chain.length < 8; r = before.find((x) => x.pid === r!.ppid)) chain.push(r)
-  show('smoke ancestors (self upward)', chain)
-  const kids = descendants(before, wrapper)
-  process.kill(wrapper) // a plain kill: TerminateProcess
-  return (async () => {
-    await Bun.sleep(3000)
-    const after = procTable()
-    show('survivors of a plain kill of the wrapper (stale ppid kept)', after.filter((r) => kids.some((k) => k.pid === r.pid)))
-    show('wrapper still listed?', after.filter((r) => r.pid === wrapper))
-    const up = await fetch(`${base}/`).then((r) => r.status, (e) => `refused: ${String(e)}`)
-    console.log(`[probe] GET / after the wrapper kill: ${up}`)
-    for (const k of kids) Bun.spawnSync(['taskkill', '/PID', String(k.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore' })
-  })()
-}
-
-/** `bun run start --port 0` in the app; resolves once `[brust] ready` is printed. `stop` ends the WHOLE process tree: on Windows a kill of the
- * `bun run` wrapper leaves the server it spawned running (it holds the app dir and the job's pipes open, which hung the previous run). */
-async function startServer(dir: string): Promise<{ pid: number; base: string; stop: () => Promise<void> }> {
+/** `bun run start --port 0` in the app; resolves once `[brust] ready` is printed. `stop` is what a user's process manager does: a plain kill of
+ * the `bun run` wrapper (TerminateProcess on Windows: no process groups, no signal) and nothing else. F488: the server must notice its launcher
+ * is gone and exit by itself, so within 10 s the port refuses connections and the app dir can be renamed (a live server holds it: EBUSY).
+ * `cleanup` ends the whole tree with taskkill, only for the failure path. */
+async function startServer(dir: string): Promise<{ base: string; stop: () => Promise<void>; cleanup: () => void }> {
   const proc = Bun.spawn(['bun', 'run', 'start', '--port', '0', '--workers', '2'], { cwd: dir, stdin: 'ignore', stdout: 'pipe', stderr: 'inherit', env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' } })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
@@ -73,15 +38,27 @@ async function startServer(dir: string): Promise<{ pid: number; base: string; st
     for (;;) if ((await reader.read()).done) return
   })()
   return {
-    pid: proc.pid,
     base,
     stop: async () => {
-      if (process.platform === 'win32') Bun.spawnSync(['taskkill', '/PID', String(proc.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore' })
+      if (process.platform === 'win32') proc.kill()
       else proc.kill('SIGINT')
-      if ((await Promise.race([proc.exited, Bun.sleep(8000).then(() => undefined)])) === undefined) {
-        proc.kill('SIGKILL')
-        await proc.exited
+      if ((await Promise.race([proc.exited, Bun.sleep(8000).then(() => undefined)])) === undefined) throw new Error('the launcher did not exit')
+      if (process.platform !== 'win32') return
+      const t0 = Date.now()
+      let refused = false
+      while (!refused && Date.now() - t0 < 10_000) {
+        refused = await fetch(`${base}/`).then(() => false, () => true)
+        if (!refused) await Bun.sleep(250)
       }
+      check(refused, 'the server still answers 10 s after its launcher was killed (F488)')
+      console.log(`[smoke] the server exited ${Date.now() - t0} ms after the launcher kill`)
+      const moved = `${dir}-moved`
+      renameSync(dir, moved) // a running server keeps the dir busy
+      renameSync(moved, dir)
+    },
+    cleanup: () => {
+      if (process.platform === 'win32') Bun.spawnSync(['taskkill', '/PID', String(proc.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore' })
+      else proc.kill('SIGKILL')
     },
   }
 }
@@ -89,7 +66,7 @@ async function startServer(dir: string): Promise<{ pid: number; base: string; st
 // The runner's TEMP is an 8.3 short path (C:\Users\RUNNER~1\...): the same file under its short and its long spelling is two modules to Bun, so
 // elysia loads twice ("two copies of elysia"). Work under the long (real) path, as a user's checkout is.
 const work = realpathSync.native(mkdtempSync(join(tmpdir(), 'brust-smoke-')))
-let stop: (() => Promise<void>) | undefined
+let cleanup: (() => void) | undefined
 let failed = false
 try {
   step('pack create-app, core, runtime-dom; host native')
@@ -125,7 +102,7 @@ try {
 
   step('bun run start on a free port; GET /')
   const app = await startServer(dir)
-  stop = app.stop
+  cleanup = app.cleanup
   const page = await fetch(`${app.base}/`)
   check(page.status === 200, `GET / is ${page.status}`)
   const html = await page.text()
@@ -142,13 +119,8 @@ try {
   const sl = await fetch(`${app.base}/_brust/action/secret-len`)
   check(sl.status === 200 && ((await sl.json()) as { n: number }).n === MARKER.length, 'the action that imports the server-only module does not answer')
 
-  if (process.platform === 'win32') {
-    step('F488 probe: process chain, then a plain kill of the wrapper')
-    await probeChain(app.pid, app.base)
-  }
-  step('stop the server, rebuild over the existing dist (the dist swap)')
+  step('stop the server with a plain kill of the launcher (F488), rebuild over the existing dist (the dist swap)')
   await app.stop()
-  stop = undefined
   sh(['bun', 'run', 'build'], dir)
   check(existsSync(join(dir, 'dist/manifest.json')), 'dist/manifest.json missing after the rebuild')
   const leftovers = readdirSync(dir).filter((f) => f.includes('.brust-'))
@@ -182,7 +154,7 @@ try {
   failed = true
   console.error(`[smoke] FAIL: ${e instanceof Error ? e.message : String(e)}`)
 } finally {
-  await stop?.().catch(() => {})
+  cleanup?.()
   // Windows keeps a directory busy while a handle is open (an indexer, a just-exited child): retry, and never fail the run on cleanup.
   try {
     rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
