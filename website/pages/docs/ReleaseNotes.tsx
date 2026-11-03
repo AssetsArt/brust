@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-34', title: '2.0.0-alpha.34' },
       { id: 'alpha-33', title: '2.0.0-alpha.33' },
       { id: 'alpha-32', title: '2.0.0-alpha.32' },
       { id: 'alpha-31', title: '2.0.0-alpha.31' },
@@ -56,6 +57,50 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-34">2.0.0-alpha.34 · 3 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.33: #425–#431 (ledger F484–F486, F488–F491; plans 2026-11-03-windows-x64 and 2026-11-03-windows-followups) */}
+      <p>brust now runs on Windows x64. Nothing changes on macOS or Linux, apart from one new CSS build error that catches a leaked local path. See <a href="/docs/installation">Installation</a>.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: #425 (F484), #426 (F485), #427 (F486); npm/win32-x64-msvc */}
+        <li>
+          <strong>Windows x64 is supported (#425, #426, #427).</strong> <code>@brust/core</code> now lists <code>@brust/native-win32-x64-msvc</code>, so <code>bun create @brust/app</code>, <code>brust dev</code>, <code>brust build</code> and <code>brust start</code> work on 64-bit Windows with no Rust toolchain. Paths with backslashes, drive letters and non-ASCII folder names are handled throughout the build, so the server-only check applies on Windows exactly as on macOS and Linux. Every pull request now runs a Windows CI job: it scaffolds an app into a non-ASCII folder, builds it, serves it and checks that a client import of server-only code fails the build. Windows on ARM is not supported yet.
+        </li>
+        {/* source: #428 (F488); packages/brust/src/launcher-watch.ts */}
+        <li>
+          <strong>On Windows, a server whose launcher is killed now shuts down by itself (#428).</strong> Windows has no process groups, so killing <code>bun run start</code> from an IDE or a process manager used to leave the server running, still holding its port and the app folder. The server now checks its launcher every second, and when the launcher is gone it drains and exits, the same way it does on Ctrl+C. SIGTERM drain is still POSIX-only.
+        </li>
+      </ul>
+
+      <h3>Fixes</h3>
+      <ul>
+        {/* source: #430 (F490) */}
+        <li>
+          <strong>Windows: CSS fonts and images are emitted as hashed files (#430).</strong> A <code>url()</code> in CSS used to keep the absolute local path (<code>C:\Users\…</code>) in the built stylesheet, and fonts and small images were not copied to <code>dist/client</code>. They are now copied as <code>&lt;name&gt;-&lt;hash&gt;.&lt;ext&gt;</code>, as on macOS and Linux.
+        </li>
+        {/* source: #430 (F490) */}
+        <li>
+          <strong>Windows: a dependency&rsquo;s source package resolves to the right file (#430).</strong> A package that brust builds from its source resolved to the wrong file on Windows. It now resolves to the same file the bundler uses.
+        </li>
+        {/* source: #431 (F491) */}
+        <li>
+          <strong>Windows: building from a symlinked folder works (#431).</strong> A build started inside a symlinked folder (or a link to another drive) failed with &ldquo;Cannot find module&rdquo;. The server-only and load-writer build errors now spell paths with <code>/</code> on every platform, and <code>bun create @brust/app</code> prints <code>cd ./my-app</code> on Windows instead of a full path.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: #430 (F490); docs/css.md */}
+        <li>
+          <strong>New build error <code>css-asset-path</code> (#430).</strong> If a CSS <code>url()</code> would still name a file on the build machine after the build (a <code>C:\…</code> or <code>\\host\…</code> path, or a path inside the app or <code>dist/</code>), the build now fails instead of shipping that path. Write the URL relative to the stylesheet, or as <code>/public/…</code>. See <a href="/docs/css">CSS</a>.
+        </li>
+        {/* source: #428 (F488), review note N3 */}
+        <li>
+          <strong>Windows: if your launcher exits after starting the server, start brust directly (#428).</strong> A server now exits when the process that started it goes away. If a process manager on Windows launches brust through a script that exits right after spawning it, point the manager at <code>brust start</code> itself.
+        </li>
+      </ul>
 
       <h2 id="alpha-33">2.0.0-alpha.33 · 29 October 2026</h2>
       {/* source: #421, #423 */}
