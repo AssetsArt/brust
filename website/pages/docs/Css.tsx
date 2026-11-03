@@ -164,14 +164,15 @@ export default function Css({ blocks }: CssData) {
         Each stylesheet becomes <code>dist/client/&lt;name&gt;-&lt;hash&gt;.css</code> with a 10-character content hash. It is minified, its <code>@import</code>s are inlined and its nesting is flattened. A file shared by several pages is one file at one URL.
         The hash is in the name, so the server sends the file as <code>immutable</code>; there is no <code>.min.</code> in the name. <code>brust build</code> always minifies, and <code>brust dev</code> does not, so the CSS stays readable while you work.
       </p>
-      {/* source: docs/css.md:36-39 (url(): absolute /public/ and /_brust/ stay; a relative font or image is copied with a hash and the URL rewritten; the served types; any other type fails with css-asset-type); css.ts:110 (SERVED_ASSET_EXT) */}
+      {/* source: docs/css.md:36-39 (url(): absolute /public/ and /_brust/ stay; a relative font or image is copied with a hash and the URL rewritten; the served types; any other type fails with css-asset-type; F490: a url() still naming a local file fails with css-asset-path); css.ts:110 (SERVED_ASSET_EXT), css.ts leakedLocalPaths */}
       <p>
         A relative <code>url()</code> to a font or image is copied next to the stylesheet with a hash in its name and the URL is rewritten. An absolute <code>/public/…</code> or <code>/_brust/…</code> URL is left as written.
       </p>
       <CodeBlock code={blocks.urls.code} lang={blocks.urls.lang} file={blocks.urls.file} html={blocks.urls.html} />
       <p>
         The types served from there are woff2, woff, ttf, otf, eot, png, jpg, jpeg, gif, webp, avif, svg and ico. Any other type, a cursor file or a video, fails the build with <code>css-asset-type</code> because the server would answer 404 for it. Put that file in{' '}
-        <code>public/</code> and reference it as <code>/public/…</code>.
+        <code>public/</code> and reference it as <code>/public/…</code>. A <code>url()</code> that would still name a file on the build machine after the rewrite, a Windows <code>C:\…</code> path or a path inside
+        the app or <code>dist/</code>, fails the build with <code>css-asset-path</code> instead of shipping that path.
       </p>
 
       <h2 id="preload">Preload a stylesheet font</h2>

@@ -36,7 +36,7 @@ Each source stylesheet becomes `dist/client/<name>-<hash>.css`, where the hash i
 In `url()`:
 
 - An absolute `/public/…` or `/_brust/…` URL stays as written.
-- A relative font or image is copied to `dist/client/<name>-<hash>.<ext>` and the URL is rewritten. It is copied at any size, never inlined as a `data:` URL. The types served from there are `.woff2 .woff .ttf .otf .eot .png .jpg .jpeg .gif .webp .avif .svg .ico`. Any other type (a `.cur`, a video) fails the build with `css-asset-type`, because the server would answer 404 for it. Put such a file in `public/` and reference it as `/public/…`.
+- A relative font or image is copied to `dist/client/<name>-<hash>.<ext>` and the URL is rewritten. It is copied at any size, never inlined as a `data:` URL. The types served from there are `.woff2 .woff .ttf .otf .eot .png .jpg .jpeg .gif .webp .avif .svg .ico`. Any other type (a `.cur`, a video) fails the build with `css-asset-type`, because the server would answer 404 for it. Put such a file in `public/` and reference it as `/public/…`. A `url()` that would still name a file on the build machine after the rewrite (a `C:\…` or `\\host\…` path, or a path inside the app or `dist/`) fails the build with `css-asset-path` instead of shipping that path; write it relative to the stylesheet or as `/public/…`.
 
 ### Preload a stylesheet font
 

@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import { BuildError } from './errors'
+import { nativeOf } from './posix'
 
 /** A specifier relative to its importer: `./x`, `../x` and the bare `.` / `..` (a directory). The one test every resolver path uses (F218, F244). */
 export const RELATIVE_SPEC = /^\.\.?(\/|$)/
@@ -46,11 +47,14 @@ export function clearResolveCache(): void {
 const PROBE = `
 const [target, entry, spec, define, conditions] = process.argv.slice(1)
 const source = 'import ' + JSON.stringify(spec) + '\\n'
+// F490: on Windows the virtual entry comes back to onLoad as C:/…/__brust_resolve__.ts while argv spells it C:\\…, so
+// the two compare in one spelling; else the entry itself was taken for the answer.
+const entryPosix = entry.replaceAll('\\\\', '/')
 let found
 await Bun.build({
   entrypoints: [entry], target, write: false, define: JSON.parse(define), conditions: JSON.parse(conditions), files: { [entry]: source },
   plugins: [{ name: 'o', setup(b) { b.onLoad({ filter: /./ }, (a) => {
-    if (a.path === entry) return { contents: source, loader: 'ts' }
+    if (a.path.replaceAll('\\\\', '/') === entryPosix) return { contents: source, loader: 'ts' }
     found ??= a.path
     return { contents: '', loader: 'js' }
   }) } }],
@@ -77,7 +81,8 @@ export function resolveNative(spec: string, from: string, target: ResolveTarget,
   const timeout = opts.timeoutMs ?? RESOLVE_TIMEOUT_MS
   const r = Bun.spawnSync([process.execPath, '-e', PROBE, target, join(from, '__brust_resolve__.ts'), spec, defs, conds], { cwd: opts.appRoot ?? from, stdout: 'pipe', stderr: 'pipe', timeout, killSignal: 'SIGKILL' })
   const out = r.exitCode === 0 ? r.stdout.toString() : ''
-  let path = out
+  // F490: one spelling out of the resolver, the platform's (a file system path; POSIX: unchanged).
+  let path = nativeOf(out)
   if (path === '') {
     // The probe did not answer: today's answer (`Bun.resolveSync`) stands, and the build output says why.
     const why = r.exitCode === null || r.signalCode ? `the probe did not answer within ${timeout} ms` : r.exitCode !== 0 ? `the probe failed (${r.stderr.toString().trim().split('\n')[0] || `exit ${r.exitCode}`})` : 'the probe resolved nothing'
