@@ -59,7 +59,12 @@ mod tests {
 
     #[test]
     fn ascii_thai_and_astral_match_std() {
-        for s in ["", "C:\\app\\pages\\index.tsx", "C:\\ผู้ใช้\\แอป\\หน้า.tsx", "emoji 😀 / 𝄞"] {
+        for s in [
+            "",
+            "C:\\app\\pages\\index.tsx",
+            "C:\\ผู้ใช้\\แอป\\หน้า.tsx",
+            "emoji 😀 / 𝄞",
+        ] {
             let units: Vec<u16> = s.encode_utf16().collect();
             assert_eq!(run(&units), s.as_bytes(), "{s}");
         }
@@ -77,7 +82,10 @@ mod tests {
             // native.rs defines it (no_mangle); declared here because that module keeps it private.
             fn simdutf__utf8_length_from_utf16le(p: *const u16, len: usize) -> usize;
         }
-        let units: Vec<u16> = "ไทย😀x".encode_utf16().chain([0xD800, 0x41, 0xDC00]).collect();
+        let units: Vec<u16> = "ไทย😀x"
+            .encode_utf16()
+            .chain([0xD800, 0x41, 0xDC00])
+            .collect();
         // SAFETY: a valid slice, as a pointer and a length.
         let want = unsafe { simdutf__utf8_length_from_utf16le(units.as_ptr(), units.len()) };
         assert_eq!(run(&units).len(), want);
