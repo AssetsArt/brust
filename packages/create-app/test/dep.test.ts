@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { applyOverrides, monorepoRoot, PLATS, resolveBrustDep } from '../src/dep.ts'
+import { applyOverrides, fileSpecPath, monorepoRoot, PLATS, resolveBrustDep } from '../src/dep.ts'
 
 const made: string[] = []
 afterEach(() => { for (const d of made.splice(0)) rmSync(d, { recursive: true, force: true }) })
@@ -35,7 +35,7 @@ test('monorepo + target under a workspace glob (examples/demo) → workspace:*',
   expect(resolveBrustDep({ targetDir: join(root, 'examples/demo'), pkgRoot })).toEqual({ kind: 'workspace', spec: 'workspace:*' })
 })
 
-test('monorepo + target outside → file:<root>/packages/brust + overrides for runtime-dom, core-cf and the six natives', () => {
+test('monorepo + target outside → file:<root>/packages/brust + overrides for runtime-dom, core-cf and the seven natives', () => {
   const { root, pkgRoot } = fakeRepo()
   const d = resolveBrustDep({ targetDir: join(tmpdir(), 'elsewhere-app'), pkgRoot })
   expect(d.kind).toBe('file')
@@ -64,4 +64,9 @@ test('applyOverrides merges into package.json and keeps 2-space JSON + trailing 
   expect(JSON.parse(raw).overrides).toEqual({ keep: '1', '@brust/runtime-dom': 'file:/rd' })
   expect(raw.endsWith('}\n')).toBe(true)
   expect(raw).toContain('\n  "name": "a"')
+})
+
+test('F484: file: spec paths are forward-slashed; a backslashed Windows root is rewritten, POSIX untouched', () => {
+  expect(fileSpecPath('C:\\repo\\brust', '\\')).toBe('C:/repo/brust')
+  expect(fileSpecPath('/home/me/brust', '/')).toBe('/home/me/brust')
 })

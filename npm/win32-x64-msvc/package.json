@@ -1,0 +1,28 @@
+{
+  "name": "@brust/native-win32-x64-msvc",
+  "version": "2.0.0-alpha.33",
+  "cpu": [
+    "x64"
+  ],
+  "main": "brust.win32-x64-msvc.node",
+  "files": [
+    "brust.win32-x64-msvc.node"
+  ],
+  "description": "brust v2 — React components compiled to Rust-rendered templates",
+  "license": "MIT",
+  "homepage": "https://brust.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git",
+    "directory": "npm/win32-x64-msvc"
+  },
+  "bugs": {
+    "url": "https://github.com/AssetsArt/brust/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "win32"
+  ]
+}

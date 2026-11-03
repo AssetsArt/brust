@@ -1,7 +1,7 @@
 name: release
-# Builds the @brust/native addon for 6 targets (zig for every Linux cross leg: aws-lc-sys needs a per-target C
+# Builds the @brust/native addon for 7 targets (zig for every Linux cross leg: aws-lc-sys needs a per-target C
 # compiler — 0.1.x release.yml:53-61), builds @brust/core-cf (the ONE app-independent workers-rs wasm; `build-core-cf`) and, on
-# workflow_dispatch, DRY-RUNS the npm publish of @brust/core, @brust/runtime-dom, @brust/core-cf and the six @brust/native-<plat>. The real publish job is gated to `v*` tags: a human pushes
+# workflow_dispatch, DRY-RUNS the npm publish of @brust/core, @brust/runtime-dom, @brust/core-cf and the seven @brust/native-<plat>. The real publish job is gated to `v*` tags: a human pushes
 # the tag (scripts/release-bump.ts --release). Secret for the real publish: BRUST_NPM_TOKEN (memory npm-org-brust).
 on:
   push: { tags: ["v*"] }
@@ -12,6 +12,7 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
+    defaults: { run: { shell: bash } }   # the Windows leg runs the same bash steps (Git Bash on windows-latest)
     strategy:
       fail-fast: false
       matrix:
@@ -22,6 +23,7 @@ jobs:
           - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu,  napi_extra: "--cross-compile", setup_zig: true }
           - { runner: ubuntu-latest, target: x86_64-unknown-linux-musl,  napi_extra: "--cross-compile", setup_zig: true }
           - { runner: ubuntu-latest, target: aarch64-unknown-linux-musl, napi_extra: "--cross-compile", setup_zig: true }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc,    napi_extra: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -30,6 +32,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.4.4" }
       - run: bun install --frozen-lockfile
+      # aws-lc-sys (rustls' default provider) needs NASM for its x86_64 Windows assembly; use the prebuilt objects it ships instead.
+      - name: aws-lc-sys prebuilt NASM objects (Windows)
+        if: runner.os == 'Windows'
+        run: echo "AWS_LC_SYS_PREBUILT_NASM=1" >> "$GITHUB_ENV"
       - name: Setup zig (cross legs; plain tarball, no node20 action — 0.1.x release.yml:95-106)
         if: matrix.setup_zig
         run: |
@@ -85,7 +91,7 @@ jobs:
         with: { pattern: "bindings-*", path: packages/brust/native, merge-multiple: true }
       - uses: actions/download-artifact@v4
         with: { name: core-cf-worker, path: npm/core-cf/worker }
-      - name: Assemble npm/<plat> (six .node files into the committed dirs)
+      - name: Assemble npm/<plat> (seven .node files into the committed dirs)
         run: ./packages/brust/node_modules/.bin/napi artifacts --package-json-path packages/brust/package.json --output-dir packages/brust/native --npm-dir npm
       - name: Dry-run publish (bun rewrites workspace:* to the version)
         run: |
@@ -95,7 +101,7 @@ jobs:
           for d in packages/runtime-dom $(printf 'npm/%s ' $PLATS) npm/core-cf packages/brust packages/cache-redis packages/cache-cloudflare packages/create-app; do (cd "$d" && bun publish --dry-run --access public); done
           cd packages/brust && bun pm pack --destination /tmp/pack && tar -xOf /tmp/pack/*.tgz package/package.json > /tmp/packed.json
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
-          grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
+          grep -c '"@brust/native-' /tmp/packed.json | grep -qx 7
           bun -e "const p=require('/tmp/packed.json'); if (p.optionalDependencies?.['@brust/core-cf'] !== p.version) { console.error('packed @brust/core lacks @brust/core-cf@' + p.version + ' in optionalDependencies'); process.exit(1) }"
           # The cache adapters peer on @brust/core: the packed peer must be the version, never workspace:* (spot-check F2).
           for a in cache-redis cache-cloudflare; do (cd "$GITHUB_WORKSPACE/packages/$a" && bun pm pack --destination "/tmp/pack-$a" && tar -xOf "/tmp/pack-$a"/*.tgz package/package.json | bun -e "const p=await new Response(Bun.stdin.stream()).json(); const want=require('$GITHUB_WORKSPACE/packages/brust/package.json').version; if (p.peerDependencies?.['@brust/core'] !== want) { console.error('packed @brust/$a peers @brust/core ' + p.peerDependencies?.['@brust/core'] + ', want ' + want); process.exit(1) }"); done
@@ -140,7 +146,7 @@ jobs:
           bun scripts/core-cf-check.ts npm/core-cf --pack --versions crates/brust-wasm/Cargo.toml
           cd packages/brust && bun pm pack --destination /tmp/pack && tar -xOf /tmp/pack/*.tgz package/package.json > /tmp/packed.json
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
-          grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
+          grep -c '"@brust/native-' /tmp/packed.json | grep -qx 7
           bun -e "const p=require('/tmp/packed.json'); if (p.optionalDependencies?.['@brust/core-cf'] !== p.version) { console.error('packed @brust/core lacks @brust/core-cf@' + p.version + ' in optionalDependencies'); process.exit(1) }"
           # The cache adapters peer on @brust/core: the packed peer must be the version, never workspace:* (spot-check F2).
           for a in cache-redis cache-cloudflare; do (cd "$GITHUB_WORKSPACE/packages/$a" && bun pm pack --destination "/tmp/pack-$a" && tar -xOf "/tmp/pack-$a"/*.tgz package/package.json | bun -e "const p=await new Response(Bun.stdin.stream()).json(); const want=require('$GITHUB_WORKSPACE/packages/brust/package.json').version; if (p.peerDependencies?.['@brust/core'] !== want) { console.error('packed @brust/$a peers @brust/core ' + p.peerDependencies?.['@brust/core'] + ', want ' + want); process.exit(1) }"); done
@@ -150,7 +156,7 @@ jobs:
           grep -qx 'package/templates/pokedex/routes.tsx' /tmp/ca.txt
           grep -qx 'package/templates/blank/_gitignore' /tmp/ca.txt
           ! grep -Eq '/(node_modules|dist|test)/|team\.sqlite' /tmp/ca.txt || { echo 'dev leftovers in the @brust/create-app tarball'; exit 1; }
-      - name: Publish (runtime-dom → six natives → core-cf → core → cache adapters → create-app, so core never lands before its optional deps and the adapters never before their peer; re-runnable)
+      - name: Publish (runtime-dom → seven natives → core-cf → core → cache adapters → create-app, so core never lands before its optional deps and the adapters never before their peer; re-runnable)
         run: |
           set -e
           printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$HOME/.npmrc"
