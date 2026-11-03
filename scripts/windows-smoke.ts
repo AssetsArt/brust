@@ -5,7 +5,7 @@
 // of a [build] server_only module must FAIL the build and leave dist usable (P3). A Windows stub that gets reached aborts the
 // process with its own symbol name, which fails this script (and so the job).
 // Run: bun scripts/windows-smoke.ts   (needs the addon built: cd packages/brust && bun run build)
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { host, hostNative, packAll, sh, startApp } from '../packages/create-app/test/helpers.ts'
@@ -21,7 +21,9 @@ function check(cond: unknown, msg: string): asserts cond {
   }
 }
 
-const work = mkdtempSync(join(tmpdir(), 'brust-smoke-'))
+// The runner's TEMP is an 8.3 short path (C:\Users\RUNNER~1\...): the same file under its short and its long spelling is two modules to Bun, so
+// elysia loads twice ("two copies of elysia"). Work under the long (real) path, as a user's checkout is.
+const work = realpathSync.native(mkdtempSync(join(tmpdir(), 'brust-smoke-')))
 let stop: (() => Promise<void>) | undefined
 try {
   step('pack create-app, core, runtime-dom; host native')
