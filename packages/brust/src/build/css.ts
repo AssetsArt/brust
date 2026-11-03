@@ -123,9 +123,12 @@ const ASSET_FILE = /\.(?:woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|svg|ico)$/i
 const SOURCE_URL = /url\(\s*(["']?)([^"')]+?)\1\s*\)/g
 
 /** A `url()` value as the file system spells it: CSS escapes undone (Bun prints a Windows path as `C:\\Users\\…`). */
+/** CSS Syntax 4.3.7: an escaped code point that is zero, a surrogate or above U+10FFFF is U+FFFD (never a RangeError). */
+const cssCodePoint = (n: number): number => (n === 0 || n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff) ? 0xfffd : n)
+
 export function cssUnescape(s: string): string {
   return s.replace(/\\(?:([0-9a-fA-F]{1,6})\s?|([^\n0-9a-fA-F]))/g, (_m, h: string | undefined, c: string | undefined) =>
-    h !== undefined ? String.fromCodePoint(Number.parseInt(h, 16) || 0xfffd) : c!,
+    h !== undefined ? String.fromCodePoint(cssCodePoint(Number.parseInt(h, 16))) : c!,
   )
 }
 
