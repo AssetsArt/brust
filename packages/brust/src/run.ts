@@ -191,6 +191,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   }
   process.on('uncaughtException', onFatal('uncaught exception'))
   process.on('unhandledRejection', onFatal('unhandled rejection'))
+  // F485 P12: on Windows Ctrl+C (SIGINT) drains; SIGTERM handlers rarely fire and a kill ends the process without a drain (POSIX-only).
   process.on('SIGINT', () => onSignal(130))
   process.on('SIGTERM', () => onSignal(143))
 

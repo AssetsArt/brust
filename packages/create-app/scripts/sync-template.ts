@@ -16,8 +16,9 @@ export interface SyncOpts {
   overlay?: string
 }
 
-function excluded(rel: string, top: boolean): boolean {
-  const parts = rel.split('/')
+export function excluded(relIn: string, top: boolean): boolean {
+  const parts = relIn.split(/[\\/]/) // F485 P10: `/` or `\` (a Windows walk)
+  const rel = parts.join('/')
   if (top && (EXCLUDE_TOP.has(parts[0]!) || /^dist-/.test(parts[0]!))) return true
   const name = parts[parts.length - 1]!
   return parts.includes('node_modules') || name === '.DS_Store' || name.endsWith('.tsbuildinfo') || /^data\/team\.sqlite/.test(rel) || /^\.dev\.vars/.test(name) || /\.sqlite(-wal|-shm)?$/.test(name)

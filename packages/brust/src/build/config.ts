@@ -23,6 +23,7 @@ import {
 } from '../actions/prefix'
 import { ADAPTER_NAMES, BUILTINS, installHint } from '../cache-adapter/load'
 import { BuildError } from './errors'
+import { posixOf } from './posix'
 
 // [actions] (opt-in, ruling R6): present table => actions on. Both byte caps cross napi as u32 (F82: 1..64 MiB / 256 KiB..64 MiB).
 //   [actions]
@@ -419,5 +420,5 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => p.trim().replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots }
 }

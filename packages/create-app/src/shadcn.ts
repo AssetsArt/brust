@@ -15,16 +15,29 @@ export const spawnRunner: Runner = async (argv, cwd) => {
   }
 }
 
+/** F485 P6: how to start the project's own brust CLI. POSIX runs the `.bin` shim by path (unchanged); Windows has no
+ * executable `brust` there (a `.exe`/`.cmd` shim), so the package's bin script runs through the running Bun. */
+export function brustArgv(targetDir: string, platform: string = process.platform, execPath: string = process.execPath): string[] {
+  if (platform === 'win32') return [execPath, join(targetDir, 'node_modules', '@brust', 'core', 'bin', 'brust')]
+  return [join(targetDir, 'node_modules/.bin/brust')]
+}
+
+/** The command text printed for the user to paste: the POSIX shim path, or on Windows the Bun-run bin script (F485 P6). */
+export function brustHint(targetDir: string, platform: string = process.platform, execPath: string = process.execPath): string {
+  if (platform !== 'win32') return 'node_modules/.bin/brust'
+  return brustArgv(targetDir, platform, execPath).map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')
+}
+
 /** POSIX single-quoting: nothing inside expands when the printed command is pasted into a shell. */
 export const shq = (s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`)
 
 /** Returns 0 when done, else the failing step's exit code (the project is left in place; `lines` says what to run). */
 export async function runShadcn(o: { targetDir: string; components: string[]; workspace: boolean; run: Runner; out: (line: string) => void }): Promise<number> {
   const { targetDir, components, out } = o
-  const by = `cd ${shq(targetDir)} && bun install && node_modules/.bin/brust shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`
+  const by = `cd ${shq(targetDir)} && bun install && ${brustHint(targetDir)} shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`
   if (o.workspace) {
     out('--shadcn: this app is a workspace member of a brust checkout; run `bun install` at the repo root, then in the app:')
-    out(`  node_modules/.bin/brust shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`)
+    out(`  ${brustHint(targetDir)} shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`)
     return 0
   }
   out('\n--shadcn: installing, then running `brust shadcn init` (needs @brust/core 2.0.0-alpha.11 or later)')
@@ -33,9 +46,9 @@ export async function runShadcn(o: { targetDir: string; components: string[]; wo
     out(`create-app: bun install failed (exit ${install}); the project is created. Finish with: ${by}`)
     return install
   }
-  const init = await o.run([join(targetDir, 'node_modules/.bin/brust'), 'shadcn', 'init', ...components], targetDir)
+  const init = await o.run([...brustArgv(targetDir), 'shadcn', 'init', ...components], targetDir)
   if (init !== 0) {
-    out(`create-app: brust shadcn init failed (exit ${init}); the project is created. Run again: cd ${shq(targetDir)} && node_modules/.bin/brust shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`)
+    out(`create-app: brust shadcn init failed (exit ${init}); the project is created. Run again: cd ${shq(targetDir)} && ${brustHint(targetDir)} shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`)
   }
   return init
 }

@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { escapes, inServerOnlyPrefix, posixOf } from './posix'
 import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
@@ -172,8 +173,7 @@ function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean 
   try {
     if (ctx.serverFiles?.includes(realpathSync(file))) return true
   } catch {}
-  const rel = relative(ctx.appRoot, file)
-  return !rel.startsWith('..') && !isAbsolute(rel) && ctx.serverOnly.some((p) => rel.startsWith(p))
+  return inServerOnlyPrefix(relative(ctx.appRoot, file), ctx.serverOnly)
 }
 
 /** Fails a browser build that would include server-only code at any depth (a client chunk, an
@@ -778,7 +778,7 @@ export async function buildJobs(
       imports.push(`import * as S${i} from ${JSON.stringify(p)}`) // a package module, external in jobs.js
       continue
     }
-    if (isAbsolute(p) || p.split('/').includes('..') || !isFile(resolve(appRoot, p))) {
+    if (isAbsolute(p) || posixOf(p).split('/').includes('..') || escapes(relative(appRoot, resolve(appRoot, p))) || !isFile(resolve(appRoot, p))) {
       throw new BuildError('store-module', `store module ${p} is not a file inside the app (${appRoot})`)
     }
     imports.push(`import * as S${i} from ${JSON.stringify(resolve(appRoot, p))}`)

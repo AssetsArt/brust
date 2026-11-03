@@ -5,7 +5,7 @@
 // a previous brust dist (no `manifest.json` / `.brust` marker; `--force` overrides), is refused
 // before anything is written or removed.
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
@@ -19,6 +19,8 @@ import { type Compiled, compileApp, scanAppWrites } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
+import { escapes, relPosix } from './posix'
+import { swapDist } from './swap'
 import { importsStore } from './features'
 import { type CacheRecord, type ManifestJson, needsWorkers, reachedJobs, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
@@ -134,7 +136,7 @@ export async function runBuild(opts: {
   if (actions) {
     actionsEntry = resolve(appRoot, actions.entry)
     const rel = relative(appRoot, actionsEntry)
-    if (isAbsolute(actions.entry) || rel === '..' || rel.startsWith('../') || isAbsolute(rel) || !statOk(actionsEntry)) {
+    if (isAbsolute(actions.entry) || escapes(rel) || !statOk(actionsEntry)) {
       throw new BuildError('actions-entry', `actions.entry ${actions.entry} is not a file inside the app`)
     }
     // F470: a route under the prefix answers GET and HEAD of its own paths, the actions app everything else there. The
@@ -155,7 +157,7 @@ export async function runBuild(opts: {
   if (cache?.module !== undefined) {
     cacheModule = resolve(appRoot, cache.module)
     const rel = relative(appRoot, cacheModule)
-    if (isAbsolute(cache.module) || rel === '..' || rel.startsWith('../') || isAbsolute(rel) || !statOk(cacheModule)) {
+    if (isAbsolute(cache.module) || escapes(rel) || !statOk(cacheModule)) {
       throw new BuildError('cache', `cache.module ${cache.module} is not a file inside the app`)
     }
   }
@@ -186,13 +188,7 @@ export async function runBuild(opts: {
       if (hybrid && cf && actions) writeStaticWorker(tmp, actions, cf, opts.log)
     }
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
-    if (existsSync(dist)) {
-      const old = join(dirname(dist), `.${basename(dist)}.brust-old`)
-      rmSync(old, { recursive: true, force: true })
-      renameSync(dist, old)
-      renameSync(tmp, dist)
-      rmSync(old, { recursive: true, force: true })
-    } else renameSync(tmp, dist)
+    swapDist(tmp, dist)
   } catch (e) {
     rmSync(tmp, { recursive: true, force: true })
     throw e
@@ -376,7 +372,7 @@ async function buildInto(
     )
     for (const w of warnings) o.log(w)
   }
-  const entryRel = relative(o.dist, entry)
+  const entryRel = relPosix(o.dist, entry) // `/`-spelled: a dist built on Windows runs on Linux (join() below re-spells it)
   writeFileSync(
     join(out, 'index.js'),
     [
@@ -399,7 +395,7 @@ export function devJson(appRoot: string, compiled: Map<string, Compiled>): { ver
     const tier = tierOf(c.ir)
     const t = c.ir.tier
     components[c.id] = {
-      file: relative(appRoot, c.file),
+      file: relPosix(appRoot, c.file),
       tier,
       ...(tier === 'react' && t && typeof t === 'object' && 'React' in t ? { reason: String((t as { React: { reason: string } }).React.reason) } : {}),
       diagnostics: (c.diagnostics ?? []).map((d) => ({ class: d.class, rule: d.rule, line: d.line, col: d.col, message: d.message, remediation: d.remediation })),
