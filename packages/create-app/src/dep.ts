@@ -1,6 +1,6 @@
 // Resolves the `@brust/core` spec written into a scaffolded package.json (`__BRUST_DEP__`, M3-F rulings R2/R3).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 
 /** = scripts/release-files.ts PLATS. */
 export const PLATS = ['darwin-x64', 'darwin-arm64', 'linux-x64-gnu', 'linux-arm64-gnu', 'linux-x64-musl', 'linux-arm64-musl', 'win32-x64-msvc'] as const
@@ -31,9 +31,14 @@ export function monorepoRoot(pkgRoot = packageRoot()): string | null {
 function inWorkspace(root: string, target: string): boolean {
   const rootPkg = readJson(join(root, 'package.json'))
   const globs = (rootPkg?.workspaces as string[] | undefined) ?? []
-  const rel = relative(root, resolve(target))
+  const rel = fileSpecPath(relative(root, resolve(target)))
   if (rel.startsWith('..') || rel === '') return false
   return globs.some((g) => (g.endsWith('/*') ? dirname(rel) === g.slice(0, -2) : rel === g))
+}
+
+/** F484: a `file:` spec path is `/`-spelled on every platform (`C:\\repo` -> `C:/repo`); a no-op on POSIX. */
+export function fileSpecPath(p: string, s: string = sep): string {
+  return s === '/' ? p : p.split(s).join('/')
 }
 
 export function resolveBrustDep(o: { explicit?: string; targetDir: string; pkgRoot?: string }): BrustDep {
@@ -43,10 +48,11 @@ export function resolveBrustDep(o: { explicit?: string; targetDir: string; pkgRo
   if (root) {
     if (inWorkspace(root, o.targetDir)) return { kind: 'workspace', spec: 'workspace:*' }
     // `file:` alone fails: core's own workspace:* deps do not resolve outside the workspace globs, so override them.
-    const overrides: Record<string, string> = { '@brust/runtime-dom': `file:${root}/packages/runtime-dom` }
-    overrides['@brust/core-cf'] = `file:${root}/npm/core-cf`
-    for (const p of PLATS) overrides[`@brust/native-${p}`] = `file:${root}/npm/${p}`
-    return { kind: 'file', spec: `file:${root}/packages/brust`, overrides }
+    const r = fileSpecPath(root)
+    const overrides: Record<string, string> = { '@brust/runtime-dom': `file:${r}/packages/runtime-dom` }
+    overrides['@brust/core-cf'] = `file:${r}/npm/core-cf`
+    for (const p of PLATS) overrides[`@brust/native-${p}`] = `file:${r}/npm/${p}`
+    return { kind: 'file', spec: `file:${r}/packages/brust`, overrides }
   }
   const version = (readJson(join(pkgRoot, 'package.json'))?.version as string | undefined) ?? '0.0.0'
   return { kind: 'version', spec: `^${version}` }
