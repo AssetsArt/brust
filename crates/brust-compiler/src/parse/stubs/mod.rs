@@ -10,3 +10,6 @@ pub(super) mod extra;
 pub(super) mod native;
 #[cfg(bun_sema_mimalloc)]
 pub(super) mod real_mimalloc;
+#[cfg(all(windows, target_env = "msvc"))]
+mod windows;
+mod windows_real;

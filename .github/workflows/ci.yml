@@ -254,6 +254,8 @@ jobs:
         if: always()
   # F484: the Windows x64 addon (x86_64-pc-windows-msvc) links and loads. A debug build: this job proves the MSVC link and the napi
   # loader's win32 branch, the release leg in release.yml builds the published binary. aws-lc-sys uses its prebuilt NASM objects.
+  # A link failure (LNK2019/LNK1120) after a Bun crates bump: regenerate crates/brust-compiler/src/parse/stubs/windows.rs from this job's
+  # log with crates/brust-compiler/scripts/gen-win-stubs.ts (plan A3).
   windows-native:
     runs-on: windows-latest
     needs: changes
@@ -276,18 +278,6 @@ jobs:
           key: cargo-reg-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: cargo-reg-${{ runner.os }}-
       - run: bun install --frozen-lockfile
-      # TEMP (F484 N2 evidence, removed before review): force the link past unresolved externals and keep the map of what /OPT:REF kept.
-      - run: cargo rustc -p brust-napi --lib -- -C link-arg=/FORCE:UNRESOLVED -C link-arg=/MAP:napi.map > link.log 2>&1; echo "exit $?"; tail -5 link.log; ls -l napi.map
-        continue-on-error: true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: win-link-evidence
-          retention-days: 3
-          if-no-files-found: warn
-          path: |
-            napi.map
-            link.log
       - run: cd packages/brust && bun run build:debug
       - run: ls -l packages/brust/native && test -f packages/brust/native/brust.win32-x64-msvc.node
       # The generated loader (CommonJS inside a "type": "module" package, so Bun only, as brust itself) picks the
