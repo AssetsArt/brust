@@ -196,23 +196,21 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   process.on('SIGINT', () => onSignal(130))
   process.on('SIGTERM', () => onSignal(143))
 
-  // F488 (Windows only): a killed `bun run start` wrapper leaves this process running; drain when the launchers are gone (same path as Ctrl+C).
-  // Started BEFORE the workers finish booting and awaited before `ready`: reading the process table (PowerShell) takes seconds on a loaded
-  // runner, and a launcher killed while it was still being read would be missed (run 41654464674: the table showed no wrapper at all).
-  // Not for a one-shot (`opts.onReady`: `brust build --target static` renders and exits): it would only add the PowerShell wait to every build.
-  const launcherWatch = opts.onReady ? undefined : watchLauncher({
-    onGone: (pid) => {
-      if (exiting) return
-      console.error(`[brust] launcher (pid ${pid}) exited: shutting down`)
-      onSignal(130)
-    },
-  })
+  // F488 (Windows only): a killed `bun run start` wrapper takes the shim (our parent) down but leaves this process running; drain when the
+  // parent is gone (same path as Ctrl+C). Synchronous, nothing awaited. Not for a one-shot (`opts.onReady`: a static render that exits itself).
+  if (!opts.onReady)
+    watchLauncher({
+      onGone: (pid) => {
+        if (exiting) return
+        console.error(`[brust] launcher (pid ${pid}) exited: shutting down`)
+        onSignal(130)
+      },
+    })
   try {
     await untilReady(cfg.bootTimeoutMs)
   } catch (e) {
     fail(`workers not ready: ${String((e as Error).message ?? e)} (BRUST_BOOT_TIMEOUT_MS=${cfg.bootTimeoutMs})`)
   }
-  await launcherWatch
   ready = true
   console.log(`[brust] ready (${workers} worker${workers === 1 ? '' : 's'})`)
   if (opts.onReady) {
