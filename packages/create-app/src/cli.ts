@@ -1,6 +1,7 @@
 // `create-app` main — a port of 0.1.x runNew (runtime/cli/new.ts:221-294) with the v2 dependency resolution.
 import { existsSync, readFileSync } from 'node:fs'
 import { readdir, rm } from 'node:fs/promises'
+import { isAbsolute, relative, sep } from 'node:path'
 import { copyTemplate } from './copy.ts'
 import { parseArgs, USAGE } from './args.ts'
 import { applyOverrides, monorepoRoot, resolveBrustDep } from './dep.ts'
@@ -67,7 +68,8 @@ export async function main(argv: string[]): Promise<void> {
 
 function printNextSteps(name: string, targetDir: string, template: string, spec: string, workspace: boolean, installed = false): void {
   const cwd = process.cwd()
-  const displayPath = targetDir.startsWith(`${cwd}/`) ? `./${targetDir.slice(cwd.length + 1)}` : targetDir
+  const rel = relative(cwd, targetDir)
+  const displayPath = rel !== '' && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`) ? `./${rel.split(sep).join('/')}` : targetDir
   console.log(`Created ${name} at ${targetDir} (template: ${template}, @brust/core ${spec})\n`)
   console.log('Next:')
   console.log(`  cd ${shq(displayPath)}`)
