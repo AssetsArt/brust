@@ -14,16 +14,51 @@ const MARKER = 'SMOKE-SERVER-ONLY-MARKER-7f3a91'
 const THAI = 'สวัสดีชาวโลก ทดสอบภาษาไทย'
 const APP_DIR_NAME = 'แอป-é'
 const step = (s: string) => console.log(`\n[smoke] ${s}`)
+/** Throws (never `process.exit`s): the top-level catch below prints it, stops the server tree and exits 1, so a failure after start ends the step in seconds. */
 function check(cond: unknown, msg: string): asserts cond {
-  if (!cond) {
-    console.error(`[smoke] FAIL: ${msg}`)
-    process.exit(1)
+  if (!cond) throw new Error(msg)
+}
+
+type Row = { pid: number; ppid: number; name: string; cmd: string }
+/** F488 S1 probe (temporary): the Windows process table, via Win32_Process. */
+function procTable(): Row[] {
+  const r = Bun.spawnSync(['powershell', '-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress'], { stdout: 'pipe', stderr: 'pipe' })
+  const rows = JSON.parse(r.stdout.toString() || '[]') as { ProcessId: number; ParentProcessId: number; Name: string; CommandLine: string | null }[]
+  return rows.map((x) => ({ pid: x.ProcessId, ppid: x.ParentProcessId, name: x.Name, cmd: (x.CommandLine ?? '').slice(0, 160) }))
+}
+function descendants(rows: Row[], root: number): Row[] {
+  const out: Row[] = []
+  const seen = new Set([root])
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const r of rows) if (seen.has(r.ppid) && !seen.has(r.pid)) (seen.add(r.pid), out.push(r), (grew = true))
   }
+  return out
+}
+function probeChain(wrapper: number, base: string): Promise<void> {
+  const show = (t: string, rows: Row[]) => console.log(`[probe] ${t}\n${rows.map((r) => `  pid=${r.pid} ppid=${r.ppid} ${r.name} :: ${r.cmd}`).join('\n')}`)
+  const before = procTable()
+  const me = before.find((r) => r.pid === wrapper)
+  show('wrapper + descendants after ready', [...(me ? [me] : []), ...descendants(before, wrapper)])
+  const chain: Row[] = []
+  for (let r = before.find((x) => x.pid === process.pid); r && chain.length < 8; r = before.find((x) => x.pid === r!.ppid)) chain.push(r)
+  show('smoke ancestors (self upward)', chain)
+  const kids = descendants(before, wrapper)
+  process.kill(wrapper) // a plain kill: TerminateProcess
+  return (async () => {
+    await Bun.sleep(3000)
+    const after = procTable()
+    show('survivors of a plain kill of the wrapper (stale ppid kept)', after.filter((r) => kids.some((k) => k.pid === r.pid)))
+    show('wrapper still listed?', after.filter((r) => r.pid === wrapper))
+    const up = await fetch(`${base}/`).then((r) => r.status, (e) => `refused: ${String(e)}`)
+    console.log(`[probe] GET / after the wrapper kill: ${up}`)
+    for (const k of kids) Bun.spawnSync(['taskkill', '/PID', String(k.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore' })
+  })()
 }
 
 /** `bun run start --port 0` in the app; resolves once `[brust] ready` is printed. `stop` ends the WHOLE process tree: on Windows a kill of the
  * `bun run` wrapper leaves the server it spawned running (it holds the app dir and the job's pipes open, which hung the previous run). */
-async function startServer(dir: string): Promise<{ base: string; stop: () => Promise<void> }> {
+async function startServer(dir: string): Promise<{ pid: number; base: string; stop: () => Promise<void> }> {
   const proc = Bun.spawn(['bun', 'run', 'start', '--port', '0', '--workers', '2'], { cwd: dir, stdin: 'ignore', stdout: 'pipe', stderr: 'inherit', env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' } })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
@@ -38,6 +73,7 @@ async function startServer(dir: string): Promise<{ base: string; stop: () => Pro
     for (;;) if ((await reader.read()).done) return
   })()
   return {
+    pid: proc.pid,
     base,
     stop: async () => {
       if (process.platform === 'win32') Bun.spawnSync(['taskkill', '/PID', String(proc.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore' })
@@ -54,6 +90,7 @@ async function startServer(dir: string): Promise<{ base: string; stop: () => Pro
 // elysia loads twice ("two copies of elysia"). Work under the long (real) path, as a user's checkout is.
 const work = realpathSync.native(mkdtempSync(join(tmpdir(), 'brust-smoke-')))
 let stop: (() => Promise<void>) | undefined
+let failed = false
 try {
   step('pack create-app, core, runtime-dom; host native')
   const tgz = packAll(work)
@@ -105,6 +142,10 @@ try {
   const sl = await fetch(`${app.base}/_brust/action/secret-len`)
   check(sl.status === 200 && ((await sl.json()) as { n: number }).n === MARKER.length, 'the action that imports the server-only module does not answer')
 
+  if (process.platform === 'win32') {
+    step('F488 probe: process chain, then a plain kill of the wrapper')
+    await probeChain(app.pid, app.base)
+  }
   step('stop the server, rebuild over the existing dist (the dist swap)')
   await app.stop()
   stop = undefined
@@ -137,6 +178,9 @@ try {
   writeFileSync(counter, counterSrc)
 
   console.log('\n[smoke] OK')
+} catch (e) {
+  failed = true
+  console.error(`[smoke] FAIL: ${e instanceof Error ? e.message : String(e)}`)
 } finally {
   await stop?.().catch(() => {})
   // Windows keeps a directory busy while a handle is open (an indexer, a just-exited child): retry, and never fail the run on cleanup.
@@ -146,4 +190,4 @@ try {
     console.warn(`[smoke] could not remove ${work}: ${(e as Error).message}`)
   }
 }
-process.exit(0) // a leaked child must not keep the job open; failures exit 1 above
+process.exit(failed ? 1 : 0) // a leaked child must not keep the job open
