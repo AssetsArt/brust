@@ -85,6 +85,14 @@ function statOk(p: string): boolean {
   }
 }
 
+function realRoot(p: string): string {
+  try {
+    return realpathSync(p)
+  } catch {
+    return p
+  }
+}
+
 export async function runBuild(opts: {
   appRoot: string
   entry: string
@@ -107,7 +115,9 @@ export async function runBuild(opts: {
   log: (s: string) => void
 }): Promise<void> {
   setDevBuild(opts.dev === true)
-  const appRoot = resolve(opts.appRoot)
+  // The app root is the real path: Windows keeps a symlinked cwd as the link, and `relative(link, file)` across drives is
+  // an absolute path that every `join(appRoot, rel)` then glues onto the link (N2). POSIX cwd is already real.
+  const appRoot = realRoot(resolve(opts.appRoot))
   const entry = resolve(appRoot, opts.entry)
   const dist = resolve(appRoot, opts.outDir)
   assertSafeOutDir(dist, appRoot, [entry, join(appRoot, 'public')])
