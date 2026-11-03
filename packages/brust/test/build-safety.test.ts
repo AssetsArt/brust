@@ -28,7 +28,7 @@ afterAll(() => {
 
 const build = (dir: string, outDir: string, entry = 'routes.tsx') => runBuild({ appRoot: dir, entry, outDir, log: () => {} })
 const cli = (args: string[], cwd: string) => {
-  const p = Bun.spawnSync([bin, ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const p = Bun.spawnSync([process.execPath, bin, ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
   return { code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() }
 }
 const clientFiles = (out: string) => readdirSync(join(out, 'client')).map((f) => join(out, 'client', f))

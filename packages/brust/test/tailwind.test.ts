@@ -18,7 +18,7 @@ let css: string[] = []
 let stdout = ''
 
 function build(cwd: string) {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx'], { cwd, stdout: 'pipe', stderr: 'pipe' })
   return { code: b.exitCode, stdout: b.stdout.toString(), stderr: b.stderr.toString() }
 }
 function tmp(files: Record<string, string>): string {

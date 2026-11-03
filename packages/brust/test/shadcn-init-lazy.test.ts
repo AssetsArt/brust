@@ -5,6 +5,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { posixOf } from '../src/build/posix'
 import { cliEnv, shadcnInit, spawnRunner } from '../src/shadcn/init'
 
 const bin = join(import.meta.dir, '../bin/brust')
@@ -15,7 +16,7 @@ const spy = join(dir, 'spy.ts')
 writeFileSync(
   spy,
   `import { appendFileSync, readFileSync } from 'node:fs'
-Bun.plugin({ name: 'spy', setup(b) { b.onLoad({ filter: /shadcn\\/init\\.ts$/ }, (a) => {
+Bun.plugin({ name: 'spy', setup(b) { b.onLoad({ filter: /shadcn[\\\\/]init\\.ts$/ }, (a) => {
   appendFileSync(process.env.SPY_LOG!, a.path + '\\n')
   return { contents: readFileSync(a.path, 'utf8'), loader: 'ts' }
 }) } })
@@ -32,7 +33,7 @@ function loaded(args: string[]): { code: number; modules: string[] } {
 test('F252: shadcn init loads the init module (control: the spy sees it; it is the only importer of tsconfig-paths)', () => {
   const r = loaded(['shadcn', 'init'])
   expect(r.code).toBe(2) // no package.json here: usage-level refusal after the module loaded
-  expect(r.modules.some((m) => m.includes('shadcn/init'))).toBe(true)
+  expect(r.modules.some((m) => posixOf(m).includes('shadcn/init'))).toBe(true)
 })
 
 test('F252: other commands do not load the init module (so not tsconfig-paths)', () => {

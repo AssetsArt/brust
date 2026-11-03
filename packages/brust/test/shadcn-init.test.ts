@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addAliasPath, componentsJson, SCAN_LIMIT, SHADCN_DEP_PINS, SHADCN_DEPS, SHADCN_VERSION, shadcnInit } from '../src/shadcn/init'
+import { posixOf } from '../src/build/posix'
 import { readObject } from '../src/shadcn/jsonc'
 
 const dirs: string[] = []
@@ -208,7 +209,7 @@ test('names are validated before anything is written or spawned; URLs must be ht
   // F228: the CLI is given the item that was checked (a local copy), not the URL
   const last = ok.calls.at(-1)!
   expect(last.slice(0, 4)).toEqual(['bun', 'x', `shadcn@${SHADCN_VERSION}`, 'add'])
-  expect(last[4]).toMatch(/brust-shadcn-item-[^/]+\/button-0\.json$/)
+  expect(posixOf(last[4]!)).toMatch(/brust-shadcn-item-[^/]+\/button-0\.json$/)
   expect(last.slice(5)).toEqual(['dialog', '-y'])
   expect(existsSync(last[4]!)).toBe(false) // removed after the CLI ran
 })

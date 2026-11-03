@@ -22,10 +22,10 @@ const html = async (path: string) => (await fetch(`${base}${path}`)).text()
 const react = (el: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(el)
 
 beforeAll(async () => {
-  build = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' }) as typeof build
+  build = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' }) as typeof build
   if (build.exitCode !== 0) throw new Error(`brust build failed:\n${build.stderr.toString()}`)
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
-  proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
+  proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
   let out = ''

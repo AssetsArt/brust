@@ -11,7 +11,7 @@ const ok = join(root, 'ok')
 let uninstall: () => void
 
 const build = (cwd: string, env: Record<string, string> = {}, out = 'dist') =>
-  Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'pipe' })
+  Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--out-dir', out], { cwd, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'pipe' })
 const manifest = (cwd: string, out = 'dist') => JSON.parse(readFileSync(join(cwd, out, 'manifest.json'), 'utf8')) as { components: Record<string, { tier: string; needs_worker: boolean; jobs: { kind: string }[] }> }
 const comp = (m: ReturnType<typeof manifest>, prefix: string) => Object.entries(m.components).find(([id]) => id.startsWith(prefix))![1]
 const jinja = (cwd: string, prefix: string, out = 'dist') => {
@@ -112,7 +112,7 @@ test('baked output equals the job path (dual run)', async () => {
   expect(ref.exitCode, ref.stderr.toString()).toBe(0)
   expect(comp(manifest(ok, 'dist-ref'), 'pure_').jobs.map((j) => j.kind)).toEqual(['precompute'])   // reference: the job stays
   const serve = async (dist: string) => {
-    const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', dist], { cwd: ok, env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }, stdout: 'pipe', stderr: 'inherit' })
+    const proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', dist], { cwd: ok, env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }, stdout: 'pipe', stderr: 'inherit' })
     const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
     const dec = new TextDecoder()
     let out = ''

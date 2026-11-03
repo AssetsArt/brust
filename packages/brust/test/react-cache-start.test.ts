@@ -15,14 +15,14 @@ afterAll(() => rmSync(dist, { recursive: true, force: true }))
 
 test('brust start serves a react island that imports { cache } from @brust/core (200, worker stays up)', async () => {
   rmSync(dist, { recursive: true, force: true })
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.stderr.toString()).toBe('')
   expect(b.exitCode).toBe(0)
   expect(readFileSync(join(dist, 'jobs.js'), 'utf8')).not.toMatch(/registerWorker|startServer|\.node["']/)
 
   const env: Record<string, string | undefined> = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
   delete env.NODE_ENV
-  const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'pipe' })
+  const proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'pipe' })
   let out = ''
   let err = ''
   const pump = async (s: ReadableStream<Uint8Array>, add: (t: string) => void) => {
