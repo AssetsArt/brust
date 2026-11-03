@@ -6,7 +6,7 @@ import { join } from 'node:path'
 const bin = join(import.meta.dir, '../bin/brust')
 const bad = join(import.meta.dir, 'fixtures/bad')
 const run = (args: string[], cwd = import.meta.dir) => {
-  const p = Bun.spawnSync([bin, ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_PORT: '' } })
+  const p = Bun.spawnSync([process.execPath, bin, ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_PORT: '' } })
   return { code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() }
 }
 
