@@ -302,6 +302,24 @@ jobs:
       - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/tailwind.test.ts
       # C2 + A2(4): scaffold -> build -> start -> fetch -> stop -> rebuild, in a non-ASCII dir with Thai text. A reached Windows stub aborts by name and fails here.
       - run: bun scripts/windows-smoke.ts
+      # F489 TEMP discovery (removed before READY): each Linux-only test file once on Windows, pass/fail per file.
+      - name: F489 discovery
+        continue-on-error: true
+        timeout-minutes: 50
+        run: |
+          res=""
+          for f in $(cd packages/brust/test && ls *.test.ts); do
+            grep -q "test/$f" <(sed -n '/^  windows:/,/^  website:/p' .github/workflows/ci.yml | grep -v '^ *#') && continue
+            c=0; s=$(date +%s); (cd packages/brust && timeout 600 bun test --timeout 180000 "test/$f" > "$RUNNER_TEMP/f489-$f.log" 2>&1) || c=$?
+            res+="brust/$f exit=$c $(( $(date +%s) - s ))s"$'\n'
+            [ $c -ne 0 ] && { echo "::group::FAIL brust/$f"; tail -60 "$RUNNER_TEMP/f489-$f.log"; echo "::endgroup::"; }
+          done
+          for f in cli.test.ts shadcn.test.ts sync-template.test.ts pack.test.ts; do
+            c=0; s=$(date +%s); (cd packages/create-app && timeout 600 bun test "test/$f" > "$RUNNER_TEMP/f489-ca-$f.log" 2>&1) || c=$?
+            res+="create-app/$f exit=$c $(( $(date +%s) - s ))s"$'\n'
+            [ $c -ne 0 ] && { echo "::group::FAIL create-app/$f"; tail -60 "$RUNNER_TEMP/f489-ca-$f.log"; echo "::endgroup::"; }
+          done
+          echo "F489-SUMMARY-BEGIN"; printf '%s' "$res"; echo "F489-SUMMARY-END"
       - run: sccache --show-stats
         if: always()
   # F478: the docs site (website/) on its own, so a website-only PR does not run the server job. It runs on every PR: the site is

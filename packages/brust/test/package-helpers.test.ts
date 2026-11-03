@@ -15,10 +15,10 @@ let base = ''
 
 beforeAll(async () => {
   uninstall = installPlainFmt(root)
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', 'dist'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--out-dir', 'dist'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}${b.stdout.toString()}`)
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
-  proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', 'dist', '--entry', 'routes.tsx'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
+  proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', 'dist', '--entry', 'routes.tsx'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
   let out = ''

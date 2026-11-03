@@ -170,7 +170,7 @@ function app(name: string, toml: string, dir: 'api' | 'pages' = 'api'): string {
   return join(root, dir)
 }
 function brust(cwd: string, args: string[]) {
-  const r = Bun.spawnSync([bin, ...args], { cwd, env: { ...process.env, BRUST_CORE_CF_DIR: CORE, BRUST_PORT: '', BRUST_ADDR: '' }, stdout: 'pipe', stderr: 'pipe' })
+  const r = Bun.spawnSync([process.execPath, bin, ...args], { cwd, env: { ...process.env, BRUST_CORE_CF_DIR: CORE, BRUST_PORT: '', BRUST_ADDR: '' }, stdout: 'pipe', stderr: 'pipe' })
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() }
 }
 

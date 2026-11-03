@@ -12,7 +12,7 @@ const bin = join(import.meta.dir, '../bin/brust')
 let faceUrl = ''
 
 function build(...args: string[]) {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', ...args], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', ...args], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build ${args.join(' ')} failed:\n${b.stderr}`)
 }
 const client = () => readdirSync(join(app, 'dist/client'))
@@ -56,7 +56,7 @@ test('a native component and a React island both get the string', () => {
 test('--target cloudflare: the font is a Static Asset and the worker carries the URL', () => {
   const out = mkdtempSync(join(tmpdir(), 'brust-font-cf-'))
   try {
-    const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out, '--force'], {
+    const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out, '--force'], {
       cwd: app,
       stdout: 'pipe',
       stderr: 'pipe',
@@ -73,7 +73,7 @@ test('--target cloudflare: the font is a Static Asset and the worker carries the
 
 test('brust start serves the font at the URL, immutable, and the page names it in its preload', async () => {
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
-  const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
+  const proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   try {
     const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
     const dec = new TextDecoder()

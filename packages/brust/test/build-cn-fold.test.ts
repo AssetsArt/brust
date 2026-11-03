@@ -18,7 +18,7 @@ type Manifest = {
   components: Record<string, { jobs: { kind: string }[]; children: { id: string; instances: string; literals?: Record<string, unknown> }[]; template: string }>
 }
 const build = (env: Record<string, string> = {}, out = 'dist') =>
-  Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'pipe' })
+  Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'pipe' })
 const manifest = (out = 'dist') => JSON.parse(readFileSync(join(app, out, 'manifest.json'), 'utf8')) as Manifest
 const page = (m: Manifest) => m.components[m.routes[0]!.chain.at(-1)!]!
 const short = (id: string) => id.replace(/_[0-9a-f]+$/, '')
@@ -60,7 +60,7 @@ test('the served page equals the per-request job path (R34.93 dual run, BRUST_BU
   expect(ref.exitCode, ref.stderr.toString()).toBe(0)
   expect(page(manifest('dist-ref')).children).toHaveLength(6) // reference: every instance keeps its job
   const serve = async (dist: string) => {
-    const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', dist], { cwd: app, env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }, stdout: 'pipe', stderr: 'inherit' })
+    const proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', dist], { cwd: app, env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }, stdout: 'pipe', stderr: 'inherit' })
     const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
     const dec = new TextDecoder()
     let out = ''

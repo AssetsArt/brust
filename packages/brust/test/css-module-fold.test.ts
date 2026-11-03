@@ -12,7 +12,7 @@ const copies: string[] = []
 type Manifest = { components: Record<string, { template: string; jobs: unknown[]; needs_worker: boolean; tier: string }> }
 
 function build(cwd: string) {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx'], { cwd, stdout: 'pipe', stderr: 'pipe' })
   return { code: b.exitCode, stdout: b.stdout.toString(), stderr: b.stderr.toString() }
 }
 function variant(name: string, edit: (dir: string) => void): string {
