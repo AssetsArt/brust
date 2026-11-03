@@ -14,7 +14,10 @@ fn analyze(parent: &str) -> ComponentIR {
     let dir = std::env::temp_dir().join(format!("brust-chl-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("Code.tsx"), CHILD).unwrap();
-    let path = dir.join("T.tsx").to_string_lossy().into_owned();
+    let path = dir
+        .join("T.tsx")
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
     let src = parent.to_string();
     run_on_compiler_thread(move || {
         analyze_source(

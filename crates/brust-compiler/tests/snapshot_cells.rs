@@ -21,7 +21,10 @@ fn tree_files(parent: &str, files: &[(&str, &str)]) -> ComponentIR {
     for (name, src) in files {
         std::fs::write(dir.join(name), src).unwrap();
     }
-    let path = dir.join("T.tsx").to_string_lossy().into_owned();
+    let path = dir
+        .join("T.tsx")
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
     let src = parent.to_string();
     run_on_compiler_thread(move || {
         analyze_source(

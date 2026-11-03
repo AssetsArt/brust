@@ -15,10 +15,10 @@ type Stats = { loader_calls: number; job_calls: number; worker_calls: number }
 const stats = async (): Promise<Stats> => (await fetch(`${base}/_brust/cache/stats`)).json() as Promise<Stats>
 
 beforeAll(async () => {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}`)
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
-  proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '2'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
+  proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '2'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   // "[brust] listening on 127.0.0.1:NNNN (io: hyper(tokio))" (brust-server server/mod.rs), then
   // "[brust] ready (2 workers)" once every worker registered (run.ts). Keep draining stdout
   // afterwards: a closed pipe would make the server's next println! panic.

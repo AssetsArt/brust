@@ -27,7 +27,7 @@ async function buildFixture(dir: string) {
 test('scanRoutes maps every Component to its .tsx file', async () => {
   const { routes, componentFile } = await scanRoutes(join(app, 'routes.tsx'))
   const { leaves } = flattenRoutes(routes)
-  expect(leaves.flatMap((l) => l.chain.map((r) => componentFile.get(r.Component!)?.split('/').pop()))).toEqual([
+  expect(leaves.flatMap((l) => l.chain.map((r) => componentFile.get(r.Component!)?.split(/[\\/]/).pop()))).toEqual([
     'AppLayout.tsx',
     'HomePage.tsx',
     'AppLayout.tsx',

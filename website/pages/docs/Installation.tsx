@@ -46,7 +46,7 @@ export default function Installation({ blocks, starters }: InstallationData) {
       <Lead>brust needs Bun and nothing else: the Rust server ships prebuilt inside the npm package for your platform.</Lead>
 
       <Step n={1} id="requirements" title="Check the requirements" />
-      <p>Bun 1.4 or newer, on macOS (arm64 or x64) or Linux (arm64 or x64, glibc or musl). There is no Windows build.</p>
+      <p>Bun 1.4 or newer, on macOS (arm64 or x64), Linux (arm64 or x64, glibc or musl) or Windows x64. Windows on ARM is not supported yet. On Windows, Ctrl+C stops a server with a graceful drain; a plain kill (and SIGTERM) ends it without one, because the SIGTERM drain is POSIX-only.</p>
       <CodeBlock code={blocks.check.code} lang={blocks.check.lang} cwd={blocks.check.cwd} html={blocks.check.html} />
       <p>
         You do not need a Rust toolchain. <code>@brust/core</code> lists one optional dependency per platform (<code>@brust/native-darwin-arm64</code>, <code>@brust/native-linux-x64-gnu</code>, and so on), and your package manager installs only the one that matches the machine.

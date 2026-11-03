@@ -12,7 +12,10 @@ fn analyze_with_child(child: &str) -> (Tier, Vec<(String, DiagClass)>) {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("Entries.tsx"), child).unwrap();
     let src = "import { useState } from 'react'\nimport Entries from './Entries'\nexport default function T() { const [log, setLog] = useState<any[]>([]); return <div onClick={() => setLog(log.concat([1]))}><Entries log={log} /></div> }";
-    let path = dir.join("T.tsx").to_string_lossy().into_owned();
+    let path = dir
+        .join("T.tsx")
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
     let ir = run_on_compiler_thread(move || {
         analyze_source(
             &path,
@@ -76,7 +79,10 @@ fn row_child_with_callback_derived_value_in_a_state_fed_list_falls_back() {
     )
     .unwrap();
     let src = "import { useState } from 'react'\nimport Item from './Item'\nexport default function T() { const [items, setItems] = useState<any[]>([]); return <ul onClick={() => setItems(items.concat([{ id: 1, tags: [] }]))}>{items.map((it) => <Item key={it.id} it={it} />)}</ul> }";
-    let path = dir.join("T.tsx").to_string_lossy().into_owned();
+    let path = dir
+        .join("T.tsx")
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
     let ir = run_on_compiler_thread(move || {
         analyze_source(
             &path,
@@ -102,7 +108,10 @@ fn analyze_pair(child: &str, parent: &str) -> brust_compiler::ir::ComponentIR {
     let dir = std::env::temp_dir().join(format!("brust-lpp-pair-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("Child.tsx"), child).unwrap();
-    let path = dir.join("T.tsx").to_string_lossy().into_owned();
+    let path = dir
+        .join("T.tsx")
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
     let src = parent.to_string();
     run_on_compiler_thread(move || {
         analyze_source(
@@ -161,7 +170,10 @@ fn a_wrapper_island_is_fed_and_a_linked_one_falls_back() {
     .unwrap();
     let analyze_in = |src: &str| {
         std::fs::write(dir.join("Child.tsx"), wrapper).unwrap();
-        let path = dir.join("T.tsx").to_string_lossy().into_owned();
+        let path = dir
+            .join("T.tsx")
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
         let src = src.to_string();
         run_on_compiler_thread(move || {
             analyze_source(
