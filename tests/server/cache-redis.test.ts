@@ -45,7 +45,7 @@ type Srv = { base: string; get: (p: string) => Promise<Response>; l2: () => Prom
 
 async function boot(redisUrl: string): Promise<Srv> {
   // `bun test` sets NODE_ENV=test; a real `brust start` is production.
-  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', NODE_ENV: 'production', BRUST_E2E_REDIS_URL: redisUrl }
+  const env = { ...process.env, BRUST_PORT: '', BRUST_STATS: 'public', BRUST_WORKERS: '', BRUST_ADDR: '', NODE_ENV: 'production', BRUST_E2E_REDIS_URL: redisUrl }
   const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '2'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   spawned.push(proc)
   const r = await readUntil(proc, /\[brust\] ready/)

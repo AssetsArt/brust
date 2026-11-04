@@ -47,3 +47,21 @@ test('actions stream keys are forwarded only with a stream list (F475)', () => {
   const none = startOptions(base, '/d', { actions: { ...a, stream: [], maxStreamBytes: 9, streamIdleMs: 8, streamTotalMs: 7, maxStreams: 2 } }, 'v')
   expect(none.actions).toEqual({ prefix: '/api', maxBodyBytes: 1 })
 })
+
+// F507: who may read /_brust/cache/stats.
+test('stats: off unless set (no key), public under brust dev, the config wins over the dev default', () => {
+  expect('stats' in startOptions(base, '/d', {}, 'v')).toBe(false)
+  expect(startOptions(base, '/d', {}, 'v', 'dev-token').stats).toBe('public')
+  expect('stats' in startOptions({ ...base, stats: 'off' }, '/d', {}, 'v', 'dev-token')).toBe(false)
+  expect(startOptions({ ...base, stats: 'public' }, '/d', {}, 'v').stats).toBe('public')
+  expect('statsToken' in startOptions({ ...base, stats: 'public' }, '/d', {}, 'v')).toBe(false)
+})
+
+test('stats token: the bearer secret is read from the env variable the config names; unset or empty is a boot error that names the variable', () => {
+  const cfg = { ...base, stats: 'token', statsToken: 'env:STATS_TOKEN' } as BrustConfig
+  const o = startOptions(cfg, '/d', {}, 'v', undefined, { STATS_TOKEN: 's3cret' })
+  expect(o).toMatchObject({ stats: 'token', statsToken: 's3cret' })
+  for (const env of [{}, { STATS_TOKEN: '' }]) {
+    expect(() => startOptions(cfg, '/d', {}, 'v', undefined, env)).toThrow('stats: [server] stats_token is "env:STATS_TOKEN" but STATS_TOKEN is not set (or empty)')
+  }
+})

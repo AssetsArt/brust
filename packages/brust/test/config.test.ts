@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig } from '../src/config'
 
-const ENV = ['BRUST_WORKER_THREADS', 'BRUST_ADDR', 'BRUST_PORT', 'BRUST_WORKERS', 'BRUST_RENDER_SLOTS', 'BRUST_DRAIN_TIMEOUT_MS', 'BRUST_BOOT_TIMEOUT_MS', 'BRUST_CALL_TIMEOUT_MS'] as const
+const ENV = ['BRUST_STATS', 'BRUST_WORKER_THREADS', 'BRUST_ADDR', 'BRUST_PORT', 'BRUST_WORKERS', 'BRUST_RENDER_SLOTS', 'BRUST_DRAIN_TIMEOUT_MS', 'BRUST_BOOT_TIMEOUT_MS', 'BRUST_CALL_TIMEOUT_MS'] as const
 const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]))
 const dirs: string[] = []
 function tmpApp(toml?: string): string {
@@ -130,4 +130,38 @@ test('BRUST_WORKER_THREADS: absent = server default (one per core), env > CLI, b
   }
   delete process.env.BRUST_WORKER_THREADS
   await expect(loadConfig(tmpApp(), { ioThreads: 0 })).rejects.toThrow('ioThreads must be an integer in 1..256')
+})
+
+// F507: `[server] stats` / `stats_token`, and the BRUST_STATS env layer.
+test('stats: absent by default; toml, CLI and env set it, env > CLI > toml', async () => {
+  for (const k of ENV) delete process.env[k]
+  expect((await loadConfig(tmpApp())).stats).toBeUndefined()
+  expect(await loadConfig(tmpApp('[server]\nstats = "public"\n'))).toMatchObject({ stats: 'public' })
+  const tok = await loadConfig(tmpApp('[server]\nstats = "token"\nstats_token = "env:STATS_TOKEN"\n'))
+  expect(tok).toMatchObject({ stats: 'token', statsToken: 'env:STATS_TOKEN' })
+  const dir = tmpApp('[server]\nstats = "public"\n')
+  expect((await loadConfig(dir, { stats: 'off' })).stats).toBe('off')
+  process.env.BRUST_STATS = 'off'
+  expect((await loadConfig(dir, { stats: 'public' })).stats).toBe('off')
+  process.env.BRUST_STATS = ''
+  expect((await loadConfig(dir)).stats).toBe('public') // an empty env var counts as unset
+})
+
+test('stats: a bad mode, a literal token and a mode/token mismatch are config errors that never echo a secret', async () => {
+  for (const k of ENV) delete process.env[k]
+  const fails = async (toml: string, msg: string | RegExp, cli: Parameters<typeof loadConfig>[1] = {}) => {
+    const e = await loadConfig(tmpApp(toml), cli).then(() => null, (x: Error) => x)
+    expect(e?.message).toMatch(msg)
+    return e!.message
+  }
+  await fails('[server]\nstats = "yes"\n', /server\.stats must be one of off, public, token \(got "yes"\)/)
+  const m = await fails('[server]\nstats = "token"\nstats_token = "hunter2-literal"\n', /server\.stats_token must be "env:NAME" \(a literal token is refused/)
+  expect(m).not.toContain('hunter2-literal')
+  await fails('[server]\nstats = "token"\n', /stats = "token" needs stats_token = "env:NAME"/)
+  await fails('[server]\nstats = "public"\nstats_token = "env:T"\n', /stats_token is used only with stats = "token"/)
+  await fails('[server]\nstats_token = "env:T"\n', /stats_token is used only with stats = "token"/)
+  await fails('', /config\.stats must be one of/, { stats: 'maybe' as never })
+  await fails('', /config\.stats_token must be "env:NAME"/, { stats: 'token', statsToken: 'literal' })
+  process.env.BRUST_STATS = 'maybe'
+  await fails('', /BRUST_STATS must be one of off, public, token \(got "maybe"\)/)
 })

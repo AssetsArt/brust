@@ -49,6 +49,8 @@ pub struct Config {
     pub l2: Option<brust_core::l2::L2Config>,
     /// `brust dev` only (L14): requests carrying this token get a trace header and the pages get DOM markers.
     pub dev_token: Option<String>,
+    /// F507: who may read `/_brust/cache/stats`; the default is nobody (404).
+    pub stats: brust_core::config::StatsAccess,
 }
 
 impl Default for Config {
@@ -67,6 +69,7 @@ impl Default for Config {
             actions_client: None,
             l2: None,
             dev_token: None,
+            stats: brust_core::config::StatsAccess::default(),
         }
     }
 }

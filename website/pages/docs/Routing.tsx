@@ -123,7 +123,7 @@ export default function Routing({ blocks }: RoutingData) {
       </ul>
 
       <h3 id="trailing">A path that ends in a slash</h3>
-      {/* source: crates/brust-core/src/pipeline.rs:171-209 (the trailing-slash step), crates/brust-server/tests/trailing_slash.rs (strict: /cart/ is 404 and /docs/a/ reaches /docs/{*rest} with the slash; redirect: 308; ignore: one entry) */}
+      {/* source: crates/brust-core/src/pipeline.rs:173-209 (the trailing-slash step), crates/brust-server/tests/trailing_slash.rs (strict: /cart/ is 404 and /docs/a/ reaches /docs/{*rest} with the slash; redirect: 308; ignore: one entry) */}
       <p>
         By default a route matches its path as written: <code>/cart/</code> is not <code>/cart</code> (404), and <code>{'/docs/{*rest}'}</code> takes <code>/docs/a/</code> with <code>params.rest</code> ending in <code>/</code>, a second URL
         of the page. Set <code>[server] trailing_slash = "redirect"</code> (one URL per page, 308 to the slashless path) or <code>"ignore"</code> (both spellings answer); see <a href="/docs/configuration#trailing-slash">Configuration</a>.

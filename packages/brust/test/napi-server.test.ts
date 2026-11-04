@@ -213,3 +213,48 @@ test('L10: slotBytes (BRUST_SLOT_BYTES) end to end: a 100 KiB loader reply over 
   expect(JSON.parse(cacheStats())).toMatchObject({ loader_calls: 1, job_calls: 1, worker_calls: 1 })
   await beginDrain(1000)
 })
+
+// F507: the real addon's gate on /_brust/cache/stats. No worker is needed: the path never reaches one.
+async function statsServer(extra: { stats?: 'off' | 'public' | 'token'; statsToken?: string }) {
+  startServer({ host: '127.0.0.1', port: 0, distDir: dist, workers: 0, ...extra })
+  await untilReady(2000)
+  return `http://${localAddr()}`
+}
+
+test('F507: stats is off by default (404 like an unknown path), /ping stays public', async () => {
+  const base = await statsServer({})
+  const r = await fetch(`${base}/_brust/cache/stats`)
+  expect(r.status).toBe(404)
+  expect(await r.text()).not.toContain('loader_calls')
+  expect((await fetch(`${base}/ping`)).status).toBe(200)
+  expect(JSON.parse(cacheStats()).loader_calls).toBe(0) // the napi call is the host's own, never gated
+  await beginDrain(1000)
+})
+
+test('F507: stats = public serves the JSON to anyone', async () => {
+  const base = await statsServer({ stats: 'public' })
+  const r = await fetch(`${base}/_brust/cache/stats`)
+  expect(r.status).toBe(200)
+  expect(await r.json()).toMatchObject({ loader_calls: 0, job_calls: 0 })
+  await beginDrain(1000)
+})
+
+test('F507: stats = token serves the bearer and answers 404 (never 401) to a wrong or missing token', async () => {
+  const base = await statsServer({ stats: 'token', statsToken: 's3cret-token' })
+  const get = (auth?: string) => fetch(`${base}/_brust/cache/stats`, auth ? { headers: { authorization: auth } } : {})
+  expect((await get('Bearer s3cret-token')).status).toBe(200)
+  for (const bad of [undefined, 'Bearer nope', 'Bearer s3cret-toke', 'Basic s3cret-token']) {
+    const r = await get(bad)
+    expect([bad, r.status]).toEqual([bad, 404])
+    expect(r.headers.get('www-authenticate')).toBeNull()
+  }
+  expect((await fetch(`${base}/ping`)).status).toBe(200)
+  await beginDrain(1000)
+})
+
+test('F507: a mode and token that do not go together is a boot error naming stats', () => {
+  const boot = (extra: object) => () => startServer({ host: '127.0.0.1', port: 0, distDir: dist, workers: 0, ...extra })
+  expect(boot({ stats: 'token' })).toThrow(/^stats: stats = "token" needs a non-empty token/)
+  expect(boot({ stats: 'public', statsToken: 'x' })).toThrow(/^stats: a stats token belongs to stats = "token"/)
+  expect(boot({ stats: 'sometimes' })).toThrow(/^stats: stats must be "off", "public" or "token"/)
+})

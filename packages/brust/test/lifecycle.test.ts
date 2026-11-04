@@ -35,6 +35,7 @@ function start(entry: string, extraEnv: Record<string, string> = {}): Started {
   const env: Record<string, string | undefined> = {
     ...process.env,
     BRUST_PORT: '',
+    BRUST_STATS: 'public', // F507: the test reads /_brust/cache/stats
     BRUST_WORKERS: '',
     BRUST_ADDR: '',
     BRUST_DIST_DIR: dist,

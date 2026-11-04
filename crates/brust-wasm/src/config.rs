@@ -184,6 +184,12 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
         https: true,
         l2,
         dev_token: None,
+        // The Workers gate is `CONFIG.stats` (a bool, off by default): on is public, as it always was.
+        stats: if c.stats {
+            brust_core::config::StatsAccess::Public
+        } else {
+            brust_core::config::StatsAccess::Off
+        },
     };
     Ok(Parsed {
         core,
@@ -202,6 +208,8 @@ mod tests {
     fn a_full_config_maps_to_core_config() {
         let (c, stats) = parse(OK).unwrap();
         assert!(stats);
+        // F507: the core's own gate follows `CONFIG.stats`, so what the Workers gate lets through the core serves
+        assert_eq!(c.stats, brust_core::config::StatsAccess::Public);
         assert_eq!(
             (c.l1_capacity, c.job_cache_capacity, c.https),
             (256, 512, true)
@@ -258,6 +266,7 @@ mod tests {
     fn defaults_are_the_workers_capacities() {
         let (c, stats) = parse(r#"{"abi":1,"edgeCache":"off"}"#).unwrap();
         assert!(!stats);
+        assert_eq!(c.stats, brust_core::config::StatsAccess::Off);
         assert_eq!((c.l1_capacity, c.job_cache_capacity), (256, 512));
         assert!(c.cors.is_none() && c.actions.is_none() && c.generator.is_none());
     }

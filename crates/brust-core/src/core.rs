@@ -45,6 +45,8 @@ pub struct CoreConfig {
     /// `brust dev` only (L14): a request carrying this token in `x-brust-dev-token` gets a trace header.
     /// `None` in production.
     pub dev_token: Option<String>,
+    /// F507: who may read `/_brust/cache/stats`; the default is nobody (the path answers 404).
+    pub stats: crate::config::StatsAccess,
 }
 
 /// The shared core state, one per server.
@@ -60,6 +62,8 @@ pub struct Core<H: Host> {
     pub(crate) renderer: Renderer,
     /// `brust dev` (L14): the token a request must carry to be traced; `None` = never.
     pub(crate) dev_token: Option<String>,
+    /// F507: who may read `/_brust/cache/stats`.
+    pub(crate) stats_access: crate::config::StatsAccess,
     pub(crate) l1: H::L1,
     #[doc(hidden)]
     pub jobs: H::Jobs,
@@ -167,6 +171,7 @@ impl<H: Host> Core<H> {
             plans,
             renderer,
             dev_token: cfg.dev_token.clone(),
+            stats_access: cfg.stats.clone(),
             l1: H::L1::with_clock(cfg.l1_capacity, Arc::clone(&clock)),
             jobs: H::Jobs::with_clock(cfg.job_cache_capacity, Arc::clone(&clock)),
             clock,

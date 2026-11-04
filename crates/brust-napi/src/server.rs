@@ -251,6 +251,11 @@ pub struct StartOptions {
     pub l2: Option<NapiL2Options>,
     /// `brust dev` only (L14): a request carrying this token in `x-brust-dev-token` is traced. Absent in production.
     pub dev_token: Option<String>,
+    /// F507: who may read `/_brust/cache/stats`: `"off"` (the default when absent), `"public"` or `"token"`.
+    pub stats: Option<String>,
+    /// F507: the secret `stats = "token"` compares `Authorization: Bearer` with (resolved from its env reference by the
+    /// JS side); never logged. Boot error `stats: …` for a mode and token that do not go together.
+    pub stats_token: Option<String>,
 }
 
 /// Boot the server (manifest, routes, templates, bind). Throws on any boot
@@ -293,6 +298,11 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
             .map_err(napi::Error::from_reason)?,
         l2: opts.l2.map(l2_config),
         dev_token: opts.dev_token,
+        stats: brust_core::config::StatsAccess::parse(
+            opts.stats.as_deref().unwrap_or("off"),
+            opts.stats_token,
+        )
+        .map_err(|e| napi::Error::from_reason(format!("stats: {e}")))?,
         ..Config::default()
     };
     let s = start(cfg).map_err(napi::Error::from_reason)?;

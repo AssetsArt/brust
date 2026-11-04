@@ -59,7 +59,9 @@ export function workerCount(cfg: BrustConfig, m: RunManifest): number {
 }
 
 /** Pure: the napi `StartOptions`. No actions/cors/cache → exactly the pre-actions keys. */
-export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, version: string, devToken?: string): StartOptions {
+export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, version: string, devToken?: string, env: Record<string, string | undefined> = process.env): StartOptions {
+  // F507: `/_brust/cache/stats` is off unless set; `brust dev` (its server carries a dev token) defaults to public.
+  const stats = cfg.stats ?? (devToken ? 'public' : 'off')
   return {
     host: cfg.host,
     port: cfg.port,
@@ -73,8 +75,17 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     ...(actionsClient(cfg, m) ? { actionsClient: actionsClient(cfg, m) } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
     ...(devToken ? { devToken } : {}),
+    ...(stats !== 'off' ? { stats, ...(stats === 'token' ? { statsToken: statsTokenOf(cfg.statsToken, env) } : {}) } : {}),
     ...(m.cache ? { l2: { adapter: m.cache.adapter, getTimeoutMs: m.cache.getTimeoutMs, maxBodyBytes: m.cache.maxBodyBytes, namespace: m.cache.namespace, buildId: m.cache.buildId } } : {}),
   }
+}
+
+/** F507: the bearer token `[server] stats_token = "env:NAME"` names; a boot error naming the variable (never a value) when it is unset or empty. */
+function statsTokenOf(ref: string | undefined, env: Record<string, string | undefined>): string {
+  const name = (ref ?? '').replace(/^env:/, '')
+  const v = name ? env[name] : undefined
+  if (!v) throw new Error(`stats: [server] stats_token is "env:${name}" but ${name} is not set (or empty)`)
+  return v
 }
 
 /** L16: what the page tells the browser `client()` (R16.1/R16.2); absent while it would only repeat the prefix script. */

@@ -54,9 +54,30 @@ export interface BrowserCtx {
   clientDir?: string
   /** F480: load-time writers shipped into an island chunk (F230), by real path: why each is there. A server-only import
    * reached through one names that chain in `server-only-in-client`. */
-  loadWriters?: Map<string, string>
+  loadWriters?: Map<string, LoadWriter>
   /** F495 `[server] base_path`: every `/_brust/…` URL a bundle names carries it (`/portal/_brust/…`); absent or `''` = the root. */
   basePath?: string
+}
+
+/** F480/F481: a load writer shipped into island chunks (F230): its path, every island whose chunk carries it, and the modules it is judged to write. */
+export interface LoadWriter {
+  rel: string
+  islands: string[]
+  writes: string[]
+}
+
+/** F481: `a, b, c and 2 more`: at most `cap` names, in sorted order, then the rest as a count. */
+export function namedCapped(names: Iterable<string>, cap = 3): string {
+  const all = [...new Set(names)].sort()
+  return all.length <= cap ? all.join(', ') : `${all.slice(0, cap).join(', ')} and ${all.length - cap} more`
+}
+
+/** The sentence a server-only refusal carries for the load writers it reached: every writer and every island, capped. */
+export function loadWriterReason(writers: LoadWriter[]): string {
+  const one = (w: LoadWriter) => `${w.rel} is loaded into the React ${w.islands.length > 1 ? 'islands' : 'island'} ${namedCapped(w.islands)} because it is judged to write ${namedCapped(w.writes, 99)} when it loads: F230 load writes`
+  const sorted = [...writers].sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
+  const shown = sorted.slice(0, 3).map(one).join('; ')
+  return sorted.length > 3 ? `${shown}; and ${sorted.length - 3} more load writers` : shown
 }
 
 /** F495: brust's own URL prefix for a build, `/_brust` or `<base>/_brust`. */
@@ -186,9 +207,9 @@ function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean 
  * offending import is stubbed so the bundler gets as far as it can; `browserBuild` then throws
  * `server-only-in-client` naming every `<importer> imports <spec>`. */
 function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
-  const writers = ctx.loadWriters ?? new Map<string, string>()
-  // F480: who first imported each file (real paths), kept only while a load writer ships, to name the writer chain.
-  const importerOf = new Map<string, string>()
+  const writers = ctx.loadWriters ?? new Map<string, LoadWriter>()
+  // F480/F481: who imports each file (real paths; every importer, not the first), kept only while a load writer ships, to name the writer chain.
+  const importersOf = new Map<string, Set<string>>()
   const real = (f: string) => {
     try {
       return realpathSync(f)
@@ -200,17 +221,28 @@ function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
     const from = real(ctx.sourceOf.get(importer) ?? importer)
     try {
       const file = real(isAbsolute(spec) ? spec : Bun.resolveSync(spec, dirname(from)))
-      if (!importerOf.has(file)) importerOf.set(file, from)
+      let set = importersOf.get(file)
+      if (!set) importersOf.set(file, (set = new Set()))
+      set.add(from)
     } catch {}
   }
+  /** Every load writer a module is reached through (a walk up all its importers, stopping at a writer), as the refusal's reason. */
   const writerChain = (importer: string): string => {
     const seen = new Set<string>()
-    for (let f: string | undefined = real(ctx.sourceOf.get(importer) ?? importer); f !== undefined && !seen.has(f); f = importerOf.get(f)) {
+    const found: LoadWriter[] = []
+    const stack = [real(ctx.sourceOf.get(importer) ?? importer)]
+    while (stack.length > 0) {
+      const f = stack.pop()!
+      if (seen.has(f)) continue
       seen.add(f)
-      const why = writers.get(f)
-      if (why !== undefined) return ` (${why})`
+      const w = writers.get(f)
+      if (w !== undefined) {
+        found.push(w)
+        continue
+      }
+      stack.push(...(importersOf.get(f) ?? []))
     }
-    return ''
+    return found.length > 0 ? ` (${loadWriterReason(found)})` : ''
   }
   return {
     name: 'brust-server-only',
