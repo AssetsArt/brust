@@ -105,6 +105,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         guards: Vec::new(),
         slot_depth: 0,
         spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
+        is_fixed_clone: ir.fixed_clone_of.is_some(),
         rest_childless: ir.rest_childless,
         no_text: false,
         mount_once: Vec::new(),
@@ -619,6 +620,8 @@ struct Walker<'s, 'c> {
     spec_salt: Option<String>,
     /// F375: `ComponentIR::rest_childless` of the component walked.
     rest_childless: bool,
+    /// F504b: `ComponentIR::fixed_clone_of` of the component walked is set (a fixed-props clone, F494).
+    is_fixed_clone: bool,
     /// F494: open `For`s of the frames pass whose rows the client can re-create (`row_reactive`). A fixed-props clone is
     /// made only where none is open: every row value there is the server's, once.
     live_rows: u32,
@@ -4350,6 +4353,7 @@ impl Walker<'_, '_> {
             .map(|p| p.name.clone())
             .collect();
         let clone_id = id.clone();
+        let shared_id = cir.id.clone();
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
             &export,
@@ -4360,6 +4364,7 @@ impl Walker<'_, '_> {
                 ir.fixed_props = fixed.clone();
                 ir.id = clone_id.clone();
                 ir.specialised = true;
+                ir.fixed_clone_of = Some(shared_id.clone());
                 Ok(())
             },
         )?;
@@ -6220,9 +6225,11 @@ impl Walker<'_, '_> {
         Ok(out)
     }
 
-    /// F502: a branch condition as a server guard. One that reads state is an `x-if` the client flips (no restriction).
+    /// F502: a branch condition as a server guard. One that reads state, or a prop that changes on the client (F504a:
+    /// this component's props are a signal and the call site did not fix it), is an `x-if` the client flips: no
+    /// restriction (the hidden copy needs the job too).
     fn cond_guard(&self, cond: &Expr) -> Result<Option<RowGuard>, ()> {
-        if self.reads_state(cond) {
+        if self.reads_state(cond) || self.reads_changing_prop(&self.deps_of(cond)) {
             return Ok(None);
         }
         match cond {
@@ -6292,10 +6299,7 @@ impl Walker<'_, '_> {
 
     /// F502: this component is a fixed-props clone (F494): every row value it renders is the server's.
     fn fixed_clone(&self) -> bool {
-        self.spec_salt.as_deref().is_some_and(|id| {
-            id.rsplit_once("_f")
-                .is_some_and(|(_, h)| h.len() == 8 && h.bytes().all(|b| b.is_ascii_hexdigit()))
-        })
+        self.is_fixed_clone
     }
 
     /// F494: every enclosing list of the children pass has rows the client never re-creates: its source reads no state

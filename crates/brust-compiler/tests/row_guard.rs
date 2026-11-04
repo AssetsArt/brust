@@ -122,3 +122,33 @@ fn a_state_condition_restricts_nothing() {
     assert_eq!(r[0].when, None);
     assert!(!r[0].when_opaque);
 }
+
+/// F504a: a condition over a prop of a component whose props are a signal (state of its own) may change on the client:
+/// it restricts nothing, like a state condition.
+#[test]
+fn a_changing_prop_condition_restricts_nothing() {
+    let all = compile("SignalPropPage.tsx");
+    let r = &all[0].0.instances;
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert_eq!(r[0].when, None);
+    assert!(!r[0].when_opaque);
+}
+
+/// F504b: a fixed-props clone names the shared component it was made of (no id-suffix sniffing).
+#[test]
+fn a_fixed_clone_names_its_shared_component() {
+    let all = compile("IfChainPage.tsx");
+    let clones: Vec<_> = all
+        .iter()
+        .filter(|(ir, _)| ir.fixed_clone_of.is_some())
+        .collect();
+    assert_eq!(clones.len(), 1);
+    let of = clones[0].0.fixed_clone_of.as_deref().unwrap();
+    assert!(
+        of.starts_with("rows_") && clones[0].0.id.starts_with(of),
+        "{of} {}",
+        clones[0].0.id
+    );
+    // The shared component is not part of the tree (every call site took the clone).
+    assert!(all.iter().all(|(ir, _)| ir.id != of));
+}
