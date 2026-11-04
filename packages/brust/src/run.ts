@@ -220,6 +220,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   // F485 P12: on Windows Ctrl+C (SIGINT) drains; SIGTERM handlers rarely fire and a kill ends the process without a drain (POSIX-only).
   process.on('SIGINT', () => onSignal(130))
   process.on('SIGTERM', () => onSignal(143))
+  // F492: a console Ctrl+Break (and closing the console) reaches Bun as SIGBREAK on Windows: drain like Ctrl+C.
+  if (process.platform === 'win32') process.on('SIGBREAK', () => onSignal(149))
 
   // F488 (Windows only): a killed `bun run start` wrapper takes the shim (our parent) down but leaves this process running; drain when the
   // parent is gone (same path as Ctrl+C). Synchronous, nothing awaited. Not for a one-shot (`opts.onReady`: a static render that exits itself).

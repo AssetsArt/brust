@@ -24,6 +24,7 @@ function check(cond: unknown, msg: string): asserts cond {
  * is gone and exit by itself, so within 10 s the port refuses connections and the app dir can be renamed (a live server holds it: EBUSY).
  * `cleanup` ends the whole tree with taskkill, only for the failure path. */
 async function startServer(dir: string): Promise<{ base: string; stop: () => Promise<void>; cleanup: () => void }> {
+  const t0 = Date.now()
   const proc = Bun.spawn(['bun', 'run', 'start', '--port', '0', '--workers', '2'], { cwd: dir, stdin: 'ignore', stdout: 'pipe', stderr: 'inherit', env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' } })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
@@ -34,6 +35,7 @@ async function startServer(dir: string): Promise<{ base: string; stop: () => Pro
     out += dec.decode(value, { stream: true })
   }
   const base = `http://${/listening on (\S+)/.exec(out)![1]}`
+  console.log(`[smoke] F492 boot: ${Date.now() - t0} ms from spawn to ready`)
   void (async () => {
     for (;;) if ((await reader.read()).done) return
   })()
