@@ -61,13 +61,15 @@ export const WS_PATH = '/_brust/dev/ws'
 export const DEVTOOLS_PATH = '/_brust/dev/devtools.js'
 export const TRACES_PATH = '/_brust/dev/traces'
 export const META_PATH = '/_brust/dev/meta'
-const scriptTag = (gen: number) => `<script type="module" src="${CLIENT_PATH}?g=${gen}"></script><script type="module" src="${DEVTOOLS_PATH}"></script>`
+/** F495: the dev channel's URLs for an app mounted under `base` (`''` = the root): the page's scripts and the WebSocket connect under it. */
+export const devPaths = (base = '') => ({ client: `${base}${CLIENT_PATH}`, ws: `${base}${WS_PATH}`, devtools: `${base}${DEVTOOLS_PATH}`, traces: `${base}${TRACES_PATH}`, meta: `${base}${META_PATH}` })
+const scriptTag = (gen: number, base = '') => `<script type="module" src="${devPaths(base).client}?g=${gen}"></script><script type="module" src="${devPaths(base).devtools}"></script>`
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string)
 
 /** `html` with the dev client script before `</head>` (else at the end). */
-export function inject(html: string, gen: number, trace: unknown | null = null): string {
-  const tag = scriptTag(gen) + (trace ? traceTag(trace) : '')
+export function inject(html: string, gen: number, trace: unknown | null = null, base = ''): string {
+  const tag = scriptTag(gen, base) + (trace ? traceTag(trace) : '')
   const i = html.search(/<\/head\s*>/i)
   return i >= 0 ? html.slice(0, i) + tag + html.slice(i) : html + tag
 }
@@ -93,8 +95,8 @@ export function decodeTrace(h: string | null): unknown | null {
 }
 
 /** A small HTML page (so even a plain-text 5xx or "no child yet" carries the client script). */
-function htmlPage(status: number, title: string, body: string, gen: number, trace: unknown | null = null): Response {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>${scriptTag(gen)}${trace ? traceTag(trace) : ''}</head><body style="font:14px ui-monospace,monospace;padding:24px"><h1>${esc(title)}</h1><pre style="white-space:pre-wrap">${esc(body)}</pre></body></html>`
+function htmlPage(status: number, title: string, body: string, gen: number, trace: unknown | null = null, base = ''): Response {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>${scriptTag(gen, base)}${trace ? traceTag(trace) : ''}</head><body style="font:14px ui-monospace,monospace;padding:24px"><h1>${esc(title)}</h1><pre style="white-space:pre-wrap">${esc(body)}</pre></body></html>`
   return new Response(html, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
 }
 
@@ -136,7 +138,9 @@ function devtoolsBundle(): Promise<string> {
 /** The trace a proxied response carried (read by `onRequest`; the header itself never reaches the browser). */
 const traceOf = new WeakMap<Response, unknown>()
 
-export function startProxy(o: { hostname: string; port: number; allowedHosts?: string; token: string }, view: DevView): DevProxy {
+export function startProxy(o: { hostname: string; port: number; allowedHosts?: string; token: string; basePath?: string }, view: DevView): DevProxy {
+  const base = o.basePath ?? ''
+  const P = devPaths(base)
   const traces: TraceEntry[] = []
   let seq = 0
   const allowed = allowedHosts(o.hostname, o.allowedHosts ?? process.env.BRUST_DEV_ALLOWED_HOSTS)
@@ -155,7 +159,7 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
     const port = view.upstream()
     if (port === null) {
       const d = view.diag()
-      return htmlPage(503, d ? `brust dev: ${d.rule}` : 'brust dev: building…', d?.raw ?? 'The first build is running. This page reloads when it is ready.', gen)
+      return htmlPage(503, d ? `brust dev: ${d.rule}` : 'brust dev: building…', d?.raw ?? 'The first build is running. This page reloads when it is ready.', gen, null, base)
     }
     const headers = new Headers(req.headers)
     // The token only this proxy knows: whatever a browser sent under that name is overwritten.
@@ -174,13 +178,13 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
         // biome-ignore lint/suspicious/noExplicitAny: Bun's fetch option
       } as any)
     } catch (e) {
-      return htmlPage(502, 'brust dev: the server is not reachable', String((e as Error).message ?? e), gen)
+      return htmlPage(502, 'brust dev: the server is not reachable', String((e as Error).message ?? e), gen, null, base)
     }
     const out = new Headers(res.headers)
     // The trace never reaches the browser as a header: it travels in the page (`#__brust_trace`) and `/_brust/dev/traces`.
     const trace = decodeTrace(res.headers.get('x-brust-dev'))
     out.delete('x-brust-dev')
-    const isAction = req.method !== 'GET' && req.method !== 'HEAD' ? true : url.pathname.startsWith('/_brust/action')
+    const isAction = req.method !== 'GET' && req.method !== 'HEAD' ? true : url.pathname.startsWith(`${base}/_brust/action`)
     if (trace || isAction) {
       traces.push({ id: ++seq, at: Date.now(), kind: trace ? 'page' : 'action', method: req.method, path: url.pathname + url.search, status: res.status, ms: Math.round(performance.now() - t0), trace })
       if (traces.length > MAX_TRACES) traces.shift()
@@ -195,9 +199,9 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
     if (req.method === 'HEAD' || res.status === 204 || res.status === 304) return new Response(null, { status: res.status, headers: out })
     if (/text\/html/i.test(type)) {
       out.set('content-type', type)
-      return tag(new Response(inject(await res.text(), gen, trace), { status: res.status, headers: out }))
+      return tag(new Response(inject(await res.text(), gen, trace, base), { status: res.status, headers: out }))
     }
-    if (doc && res.status >= 500) return tag(htmlPage(res.status, `${res.status} ${res.statusText || 'server error'}`, await res.text(), gen, trace))
+    if (doc && res.status >= 500) return tag(htmlPage(res.status, `${res.status} ${res.statusText || 'server error'}`, await res.text(), gen, trace, base))
     return tag(new Response(res.body, { status: res.status, headers: out }))
   }
 
@@ -216,17 +220,17 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
       // DNS rebinding: a page on evil.example whose name resolves to 127.0.0.1 would otherwise read the app and the
       // source paths in build errors. Only the dev server's own names are answered.
       if (!allowed.has(hostName(req.headers.get('host') ?? ''))) return new Response('brust dev: unexpected Host header (set BRUST_DEV_ALLOWED_HOSTS to allow it)', { status: 421 })
-      if (url.pathname === WS_PATH && !sameOriginOrNone(req.headers.get('origin'), req.headers.get('host'))) return new Response('brust dev: cross-origin WebSocket refused', { status: 403 })
-      if (url.pathname === WS_PATH) return srv.upgrade(req, { data: undefined }) ? undefined : new Response('websocket expected', { status: 426 })
-      if (url.pathname === TRACES_PATH) return Response.json({ traces }, { headers: { 'cache-control': 'no-store' } })
-      if (url.pathname === META_PATH) return Response.json(view.meta() ?? {}, { headers: { 'cache-control': 'no-store' } })
-      if (url.pathname === DEVTOOLS_PATH) {
+      if (url.pathname === P.ws && !sameOriginOrNone(req.headers.get('origin'), req.headers.get('host'))) return new Response('brust dev: cross-origin WebSocket refused', { status: 403 })
+      if (url.pathname === P.ws) return srv.upgrade(req, { data: undefined }) ? undefined : new Response('websocket expected', { status: 426 })
+      if (url.pathname === P.traces) return Response.json({ traces }, { headers: { 'cache-control': 'no-store' } })
+      if (url.pathname === P.meta) return Response.json(view.meta() ?? {}, { headers: { 'cache-control': 'no-store' } })
+      if (url.pathname === P.devtools) {
         return devtoolsBundle().then(
           (js) => new Response(js, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } }),
           (e: Error) => new Response(e.message, { status: 500 }),
         )
       }
-      if (url.pathname === CLIENT_PATH) return new Response(DEV_CLIENT_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } })
+      if (url.pathname === P.client) return new Response(DEV_CLIENT_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } })
       const t0 = performance.now()
       const res = await forward(req)
       view.onRequest({ method: req.method, path: url.pathname + url.search, status: res.status, ms: Math.round(performance.now() - t0), cache: res.headers.get('x-brust-cache'), trace: traceOf.get(res) ?? null })

@@ -167,7 +167,7 @@ export async function writeStatic(
   const dir = join(dist, 'static')
   rmSync(dir, { recursive: true, force: true })
   const assetsStage = join(dist, '.ssg-assets')
-  const assets = layoutAssets(dist, assetsStage, o.version)
+  const assets = layoutAssets(dist, assetsStage, o.version, (JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf8')) as { base_path?: string }).base_path ?? '')
   renameSync(join(assetsStage, 'assets'), dir)
   rmSync(assetsStage, { recursive: true, force: true })
   const warnings = [...assets.warnings]

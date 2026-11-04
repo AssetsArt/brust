@@ -425,13 +425,15 @@ pub fn inject_page_assets_into(
 /// it), so every tag the author wrote in the head follows and wins the cascade. `<header>` is not a
 /// head. Without a `<head>` the links go first, after a leading doctype. Not gated by the tier: an
 /// all-static page is styled too. The paths were checked at boot (`client/<safe name>.css`).
-pub fn inject_css_into(html: &mut String, css: &[String]) {
+pub fn inject_css_into(html: &mut String, css: &[String], base: &str) {
     if css.is_empty() {
         return;
     }
     let mut links = String::new();
     for p in css {
-        links.push_str("<link rel=\"stylesheet\" href=\"/_brust/");
+        links.push_str("<link rel=\"stylesheet\" href=\"");
+        links.push_str(base);
+        links.push_str("/_brust/");
         links.push_str(p);
         links.push_str("\" data-brust-css>");
     }
@@ -937,11 +939,19 @@ pub fn inject_document_assets_with_root_into(
     if let Some(nav) = &m.assets.nav
         && html.rfind("</body>").is_some()
     {
-        tags.push_str("<script type=\"module\" src=\"/_brust/");
+        tags.push_str("<script type=\"module\" src=\"");
+        tags.push_str(&m.base_path);
+        tags.push_str("/_brust/");
         tags.push_str(nav);
         tags.push_str("\" data-brust-nav data-brust-build=\"");
         tags.push_str(m.assets.build.as_deref().unwrap_or_default());
         tags.push('"');
+        // F495: the client navigates inside the app's own subtree only; it reads the mount point here.
+        if !m.base_path.is_empty() {
+            tags.push_str(" data-brust-base=\"");
+            tags.push_str(&m.base_path);
+            tags.push('"');
+        }
         if let Some(r) = root {
             tags.push_str(" data-brust-root=\"");
             tags.push_str(r);
@@ -956,7 +966,8 @@ pub fn inject_document_assets_with_root_into(
         }
         return;
     }
-    let tag = |p: &str| format!("<script type=\"module\" src=\"/_brust/{p}\"></script>");
+    let base = m.base_path.as_str();
+    let tag = |p: &str| format!("<script type=\"module\" src=\"{base}/_brust/{p}\"></script>");
     if let Some(t) = prefix_tag {
         tags.push_str(t);
     }
@@ -999,7 +1010,9 @@ pub fn inject_document_assets_with_root_into(
     // while it parses the body instead of discovering the store module and the features through the scripts.
     let mut links = String::new();
     for f in std::iter::once(m.assets.runtime.as_str()).chain(needed) {
-        links.push_str("<link rel=\"modulepreload\" href=\"/_brust/");
+        links.push_str("<link rel=\"modulepreload\" href=\"");
+        links.push_str(base);
+        links.push_str("/_brust/");
         links.push_str(f);
         links.push_str("\">");
     }
@@ -1015,13 +1028,18 @@ const PRELOAD_ONLY: &[&str] = &["store"];
 /// Where the modulepreload links go: the CSS insertion point, past the stylesheet links `inject_css_into` wrote there;
 /// `None` when the document has no `<head>` (a link before `<html>` or in a fragment is not a head link).
 fn preload_insert_at(html: &str) -> Option<usize> {
-    const CSS: &str = "<link rel=\"stylesheet\" href=\"/_brust/";
+    const CSS: &str = "<link rel=\"stylesheet\" href=\"";
     if !html.contains("<head>") && !html.contains("<head ") {
         return None;
     }
     let mut at = css_insert_at(html);
+    // F495: the link's href carries the base path, so the tag is told by its own marker, not by the `/_brust/` start.
     while html[at..].starts_with(CSS) {
-        at = html[at..].find('>').map_or(html.len(), |e| at + e + 1);
+        let end = html[at..].find('>').map_or(html.len(), |e| at + e + 1);
+        if !html[at..end].ends_with(" data-brust-css>") {
+            break;
+        }
+        at = end;
     }
     Some(at)
 }
@@ -1094,7 +1112,7 @@ mod tests {
         let links = "<link rel=\"stylesheet\" href=\"/_brust/client/a-1a2b3c4d5e.css\" data-brust-css><link rel=\"stylesheet\" href=\"/_brust/client/b-0a1b2c3d4e.css\" data-brust-css>";
         let run = |html: &str| {
             let mut s = html.to_string();
-            inject_css_into(&mut s, &css);
+            inject_css_into(&mut s, &css, "");
             s
         };
         // The author's own head tags come after brust's links.
@@ -1129,7 +1147,7 @@ mod tests {
             format!("<body><header>h</header><head>{links}<title>late</title></head></body>")
         );
         let mut none = "<p>x</p>".to_string();
-        inject_css_into(&mut none, &[]);
+        inject_css_into(&mut none, &[], "");
         assert_eq!(none, "<p>x</p>");
     }
     use serde_json::json;
@@ -1505,7 +1523,7 @@ mod tests {
         let m = crate::manifest::Manifest::load(&dir).unwrap().manifest;
         let chain = m.routes[1].chain.clone();
         let mut html = "<html><head><title>t</title></head><body></body></html>".to_string();
-        inject_css_into(&mut html, &["client/a-0123456789.css".to_string()]);
+        inject_css_into(&mut html, &["client/a-0123456789.css".to_string()], "");
         inject_assets_into(&mut html, &chain, &m);
         let css = html.find("data-brust-css").unwrap();
         let pre = html.find("modulepreload").unwrap();
@@ -1783,7 +1801,7 @@ mod tests {
         let mut doc = html.clone();
         ensure_doctype(&mut doc);
         hoist_head_into(&mut doc);
-        inject_css_into(&mut doc, &["client/a-0123456789.css".to_string()]);
+        inject_css_into(&mut doc, &["client/a-0123456789.css".to_string()], "");
         // The injected link sits in the head; the root's mark is the chain output's, untouched by it.
         let (again, root_again) = mark(&r, serde_json::json!({"t": "T", "n": 1}));
         assert_eq!(again, html);
@@ -1865,6 +1883,65 @@ mod tests {
         m.assets.nav = Some("client/nav-0123456789.js".into());
         m.assets.build = Some("b0b1b2b3b4".into());
         m
+    }
+
+    /// F495: under a base path every URL brust prints carries it, and the nav tag tells the client where its app ends.
+    #[test]
+    fn every_emitted_asset_url_is_under_the_base_path() {
+        let mut m = nav_manifest();
+        m.base_path = "/portal".into();
+        let mut d = "<html><head></head><body><p>x</p></body></html>".to_string();
+        inject_css_into(
+            &mut d,
+            &["client/a-0123456789.css".to_string()],
+            &m.base_path,
+        );
+        inject_document_assets_with_root_into(&mut d, &m.routes[1].chain, &m, None, None, None);
+        assert!(
+            d.contains(
+                "<link rel=\"stylesheet\" href=\"/portal/_brust/client/a-0123456789.css\" data-brust-css>"
+            ),
+            "{d}"
+        );
+        assert!(
+            d.contains("src=\"/portal/_brust/client/nav-0123456789.js\" data-brust-nav"),
+            "{d}"
+        );
+        assert!(d.contains(" data-brust-base=\"/portal\""), "{d}");
+        assert!(
+            d.contains(&format!(
+                "<link rel=\"modulepreload\" href=\"/portal/_brust/{}\">",
+                m.assets.runtime
+            )),
+            "{d}"
+        );
+        assert!(
+            d.contains(&format!(
+                "src=\"/portal/_brust/{}\"></script>",
+                m.assets.runtime
+            )),
+            "{d}"
+        );
+        // no tag names the root-level URL
+        assert!(!d.contains("\"/_brust/"), "{d}");
+        // the modulepreload goes after the route's stylesheet link, as before
+        assert!(d.find("data-brust-css").unwrap() < d.find("modulepreload").unwrap());
+        // a root app prints the old bytes and no data-brust-base
+        let mut root = nav_manifest();
+        root.base_path = String::new();
+        let mut r = "<html><head></head><body></body></html>".to_string();
+        inject_document_assets_with_root_into(
+            &mut r,
+            &root.routes[1].chain,
+            &root,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !r.contains("data-brust-base") && r.contains("src=\"/_brust/"),
+            "{r}"
+        );
     }
 
     #[test]

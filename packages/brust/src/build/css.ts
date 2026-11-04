@@ -132,13 +132,17 @@ export function cssUnescape(s: string): string {
   )
 }
 
+/** F495: a URL brust serves itself, `/public/…` or `/_brust/…`, under the app's base path (`<base>/public/…`) or at the root:
+ * written as it is, never a file on this machine. */
+export const brustUrl = (v: string, base = ''): boolean => ['/public/', '/_brust/'].some((p) => v.startsWith(p) || (base !== '' && v.startsWith(`${base}${p}`)))
+
 /** F490: an absolute local path in either spelling: POSIX `/…`, a Windows drive `C:\…` / `C:/…`, or a UNC `\\host\…`. */
 export const localAbsolute = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\')
 
 /** F393: a `url()` that is the absolute path of a file on disk (see the `loader` in `buildCss`) becomes a
  * hashed `./<name>-<hex10>.<ext>` client asset at any size. `/public/…` and `/_brust/…` stay as written.
  * F490: on Windows that path is `C:\\…` (CSS-escaped), so the value is unescaped and both spellings are taken. */
-function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Array }[], suffixed: Map<string, string>): string {
+function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Array }[], suffixed: Map<string, string>, base = ''): string {
   const emit = (path: string, suffix: string) => {
     const { name, bytes } = hashedAsset(path)
     if (!assets.some((a) => a.name === name)) assets.push({ name, bytes })
@@ -149,7 +153,7 @@ function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Arra
     if (abs !== undefined) return emit(abs, path.slice(path.search(/[?#]/)))
     const file = cssUnescape(path)
     const ext = extname(file).toLowerCase()
-    if (!localAbsolute(file) || !SERVED_ASSET_EXT.includes(ext) || file.startsWith('/public/') || file.startsWith('/_brust/') || !existsSync(file)) return whole
+    if (!localAbsolute(file) || !SERVED_ASSET_EXT.includes(ext) || brustUrl(file, base) || !existsSync(file)) return whole
     return emit(file, '')
   })
 }
@@ -158,11 +162,11 @@ function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Arra
  * path and 404 in the browser, so the build fails instead. A leak is a Windows drive or UNC path, or a `/…` path under
  * the app root or the dist dir (`roots`). Any other root URL passes, even one that happens to exist on the build
  * machine (`url(/tmp/x)`, `url(/fonts/x.woff2)`): only the app's own files are known to be local. */
-export function leakedLocalPaths(text: string, roots: string[]): string[] {
+export function leakedLocalPaths(text: string, roots: string[], base = ''): string[] {
   const out: string[] = []
   for (const m of text.matchAll(SOURCE_URL)) {
     const v = cssUnescape(m[2]!)
-    if (v.startsWith('/public/') || v.startsWith('/_brust/') || !localAbsolute(v)) continue
+    if (brustUrl(v, base) || !localAbsolute(v)) continue
     const posix = v.replaceAll('\\', '/')
     const local = !v.startsWith('/') || roots.some((r) => posix === r || posix.startsWith(`${r}/`))
     if (local && !out.includes(v)) out.push(v)
@@ -203,7 +207,7 @@ export async function buildCss(
   dist: string,
   sources: string[],
   minify = true,
-  o: { appRoot?: string; log?: (s: string) => void } = {},
+  o: { appRoot?: string; log?: (s: string) => void; basePath?: string } = {},
 ): Promise<CssBuild> {
   const file = new Map<string, string>()
   const maps = new Map<string, Record<string, string>>()
@@ -241,7 +245,7 @@ export async function buildCss(
     format: 'esm',
     minify,
     naming: { entry: '[name]-[hash].[ext]', chunk: '[name]-[hash].[ext]', asset: '[name]-[hash].[ext]' },
-    external: ['/public/*', '/_brust/*'],
+    external: ['/public/*', '/_brust/*', ...(o.basePath ? [`${o.basePath}/public/*`, `${o.basePath}/_brust/*`] : [])],
     root: appRoot,
     plugins,
     // F393, verified on Bun 1.4.4 only: its CSS bundler turns an asset under the size threshold into a `data:`
@@ -289,9 +293,9 @@ export async function buildCss(
       `${lines.join('; ')}: brust serves only ${SERVED_ASSET_EXT.join(' ')} from /_brust/client; put the file in public/ and reference it as /public/…`,
     )
   }
-  for (const [i, t] of css) css.set(i, emitSourceAssets(t, assets, suffixed))
+  for (const [i, t] of css) css.set(i, emitSourceAssets(t, assets, suffixed, o.basePath))
   const roots = [appRoot, dist].flatMap((r) => [r, real(r)]).map((r) => r.replaceAll('\\', '/').replace(/\/+$/, '')).filter((r) => r !== '')
-  const leaks = [...css].flatMap(([i, t]) => leakedLocalPaths(t, roots).map((p) => `url(${p}) in ${sources[i]}`))
+  const leaks = [...css].flatMap(([i, t]) => leakedLocalPaths(t, roots, o.basePath).map((p) => `url(${p}) in ${sources[i]}`))
   if (leaks.length > 0)
     throw new BuildError('css-asset-path', `${leaks.join('; ')}: the built CSS would name a file on this machine; reference it relative to the stylesheet or as /public/…`)
   for (const a of assets) writeFileSync(join(dist, 'client', a.name), a.bytes)
@@ -351,9 +355,9 @@ export function tailwindUse(sources: string[]): { using: string[]; imports: stri
  * (`export default Object.freeze({…})`); any other `.css` import is an empty module, because the
  * stylesheet itself is linked by the server (R19.3), never bundled into JS.
  * F411: with `clientDir` (`<dist>/client`), an import of a served asset (`SERVED_ASSET_EXT`: a font, an image) is
- * the string `/_brust/client/<name>-<hex10>.<ext>`, the very file a stylesheet's `url()` of it is rewritten to; the
+ * the string `/_brust/client/<name>-<hex10>.<ext>` (under `basePath`, F495), the very file a stylesheet's `url()` of it is rewritten to; the
  * file is written there, so the URL can be preloaded (`<link rel="preload" as="font" href={font}>`). */
-export function cssPlugin(maps: Map<string, Record<string, string>>, clientDir?: string): BunPlugin {
+export function cssPlugin(maps: Map<string, Record<string, string>>, clientDir?: string, basePath = ''): BunPlugin {
   return {
     name: 'brust-css',
     setup(b) {
@@ -371,7 +375,7 @@ export function cssPlugin(maps: Map<string, Record<string, string>>, clientDir?:
           mkdirSync(clientDir, { recursive: true })
           writeFileSync(to, bytes)
         }
-        return { contents: `export default ${JSON.stringify(`/_brust/client/${name}`)}\n`, loader: 'js' }
+        return { contents: `export default ${JSON.stringify(`${basePath}/_brust/client/${name}`)}\n`, loader: 'js' }
       })
     },
   }

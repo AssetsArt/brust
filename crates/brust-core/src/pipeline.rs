@@ -106,6 +106,21 @@ pub async fn handle<H: Host>(
         return c.preflight_response(acao, headers);
     }
 
+    // F495: an app mounted under `base_path` answers only below it; the rest of the origin belongs to another app.
+    // `fw` is the path with the base cut off: what the framework's own URLs (`/ping`, `/_brust/…`, `/public/…`) match on.
+    // Pages keep matching `full`: route patterns are real URL paths (written with the base).
+    let base = s.manifest.base_path.as_str();
+    let norm_base;
+    let fw = if base.is_empty() {
+        path_only
+    } else {
+        norm_base = crate::routing::routes::normalize_request_path(path_only);
+        match norm_base.strip_prefix(base) {
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => rest,
+            _ => return body::error_404(),
+        }
+    };
+
     // ----- actions (M3-F E3): the prefix subtree, before the method gate and the `/_brust/` static root (the
     // default prefix lives under it). The body is read ONLY here. F470: a GET/HEAD that a route declared under the
     // prefix matches (`/auth/{provider}/callback`) is that page's; the catch-all never counts, and a route declared
@@ -119,7 +134,7 @@ pub async fn handle<H: Host>(
     }
 
     // L16 (R16.3): an actions-only deployment has no pages; its own paths stay (`/ping`, stats).
-    if s.manifest.actions_only && path_only != "/ping" && path_only != "/_brust/cache/stats" {
+    if s.manifest.actions_only && fw != "/ping" && fw != "/_brust/cache/stats" {
         return body::error_404_problem();
     }
 
@@ -127,20 +142,19 @@ pub async fn handle<H: Host>(
     if !(method == "GET" || head) {
         return body::error_405();
     }
-    if path_only == "/ping" {
+    if fw == "/ping" {
         tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "ping");
         return body::resp(200, "text/plain", &[], b"pong\n".to_vec());
     }
-    if path_only == "/_brust/cache/stats" {
+    if fw == "/_brust/cache/stats" {
         tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "stats");
         let json = serde_json::to_vec(&s.stats()).unwrap_or_else(|_| b"{}".to_vec());
         return body::resp(200, "application/json", &[], json);
     }
-    let static_root = if let Some(rel) = path_only.strip_prefix("/_brust/") {
+    let static_root = if let Some(rel) = fw.strip_prefix("/_brust/") {
         Some((StaticRoot::Brust, rel))
     } else {
-        path_only
-            .strip_prefix("/public/")
+        fw.strip_prefix("/public/")
             .map(|rel| (StaticRoot::Public, rel))
     };
     if let Some((root, rel)) = static_root {
@@ -843,7 +857,7 @@ fn render_document<H: Host>(
     if let Some(tag) = &s.generator_meta {
         inject_generator_into(&mut out, tag);
     }
-    inject_css_into(&mut out, &route.css);
+    inject_css_into(&mut out, &route.css, &s.manifest.base_path);
     inject_document_assets_with_root_into(
         &mut out,
         &route.chain,

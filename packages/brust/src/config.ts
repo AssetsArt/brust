@@ -2,7 +2,7 @@
 //   env (BRUST_ADDR / BRUST_PORT / BRUST_WORKERS / BRUST_RENDER_SLOTS / BRUST_DRAIN_TIMEOUT_MS /
 //        BRUST_BOOT_TIMEOUT_MS / BRUST_CALL_TIMEOUT_MS / BRUST_SLOT_BYTES / BRUST_MAX_LOADER_RESPONSE_BYTES)
 //   > CLI flags (`brust start --port/--workers`) and `run({ config })`
-//   > brust.toml ([server] address / port / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [actions] base_url / credentials)
+//   > brust.toml ([server] address / port / base_path / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [actions] base_url / credentials)
 //   > defaults (localhost, 1337, availableParallelism(), 1, 10000, 30000, 30000, 262144, 8388608).
 // L16 R16.1: `actionsBaseUrl` follows env (BRUST_ACTIONS_BASE_URL) > run({ config }) > toml `[actions] base_url`.
 // `cors` has no env layer; `run({ config: { cors } })` replaces a toml `[cors]` as a whole (never merged), and
@@ -43,6 +43,10 @@ export interface BrustConfig {
   maxLoaderResponseBytes: number
   /** `run({ config: { cors } })` over brust.toml `[cors]` (a whole-object replace); absent = CORS off. No env layer. */
   cors?: CorsConfig
+  /** F495 `[server] base_path` / `run({ config: { basePath } })`: the path the app is mounted under on a shared origin (`/portal`; `''` = the
+   * root), absent when nothing set it. A build setting too (`brust build` bakes it into the manifest): `brust start` refuses a manifest
+   * built for another one, and with none set serves the one the manifest names. */
+  basePath?: string
   /** L16 R16.1: the origin the browser `client()` calls (page script `__BRUST_ACTION_BASE__`); absent = same origin. */
   actionsBaseUrl?: string
   /** L16 R16.2: the client's default `RequestInit.credentials` (`__BRUST_ACTION_CREDENTIALS__`); absent = `same-origin`. */
@@ -51,6 +55,19 @@ export interface BrustConfig {
 
 /** What `run({ config })` / `loadConfig`'s `cli` accepts: any setting, and `cors: null` to turn a toml `[cors]` off. */
 export type ConfigOverrides = Omit<Partial<BrustConfig>, 'cors'> & { cors?: (Omit<CorsConfig, 'credentials'> & { credentials?: boolean }) | null }
+
+/** F495: `[server] base_path`, validated: `/seg[/seg…]`, no trailing `/`, each segment `[A-Za-z0-9._~-]+` (not `.`/`..`), the
+ * same alphabet as the actions prefix, so it needs no percent-encoding anywhere it is printed. `""` and `"/"` mean the
+ * root (`""`). Returns the value, or the reason it is refused. */
+export function normalizeBasePath(raw: unknown): { ok: true; value: string } | { ok: false; why: string } {
+  if (typeof raw !== 'string') return { ok: false, why: `must be a string (got ${JSON.stringify(raw)})` }
+  if (raw === '' || raw === '/') return { ok: true, value: '' }
+  if (!raw.startsWith('/')) return { ok: false, why: `must start with '/' (got ${JSON.stringify(raw)})` }
+  if (raw.endsWith('/')) return { ok: false, why: `must not end with '/' (got ${JSON.stringify(raw)})` }
+  if (raw.slice(1).split('/').some((seg) => !/^[A-Za-z0-9._~-]+$/.test(seg) || seg === '.' || seg === '..'))
+    return { ok: false, why: `segments must be [A-Za-z0-9._~-]+ and not '.'/'..' (got ${JSON.stringify(raw)})` }
+  return { ok: true, value: raw }
+}
 
 export class BrustConfigError extends Error {
   override name = 'BrustConfigError'
@@ -112,6 +129,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
     maxLoaderResponseBytes: env.maxLoaderResponseBytes ?? cli.maxLoaderResponseBytes ?? fromToml.maxLoaderResponseBytes ?? DEFAULTS.maxLoaderResponseBytes,
     ioThreads: env.ioThreads ?? cli.ioThreads,
     ...(cors ? { cors } : {}),
+    ...pick('basePath', cli.basePath ?? fromToml.basePath),
     ...pick('actionsBaseUrl', env.actionsBaseUrl ?? cli.actionsBaseUrl ?? fromToml.actionsBaseUrl),
     ...pick('actionsCredentials', cli.actionsCredentials ?? fromToml.actionsCredentials),
   }
@@ -150,6 +168,11 @@ function checkCli(cli: ConfigOverrides): void {
   check('ioThreads', cli.ioThreads, 1, MAX_IO_THREADS)
   check('slotBytes', cli.slotBytes, MIN_SLOT_BYTES, MAX_SLOT_BYTES)
   check('maxLoaderResponseBytes', cli.maxLoaderResponseBytes, MIN_LOADER_RESPONSE_BYTES, MAX_LOADER_RESPONSE_BYTES)
+  if (cli.basePath !== undefined) {
+    const r = normalizeBasePath(cli.basePath)
+    if (!r.ok) throw new BrustConfigError(`config.basePath ${r.why}`, null)
+    cli.basePath = r.value
+  }
   if (cli.actionsBaseUrl !== undefined) {
     const why = baseUrlError(cli.actionsBaseUrl)
     if (why) throw new BrustConfigError(`config.actionsBaseUrl ${why}`, null)
@@ -176,6 +199,11 @@ function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
   if ('server' in root) {
     const server = table(root.server, '[server]', file)
     const { port, address } = server
+    if (server.base_path !== undefined) {
+      const r = normalizeBasePath(server.base_path)
+      if (!r.ok) throw new BrustConfigError(`${file}: server.base_path ${r.why}`, file)
+      out.basePath = r.value
+    }
     const cap = tomlInt(server.max_loader_response_bytes, 'server.max_loader_response_bytes', MIN_LOADER_RESPONSE_BYTES, MAX_LOADER_RESPONSE_BYTES, file)
     if (cap !== undefined) out.maxLoaderResponseBytes = cap
     if (port !== undefined) {

@@ -46,10 +46,9 @@ const page = () => globalThis as PageGlobals
 export function resolvePrefix(opts?: { prefix?: string; baseUrl?: string }): string {
   if (opts?.prefix) return opts.prefix
   if (opts?.baseUrl !== undefined) return DEFAULT_ACTION_PREFIX
-  return (
-    (globalThis as { __BRUST_ACTION_PREFIX__?: string }).__BRUST_ACTION_PREFIX__ ??
-    DEFAULT_ACTION_PREFIX
-  )
+  // F495: an app under a base path serves the default prefix below it; the page says where (`__BRUST_BASE_PATH__`).
+  const g = globalThis as { __BRUST_ACTION_PREFIX__?: string; __BRUST_BASE_PATH__?: string }
+  return g.__BRUST_ACTION_PREFIX__ ?? `${g.__BRUST_BASE_PATH__ ?? ''}${DEFAULT_ACTION_PREFIX}`
 }
 
 /** 0.1.x runtime/treaty.ts:95-106; message names `client`. */

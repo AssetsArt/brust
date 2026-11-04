@@ -24,6 +24,10 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
   const g = globalThis as { [KEY]?: NavBridge }
   const build = document.querySelector(NAV)?.getAttribute('data-brust-build')
   if (g[KEY] || build == null) return () => {}
+  // F495: an app mounted under `base_path` navigates inside its own subtree only; a path outside it belongs to another app
+  // on the same origin, so a click or `navigate()` there is a full load (never a swapped fetch).
+  const base = document.querySelector(NAV)?.getAttribute('data-brust-base') ?? ''
+  const inBase = (path: string) => !base || path === base || path.startsWith(base + '/')
   const off = new AbortController()
   const on = (t: EventTarget, type: string, h: (e: any) => void, capture?: boolean) =>
     t.addEventListener(type, h, { capture, passive: type === 'touchstart', signal: off.signal })
@@ -117,7 +121,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
     if (href == null || a!.hasAttribute('download') || (a!.getAttribute('target') || '_self').toLowerCase() !== '_self' || a!.closest('[data-brust-reload]')) return null
     let u: URL
     try { u = new URL(href, document.baseURI) } catch { return null }
-    if (u.origin !== location.origin || !/^https?:$/.test(u.protocol) || (u.href.includes('#') && sameDoc(u.href, location.href))) return null
+    if (u.origin !== location.origin || !/^https?:$/.test(u.protocol) || !inBase(u.pathname) || (u.href.includes('#') && sameDoc(u.href, location.href))) return null
     return [a!, u.href]
   }
 
@@ -253,7 +257,7 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
 
   const navigate = (u: string, o?: { replace?: boolean }): Promise<void> => {
     const url = new URL(u, location.href).href
-    if (url.startsWith(location.origin + '/') && !document.body.closest('[data-brust-reload]') && !(url.includes('#') && sameDoc(url, location.href)))
+    if (url.startsWith(location.origin + '/') && inBase(new URL(url).pathname) && !document.body.closest('[data-brust-reload]') && !(url.includes('#') && sameDoc(url, location.href)))
       return go(url, 'navigate', ++seq, !!o?.replace || sameDoc(url, location.href))
     location[o?.replace ? 'replace' : 'assign'](url)
     return Promise.resolve()

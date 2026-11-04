@@ -77,9 +77,9 @@ function pumpLines(stream: ReadableStream<Uint8Array> | null | undefined, onLine
 }
 
 /** L19/L21 dev swap: the built stylesheets of the old and the new generation, paired by source stem
- * (`<stem>-<hex10>.css`), as `/_brust/client/<old>` → `/_brust/client/<new>`. `null` when the pairing is not
+ * (`<stem>-<hex10>.css`), as `<base>/_brust/client/<old>` → `<base>/_brust/client/<new>`. `null` when the pairing is not
  * one-to-one (a stylesheet was added or removed, or two sources share a stem): the page must reload. */
-export function cssSwapMap(oldDir: string, newDir: string): Record<string, string> | null {
+export function cssSwapMap(oldDir: string, newDir: string, base = ''): Record<string, string> | null {
   const byStem = (dir: string) => {
     const m = new Map<string, string>()
     let files: string[] = []
@@ -101,7 +101,7 @@ export function cssSwapMap(oldDir: string, newDir: string): Record<string, strin
   for (const [stem, f] of a) {
     const g = b.get(stem)
     if (g === undefined) return null
-    if (g !== f) map[`/_brust/client/${f}`] = `/_brust/client/${g}`
+    if (g !== f) map[`${base}/_brust/client/${f}`] = `${base}/_brust/client/${g}`
   }
   return map
 }
@@ -123,6 +123,8 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
   const mode = tuiMode(out, env)
   const tui = new Tui(out, mode.interactive, mode.color)
   const cfg = await loadConfig(appRoot, o.port !== undefined ? { port: o.port } : {})
+  // F495: `[server] base_path`: the dev channel (`<base>/_brust/dev/*`) and the app's own URLs live under it, so two apps behind one path proxy can both run.
+  const base = cfg.basePath ?? ''
   const workers = o.workers ?? 1
   const devRoot = join(appRoot, '.brust', 'dev')
   rmSync(devRoot, { recursive: true, force: true })
@@ -165,7 +167,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
   }
 
   const proxy: DevProxy = startProxy(
-    { hostname: cfg.host, port: cfg.port, token: devToken },
+    { hostname: cfg.host, port: cfg.port, token: devToken, basePath: base },
     {
       gen: () => gen,
       state: () => state,
@@ -175,7 +177,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       actionsPrefix: () => prefixOf(active),
       onRequest(r) {
         tui.log(`${r.method} ${r.path} ${r.status} ${r.ms}ms${r.cache ? ` ${r.cache}` : ''}`)
-        if (!r.path.startsWith('/_brust/')) {
+        if (!r.path.startsWith(`${base}/_brust/`)) {
           const rendered = (r.trace as { rendered?: string[] } | null)?.rendered
           last = { method: r.method, path: r.path, status: r.status, ...(rendered ? { tiers: tierCounts(rendered, devMeta() as Parameters<typeof tierCounts>[1]) } : {}) }
           publish()
@@ -303,7 +305,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
     state = 'ready'
     diag = null
     // A stylesheet-only edit (L19/L21): the pages keep their DOM and swap their brust CSS links.
-    const swap = cssOnly && old ? cssSwapMap(old.dir, child.dir) : null
+    const swap = cssOnly && old ? cssSwapMap(old.dir, child.dir, base) : null
     if (swap) {
       proxy.broadcast({ type: 'css-swap', gen, map: swap })
       tui.log(`[brust] css rebuilt (${Object.keys(swap).length} stylesheet${Object.keys(swap).length === 1 ? '' : 's'} swapped, no reload)`)

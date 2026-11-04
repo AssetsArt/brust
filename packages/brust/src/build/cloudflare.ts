@@ -77,7 +77,7 @@ export interface CfBuildCtx {
   /** the FINAL dist dir (`out` is a tmp sibling that is renamed to it): wrangler paths are relative to `<dist>/cf` */
   dist: string
   compiled: Map<string, Compiled>
-  manifest: { components: Record<string, { template: string }>; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow'; stream?: string[]; maxStreamBytes?: number } | null; cache?: CacheRecord }
+  manifest: { components: Record<string, { template: string }>; /** F495 `[server] base_path`: the asset tree is laid out under it. */ base_path?: string; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow'; stream?: string[]; maxStreamBytes?: number } | null; cache?: CacheRecord }
   sourceOf: SourceOf
   actionsEntry: string | null
   /** L16 R16.3: an actions-only Worker: no pages (no routes entry, no jobs, no templates), no Static Assets. */
@@ -291,7 +291,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     define: PRODUCTION,
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
-    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map(), join(out, 'client')), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'], 'browser', CF_CONDITIONS), exposePlugin(ctx.compiled)],
+    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map(), join(out, 'client'), ctx.manifest.base_path ?? ''), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'], 'browser', CF_CONDITIONS), exposePlugin(ctx.compiled)],
   })
   if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
   if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)
@@ -303,7 +303,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   writeFileSync(appFile, await js[0]!.text())
 
   // An actions-only Worker has no pages and so no Static Assets (no `assets` binding in its wrangler.jsonc either).
-  if (!ctx.actionsOnly) warnings.push(...layoutAssets(out, cfDir, p.coreVersion).warnings)
+  if (!ctx.actionsOnly) warnings.push(...layoutAssets(out, cfDir, p.coreVersion, ctx.manifest.base_path ?? '').warnings)
   const compatibilityDate = p.cfg.compatibilityDate ?? p.core.meta.compatibilityDate
   if (compatibilityDate < CF_MIN_COMPAT_DATE) throw new BuildError('config', `compatibility_date ${compatibilityDate} is older than ${CF_MIN_COMPAT_DATE}`)
   if (doClass) {
