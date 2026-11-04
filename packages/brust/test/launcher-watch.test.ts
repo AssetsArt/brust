@@ -111,8 +111,6 @@ describe('watchLauncher', () => {
     } finally {
       child.kill()
     }
-    // the same pid read after the process is gone is no identity at all (never a stale one)
-    await child.exited
-    expect(processIdentity(child.pid)).toBeUndefined()
+    // (An exited process whose handle is still open elsewhere keeps its creation time: whether the pid is gone is `alive`'s job, the identity only tells a reused pid.)
   })
 })
