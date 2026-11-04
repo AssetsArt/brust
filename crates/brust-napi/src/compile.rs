@@ -287,8 +287,38 @@ pub fn scan_load_writes(
     })
 }
 
+/// F496: the first route pattern the server's router refuses (a conflict such as `/{*rest}` next to `/{slug}`, or an
+/// invalid pattern), or `None`. `brust build` runs it over the flattened patterns (catch-all `*` routes left out, as
+/// the server does) so the failure shows at build, with the router's own message. Needs no running server.
+#[napi(object)]
+pub struct RoutePatternConflict {
+    /// Index into the `patterns` given of the pattern the router refused.
+    pub index: u32,
+    /// Index of the earlier pattern it conflicts with, when there is one.
+    pub with_index: Option<u32>,
+    /// The router's refusal, as `brust start` would print it.
+    pub message: String,
+}
+
+#[napi]
+pub fn check_route_patterns(patterns: Vec<String>) -> Option<RoutePatternConflict> {
+    brust_core::routing::routes::find_pattern_conflict(&patterns).map(|c| RoutePatternConflict {
+        index: c.index as u32,
+        with_index: c.with_index.map(|j| j as u32),
+        message: c.message,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn check_route_patterns_reports_a_catch_all_next_to_a_param() {
+        let c = super::check_route_patterns(vec!["/{*rest}".into(), "/{slug}".into()]).unwrap();
+        assert_eq!((c.index, c.with_index), (1, Some(0)));
+        assert!(c.message.contains("invalid route pattern \"/{slug}\""));
+        assert!(super::check_route_patterns(vec!["/{*rest}".into()]).is_none());
+    }
+
     #[test]
     fn compiles_outlet_layout_fixture_through_lowering() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
