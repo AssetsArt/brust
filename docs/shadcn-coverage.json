@@ -133,7 +133,7 @@
       "measuredRows": 3,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 27
+      "libraryComponents": 26
     },
     {
       "blocker": "fallback:instance-prop-path",
@@ -533,6 +533,15 @@
     },
     {
       "blocker": "fallback:ref-in-render",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 2
+    },
+    {
+      "blocker": "fallback:switch-fallthrough",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
