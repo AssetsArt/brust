@@ -37,7 +37,7 @@ function variant(from: string, to: string, edit: (m: Record<string, unknown>) =>
 }
 
 async function start(dist: string, entry: string): Promise<Server> {
-  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', NODE_ENV: 'production' }
+  const env = { ...process.env, BRUST_PORT: '', BRUST_STATS: 'public', BRUST_WORKERS: '', BRUST_ADDR: '', NODE_ENV: 'production' }
   const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '2', '--dist-dir', dist, '--entry', entry], { cwd: app, env, stdout: 'pipe', stderr: 'pipe' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()

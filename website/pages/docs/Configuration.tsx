@@ -18,6 +18,8 @@ address = "127.0.0.1"   # default localhost
 port = 1337             # 1..65535, default 1337
 max_loader_response_bytes = 8388608   # 256 KiB..64 MiB, default 8 MiB (env BRUST_MAX_LOADER_RESPONSE_BYTES)
 base_path = "/portal"   # mount the app under a path (a build setting), default the root
+stats = "token"         # who may read /_brust/cache/stats: "off" (default), "public" or "token"
+stats_token = "env:STATS_TOKEN"   # with stats = "token": the variable that holds the bearer token
 
 [workers]
 count = 4               # 1..1024, default one per CPU core
@@ -77,6 +79,7 @@ export async function configurationLoader(): Promise<ConfigurationData> {
       { id: 'code', title: 'Configure from code' },
       { id: 'toml-only', title: 'What only brust.toml sets' },
       { id: 'base-path', title: 'Mount under a path' },
+      { id: 'stats', title: 'The cache stats endpoint' },
       { id: 'try', title: 'Try it' },
       { id: 'size', title: 'Response size' },
       { id: 'env', title: 'Environment variables' },
@@ -186,6 +189,20 @@ export default function Configuration({ blocks }: ConfigurationData) {
         <code>brust: action response exceeds &lt;max_response_bytes&gt; bytes</code>. Request bodies are capped by <code>max_body_bytes</code> (1 MiB by default).
       </Note>
 
+      <h2 id="stats">The cache stats endpoint</h2>
+      {/* source: crates/brust-core/src/pipeline.rs:137-140 (the path is the app's own only for a request that may read it; any other gets an unknown path's answer) and crates/brust-core/src/config.rs:468 (StatsAccess: off, public, token; the bearer compared in constant time); packages/brust/src/run.ts:62 (the default: off, public under brust dev; the token is read from its env variable at boot);
+          tests: crates/brust-server/tests/stats_gate.rs:24 (off, public, token right and wrong, 404 and no challenge), packages/brust/test/napi-server.test.ts:224 (the same through the real addon), packages/brust/test/run-options.test.ts:52 (defaults and the env token), packages/brust/test/config.test.ts:135 (toml, env, errors) */}
+      <p>
+        <code>/_brust/cache/stats</code> reports cache sizes, hit rates and loader, job and worker call counts. It is <strong>off</strong> by default: the path answers 404, like any path nothing serves, so an app behind an edge that forwards every path does not
+        publish its metrics on every domain it serves. <code>[server] stats</code> opens it: <code>"public"</code> serves the JSON to anyone, <code>"token"</code> serves it to a request with <code>Authorization: Bearer &lt;token&gt;</code> and answers 404 (not 401, so the
+        endpoint is not revealed) to a wrong or missing one. <code>brust dev</code> defaults to <code>"public"</code>. <code>/ping</code> stays public in every mode.
+      </p>
+      <p>
+        The token is never written in a file: <code>stats_token = "env:NAME"</code> names the variable that holds it, and <code>brust start</code> stops with a message naming the variable when it is unset or empty. The environment variable{' '}
+        <code>BRUST_STATS</code> sets the mode too (it wins over the file); <code>run({'{ config: { stats, statsToken } }'})</code> sets both from code. If you monitor an app with this endpoint, set <code>stats = "public"</code> or <code>"token"</code> when you upgrade. Workers has
+        its own switch, <code>[cloudflare] stats</code>, and ignores <code>[server]</code>.
+      </p>
+
       <h2 id="env">Environment variables</h2>
       <table>
         <thead>
@@ -257,6 +274,15 @@ export default function Configuration({ blocks }: ConfigurationData) {
             </td>
             <td>default 10000</td>
             <td>no</td>
+          </tr>
+          <tr>
+            <td>
+              <code>BRUST_STATS</code>
+            </td>
+            <td>off, public or token</td>
+            <td>
+              <code>[server] stats</code>
+            </td>
           </tr>
           <tr>
             <td>

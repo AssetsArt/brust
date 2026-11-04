@@ -1,8 +1,8 @@
 // Runtime configuration (spec §8). Precedence, high → low:
 //   env (BRUST_ADDR / BRUST_PORT / BRUST_WORKERS / BRUST_RENDER_SLOTS / BRUST_DRAIN_TIMEOUT_MS /
-//        BRUST_BOOT_TIMEOUT_MS / BRUST_CALL_TIMEOUT_MS / BRUST_SLOT_BYTES / BRUST_MAX_LOADER_RESPONSE_BYTES)
+//        BRUST_BOOT_TIMEOUT_MS / BRUST_CALL_TIMEOUT_MS / BRUST_SLOT_BYTES / BRUST_MAX_LOADER_RESPONSE_BYTES / BRUST_STATS)
 //   > CLI flags (`brust start --port/--workers`) and `run({ config })`
-//   > brust.toml ([server] address / port / base_path / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [actions] base_url / credentials)
+//   > brust.toml ([server] address / port / base_path / stats / stats_token / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [actions] base_url / credentials)
 //   > defaults (localhost, 1337, availableParallelism(), 1, 10000, 30000, 30000, 262144, 8388608).
 // L16 R16.1: `actionsBaseUrl` follows env (BRUST_ACTIONS_BASE_URL) > run({ config }) > toml `[actions] base_url`.
 // `cors` has no env layer; `run({ config: { cors } })` replaces a toml `[cors]` as a whole (never merged), and
@@ -22,6 +22,20 @@ export interface CorsConfig {
   exposeHeaders?: string[]
   credentials: boolean
   maxAgeSeconds?: number
+}
+
+/** F507 `[server] stats`: who may read `/_brust/cache/stats`. */
+export const STATS_MODES = ['off', 'public', 'token'] as const
+export type StatsMode = (typeof STATS_MODES)[number]
+/** F507 `[server] stats_token`: an env reference only, never the secret itself (like `[cache.redis] url`). */
+const STATS_TOKEN_REF = /^env:[A-Za-z_][A-Za-z0-9_]*$/
+
+/** Why `[server] stats` / `stats_token` (or `run({ config })`) are wrong, or `undefined`. The secret never appears in the message. */
+function statsError(mode: unknown, token: unknown, where: string): string | undefined {
+  if (mode !== undefined && !STATS_MODES.includes(mode as StatsMode)) return `${where}stats must be one of ${STATS_MODES.join(', ')} (got ${JSON.stringify(mode)})`
+  if (token !== undefined && (typeof token !== 'string' || !STATS_TOKEN_REF.test(token)))
+    return `${where}stats_token must be "env:NAME" (a literal token is refused: it would sit in a file)`
+  return undefined
 }
 
 export interface BrustConfig {
@@ -47,6 +61,11 @@ export interface BrustConfig {
    * root), absent when nothing set it. A build setting too (`brust build` bakes it into the manifest): `brust start` refuses a manifest
    * built for another one, and with none set serves the one the manifest names. */
   basePath?: string
+  /** F507 `[server] stats` / `run({ config: { stats } })`: who may read `/_brust/cache/stats` (`off` = 404, `public`, `token` = a bearer
+   * token). Absent = `off` for `brust start`, `public` under `brust dev`. */
+  stats?: StatsMode
+  /** F507 `[server] stats_token` / `run({ config: { statsToken } })`: `"env:NAME"`, the variable that holds the bearer token (`stats = "token"` only). */
+  statsToken?: string
   /** L16 R16.1: the origin the browser `client()` calls (page script `__BRUST_ACTION_BASE__`); absent = same origin. */
   actionsBaseUrl?: string
   /** L16 R16.2: the client's default `RequestInit.credentials` (`__BRUST_ACTION_CREDENTIALS__`); absent = `same-origin`. */
@@ -116,6 +135,11 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
   checkCli(cli)
   // cli (validated, normalised) over toml as a whole object (R10.2); `null` = off.
   const cors = cli.cors === undefined ? fromToml.cors : cli.cors === null ? undefined : checkCors(cli.cors, 'config.cors', null, false)
+  // F507: the two keys belong together, wherever each one came from.
+  const stats = env.stats ?? cli.stats ?? fromToml.stats
+  const statsToken = cli.statsToken ?? fromToml.statsToken
+  if (stats === 'token' && statsToken === undefined) throw new BrustConfigError('stats = "token" needs stats_token = "env:NAME" (the variable that holds the bearer token)', null)
+  if (statsToken !== undefined && stats !== 'token') throw new BrustConfigError('stats_token is used only with stats = "token"', null)
   return {
     host: env.host ?? cli.host ?? fromToml.host ?? DEFAULTS.host,
     port: env.port ?? cli.port ?? fromToml.port ?? DEFAULTS.port,
@@ -130,6 +154,8 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
     ioThreads: env.ioThreads ?? cli.ioThreads,
     ...(cors ? { cors } : {}),
     ...pick('basePath', cli.basePath ?? fromToml.basePath),
+    ...pick('stats', stats),
+    ...pick('statsToken', statsToken),
     ...pick('actionsBaseUrl', env.actionsBaseUrl ?? cli.actionsBaseUrl ?? fromToml.actionsBaseUrl),
     ...pick('actionsCredentials', cli.actionsCredentials ?? fromToml.actionsCredentials),
   }
@@ -173,6 +199,8 @@ function checkCli(cli: ConfigOverrides): void {
     if (!r.ok) throw new BrustConfigError(`config.basePath ${r.why}`, null)
     cli.basePath = r.value
   }
+  const badStats = statsError(cli.stats, cli.statsToken, 'config.')
+  if (badStats) throw new BrustConfigError(badStats, null)
   if (cli.actionsBaseUrl !== undefined) {
     const why = baseUrlError(cli.actionsBaseUrl)
     if (why) throw new BrustConfigError(`config.actionsBaseUrl ${why}`, null)
@@ -204,6 +232,10 @@ function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
       if (!r.ok) throw new BrustConfigError(`${file}: server.base_path ${r.why}`, file)
       out.basePath = r.value
     }
+    const bad = statsError(server.stats, server.stats_token, `${file}: server.`)
+    if (bad) throw new BrustConfigError(bad, file)
+    if (server.stats !== undefined) out.stats = server.stats as StatsMode
+    if (server.stats_token !== undefined) out.statsToken = server.stats_token as string
     const cap = tomlInt(server.max_loader_response_bytes, 'server.max_loader_response_bytes', MIN_LOADER_RESPONSE_BYTES, MAX_LOADER_RESPONSE_BYTES, file)
     if (cap !== undefined) out.maxLoaderResponseBytes = cap
     if (port !== undefined) {
@@ -320,6 +352,11 @@ function fromEnv(): Partial<BrustConfig> {
   out.slotBytes = envInt('BRUST_SLOT_BYTES', MIN_SLOT_BYTES, MAX_SLOT_BYTES, `an integer in ${MIN_SLOT_BYTES}..${MAX_SLOT_BYTES}`)
   out.maxLoaderResponseBytes = envInt('BRUST_MAX_LOADER_RESPONSE_BYTES', MIN_LOADER_RESPONSE_BYTES, MAX_LOADER_RESPONSE_BYTES, `an integer in ${MIN_LOADER_RESPONSE_BYTES}..${MAX_LOADER_RESPONSE_BYTES}`)
   out.ioThreads = envInt('BRUST_WORKER_THREADS', 1, MAX_IO_THREADS, `an integer in 1..${MAX_IO_THREADS}`)
+  const stats = process.env.BRUST_STATS
+  if (stats !== undefined && stats !== '') {
+    if (!STATS_MODES.includes(stats as StatsMode)) throw new BrustConfigError(`BRUST_STATS must be one of ${STATS_MODES.join(', ')} (got ${JSON.stringify(stats)})`, null)
+    out.stats = stats as StatsMode
+  }
   const base = process.env.BRUST_ACTIONS_BASE_URL
   if (base !== undefined && base !== '') {
     const why = baseUrlError(base)

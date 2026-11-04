@@ -131,7 +131,8 @@ A loader or job call that has not settled within `BRUST_CALL_TIMEOUT_MS` answers
 slot stays claimed until the call settles (the late result is discarded), so a stuck call costs one
 slot, never a frozen worker. Waiting for a free slot is the separate 503 "all workers busy".
 `GET /_brust/cache/stats` reports L1/job cache counters plus `loader_calls` / `job_calls` /
-`timed_out_calls`.
+`timed_out_calls`. It is off by default (404): set `[server] stats` to `"public"` or `"token"` (`stats_token = "env:NAME"`)
+to read it; `brust dev` serves it.
 
 ## Worker wire (contract 7, `crates/brust-server/src/protocol.rs`)
 

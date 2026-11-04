@@ -17,7 +17,7 @@ const stats = async (): Promise<Stats> => (await fetch(`${base}/_brust/cache/sta
 beforeAll(async () => {
   const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}`)
-  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
+  const env = { ...process.env, BRUST_PORT: '', BRUST_STATS: 'public', BRUST_WORKERS: '', BRUST_ADDR: '' }
   proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '2'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   // "[brust] listening on 127.0.0.1:NNNN (io: hyper(tokio))" (brust-server server/mod.rs), then
   // "[brust] ready (2 workers)" once every worker registered (run.ts). Keep draining stdout
