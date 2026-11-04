@@ -899,42 +899,10 @@ fn read_stmts(
                         break;
                     }
                 };
-                if throws || out.throw_unless.is_some() {
-                    out.throw_unless
-                        .get_or_insert_with(Vec::new)
-                        .push(test.clone());
-                    let mut roots = Vec::new();
-                    prop_roots(&test, &mut roots);
-                    for p in roots {
-                        if !out.throw_props.contains(&p) {
-                            out.throw_props.push(p);
-                        }
-                    }
-                    // ruling A (3): a test that can change after mount would make the error a client-side one
-                    let body_locals: Vec<&str> = out
-                        .derived
-                        .iter()
-                        .map(|d| d.name.as_str())
-                        .chain(out.handlers.iter().map(|h| h.name.as_str()))
-                        .chain(out.refs.iter().map(|x| x.name.as_str()))
-                        .chain(out.state.iter().map(|x| x.name.as_str()))
-                        .collect();
-                    if !test_is_static(&test, &body_locals) {
-                        out.fallback(
-                            "control-flow",
-                            "the test of an early return that ends in a throw reads something that changes after mount".into(),
-                            loc,
-                            "decide the render from props, or keep this component in React",
-                        );
-                        break;
-                    }
+                if (throws || out.throw_unless.is_some()) && !chain_level_guard(out, &test, loc) {
+                    break;
                 }
-                // a hoisted const must not shadow another of the body
-                let names: Vec<&String> = out.derived.iter().map(|d| &d.name).collect();
-                if out.derived[before..]
-                    .iter()
-                    .any(|d| names.iter().filter(|n| **n == &d.name).count() > 1)
-                {
+                if derived_name_clash(out, before) {
                     out.fallback(
                         "control-flow",
                         "two branches of an early-return chain declare the same name".into(),
@@ -952,6 +920,26 @@ fn read_stmts(
                     },
                 }));
                 break;
+            }
+            // F499: `switch (d) { case 'a': return A; …; default: return B }` in a component, every case ending in a
+            // return: the same nested conditional as an early-return chain of `if (d === 'a') return A`.
+            S::SSwitch(sw) if out.inline.stack.is_empty() => {
+                match read_switch_chain(sw, &stmts[i + 1..], loc, r, out, m, &mut branched) {
+                    SwitchRead::Chain(v) => {
+                        returned = Some(Some(v));
+                        break;
+                    }
+                    SwitchRead::Refused => break,
+                    SwitchRead::NotAChain => {
+                        out.fallback(
+                            "control-flow",
+                            "control flow before return".into(),
+                            loc,
+                            "compute values with expressions and return one JSX tree",
+                        );
+                        break;
+                    }
+                }
             }
             S::SIf(_)
             | S::SFor(_)
@@ -4400,6 +4388,318 @@ fn throw_arm(loc: u32) -> RawExpr {
             args: Vec::new(),
         },
     }
+}
+
+/// The guard of one level of an early-return chain that ends in a throw (W1d PR 3, ruling A): the level's test joins
+/// the "throw unless" list, and it must read only what cannot change after mount, else the error would be a client one.
+/// `false` = a fallback was recorded.
+fn chain_level_guard(out: &mut BodyDecls, test: &RawExpr, loc: u32) -> bool {
+    out.throw_unless
+        .get_or_insert_with(Vec::new)
+        .push(test.clone());
+    let mut roots = Vec::new();
+    prop_roots(test, &mut roots);
+    for p in roots {
+        if !out.throw_props.contains(&p) {
+            out.throw_props.push(p);
+        }
+    }
+    // ruling A (3): a test that can change after mount would make the error a client-side one
+    let body_locals: Vec<&str> = out
+        .derived
+        .iter()
+        .map(|d| d.name.as_str())
+        .chain(out.handlers.iter().map(|h| h.name.as_str()))
+        .chain(out.refs.iter().map(|x| x.name.as_str()))
+        .chain(out.state.iter().map(|x| x.name.as_str()))
+        .collect();
+    if !test_is_static(test, &body_locals) {
+        out.fallback(
+            "control-flow",
+            "the test of an early return that ends in a throw reads something that changes after mount".into(),
+            loc,
+            "decide the render from props, or keep this component in React",
+        );
+        return false;
+    }
+    true
+}
+
+/// A const hoisted out of a chain branch (`derived[before..]`) must not shadow another of the body.
+fn derived_name_clash(out: &BodyDecls, before: usize) -> bool {
+    let names: Vec<&String> = out.derived.iter().map(|d| &d.name).collect();
+    out.derived[before..]
+        .iter()
+        .any(|d| names.iter().filter(|n| **n == &d.name).count() > 1)
+}
+
+enum SwitchRead {
+    /// The whole `switch` as one nested conditional (its value is the component's return value).
+    Chain(RawExpr),
+    /// A diagnostic is recorded: the component falls back to React.
+    Refused,
+    /// Not shaped like a chain (a discriminant that is not a pure path, no case at all): the generic
+    /// `control-flow` fallback.
+    NotAChain,
+}
+
+/// `d === <literal>` for a case's test.
+fn case_test(disc: &RawExpr, lit: &RawExpr) -> RawExpr {
+    RawExpr {
+        loc: lit.loc,
+        kind: RawKind::Binary {
+            op: crate::ir::BinOp::StrictEq,
+            left: Box::new(disc.clone()),
+            right: Box::new(lit.clone()),
+        },
+    }
+}
+
+/// An identifier or a member chain (optional chaining allowed): reading it twice is the same as reading it once.
+fn pure_path(e: &RawExpr) -> bool {
+    match &e.kind {
+        RawKind::Ident { .. } => true,
+        RawKind::Member { target, .. } => pure_path(target),
+        _ => false,
+    }
+}
+
+fn is_literal_case(e: &RawExpr) -> bool {
+    match &e.kind {
+        RawKind::Lit(Literal::Str(_) | Literal::Num(_) | Literal::Bool(_) | Literal::Null) => true,
+        RawKind::Unary {
+            op: UnOp::Neg,
+            value,
+        } => matches!(value.kind, RawKind::Lit(Literal::Num(_))),
+        _ => false,
+    }
+}
+
+/// F499: reads `switch (d) { case L1: … return A; case L2: case L3: … return B; default: … return C }` as the nested
+/// conditional of the same early-return chain (`d === L1 ? A : d === L2 || d === L3 ? B : C`), reusing the chain's
+/// rules: hoisted consts (lazy derived values), the same-name check, a literal-message throw as the last arm, a test
+/// that reads state becoming an `x-if` like any other. `default` is the last `else` wherever it is written; without
+/// one the rest of the body is. A shape that would fall through or leave the switch any other way is refused with
+/// `switch-fallthrough` (never silently read as something else).
+fn read_switch_chain(
+    sw: &js_ast::S::Switch,
+    after: &[js_ast::Stmt],
+    loc: u32,
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+    branched: &mut u32,
+) -> SwitchRead {
+    let disc = r.expr(&sw.test);
+    if !pure_path(&disc) || sw.cases.slice().is_empty() {
+        return SwitchRead::NotAChain;
+    }
+    let refuse = |out: &mut BodyDecls, at: u32, why: &str| {
+        out.fallback(
+            "switch-fallthrough",
+            why.into(),
+            at,
+            "end every case with return (a default may throw), compare against literals, and wrap a case's consts in braces; or keep this component in React",
+        );
+        SwitchRead::Refused
+    };
+    let dead = |s: &js_ast::Stmt| {
+        matches!(
+            &s.data,
+            S::SEmpty(_) | S::STypeScript(_) | S::SComment(_) | S::SDirective(_)
+        )
+    };
+    // Groups of stacked cases sharing one body, in source order; the `default` group is set aside.
+    let mut arms: Vec<(Vec<RawExpr>, Vec<js_ast::Stmt>)> = Vec::new();
+    let mut default: Option<Vec<js_ast::Stmt>> = None;
+    let mut tests: Vec<RawExpr> = Vec::new();
+    let mut is_default = false;
+    for c in sw.cases.slice() {
+        let cloc = c.loc.start.max(0) as u32;
+        match &c.value {
+            Some(v) => {
+                let t = r.expr(v);
+                if !is_literal_case(&t) {
+                    return refuse(
+                        out,
+                        cloc,
+                        "a case test that is not a string, number, boolean or null literal",
+                    );
+                }
+                tests.push(t);
+            }
+            None => is_default = true,
+        }
+        let raw = c.body.slice();
+        let braced = matches!(raw, [only] if matches!(only.data, S::SBlock(_)));
+        let body: Vec<js_ast::Stmt> = match raw {
+            [only] if let S::SBlock(b) = &only.data => b.stmts.slice().to_vec(),
+            _ => raw.to_vec(),
+        };
+        if body.iter().all(dead) {
+            continue; // stacked with the next case
+        }
+        if body
+            .iter()
+            .any(|s| matches!(&s.data, S::SBreak(_) | S::SContinue(_)))
+        {
+            return refuse(
+                out,
+                cloc,
+                "a case that leaves the switch with break or continue",
+            );
+        }
+        if !braced
+            && body
+                .iter()
+                .any(|s| matches!(&s.data, S::SLocal(_) | S::SFunction(_) | S::SClass(_)))
+        {
+            return refuse(
+                out,
+                cloc,
+                "a declaration in a case body without braces (it is visible to the other cases)",
+            );
+        }
+        let last = body.iter().rev().find(|s| !dead(s));
+        let ends = match last.map(|s| &s.data) {
+            Some(S::SReturn(ret)) => ret.value.is_some(),
+            Some(S::SThrow(_)) => is_default,
+            _ => false,
+        };
+        if !ends {
+            return refuse(
+                out,
+                cloc,
+                if is_default {
+                    "a default that does not end in a return or a throw"
+                } else {
+                    "a case that does not end in a return (it would fall through)"
+                },
+            );
+        }
+        if is_default {
+            default = Some(body);
+            tests.clear(); // the cases stacked with `default` end up in the else anyway
+            is_default = false;
+        } else {
+            arms.push((std::mem::take(&mut tests), body));
+        }
+    }
+    if !tests.is_empty() || is_default {
+        return refuse(
+            out,
+            loc,
+            "a last case with no body (it would leave the switch)",
+        );
+    }
+    let mut rest: Vec<js_ast::Stmt> = match default {
+        Some(d) => {
+            if !after.iter().all(dead) {
+                out.fallback(
+                    "stmt-after-return",
+                    "statement after a switch whose default returns".into(),
+                    loc,
+                    "remove unreachable code",
+                );
+                return SwitchRead::Refused;
+            }
+            d
+        }
+        None => after.to_vec(),
+    };
+    // read the arms in order, each nested one level deeper (what a chain of ifs does)
+    let before = out.derived.len();
+    let mut yes: Vec<RawExpr> = Vec::new();
+    let mut arm_tests: Vec<RawExpr> = Vec::new();
+    for (lits, body) in &arms {
+        out.branch_depth += 1;
+        *branched += 1;
+        let test = lits
+            .iter()
+            .map(|l| case_test(&disc, l))
+            .reduce(|a, b| RawExpr {
+                loc: a.loc,
+                kind: RawKind::Binary {
+                    op: crate::ir::BinOp::Or,
+                    left: Box::new(a),
+                    right: Box::new(b),
+                },
+            })
+            .expect("a group has at least one case");
+        arm_tests.push(test);
+        match read_stmts(body, r, out, m) {
+            Some(Some(v)) => yes.push(v),
+            _ => {
+                out.fallback(
+                    "control-flow",
+                    "an early return without a value".into(),
+                    loc,
+                    "return one JSX tree",
+                );
+                return SwitchRead::Refused;
+            }
+        }
+    }
+    let mut throws = false;
+    if let [only] = rest.as_slice()
+        && let S::SThrow(t) = &only.data
+    {
+        if !literal_error_throw(&t.value, m, r.names) {
+            out.fallback(
+                "control-flow",
+                "the throw of an early-return chain is not `throw new Error(<literal>)`".into(),
+                loc,
+                "throw an Error with a literal message, or keep this component in React",
+            );
+            return SwitchRead::Refused;
+        }
+        rest.clear();
+        throws = true;
+    }
+    let no = match read_stmts(&rest, r, out, m) {
+        Some(Some(v)) => v,
+        None if throws => {
+            out.throw_unless.get_or_insert_with(Vec::new);
+            throw_arm(loc)
+        }
+        _ => {
+            out.fallback(
+                "control-flow",
+                "an early-return chain must end in a return or a throw".into(),
+                loc,
+                "return one JSX tree",
+            );
+            return SwitchRead::Refused;
+        }
+    };
+    // innermost level first, as the nested ifs finish
+    for test in arm_tests.iter().rev() {
+        if (throws || out.throw_unless.is_some()) && !chain_level_guard(out, test, loc) {
+            return SwitchRead::Refused;
+        }
+    }
+    if derived_name_clash(out, before) {
+        out.fallback(
+            "control-flow",
+            "two branches of an early-return chain declare the same name".into(),
+            loc,
+            "give each branch's consts a different name",
+        );
+        return SwitchRead::Refused;
+    }
+    let chain = arm_tests
+        .into_iter()
+        .zip(yes)
+        .rev()
+        .fold(no, |no, (test, yes)| RawExpr {
+            loc,
+            kind: RawKind::Cond {
+                test: Box::new(test),
+                yes: Box::new(yes),
+                no: Box::new(no),
+            },
+        });
+    SwitchRead::Chain(chain)
 }
 
 /// `throw new Error(<literal>)` (or TypeError/RangeError): the message is a string literal, a template of string literals

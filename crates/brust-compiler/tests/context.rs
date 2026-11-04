@@ -1796,3 +1796,116 @@ fn a_live_value_after_the_spread_is_bound_by_the_native_childs_element() {
             .collect::<Vec<_>>()
     );
 }
+
+// ---- F499: a switch whose every case returns lowers like an if/return chain ----
+
+/// Stacked cases, a braced case with a const, a default: one nested conditional on `===` against each literal.
+#[test]
+fn a_switch_that_returns_in_every_case_is_one_nested_conditional() {
+    let all = compile("switch-return.tsx");
+    assert!(
+        all.iter().all(|(_, ir, _)| !is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| &ir.diagnostics)
+            .collect::<Vec<_>>()
+    );
+    let view = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("view"))
+        .expect("view");
+    for want in [
+        r#"type == "hero""#,
+        r#"type == "promo""#,
+        r#"type == "sale""#,
+    ] {
+        assert!(view.2.contains(want), "{want}: {}", view.2);
+    }
+    assert!(
+        view.2.contains("<h1") && view.2.contains("<p") && view.2.contains("<div>"),
+        "{}",
+        view.2
+    );
+}
+
+/// Without a default the rest of the body is the last `else`.
+#[test]
+fn a_switch_without_a_default_falls_to_the_rest_of_the_body() {
+    let all = compile("switch-return-rest.tsx");
+    assert!(
+        all.iter().all(|(_, ir, _)| !is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| &ir.diagnostics)
+            .collect::<Vec<_>>()
+    );
+    let view = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("view"))
+        .expect("view");
+    assert!(
+        view.2.contains(r#"type == "a""#)
+            && view.2.contains(r#"type == "b""#)
+            && view.2.contains("<div>"),
+        "{}",
+        view.2
+    );
+}
+
+/// A default that throws a literal-message Error is the chain's render-error arm (ruling A), the message never printed.
+#[test]
+fn a_switch_whose_default_throws_prints_a_render_error_arm() {
+    let all = compile("switch-return-throw.tsx");
+    assert!(
+        all.iter().all(|(_, ir, _)| !is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| &ir.diagnostics)
+            .collect::<Vec<_>>()
+    );
+    let view = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("view"))
+        .expect("view");
+    assert!(view.2.contains("render_error"), "{}", view.2);
+    assert!(!view.2.contains("unknown type"), "{}", view.2);
+}
+
+/// A discriminant that is a number: `===` is strict, so the printed test never makes `'1'` match `1`.
+#[test]
+fn a_switch_on_a_number_prints_a_strict_comparison() {
+    let all = compile("switch-return-strict.tsx");
+    assert!(
+        all.iter().all(|(_, ir, _)| !is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| &ir.diagnostics)
+            .collect::<Vec<_>>()
+    );
+    let num = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("num"))
+        .expect("num");
+    assert!(
+        num.2.contains("js_seq") || num.2.contains("n == 1"),
+        "{}",
+        num.2
+    );
+}
+
+/// A discriminant that is state keeps the page native (the chain's conditional is `x-if` on the client).
+#[test]
+fn a_switch_on_state_stays_native() {
+    let all = compile("switch-return-state.tsx");
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("switchreturnstate"))
+        .expect("page");
+    assert!(
+        matches!(page.1.tier, Tier::Native),
+        "{:?} {:?}",
+        page.1.tier,
+        page.1.diagnostics
+    );
+    assert!(page.2.contains("x-if"), "{}", page.2);
+}
