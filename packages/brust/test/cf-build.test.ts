@@ -267,3 +267,37 @@ test('without [cache] nothing of the DO wiring appears', () => {
   expect(existsSync(join(out, 'cf', 'worker', 'main.js'))).toBe(false)
   expect(readFileSync(join(out, 'cf', '.stage', 'brust-app.entry.js'), 'utf8')).not.toContain('BrustCacheDO')
 })
+
+// F482 end to end: the wrangler.jsonc a real `brust build --target cloudflare` writes carries the date bounded by the app's
+// installed workerd (a fake one, 2026-09-28), an explicit date as written with the named warning.
+function withWorkerd(date: string, toml?: string): string {
+  const dir = join(FIX, '.cf-compat-run')
+  rmSync(dir, { recursive: true, force: true })
+  cpSync(APP, dir, { recursive: true, filter: (src) => !src.includes('/dist') })
+  cleanup.push(dir)
+  for (const [name, version] of [['wrangler', '4.136.1'], ['miniflare', '5.20260928.0'], ['workerd', `1.${date.replaceAll('-', '')}.0`]] as const) {
+    mkdirSync(join(dir, 'node_modules', name, 'lib'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }))
+  }
+  writeFileSync(join(dir, 'node_modules', 'workerd', 'lib', 'main.js'), `var compatibilityDate = "${date}";\n`)
+  if (toml !== undefined) writeFileSync(join(dir, 'brust.toml'), toml)
+  return dir
+}
+
+test('F482: the built wrangler.jsonc defaults compatibility_date to what the installed workerd runs', () => {
+  const dir = withWorkerd('2026-09-28')
+  const out = join(outDir(), 'dist')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
+  expect(r.code).toBe(0)
+  expect(r.out + r.err).not.toContain('cf-compat-date')
+  expect((Bun.JSONC.parse(readFileSync(join(out, 'cf', 'wrangler.jsonc'), 'utf8')) as { compatibility_date: string }).compatibility_date).toBe('2026-09-28')
+})
+
+test('F482: an explicit compatibility_date newer than the installed workerd is kept and named in a warning', () => {
+  const dir = withWorkerd('2026-09-28', '[actions]\nprefix = "/api"\n\n[cloudflare]\ncompatibility_date = "2026-10-01"\n')
+  const out = join(outDir(), 'dist')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
+  expect(r.code).toBe(0)
+  expect(r.out + r.err).toContain('warning cf-compat-date')
+  expect((Bun.JSONC.parse(readFileSync(join(out, 'cf', 'wrangler.jsonc'), 'utf8')) as { compatibility_date: string }).compatibility_date).toBe('2026-10-01')
+})
