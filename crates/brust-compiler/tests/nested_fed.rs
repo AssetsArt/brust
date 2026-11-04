@@ -115,18 +115,37 @@ fn a_fed_child_inside_a_static_wrapper_is_rebased_onto_the_caller() {
     );
 }
 
+/// F494: in ONE list over a props path of a stateless page (its rows never change on the client) a static wrapper's fed
+/// child is fed per row, like a direct child (F142): its record is the page's, over that list. Over a list that is not a
+/// props path, or one the client re-creates, the caller still falls back (below and `..._in_a_stateful_list_...`).
 #[test]
-fn a_static_wrapper_with_a_fed_child_in_a_list_makes_the_caller_an_island() {
-    let t = lower(
+fn a_static_wrapper_with_a_fed_child_in_a_fixed_list_is_fed_per_row() {
+    let (t, recs, jinja) = lower_full(
         "import Wrapper from './Wrapper'\nexport default function P(props: { xs: string[] }) { return <div>{props.xs.map((x) => <Wrapper key={x} tone={x} />)}</div> }",
     );
     let p = named(&t, "p_");
-    assert!(is_react(p), "{:?}", p.tier);
-    assert!(
-        p.fallbacks.contains(&"nested-instance".to_string()),
-        "{:?}",
-        p.fallbacks
-    );
+    assert!(!is_react(p), "{:?} {:?}", p.tier, p.fallbacks);
+    assert_eq!(recs.len(), 1, "{recs:?}");
+    assert_eq!(recs[0].loops, vec![Some("xs".to_string())]);
+    assert_eq!(recs[0].props["tone"], Some("xs[idx]".to_string()));
+    assert!(jinja.contains("_1[_i1][\"_s1\"]"), "{jinja}");
+}
+
+#[test]
+fn a_static_wrapper_with_a_fed_child_in_a_literal_or_stateful_list_makes_the_caller_an_island() {
+    for src in [
+        "import Wrapper from './Wrapper'\nexport default function P() { return <div>{['a', 'b'].map((x) => <Wrapper key={x} tone={x} />)}</div> }",
+        "import { useState } from 'react'\nimport Wrapper from './Wrapper'\nexport default function P() { const [xs, set] = useState(['a']); return <div onClick={() => set([...xs, 'b'])}>{xs.map((x) => <Wrapper key={x} tone={x} />)}</div> }",
+    ] {
+        let t = lower(src);
+        let p = named(&t, "p_");
+        assert!(is_react(p), "{src}: {:?}", p.tier);
+        assert!(
+            p.fallbacks.contains(&"nested-instance".to_string()),
+            "{src}: {:?}",
+            p.fallbacks
+        );
+    }
 }
 
 #[test]

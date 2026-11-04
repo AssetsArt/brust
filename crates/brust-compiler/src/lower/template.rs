@@ -281,6 +281,10 @@ pub struct Printer<'a, 'c> {
     /// F233: the names the component spells; a member never takes one (shared by the printers of one lowering, by id).
     seeds: Seeds,
     frames: Vec<Frame>,
+    /// F494: the open loops of the printers this one is inlined into, outermost first (`_iN` and its "read" mark): a
+    /// static child inlined in a row of a fixed list prints its fed children's slots per row of that list (their records
+    /// were rebased onto it, `children.rs` rebase).
+    outer_loops: Vec<(String, Rc<Cell<bool>>)>,
     diagnostics: Vec<Diagnostic>,
     /// Prop roots the members read: they are seeded through `x-props`.
     prop_reads: BTreeSet<String>,
@@ -338,6 +342,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             members: Vec::new(),
             counts: HashMap::new(),
             frames: Vec::new(),
+            outer_loops: Vec::new(),
             diagnostics: Vec::new(),
             prop_reads: BTreeSet::new(),
             prop_seen: Default::default(),
@@ -2299,6 +2304,12 @@ impl<'a, 'c> Printer<'a, 'c> {
         let loops: String = self.frames.iter().map(|f| format!("[{}]", f.var)).collect();
         let slot_loops: Vec<Rc<Cell<bool>>> =
             self.frames.iter().map(|f| f.var_used.clone()).collect();
+        // F494: a rebased record's rows are those of a loop in a printer this one is inlined into.
+        let (outer, outer_marks): (String, Vec<Rc<Cell<bool>>>) = self
+            .outer_loops
+            .iter()
+            .map(|(v, m)| (format!("[{v}]"), m.clone()))
+            .unzip();
         if let Tier::React { client_only, .. } = tier {
             if *client_only {
                 let dict = self.props_dict(props, sprops);
@@ -2502,7 +2513,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         let (loops, slot_loops) = if invariant {
             (String::new(), Vec::new())
         } else {
-            (loops, slot_loops)
+            let mut marks = outer_marks;
+            marks.extend(slot_loops);
+            (format!("{outer}{loops}"), marks)
         };
         // The server numbers an instance by its record's position among this child's records
         // (brust-core `pipeline.rs` ordinal); an instance the build evaluated has no record (F149),
@@ -2576,6 +2589,13 @@ impl<'a, 'c> Printer<'a, 'c> {
         // The inlined component numbers its fed children with this printer's counters (F164 re-base).
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
+        // F494: this printer's open loops stay open around the inlined child.
+        p.outer_loops = self.outer_loops.clone();
+        p.outer_loops.extend(
+            self.frames
+                .iter()
+                .map(|f| (f.var.clone(), f.var_used.clone())),
+        );
         p.native = !matches!(child_ir.tier, Tier::Static) || bind.is_some();
         p.inline_host = Some((child_ir.id.clone(), bind));
         p.preamble();
@@ -2830,6 +2850,13 @@ impl<'a, 'c> Printer<'a, 'c> {
         p.in_select = self.in_select;
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
+        // F494: this printer's open loops stay open around the inlined child.
+        p.outer_loops = self.outer_loops.clone();
+        p.outer_loops.extend(
+            self.frames
+                .iter()
+                .map(|f| (f.var.clone(), f.var_used.clone())),
+        );
         p.native = false;
         p.inline_host = Some((child_ir.id.clone(), None));
         p.preamble();

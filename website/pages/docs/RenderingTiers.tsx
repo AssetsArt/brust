@@ -107,6 +107,13 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       <p>
         The tier is decided per component, bottom-up. A React child inside a native parent becomes an island and the parent stays native, so one island never turns the whole page into React. A page made only of static components gets no <code>&lt;script&gt;</code> tag at all.
       </p>
+      {/* source: crates/brust-compiler/src/analyze/passes/children.rs:4259 (fixed_call: a stateless child, every prop a value the client never changes there), :4304 (specialise_fixed: the clone is kept only when it is static) */}
+      <p>
+        It is also decided per call site. A component without state used by a page that has none either (say a <code>List</code> that maps the page&rsquo;s loader data to a <code>Hero</code> per row) is compiled once for every caller,
+        and a caller could pass values that change, so on its own it may need the runtime for its rows, or React for a value it derives from a prop. Where a call site passes only fixed values (the page&rsquo;s loader data, literals, the rows of a
+        list that never changes on the client), brust makes a copy of the component for that call site with every prop fixed, and that copy renders static: plain HTML, no script. The same component used from a component with state keeps its own tier.
+        Nothing to write: the compiler proves it from the call site.
+      </p>
 
       <h2 id="live">The three, live</h2>
       <p>These are the landing page's three demo components. The tier and the shipped chunk under each one come from this build's manifest, read by the page's loader.</p>

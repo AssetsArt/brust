@@ -494,6 +494,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/module-projection.chromium.test.ts
       # F305: a value of rest-carried content that calls an import is computed by the page and handed to the clone; served == React.
       - run: bun test --timeout 120000 tests/server/clone-carry.chromium.test.ts
+      # F494: a stateless child fed only loader data is cloned with fixed props and renders static (no script, HTML == React); the same List under state stays native and adds rows.
+      - run: bun test --timeout 180000 tests/server/loader-static-tiers.chromium.test.ts
       # switch-provider-chain PR1: a render prop called with a local object holding a setter is spliced into the clone; served == React.
       - run: bun test --timeout 120000 tests/server/render-ctx.chromium.test.ts
       # switch-provider-chain PR1: a context value is never pinned in a clone; the Switch shape toggles as React does.
