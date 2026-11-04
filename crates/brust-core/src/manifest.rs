@@ -25,6 +25,9 @@ pub struct Manifest {
     /// brust owns (`/_brust/…`, `/public/…`, `/ping`, the actions prefix) lies below it. `""` = the root.
     #[serde(default)]
     pub base_path: String,
+    /// F506: `[server] trailing_slash` baked at build; absent = `strict` (the path is matched as written).
+    #[serde(default)]
+    pub trailing_slash: crate::config::TrailingSlash,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -130,7 +130,7 @@ export async function runBuild(opts: {
   process.env.BRUST_BASE_PATH = built.basePath
   if (opts.actionsOnly)
     return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
-  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, basePath } = built
+  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, basePath, trailingSlash } = built
   // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
   // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
   const remote =
@@ -198,7 +198,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, basePath, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -243,6 +243,8 @@ async function buildInto(
     sourceRoots: string[]
     /** `[server] base_path` (F495), `''` = the root. */
     basePath: string
+    /** `[server] trailing_slash` (F506); `strict` = the default (not written). */
+    trailingSlash: import('../config').TrailingSlash
     /** L16 R16.4b: the prefix of an actions app deployed elsewhere (a page-only build); absent = a local app or none. */
     actionsRemote: string | null
     /** `--target static` with `[actions]`: the worker is built without the cache (static pages are never cached). */
@@ -361,6 +363,8 @@ async function buildInto(
   await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots, reachedJobs(manifest), writers, o.basePath)
   // F495: absent without a base path, so an app at the root writes the manifest it always did.
   if (o.basePath !== '') manifest.base_path = o.basePath
+  // F506: absent when strict (the default), so an app that sets nothing writes the manifest it always did.
+  if (o.trailingSlash !== 'strict') manifest.trailing_slash = o.trailingSlash
   manifest.actions =
     o.actions && o.actionsEntry
       ? { entry: await buildActions(out, o.actionsEntry, css.maps, o.basePath), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite, ...o.actions.stream }

@@ -177,6 +177,10 @@ export async function writeStatic(
     o.log(w)
   }
   for (const w of assets.warnings) o.log(w)
+  // F506: a static host serves the files as it likes; brust's trailing-slash policy applies to `brust start` only.
+  const ts = (JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf8')) as { trailing_slash?: string }).trailing_slash
+  if (ts !== undefined && ts !== 'strict')
+    warn(`warning trailing-slash-static server.trailing_slash = ${JSON.stringify(ts)} does not apply to --target static: the static host decides how a path ending in '/' is served`)
 
   // R9.4: [cache] does not apply to static files, so the render must not need its adapter (a Redis
   // that is not running at build time): the render reads a manifest without `cache`, and the dist

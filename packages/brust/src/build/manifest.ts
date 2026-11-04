@@ -102,6 +102,8 @@ export interface ManifestJson {
   actions_only?: true
   /** F495 `[server] base_path`: set only for an app mounted under a path. The server answers under it alone and every URL brust owns lies below it. */
   base_path?: string
+  /** F506 `[server] trailing_slash`: set only when it is not `strict` (`redirect` | `ignore`). */
+  trailing_slash?: 'redirect' | 'ignore'
   /** L16 R16.4b: a page-only build: no local actions app, `base_url` points at the deployment that has it. */
   actions_remote?: { prefix: string }
   /** `[cache]` (cache adapters); absent without one (the manifest is then byte-identical). */
