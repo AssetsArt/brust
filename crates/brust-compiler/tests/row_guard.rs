@@ -122,3 +122,46 @@ fn a_state_condition_restricts_nothing() {
     assert_eq!(r[0].when, None);
     assert!(!r[0].when_opaque);
 }
+
+/// F504a (review 05ee17fd a): a non-root child whose prop its stateful parent changes: the branch is an `x-if` the
+/// client flips, so it restricts nothing wherever the record lands.
+#[test]
+fn a_changing_prop_condition_restricts_nothing() {
+    let all = compile("StatefulPanelPage.tsx");
+    // The record the server feeds is the page's (Panel is inlined): the page links Panel (`open` is its state), so
+    // the rebase drops the guard and the job runs on every request, as the hidden copy needs.
+    let page = &all[0].0;
+    assert!(matches!(page.tier, Tier::Native), "{:?}", page.tier);
+    assert_eq!(page.instances.len(), 1, "{:?}", page.instances);
+    assert_eq!(page.instances[0].when, None);
+    assert!(!page.instances[0].when_opaque);
+}
+
+/// Review 05ee17fd (b): a stateful route root's props are the loader's, fixed for the page's life: a condition over
+/// them keeps guarding its job (F502), state of its own or not.
+#[test]
+fn a_root_prop_condition_on_a_stateful_page_still_guards() {
+    let all = compile("StatefulRootPage.tsx");
+    let r = &all[0].0.instances;
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert_eq!(r[0].when, Some(RowGuard::Eq("mode".into(), json!("a"))));
+}
+
+/// F504b: a fixed-props clone names the shared component it was made of (no id-suffix sniffing).
+#[test]
+fn a_fixed_clone_names_its_shared_component() {
+    let all = compile("IfChainPage.tsx");
+    let clones: Vec<_> = all
+        .iter()
+        .filter(|(ir, _)| ir.fixed_clone_of.is_some())
+        .collect();
+    assert_eq!(clones.len(), 1);
+    let of = clones[0].0.fixed_clone_of.as_deref().unwrap();
+    assert!(
+        of.starts_with("rows_") && clones[0].0.id.starts_with(of),
+        "{of} {}",
+        clones[0].0.id
+    );
+    // The shared component is not part of the tree (every call site took the clone).
+    assert!(all.iter().all(|(ir, _)| ir.id != of));
+}

@@ -185,9 +185,15 @@ export default function Workers({ blocks }: WorkersData) {
               <td>
                 <code>compatibility_date</code>
               </td>
-              <td>the date <code>@brust/core-cf</code> was built with</td>
               <td>
-                Must be <code>YYYY-MM-DD</code> and at least <code>2026-08-04</code>. From that date <code>nodejs_compat</code> is on by default, and brust needs it for <code>AsyncLocalStorage</code> (source C2).
+                the date <code>@brust/core-cf</code> was built with, or the newest date the installed <code>workerd</code> runs if that is older
+              </td>
+              <td>
+                {/* source: packages/brust/src/build/cloudflare.ts:51 (the default is bounded by installedWorkerd, an explicit date is only warned about) and packages/brust/src/build/cf-workerd.ts:50 (workerd's own compatibilityDate export, read from the workerd wrangler runs);
+                    packages/brust/test/cf-core.test.ts:97 (older and newer workerd, none installed, too old, explicit date with and without the warning) and packages/brust/test/cf-build.test.ts:287 (the built wrangler.jsonc). */}
+                Must be <code>YYYY-MM-DD</code> and at least <code>2026-08-04</code>. From that date <code>nodejs_compat</code> is on by default, and brust needs it for <code>AsyncLocalStorage</code> (source C2). Without it, the default is the core&rsquo;s date, lowered to the
+                newest date the <code>workerd</code> your <code>wrangler</code> runs supports (<code>wrangler dev</code> and <code>brust dev --target cloudflare</code> refuse a newer one). A date you write is used as is, and the build warns with{' '}
+                <code>cf-compat-date</code> when it is newer than that <code>workerd</code> supports; so does a <code>workerd</code> too old for the minimum, which keeps the core&rsquo;s date for the deploy build. When no <code>workerd</code> is installed, the core&rsquo;s date is used.
               </td>
             </tr>
             <tr>

@@ -14,6 +14,7 @@ import { type CfConfigJson, cfEntrySource } from './cf-entry'
 import { type CoreCf, resolveCoreCf } from './cf-core'
 import { type CacheNeed, mergeWrangler, readUserWrangler, renderWrangler, type UserWrangler, verifyCacheBindings } from './cf-wrangler'
 import { type CloudflareBuildConfig, CF_MIN_COMPAT_DATE } from './config'
+import { installedWorkerd } from './cf-workerd'
 import { MANIFEST_VERSION } from './manifest'
 import { exposePlugin, PRODUCTION, type SourceOf, sourceDirPlugin } from './bundle'
 import type { Compiled } from './compile'
@@ -42,9 +43,25 @@ const DEFAULT_CFG: CloudflareBuildConfig = { name: undefined, compatibilityDate:
 
 /** Everything that can fail on the app's own input or install, before a byte is written (index.ts rule). */
 export async function prepareCloudflare(appRoot: string, cfg: CloudflareBuildConfig | null, flags: CfFlags): Promise<CfPrepared> {
-  const core = resolveCoreCf({ appRoot, fromSource: flags.fromSource, env: flags.env })
+  const resolved = resolveCoreCf({ appRoot, fromSource: flags.fromSource, env: flags.env })
   const user = await readUserWrangler(appRoot)
-  const warnings = [...core.warnings]
+  const warnings = [...resolved.warnings]
+  // F482: the default date is the core's build date, bounded by what the installed workerd runs (wrangler dev refuses a newer
+  // one). An explicit date is used as written, with a warning when it outruns workerd. Not resolvable: today's behaviour.
+  const workerd = installedWorkerd(appRoot)
+  let core = resolved
+  if (cfg?.compatibilityDate !== undefined) {
+    if (workerd && cfg.compatibilityDate > workerd.date)
+      warnings.push(
+        `[brust] warning cf-compat-date compatibility_date ${cfg.compatibilityDate} in brust.toml is newer than ${workerd.date}, the newest the installed workerd ${workerd.version} runs: \`wrangler dev\` and \`brust dev --target cloudflare\` will not start; lower it or upgrade wrangler`,
+      )
+  } else if (workerd && workerd.date < resolved.meta.compatibilityDate) {
+    if (workerd.date >= CF_MIN_COMPAT_DATE) core = { ...resolved, meta: { ...resolved.meta, compatibilityDate: workerd.date } }
+    else
+      warnings.push(
+        `[brust] warning cf-compat-date the installed workerd ${workerd.version} runs dates only up to ${workerd.date}, older than ${CF_MIN_COMPAT_DATE}, the oldest brust supports: the build keeps ${resolved.meta.compatibilityDate}, but \`wrangler dev\` will not start; upgrade wrangler`,
+      )
+  }
   try {
     const toml = Bun.file(join(appRoot, 'brust.toml'))
     if (await toml.exists()) {

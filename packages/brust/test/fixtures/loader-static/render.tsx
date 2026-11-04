@@ -7,6 +7,7 @@ import AndRowsPage from './AndRowsPage'
 import TernaryRowsPage from './TernaryRowsPage'
 import GtRowsPage from './GtRowsPage'
 import RootRowsPage from './RootRowsPage'
+import ConstPage from './ConstPage'
 import ListPage from './ListPage'
 import PricesPage from './PricesPage'
 import SectionsPage from './SectionsPage'
@@ -21,4 +22,8 @@ export type RowsPage = 'if' | 'switch' | 'and' | 'ternary' | 'gt' | 'root'
 export function reactRowsHtml(page: RowsPage): string {
   const C = { if: IfRowsPage, switch: SwitchRowsPage, and: AndRowsPage, ternary: TernaryRowsPage, gt: GtRowsPage, root: RootRowsPage }[page]
   return renderToStaticMarkup(<C rows={ROWS} />)
+}
+
+export function reactConstHtml(): string {
+  return renderToStaticMarkup(<ConstPage rows={ROWS} />)
 }

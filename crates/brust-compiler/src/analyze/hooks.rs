@@ -2445,7 +2445,10 @@ fn read_decl(
         out.poly = Some(tag);
         return;
     }
+    // F483: `const submit = async (e) => {…}` is a handler the component lifts, as `const submit = (e) => {…}` is
+    r.async_const_arrow = matches!(&value.data, E::EArrow(a) if a.is_async);
     let expr = r.expr(value);
+    r.async_const_arrow = false;
     // F331: `const o = { cb: toggle }` holding the component's own function is read member by member (`o.cb` is
     // `toggle`), as an object a hook returns is; as one derived value it would be a job naming a client function.
     // Not inside a hook: `const obj = {…}; return obj` hands the object out whole, which stays the named refusal.

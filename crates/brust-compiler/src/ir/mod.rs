@@ -269,6 +269,10 @@ pub struct ComponentIR {
     /// shares one factory module with every clone whose chunk is equal (R34.124).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub specialised: bool,
+    /// F494/F504b: this is a fixed-props clone (every prop fixed at its one call site) of the shared component with
+    /// this id. Read by the children pass (F502) and by the tree pruning (`pipeline::compile_tree`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_clone_of: Option<String>,
     /// F298: a clone made for one call site whose children were put where the component spreads its rest: the clones
     /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -588,6 +592,7 @@ impl ComponentIR {
             export: None,
             unexported: false,
             specialised: false,
+            fixed_clone_of: None,
             reads_request_prop: false,
             rest_clone_of: None,
             rest_childless: false,

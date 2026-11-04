@@ -956,3 +956,73 @@ fn a_switch_discriminant_that_is_not_a_pure_path_keeps_the_control_flow_fallback
         );
     }
 }
+
+// ---- F483: `const submit = async (e) => {…}` is a handler, as the sync arrow and the async function declaration are ----
+
+fn derived_of<'a>(ir: &'a ComponentIR, name: &str) -> &'a RawExpr {
+    let d = ir.derived.iter().find(|d| d.name == name).expect(name);
+    let Expr::Raw(e) = &d.expr else { panic!() };
+    e
+}
+
+#[test]
+fn an_async_arrow_const_is_a_handler_that_names_a_setter_without_a_fallback() {
+    let c = ir(&format!(
+        "{PRE}export default function F() {{ const [msg, setMsg] = useState(''); const submit = async (e: any) => {{ e.preventDefault(); const r = await fetch('/x'); setMsg(String(r.status)) }}; return <form onSubmit={{submit}}><p>{{msg}}</p></form> }}"
+    ));
+    assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    let RawKind::Arrow {
+        params,
+        body,
+        captures,
+    } = &derived_of(&c, "submit").kind
+    else {
+        panic!("{:?}", derived_of(&c, "submit"))
+    };
+    assert_eq!(params, &["e".to_string()]);
+    assert!(
+        captures
+            .iter()
+            .any(|(n, k)| n == "setMsg" && matches!(k, IdentKind::Setter))
+    );
+    // the printed source keeps `async`: it runs in the client chunk as written
+    let ArrowBody::Block { source, .. } = body else {
+        panic!()
+    };
+    assert!(
+        source.contains("async") && source.contains("await fetch"),
+        "{source}"
+    );
+}
+
+#[test]
+fn an_async_arrow_with_an_expression_body_keeps_async_in_its_source() {
+    let c = ir(&format!(
+        "{PRE}export default function F() {{ const [n, setN] = useState(0); const go = async () => setN(await Promise.resolve(1)); return <button onClick={{go}}>{{n}}</button> }}"
+    ));
+    assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    let RawKind::Arrow {
+        body: ArrowBody::Block { source, .. },
+        ..
+    } = &derived_of(&c, "go").kind
+    else {
+        panic!("{:?}", derived_of(&c, "go"))
+    };
+    assert!(source.starts_with("async"), "{source}");
+}
+
+#[test]
+fn an_async_arrow_anywhere_else_stays_opaque() {
+    // a per-request value built with an async callback is not a handler: the reader still refuses to look inside it
+    let c = ir(&format!(
+        "{PRE}export default function F({{ items }}: any) {{ const rows = items.map(async (i: any) => i); return <p>{{rows.length}}</p> }}"
+    ));
+    let RawKind::Call { args, .. } = &derived_of(&c, "rows").kind else {
+        panic!("{:?}", derived_of(&c, "rows"))
+    };
+    assert!(
+        args.iter()
+            .any(|a| matches!(&a.kind, RawKind::Opaque { why, .. } if why == "async arrow")),
+        "{args:?}"
+    );
+}
