@@ -36,6 +36,10 @@ pub struct Reader<'r, 'a> {
     /// `useId()` calls hoisted out of the return expression (R34.120), by call address: each reads as the local the
     /// component declares for it.
     pub hoisted_calls: std::collections::HashMap<usize, String>,
+    /// F483: the next arrow read is the initialiser of a body const (`const submit = async (e) => {…}`), which may be
+    /// async: it is read as the function it is (its source kept, `async` included), as a sync one is. Any other async
+    /// arrow stays opaque. Taken by `arrow`.
+    pub async_const_arrow: bool,
 }
 
 /// A context local read in code printed as written (F304): the fields it reads, or its whole value.
@@ -55,6 +59,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             pending_handlers: Vec::new(),
             loop_scope: Vec::new(),
             map_callback: false,
+            async_const_arrow: false,
             provides: Vec::new(),
             render_props: Vec::new(),
             verbatim_unused: false,
@@ -665,6 +670,7 @@ impl<'r, 'a> Reader<'r, 'a> {
 
     fn arrow(&mut self, e: &js_ast::Expr, a: &js_ast::E::Arrow) -> RawExpr {
         let list_body = std::mem::take(&mut self.map_callback);
+        let async_const = std::mem::take(&mut self.async_const_arrow);
         let mut params = Vec::new();
         for (i, arg) in a.args.slice().iter().enumerate() {
             match arg.binding.data {
@@ -678,11 +684,16 @@ impl<'r, 'a> Reader<'r, 'a> {
                 _ => return self.opaque(e, "arrow parameter pattern"),
             }
         }
-        if a.is_async {
+        if a.is_async && !async_const {
             return self.opaque(e, "async arrow");
         }
         let stmts = a.body.stmts.slice();
         let body = match stmts {
+            // the printed source keeps `async`; an expression body would be printed without it
+            _ if a.is_async => ArrowBody::Block {
+                source: self.print(e),
+                captures_only: false,
+            },
             [only] if a.prefer_expr => match &only.data {
                 S::SReturn(r) => match &r.value {
                     Some(v) if list_body && crate::analyze::jsx::is_list_body(v) => {
