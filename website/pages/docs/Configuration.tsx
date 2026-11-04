@@ -190,12 +190,12 @@ export default function Configuration({ blocks }: ConfigurationData) {
       </Note>
 
       <h2 id="stats">The cache stats endpoint</h2>
-      {/* source: crates/brust-core/src/pipeline.rs:137-140 (the path is the app's own only for a request that may read it; any other gets an unknown path's answer) and crates/brust-core/src/config.rs:468 (StatsAccess: off, public, token; the bearer compared in constant time); packages/brust/src/run.ts:62 (the default: off, public under brust dev; the token is read from its env variable at boot);
+      {/* source: crates/brust-core/src/pipeline.rs:137-140 (the path is the app's own only for a request that may read it; any other gets an unknown path's answer) and :154-160 (the 200 carries cache-control: no-store, once, for every host; crates/brust-core/tests/stats_no_store.rs:121 asserts it in both modes) and crates/brust-core/src/config.rs:468 (StatsAccess: off, public, token; the bearer compared in constant time); packages/brust/src/run.ts:62 (the default: off, public under brust dev; the token is read from its env variable at boot);
           tests: crates/brust-server/tests/stats_gate.rs:24 (off, public, token right and wrong, 404 and no challenge), packages/brust/test/napi-server.test.ts:224 (the same through the real addon), packages/brust/test/run-options.test.ts:52 (defaults and the env token), packages/brust/test/config.test.ts:135 (toml, env, errors) */}
       <p>
         <code>/_brust/cache/stats</code> reports cache sizes, hit rates and loader, job and worker call counts. It is <strong>off</strong> by default: the path answers 404, like any path nothing serves, so an app behind an edge that forwards every path does not
         publish its metrics on every domain it serves. <code>[server] stats</code> opens it: <code>"public"</code> serves the JSON to anyone, <code>"token"</code> serves it to a request with <code>Authorization: Bearer &lt;token&gt;</code> and answers 404 (not 401, so the
-        endpoint is not revealed) to a wrong or missing one. <code>brust dev</code> defaults to <code>"public"</code>. <code>/ping</code> stays public in every mode.
+        endpoint is not revealed) to a wrong or missing one. A response that is served always carries <code>cache-control: no-store</code>, so an edge that caches everything does not keep it. <code>brust dev</code> defaults to <code>"public"</code>. <code>/ping</code> stays public in every mode.
       </p>
       <p>
         The token is never written in a file: <code>stats_token = "env:NAME"</code> names the variable that holds it, and <code>brust start</code> stops with a message naming the variable when it is unset or empty. The environment variable{' '}

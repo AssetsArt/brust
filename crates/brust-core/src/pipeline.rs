@@ -151,7 +151,13 @@ pub async fn handle<H: Host>(
     if stats {
         tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "stats");
         let json = serde_json::to_vec(&s.stats()).unwrap_or_else(|_| b"{}".to_vec());
-        return body::resp(200, "application/json", &[], json);
+        // F508: never stored by a shared cache: an edge that caches everything must not keep a token-mode 200 for the next client.
+        return body::resp(
+            200,
+            "application/json",
+            &[("cache-control".into(), "no-store".into())],
+            json,
+        );
     }
     let static_root = if let Some(rel) = fw.strip_prefix("/_brust/") {
         Some((StaticRoot::Brust, rel))

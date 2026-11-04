@@ -38,6 +38,8 @@ fn public_serves_the_stats_to_anyone() {
     let (st, h, body) = get(&s, PATH, &[]);
     assert_eq!(st, 200, "{body}");
     assert_eq!(h.get("content-type").unwrap(), "application/json");
+    // F508: a shared cache must not keep it
+    assert_eq!(h.get("cache-control").unwrap(), "no-store");
     assert!(body.contains("loader_calls"), "{body}");
 }
 
@@ -46,6 +48,7 @@ fn token_serves_the_bearer_and_hides_the_endpoint_from_everyone_else() {
     let s = boot_stats(StatsAccess::Token("s3cret-token".into()));
     let ok = get(&s, PATH, &[("authorization", "Bearer s3cret-token")]);
     assert_eq!(ok.0, 200, "{}", ok.2);
+    assert_eq!(ok.1.get("cache-control").unwrap(), "no-store", "F508");
     assert!(ok.2.contains("loader_calls"));
     for bad in [
         None,
