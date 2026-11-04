@@ -21,19 +21,15 @@ export function pidAlive(pid: number): boolean {
  * access, `bun:ffi` missing): the watch then keeps its pid-only behaviour. Synchronous, a few microseconds, nothing awaited. */
 export function processIdentity(pid: number): string | undefined {
   if (process.platform !== 'win32') return undefined
+  const k = kernel32()
+  if (!k) return undefined
   try {
-    const { dlopen, FFIType, ptr } = require('bun:ffi') as typeof import('bun:ffi')
-    const k = dlopen('kernel32.dll', {
-      OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
-      GetProcessTimes: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-      CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
-    }).symbols
     const h = k.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, 0, pid)
     if (!h) return undefined
     try {
       const t = new BigUint64Array(4) // creation, exit, kernel, user
-      const base = ptr(t)
-      if (!k.GetProcessTimes(h, base, ptr(t, 8), ptr(t, 16), ptr(t, 24))) return undefined
+      const base = k.ptr(t)
+      if (!k.GetProcessTimes(h, base, k.ptr(t, 8), k.ptr(t, 16), k.ptr(t, 24))) return undefined
       return t[0]!.toString()
     } finally {
       k.CloseHandle(h)
@@ -41,6 +37,31 @@ export function processIdentity(pid: number): string | undefined {
   } catch {
     return undefined
   }
+}
+
+type Kernel32 = {
+  OpenProcess(access: number, inherit: number, pid: number): unknown
+  GetProcessTimes(h: unknown, a: unknown, b: unknown, c: unknown, d: unknown): number
+  CloseHandle(h: unknown): number
+  ptr: (view: ArrayBufferView, offset?: number) => never
+}
+let k32: Kernel32 | null | undefined
+/** The three kernel32 bindings, opened ONCE for the life of the process: `dlopen` compiles a binding per symbol and holds it until
+ * the library is closed, and the watch reads the identity every tick of a long-running server. `null` = unavailable (kept). */
+function kernel32(): Kernel32 | null {
+  if (k32 !== undefined) return k32
+  try {
+    const { dlopen, FFIType, ptr } = require('bun:ffi') as typeof import('bun:ffi')
+    const s = dlopen('kernel32.dll', {
+      OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
+      GetProcessTimes: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+      CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
+    }).symbols
+    k32 = { ...(s as unknown as Omit<Kernel32, 'ptr'>), ptr: ptr as Kernel32['ptr'] }
+  } catch {
+    k32 = null
+  }
+  return k32
 }
 
 export interface LauncherWatchOptions {

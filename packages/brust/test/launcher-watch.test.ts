@@ -102,6 +102,14 @@ describe('watchLauncher', () => {
       const warm = performance.now()
       for (let i = 0; i < 100; i++) processIdentity(process.pid)
       const each = (performance.now() - warm) / 100
+      // the watch reads it every second for the life of a server: the bindings are opened once, so memory stays flat
+      Bun.gc(true)
+      const rss0 = process.memoryUsage().rss
+      for (let i = 0; i < 5000; i++) processIdentity(process.pid)
+      Bun.gc(true)
+      const grew = (process.memoryUsage().rss - rss0) / 1024 / 1024
+      console.log(`[F492] rss after 5000 identity reads: ${grew.toFixed(2)} MiB`)
+      expect(grew).toBeLessThan(20)
       console.log(`[F492] processIdentity: first call ${cost.toFixed(2)} ms, warm ${each.toFixed(3)} ms; mine=${mine} child=${other}`)
       expect(mine).toMatch(/^\d+$/)
       expect(again).toBe(mine)
