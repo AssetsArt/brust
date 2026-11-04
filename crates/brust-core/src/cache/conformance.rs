@@ -26,6 +26,8 @@ pub trait ConformL1: PageCache {
     fn tag_slot(&self, t: &str) -> usize;
     /// The `(method, path)` invalidation slot.
     fn path_slot(&self, m: &str, p: &str) -> usize;
+    /// The key-prefix invalidation slot (F493).
+    fn prefix_slot(&self, p: &str) -> usize;
     /// Keys indexed across all tags.
     fn tag_index_size(&self) -> usize;
     /// Finish deferred maintenance (native: moka's pending tasks).
@@ -64,6 +66,14 @@ pub fn key(method: &str, path: &str, query: &str) -> CacheKey {
         method: method.to_string(),
         path: path.to_string(),
         sorted_query: query.to_string(),
+    }
+}
+
+/// `key` under a key prefix (F493: one app serving many hosts, `prefix: 'request(host)'`).
+pub fn pkey(prefix: &str, method: &str, path: &str, query: &str) -> CacheKey {
+    CacheKey {
+        prefix: prefix.to_string(),
+        ..key(method, path, query)
     }
 }
 
@@ -122,7 +132,7 @@ pub mod page {
         let c = l1(make);
         let k = key("GET", "/k", "");
         let s = c.read_stamp();
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         assert!(!c.insert(k.clone(), rb_of("old"), TTL, &tags(&["t"]), s));
         assert!(html(&c, &k).is_none());
         c.settle();
@@ -134,14 +144,14 @@ pub mod page {
         let k = key("GET", "/k", "");
         let s = c.read_stamp();
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &tags(&["t"]), s));
-        assert_eq!(c.invalidate_tags(&tags(&["t"])), 1);
+        assert_eq!(c.invalidate_tags(&tags(&["t"]), None), 1);
         assert!(html(&c, &k).is_none());
     }
 
     pub fn a_stamp_after_the_invalidation_lands<C: ConformL1>(make: Make<'_, C>) {
         let c = l1(make);
         let k = key("GET", "/k", "");
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         let s = c.read_stamp();
         assert!(c.insert(k.clone(), rb_of("new"), TTL, &tags(&["t"]), s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"new")));
@@ -151,7 +161,7 @@ pub mod page {
         let c = l1(make);
         let k = key("GET", "/k", "");
         let s = c.read_stamp();
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
     }
@@ -164,7 +174,7 @@ pub mod page {
             .find(|b| c.tag_slot(b) != c.tag_slot("t"))
             .unwrap();
         let s = c.read_stamp();
-        c.invalidate_tags(&[b]);
+        c.invalidate_tags(&[b], None);
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &tags(&["t"]), s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
     }
@@ -182,7 +192,7 @@ pub mod page {
         let c = l1(make);
         let k = key("GET", "/k", "");
         let s1 = c.read_stamp();
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         let s2 = c.read_stamp();
         assert!(c.insert(k.clone(), rb_of("new"), TTL, &tags(&["t"]), s2));
         assert!(!c.insert(k.clone(), rb_of("old"), TTL, &tags(&["t"]), s1));
@@ -195,7 +205,7 @@ pub mod page {
         let c = l1(make);
         let k = key("GET", "/p", "x=1");
         let s = c.read_stamp();
-        c.invalidate_path("GET", "/p");
+        c.invalidate_path("GET", "/p", None);
         assert!(!c.insert(k.clone(), rb_of("old"), TTL, &[], s));
         assert!(html(&c, &k).is_none());
     }
@@ -208,7 +218,7 @@ pub mod page {
             .find(|q| c.path_slot("GET", q) != c.path_slot("GET", "/p"))
             .unwrap();
         let s = c.read_stamp();
-        c.invalidate_path("GET", &q);
+        c.invalidate_path("GET", &q, None);
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
     }
@@ -227,7 +237,7 @@ pub mod page {
         c.insert(key("GET", "/b", ""), rb_of("b"), TTL, &[], c.read_stamp());
         c.settle();
 
-        let removed = c.invalidate_path("GET", "/a");
+        let removed = c.invalidate_path("GET", "/a", None);
         c.settle();
         assert_eq!(removed, 2);
         assert!(html(&c, &key("GET", "/a", "")).is_none());
@@ -236,10 +246,147 @@ pub mod page {
             html(&c, &key("GET", "/b", "")),
             Some(Bytes::from_static(b"b"))
         );
-        assert_eq!(c.invalidate_path("GET", "/missing"), 0);
-        assert_eq!(c.invalidate_path("POST", "/b"), 0);
+        assert_eq!(c.invalidate_path("GET", "/missing", None), 0);
+        assert_eq!(c.invalidate_path("POST", "/b", None), 0);
         c.settle();
         assert_eq!(c.stats().len, 1);
+    }
+
+    /// F493: two prefixes, one path: a prefix-scoped path invalidation leaves the other a HIT.
+    pub fn invalidate_path_with_a_prefix_leaves_other_prefixes<C: ConformL1>(make: Make<'_, C>) {
+        let c = l1(make);
+        let (a, a2, b) = (
+            pkey("a.test", "GET", "/p", ""),
+            pkey("a.test", "GET", "/p", "x=1"),
+            pkey("b.test", "GET", "/p", ""),
+        );
+        for (k, v) in [(&a, "a"), (&a2, "a2"), (&b, "b")] {
+            assert!(c.insert(k.clone(), rb_of(v), TTL, &[], c.read_stamp()));
+        }
+        c.settle();
+        assert_eq!(c.invalidate_path("GET", "/p", Some("a.test")), 2);
+        c.settle();
+        assert!(html(&c, &a).is_none());
+        assert!(html(&c, &a2).is_none());
+        assert_eq!(html(&c, &b), Some(Bytes::from_static(b"b")));
+        assert_eq!(c.invalidate_path("GET", "/p", Some("c.test")), 0);
+        // `""` is a prefix like any other: it matches only routes with no prefix.
+        assert_eq!(c.invalidate_path("GET", "/p", Some("")), 0);
+        assert_eq!(html(&c, &b), Some(Bytes::from_static(b"b")));
+    }
+
+    /// F493: `{prefix}` alone drops every entry of that prefix (all methods, paths and queries),
+    /// `{prefix, method}` only that method's; other prefixes (and `""`) keep theirs.
+    pub fn invalidate_prefix_drops_only_that_prefix<C: ConformL1>(make: Make<'_, C>) {
+        let c = l1(make);
+        let mine = [
+            pkey("a.test", "GET", "/x", ""),
+            pkey("a.test", "GET", "/y", "q=1"),
+            pkey("a.test", "POST", "/z", ""),
+        ];
+        let theirs = [pkey("b.test", "GET", "/x", ""), pkey("", "GET", "/x", "")];
+        for k in mine.iter().chain(&theirs) {
+            assert!(c.insert(
+                k.clone(),
+                rb_of(&k.prefix),
+                TTL,
+                &tags(&["t"]),
+                c.read_stamp()
+            ));
+        }
+        c.settle();
+        assert_eq!(c.invalidate_prefix("a.test", Some("POST")), 1);
+        c.settle();
+        assert!(html(&c, &mine[2]).is_none());
+        assert!(html(&c, &mine[0]).is_some());
+        assert_eq!(c.invalidate_prefix("a.test", None), 2);
+        c.settle();
+        for k in &mine {
+            assert!(html(&c, k).is_none(), "{k:?}");
+        }
+        for k in &theirs {
+            assert_eq!(html(&c, k), Some(Bytes::from(k.prefix.clone())), "{k:?}");
+        }
+        assert_eq!(c.invalidate_prefix("", None), 1);
+        c.settle();
+        assert!(html(&c, &theirs[1]).is_none());
+        assert!(html(&c, &theirs[0]).is_some());
+        // The dropped entries left the tag index with them.
+        assert_eq!(c.tag_index_size(), 1);
+        assert_eq!(c.stats().len, 1);
+    }
+
+    /// F493: `{prefix, tags}` drops that prefix's tagged entries; the other prefix's stay indexed
+    /// (a later unscoped tag invalidation still finds them).
+    pub fn invalidate_tags_with_a_prefix_keeps_other_prefixes_indexed<C: ConformL1>(
+        make: Make<'_, C>,
+    ) {
+        let c = l1(make);
+        let (a, b, a_untagged) = (
+            pkey("a.test", "GET", "/p", ""),
+            pkey("b.test", "GET", "/p", ""),
+            pkey("a.test", "GET", "/u", ""),
+        );
+        assert!(c.insert(
+            a.clone(),
+            rb_of("a"),
+            TTL,
+            &tags(&["page", "t2"]),
+            c.read_stamp()
+        ));
+        assert!(c.insert(b.clone(), rb_of("b"), TTL, &tags(&["page"]), c.read_stamp()));
+        assert!(c.insert(a_untagged.clone(), rb_of("u"), TTL, &[], c.read_stamp()));
+        c.settle();
+        assert_eq!(c.invalidate_tags(&tags(&["page", "t2"]), Some("a.test")), 1);
+        c.settle();
+        assert!(html(&c, &a).is_none());
+        assert_eq!(html(&c, &b), Some(Bytes::from_static(b"b")));
+        assert_eq!(html(&c, &a_untagged), Some(Bytes::from_static(b"u")));
+        assert_eq!(c.tag_index_size(), 1);
+        assert_eq!(c.invalidate_tags(&tags(&["page"]), Some("a.test")), 0);
+        assert_eq!(c.invalidate_tags(&tags(&["page"]), None), 1);
+        c.settle();
+        assert!(html(&c, &b).is_none());
+        assert_eq!(c.tag_index_size(), 0);
+    }
+
+    /// F493 race stamp: an insert stamped before `invalidate_prefix` does not land; one of another
+    /// prefix (another slot) does.
+    pub fn invalidate_prefix_after_the_stamp_keeps_the_insert_out<C: ConformL1>(make: Make<'_, C>) {
+        let c = l1(make);
+        let a = pkey("a.test", "GET", "/p", "x=1");
+        let other = (0..)
+            .map(|i| format!("h{i}.test"))
+            .find(|h| c.prefix_slot(h) != c.prefix_slot("a.test"))
+            .unwrap();
+        let b = pkey(&other, "GET", "/p", "x=1");
+        let s = c.read_stamp();
+        c.invalidate_prefix("a.test", None);
+        assert!(!c.insert(a.clone(), rb_of("old"), TTL, &[], s));
+        assert!(html(&c, &a).is_none());
+        assert!(c.insert(b.clone(), rb_of("v"), TTL, &[], s));
+        assert_eq!(html(&c, &b), Some(Bytes::from_static(b"v")));
+        // A stamp taken after it lands.
+        assert!(c.insert(a.clone(), rb_of("new"), TTL, &[], c.read_stamp()));
+        assert_eq!(html(&c, &a), Some(Bytes::from_static(b"new")));
+    }
+
+    /// F493: a prefix-scoped path or tag invalidation refuses a racing insert of ANY prefix for
+    /// that path / tag (the unscoped slot is published: a later MISS, never a stale HIT).
+    pub fn prefix_scoped_path_and_tags_refuse_racing_inserts_conservatively<C: ConformL1>(
+        make: Make<'_, C>,
+    ) {
+        let c = l1(make);
+        let b = pkey("b.test", "GET", "/p", "");
+        let s = c.read_stamp();
+        c.invalidate_path("GET", "/p", Some("a.test"));
+        assert!(!c.insert(b.clone(), rb_of("b"), TTL, &[], s));
+        let s = c.read_stamp();
+        c.invalidate_tags(&tags(&["t"]), Some("a.test"));
+        let q = pkey("b.test", "GET", "/q", "");
+        assert!(!c.insert(q.clone(), rb_of("q"), TTL, &tags(&["t"]), s));
+        assert!(c.insert(q.clone(), rb_of("q"), TTL, &tags(&["t"]), c.read_stamp()));
+        assert_eq!(html(&c, &q), Some(Bytes::from_static(b"q")));
     }
 
     /// l1.rs `invalidate_tags_removes_all_keyed_entries_in_group` + the index pruning.
@@ -265,7 +412,7 @@ pub mod page {
         );
         c.settle();
 
-        assert_eq!(c.invalidate_tags(&tags(&["grp", "two"])), 2);
+        assert_eq!(c.invalidate_tags(&tags(&["grp", "two"]), None), 2);
         c.settle();
         assert!(html(&c, &key("GET", "/a", "")).is_none());
         assert!(html(&c, &key("GET", "/a", "x=1")).is_none());
@@ -274,8 +421,8 @@ pub mod page {
             Some(Bytes::from_static(b"b")),
             "untagged group survives"
         );
-        assert_eq!(c.invalidate_tags(&tags(&["missing"])), 0);
-        assert_eq!(c.invalidate_tags(&tags(&["other"])), 1);
+        assert_eq!(c.invalidate_tags(&tags(&["missing"]), None), 0);
+        assert_eq!(c.invalidate_tags(&tags(&["other"]), None), 1);
         c.settle();
         assert_eq!(c.tag_index_size(), 0);
     }
@@ -289,7 +436,7 @@ pub mod page {
         assert_eq!(c.stats().hits, 1);
         assert_eq!(c.stats().misses, 1);
 
-        c.invalidate_path("GET", "/a");
+        c.invalidate_path("GET", "/a", None);
         assert_eq!(c.stats().hits, 1);
         assert_eq!(c.stats().misses, 1);
 
@@ -306,7 +453,7 @@ pub mod page {
         c.insert(k.clone(), rb_of("2"), TTL, &tags(&["t"]), c.read_stamp());
         c.settle();
         assert_eq!(c.tag_index_size(), 1, "new entry stays indexed");
-        assert_eq!(c.invalidate_tags(&["t".to_string()]), 1);
+        assert_eq!(c.invalidate_tags(&["t".to_string()], None), 1);
         assert!(
             html(&c, &k).is_none(),
             "tag invalidation reaches the new entry"
@@ -348,7 +495,7 @@ pub mod page {
         let (mut max_started, mut last_insert, mut invalidated_after_last) = (0, None, false);
         for i in 0..300 {
             if i % 7 == 6 {
-                cache.invalidate_path("GET", "/hot");
+                cache.invalidate_path("GET", "/hot", None);
                 invalidated_after_last = true;
             } else {
                 max_started = i;
@@ -412,14 +559,14 @@ pub mod page {
                         assert_eq!(b, Bytes::from(v), "cap {cap}: stale/foreign body");
                     }
                     if j % 3 == 0 {
-                        cache.invalidate_path("GET", &k.path);
+                        cache.invalidate_path("GET", &k.path, None);
                         assert!(
                             html(&cache, &k).is_none(),
                             "cap {cap}: readable after invalidate_path"
                         );
                     }
                     if j % 50 == 49 {
-                        cache.invalidate_tags(&tags(&["all"]));
+                        cache.invalidate_tags(&tags(&["all"]), None);
                     }
                     progress += 1;
                     if clears < CLEARS && progress >= total * (clears + 1) / (CLEARS + 1) {
@@ -824,7 +971,7 @@ pub mod shared {
         let clock = Arc::new(InvalClock::default());
         let (l1, jobs) = (make_l1(1000, Arc::clone(&clock)), make_jobs(100, clock));
         let s = jobs.read_stamp();
-        l1.invalidate_tags(&tags(&["t"]));
+        l1.invalidate_tags(&tags(&["t"]), None);
         assert!(jobs.read_stamp().0 > s.0);
         assert!(jobs.insert(k("hash"), val(json!(1)), None, &[], None, s));
         assert!(jobs.insert(k("k:a/j0/u"), val(json!(2)), None, &[], Some("u"), s));
@@ -851,6 +998,11 @@ macro_rules! page_cache_conformance {
                 invalidate_path_after_the_stamp_keeps_the_insert_out,
                 invalidate_path_of_another_path_does_not_reject,
                 invalidate_path_counts_live_matches_across_queries,
+                invalidate_path_with_a_prefix_leaves_other_prefixes,
+                invalidate_prefix_drops_only_that_prefix,
+                invalidate_tags_with_a_prefix_keeps_other_prefixes_indexed,
+                invalidate_prefix_after_the_stamp_keeps_the_insert_out,
+                prefix_scoped_path_and_tags_refuse_racing_inserts_conservatively,
                 invalidate_tags_counts_distinct_keys_and_prunes_the_index,
                 invalidate_and_clear_preserve_hits_and_misses,
                 reinsert_keeps_newer_entry_tag_indexed,

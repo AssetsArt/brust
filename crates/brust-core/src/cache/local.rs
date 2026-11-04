@@ -2,7 +2,8 @@
 //! and `LocalJobs`, the `PageCache` / `JobStore` the Workers host builds `Core` on. They pass the
 //! same conformance suite as the native moka caches (`cache::conformance`: the F81/F86/F89 cases),
 //! with the same `InvalClock` / `ReadStamp` semantics: every invalidation publishes the clock's
-//! next value in a hashed per-tag / per-(method, path) / per-user-key slot (or `cleared_at`), and an
+//! next value in a hashed per-tag / per-(method, path) / per-key-prefix / per-user-key slot (or
+//! `cleared_at`), and an
 //! insert stamped before a covering invalidation does not land.
 //!
 //! - **Eviction (R1/R3).** LRU over `HashMap<Rc<K>, _>` + a `BTreeMap<tick, Rc<K>>` recency
@@ -219,6 +220,35 @@ impl<K: Hash + Eq, V> Store<K, V> {
         n
     }
 
+    /// As `take_indexed` over the tag index, only the keys `keep` selects (F493: one prefix's
+    /// pages); the other keys of those tags stay indexed. The distinct count.
+    fn take_tagged_where(&mut self, names: &[String], keep: impl Fn(&K) -> bool) -> usize {
+        let mut keys: HashSet<Rc<K>, Fixed> = HashSet::default();
+        for n in names {
+            if let Some(set) = self.tags.get(n.as_str()) {
+                keys.extend(set.iter().filter(|k| keep(k)).cloned());
+            }
+        }
+        let n = keys.len();
+        // `remove` unindexes each key from every tag it carries (empty sets dropped).
+        for k in keys {
+            self.remove(&k);
+        }
+        n
+    }
+
+    /// Remove every entry `hit` selects; the number of live ones.
+    fn remove_where(&mut self, now: u64, hit: impl Fn(&K) -> bool) -> usize {
+        let hits: Vec<Rc<K>> = self.entries.keys().filter(|k| hit(k)).cloned().collect();
+        let mut live = 0;
+        for k in hits {
+            if self.remove(&k).is_some_and(|s| s.live(now)) {
+                live += 1;
+            }
+        }
+        live
+    }
+
     fn clear(&mut self) {
         self.entries.clear();
         self.recency.clear();
@@ -265,6 +295,8 @@ pub struct LocalL1<T: Clock> {
     inval: Arc<InvalClock>,
     tag_inval: Box<[Cell<u64>]>,
     path_inval: Box<[Cell<u64>]>,
+    /// Per hashed key prefix: the latest `invalidate_prefix` (F493).
+    prefix_inval: Box<[Cell<u64>]>,
     cleared_at: Cell<u64>,
     hits: Cell<u64>,
     misses: Cell<u64>,
@@ -282,6 +314,7 @@ impl<T: Clock> LocalL1<T> {
             inval,
             tag_inval: slots(),
             path_inval: slots(),
+            prefix_inval: slots(),
             cleared_at: Cell::new(0),
             hits: Cell::new(0),
             misses: Cell::new(0),
@@ -305,17 +338,23 @@ impl<T: Clock> LocalL1<T> {
         self.slot(&(m, p))
     }
 
+    /// The key-prefix invalidation slot (F493).
+    pub fn prefix_slot(&self, p: &str) -> usize {
+        self.slot(p)
+    }
+
     /// Keys indexed across all tags.
     pub fn tag_index_size(&self) -> usize {
         self.store.borrow().index_size(false)
     }
 
-    /// A covering invalidation (`clear`, this key's method + path, one of `tags`) came after
-    /// `since` (`l1.rs` `invalidated_since`).
+    /// A covering invalidation (`clear`, this key's method + path, its prefix, one of `tags`) came
+    /// after `since` (`l1.rs` `invalidated_since`).
     fn invalidated_since(&self, key: &CacheKey, tags: &[String], since: ReadStamp) -> bool {
         let after = |c: &Cell<u64>| c.get() > since.0;
         after(&self.cleared_at)
             || after(&self.path_inval[self.slot(&(key.method.as_str(), key.path.as_str()))])
+            || after(&self.prefix_inval[self.prefix_slot(&key.prefix)])
             || tags
                 .iter()
                 .any(|t| after(&self.tag_inval[self.slot(t.as_str())]))
@@ -396,35 +435,43 @@ impl<T: Clock + Default> PageCache for LocalL1<T> {
         self.inval.stamp()
     }
 
-    fn invalidate_tags(&self, tags: &[String]) -> usize {
+    /// With `prefix` (F493) only that prefix's keys go; the tag slots are published all the same
+    /// (`l1.rs`: a racing insert of another prefix is refused, a later MISS).
+    fn invalidate_tags(&self, tags: &[String], prefix: Option<&str>) -> usize {
         let seq = self.inval.next();
         for t in tags {
             publish(&self.tag_inval[self.slot(t.as_str())], seq);
         }
-        self.store.borrow_mut().take_indexed(false, tags)
+        let mut st = self.store.borrow_mut();
+        match prefix {
+            None => st.take_indexed(false, tags),
+            Some(p) => st.take_tagged_where(tags, |k| k.prefix == p),
+        }
     }
 
-    /// Every entry for `method` + `path`, any query/prefix; the number of live ones.
-    fn invalidate_path(&self, method: &str, path: &str) -> usize {
+    /// Every entry for `method` + `path`, any query (and, with `prefix`, that prefix only); the
+    /// number of live ones. A prefix-scoped call publishes the unscoped (method, path) slot.
+    fn invalidate_path(&self, method: &str, path: &str, prefix: Option<&str>) -> usize {
         publish(
             &self.path_inval[self.path_slot(method, path)],
             self.inval.next(),
         );
         let now = self.time.now_ns();
-        let mut st = self.store.borrow_mut();
-        let hits: Vec<Rc<CacheKey>> = st
-            .entries
-            .keys()
-            .filter(|k| k.method == method && k.path == path)
-            .cloned()
-            .collect();
-        let mut live = 0;
-        for k in hits {
-            if st.remove(&k).is_some_and(|s| s.live(now)) {
-                live += 1;
-            }
-        }
-        live
+        self.store.borrow_mut().remove_where(now, |k| {
+            k.method == method && k.path == path && prefix.is_none_or(|p| k.prefix == p)
+        })
+    }
+
+    /// Every entry of key prefix `prefix` (of `method` when given); the number of live ones.
+    fn invalidate_prefix(&self, prefix: &str, method: Option<&str>) -> usize {
+        publish(
+            &self.prefix_inval[self.prefix_slot(prefix)],
+            self.inval.next(),
+        );
+        let now = self.time.now_ns();
+        self.store.borrow_mut().remove_where(now, |k| {
+            k.prefix == prefix && method.is_none_or(|m| k.method == m)
+        })
     }
 
     fn clear_all(&self) -> usize {
@@ -733,7 +780,7 @@ mod tests {
         c.insert(a.clone(), rb_of("a"), TTL, &tags(&["t"]), c.read_stamp());
         let got = c.get_with(&a, |body| {
             assert!(c.insert(b.clone(), rb_of("b"), TTL, &[], c.read_stamp()));
-            assert_eq!(c.invalidate_tags(&tags(&["t"])), 1);
+            assert_eq!(c.invalidate_tags(&tags(&["t"]), None), 1);
             body.html.clone()
         });
         assert_eq!(got.as_deref(), Some(&b"a"[..]));
@@ -784,10 +831,10 @@ mod tests {
         };
         let mut a = std::pin::pin!(render("old"));
         assert!(poll(a.as_mut()).is_pending());
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         assert_eq!(poll(a.as_mut()), Poll::Ready(false));
         assert!(html(&c, &k).is_none());
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         let mut b = std::pin::pin!(render("new"));
         assert!(poll(b.as_mut()).is_pending());
         assert_eq!(poll(b.as_mut()), Poll::Ready(true));
@@ -831,6 +878,9 @@ mod conformance {
         }
         fn path_slot(&self, m: &str, p: &str) -> usize {
             LocalL1::path_slot(self, m, p)
+        }
+        fn prefix_slot(&self, p: &str) -> usize {
+            LocalL1::prefix_slot(self, p)
         }
         fn tag_index_size(&self) -> usize {
             LocalL1::tag_index_size(self)

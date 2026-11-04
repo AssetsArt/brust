@@ -253,7 +253,8 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
         <b>KV alone never invalidates.</b> Tier-2 keys hash the route prefix, method, path and query, so KV cannot list the pages under a tag or a path without extra index writes. Use the pair unless a stale page for up to its TTL is acceptable.
       </p>
       <p>
-        <b>How the pair stays correct.</b> Each isolate keeps, for every tag and path, the sequence number of the last invalidation it knows. It seeds this from the Durable Object when it starts and after a restart, raises it from every event it polls, and raises it from its own invalidations. A KV page whose write stamp is older than the floor of its tags or path, or which has no stamp, is treated as a miss. A stale write from a lagging isolate can land in KV, but every isolate that knows the invalidation, including a new one, rejects it. The cost is an extra render, never a stale page.
+        {/* source: packages/cache-cloudflare/src/floors.ts (namesOf / entryNames: tag, path and the same scoped by prefix) */}
+        <b>How the pair stays correct.</b> Each isolate keeps, for every tag and path (and, for a <code>{'cache.invalidate({ prefix })'}</code>, for that tag, path or whole prefix), the sequence number of the last invalidation it knows. It seeds this from the Durable Object when it starts and after a restart, raises it from every event it polls, and raises it from its own invalidations. A KV page whose write stamp is older than the floor of its tags or path, or which has no stamp, is treated as a miss. A stale write from a lagging isolate can land in KV, but every isolate that knows the invalidation, including a new one, rejects it. The cost is an extra render, never a stale page.
       </p>
 
       <h2 id="expect">Things that behave in ways you should expect</h2>

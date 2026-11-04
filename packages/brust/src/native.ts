@@ -10,6 +10,13 @@ export interface InvalidateArgs {
   tags?: string[]
   path?: string
   method?: string
+  /**
+   * F493: narrow the page invalidation to entries whose evaluated route-cache `prefix` equals this
+   * string exactly (`''` = routes with no prefix). With `path`: that path of that prefix; with
+   * `tags`: that prefix's tagged pages (the job cache is not touched); alone: every page of that
+   * prefix. Not with `key`.
+   */
+  prefix?: string
 }
 export interface InvalidateResult {
   l1Removed: number

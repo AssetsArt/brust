@@ -20,8 +20,10 @@ for i = 1, n do
 end
 return 1`
 
-// INVAL_LUA  KEYS = [seq, idx_1..idx_n, mark_1..mark_n]
-//            ARGV = [mode ('both'|'delete'|'publish'), n, marker_ttl_ms, channel, origin_json, args_json]
+// INVAL_LUA  KEYS = [seq, idx_1..idx_n, mark_1..mark_n, filter?]
+//            ARGV = [mode ('both'|'delete'|'publish'), n, marker_ttl_ms, channel, origin_json, args_json, has_filter ('1'|'')]
+// F493: with a filter (one prefix's member set) only the members of each idx set that are also in the filter are
+// returned and SREM'd from both (the other prefixes' members stay indexed); without one, SUNION + DEL as before.
 // The `publish` and `both` modes PUBLISH {seq, origin, args} from INSIDE the script (N1): scripts run one at a time, so
 // the order of events on the channel is the order of seq, however many processes invalidate at once.
 export const INVAL_LUA = `local unpack = table.unpack or unpack  -- Lua 5.1 (Redis) and 5.4 (Dragonfly)
@@ -34,9 +36,21 @@ for i = 1, n do
 end
 local out = { mode == 'delete' and v - 1 or v }
 if mode ~= 'publish' and n > 0 then
-  local idx = {}; for i = 1, n do idx[i] = KEYS[1 + i] end
-  for _, m in ipairs(redis.call('SUNION', unpack(idx))) do out[#out + 1] = m end
-  redis.call('DEL', unpack(idx))
+  if ARGV[7] == '1' then
+    local f = KEYS[2 + 2 * n]; local seen = {}
+    for i = 1, n do
+      local ms = redis.call('SINTER', KEYS[1 + i], f)
+      for j = 1, #ms, 1000 do
+        redis.call('SREM', KEYS[1 + i], unpack(ms, j, math.min(j + 999, #ms)))
+        redis.call('SREM', f, unpack(ms, j, math.min(j + 999, #ms)))
+      end
+      for _, m in ipairs(ms) do if not seen[m] then seen[m] = true; out[#out + 1] = m end end
+    end
+  else
+    local idx = {}; for i = 1, n do idx[i] = KEYS[1 + i] end
+    for _, m in ipairs(redis.call('SUNION', unpack(idx))) do out[#out + 1] = m end
+    redis.call('DEL', unpack(idx))
+  end
 end
 if mode ~= 'delete' then
   redis.call('PUBLISH', ARGV[4], '{"seq":' .. string.format('%d', v) .. ',"origin":' .. ARGV[5] .. ',"args":' .. ARGV[6] .. '}')

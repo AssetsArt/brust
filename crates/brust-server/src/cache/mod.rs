@@ -44,13 +44,18 @@ impl PageCache for L1Cache {
     }
 
     #[inline]
-    fn invalidate_tags(&self, tags: &[String]) -> usize {
-        L1Cache::invalidate_tags(self, tags)
+    fn invalidate_tags(&self, tags: &[String], prefix: Option<&str>) -> usize {
+        L1Cache::invalidate_tags(self, tags, prefix)
     }
 
     #[inline]
-    fn invalidate_path(&self, method: &str, path: &str) -> usize {
-        L1Cache::invalidate_path(self, method, path)
+    fn invalidate_path(&self, method: &str, path: &str, prefix: Option<&str>) -> usize {
+        L1Cache::invalidate_path(self, method, path, prefix)
+    }
+
+    #[inline]
+    fn invalidate_prefix(&self, prefix: &str, method: Option<&str>) -> usize {
+        L1Cache::invalidate_prefix(self, prefix, method)
     }
 
     #[inline]
@@ -141,9 +146,9 @@ mod tests {
                 c.read_stamp()
             ));
             assert_eq!(c.get_with(&k, |b| b.status), Some(200));
-            assert_eq!(c.invalidate_tags(&tags), 1);
+            assert_eq!(c.invalidate_tags(&tags, None), 1);
             assert_eq!(c.get_with(&k, |b| b.status), None);
-            assert_eq!(c.invalidate_path("GET", "/p"), 0);
+            assert_eq!(c.invalidate_path("GET", "/p", None), 0);
             assert_eq!(c.stats().hits, 1);
         }
         fn jobs<C: JobStore>(c: &C) {
@@ -180,6 +185,9 @@ mod conformance {
         }
         fn path_slot(&self, m: &str, p: &str) -> usize {
             L1Cache::path_slot(self, m, p)
+        }
+        fn prefix_slot(&self, p: &str) -> usize {
+            L1Cache::prefix_slot(self, p)
         }
         fn tag_index_size(&self) -> usize {
             L1Cache::tag_index_size(self)

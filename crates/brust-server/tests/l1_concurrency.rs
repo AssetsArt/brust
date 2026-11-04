@@ -100,7 +100,7 @@ fn hot_key_writer_makes_progress_under_twelve_readers() {
             let (mut last, mut inv) = (None, false);
             for i in 0..WRITER_OPS {
                 if i % 7 == 6 {
-                    cache.invalidate_path("GET", "/hot");
+                    cache.invalidate_path("GET", "/hot", None);
                     inv = true;
                 } else {
                     max_started.store(i, Ordering::SeqCst);
@@ -155,14 +155,14 @@ fn churn(cap: u64) {
                         assert_eq!(html(&b), v, "cap {cap}: stale/foreign body");
                     }
                     if j % 3 == 0 {
-                        cache.invalidate_path("GET", &k.path);
+                        cache.invalidate_path("GET", &k.path, None);
                         assert!(
                             cache.get(&k).is_none(),
                             "cap {cap}: readable after invalidate_path"
                         );
                     }
                     if j % 50 == 49 {
-                        cache.invalidate_tags(&tags(&["all"]));
+                        cache.invalidate_tags(&tags(&["all"]), None);
                     }
                     progress.fetch_add(1, Ordering::Relaxed);
                 }
