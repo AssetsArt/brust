@@ -5716,8 +5716,11 @@ impl Walker<'_, '_> {
                     when_opaque = true;
                 }
             }
+            // A standing link lets the client change what the condition reads (the branch is an x-if): no restriction,
+            // and nothing left for the server to evaluate (so not opaque either).
             if linked {
                 when = None;
+                when_opaque = false;
             }
             if when_opaque && fixed_ctx {
                 return Err(
@@ -6227,9 +6230,13 @@ impl Walker<'_, '_> {
 
     /// F502: a branch condition as a server guard. One that reads state, or a prop that changes on the client (F504a:
     /// this component's props are a signal and the call site did not fix it), is an `x-if` the client flips: no
-    /// restriction (the hidden copy needs the job too).
+    /// restriction (the hidden copy needs the job too). A route root's props are the loader's, fixed for the life of
+    /// the page (SPA navigation swaps server markup), so a condition over them still guards its job there (review
+    /// 05ee17fd: a stateful page must not lose F502's guard).
     fn cond_guard(&self, cond: &Expr) -> Result<Option<RowGuard>, ()> {
-        if self.reads_state(cond) || self.reads_changing_prop(&self.deps_of(cond)) {
+        if self.reads_state(cond)
+            || (!self.ctx.is_root && self.reads_changing_prop(&self.deps_of(cond)))
+        {
             return Ok(None);
         }
         match cond {
