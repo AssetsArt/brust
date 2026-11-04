@@ -94,6 +94,18 @@ export default function ReactCoverage({ reference, summary, groups }: ReactCover
         </li>
       </ul>
 
+      <h2 id="control-flow">Early returns and switch</h2>
+      {/* source: crates/brust-compiler/src/analyze/hooks.rs:4484 (read_switch_chain: stacked cases, default last, a literal-message throw as the default, the refusals);
+          crates/brust-compiler/tests/hooks_reader.rs:919 (accepted forms and each refusal); tests/server/switch-return.chromium.test.ts:59-74 (static page equals React's markup, strict ===, native on state). */}
+      <p>
+        A component body may choose what it returns with an early-return chain, <code>if (a) return A</code> and so on down to a last return, or with a <code>switch</code> on a prop, a state value or a member path such as <code>item.type</code>, when every case
+        ends in <code>return</code>. Stacked cases (<code>case 'a': case 'b':</code>) and a <code>default</code> are fine, and a <code>default</code> may throw <code>new Error</code> with a literal message. Cases compare with <code>===</code>, so the string <code>'1'</code> does not
+        match the number <code>1</code>. The tier follows the discriminant like any condition: props only keeps the page static, state makes the choice follow the clicks.
+      </p>
+      <p>
+        A <code>switch</code> that could fall through, leave with <code>break</code>, declare a <code>const</code> outside braces, or test something that is not a literal stays a React island, and the build names it <code>switch-fallthrough</code>. End every case with <code>return</code> to keep it native or static.
+      </p>
+
       {groups.map((g) => (
         <section style={{ display: 'contents' }} key={g.id}>
           <h2 id={g.id}>{g.title}</h2>

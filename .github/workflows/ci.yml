@@ -495,6 +495,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/render-ctx.chromium.test.ts
       # switch-provider-chain PR1: a context value is never pinned in a clone; the Switch shape toggles as React does.
       - run: bun test --timeout 120000 tests/server/switch-chain.chromium.test.ts
+      # F499: a switch whose every case returns lowers like an if/return chain: static page == React, strict ===, native on state.
+      - run: bun test --timeout 120000 tests/server/switch-return.chromium.test.ts
       # F298: a consumer passed as children through a component's rest sits under that component's Provider; served == React.
       - run: bun test --timeout 120000 tests/server/rest-children.chromium.test.ts
       # F317: a Provider of the same context in the page AND the callee's own inner Provider: served == React.
