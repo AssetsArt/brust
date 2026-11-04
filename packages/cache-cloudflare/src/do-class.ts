@@ -3,13 +3,13 @@
 // persist (R7) so seqs never regress across a restart; the ring stays in memory and `gen` is new on every construction, so isolates clear once.
 import { DurableObject } from 'cloudflare:workers'
 import type { EpochSince, InvalidateArgs } from '@brust/core/cache-adapter'
-import { namesOf, pathName } from './floors'
+import { entryNames, namesOf, pathName } from './floors'
 import { Ring } from './ring'
 
 export const INVAL_CAP = 4096
 const SWEEP_MS = 60_000
 
-export interface PageMeta { tags: string[]; method: string; path: string; expiresAt: number }
+export interface PageMeta { tags: string[]; method: string; path: string; /** F493; absent from older callers = `''`. */ prefix?: string; expiresAt: number }
 export interface FloorsPayload { gen: string; seq: number; names: [string, number][]; evicted: number }
 
 export class BrustCacheDO extends DurableObject {
@@ -31,6 +31,10 @@ export class BrustCacheDO extends DurableObject {
       sql.exec('CREATE INDEX IF NOT EXISTS inval_seq ON inval(seq)')
       sql.exec('CREATE TABLE IF NOT EXISTS pages(key TEXT PRIMARY KEY, meta TEXT NOT NULL, body BLOB NOT NULL, mpath TEXT NOT NULL, expires_at INTEGER NOT NULL)')
       sql.exec('CREATE TABLE IF NOT EXISTS tags(tag TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY(tag, key))')
+      // F493: the page's route-cache key prefix, for `invalidate({ prefix })`. Added in place to a table made before it.
+      if (!sql.exec<{ name: string }>('PRAGMA table_info(pages)').toArray().some((c) => c.name === 'prefix'))
+        sql.exec("ALTER TABLE pages ADD COLUMN prefix TEXT NOT NULL DEFAULT ''")
+      sql.exec('CREATE INDEX IF NOT EXISTS pages_prefix ON pages(prefix)')
       const m = (k: string) => (sql.exec<{ v: number }>('SELECT v FROM meta WHERE k = ?', k).toArray()[0]?.v ?? 0)
       this.evicted = m('evicted')
       this.invalCount = sql.exec<{ c: number }>('SELECT count(*) AS c FROM inval').one().c
@@ -107,13 +111,14 @@ export class BrustCacheDO extends DurableObject {
     const ok = this.ctx.storage.transactionSync(() => {
       if (stamp !== null) {
         if (this.evicted > stamp) return false
-        for (const n of [...meta.tags.map((t) => `t:${t}`), pathName(meta.method, meta.path)]) {
+        for (const n of entryNames(meta.tags, meta.method, meta.path, meta.prefix)) {
           const r = this.sql.exec<{ seq: number }>('SELECT seq FROM inval WHERE name = ?', n).toArray()[0]
           if (r && r.seq > stamp) return false
         }
       }
       this.dropKeys([key])
-      this.sql.exec('INSERT INTO pages(key, meta, body, mpath, expires_at) VALUES(?, ?, ?, ?, ?)', key, JSON.stringify({ tags: meta.tags, method: meta.method, path: meta.path }), frame, pathName(meta.method, meta.path), meta.expiresAt)
+      const prefix = meta.prefix ?? ''
+      this.sql.exec('INSERT INTO pages(key, meta, body, mpath, expires_at, prefix) VALUES(?, ?, ?, ?, ?, ?)', key, JSON.stringify({ tags: meta.tags, method: meta.method, path: meta.path, prefix }), frame, pathName(meta.method, meta.path), meta.expiresAt, prefix)
       for (const t of new Set(meta.tags)) this.sql.exec('INSERT OR IGNORE INTO tags(tag, key) VALUES(?, ?)', t, key)
       return true
     })
@@ -124,8 +129,21 @@ export class BrustCacheDO extends DurableObject {
     return this.ctx.storage.transactionSync(() => {
       this.bump(namesOf(args), seq)
       const keys = new Set<string>()
-      for (const t of args.tags ?? []) for (const r of this.sql.exec<{ key: string }>('SELECT key FROM tags WHERE tag = ?', t)) keys.add(r.key)
-      if (args.path !== undefined) for (const r of this.sql.exec<{ key: string }>('SELECT key FROM pages WHERE mpath = ?', pathName(args.method, args.path))) keys.add(r.key)
+      const pre = args.prefix
+      const tags = args.tags ?? []
+      if (pre === undefined) {
+        for (const t of tags) for (const r of this.sql.exec<{ key: string }>('SELECT key FROM tags WHERE tag = ?', t)) keys.add(r.key)
+        if (args.path !== undefined) for (const r of this.sql.exec<{ key: string }>('SELECT key FROM pages WHERE mpath = ?', pathName(args.method, args.path))) keys.add(r.key)
+      } else if (tags.length || args.path !== undefined) {
+        // F493: only that prefix's pages; the other prefixes' rows and tag rows stay.
+        for (const t of tags)
+          for (const r of this.sql.exec<{ key: string }>('SELECT t.key AS key FROM tags t JOIN pages p ON p.key = t.key WHERE t.tag = ? AND p.prefix = ?', t, pre)) keys.add(r.key)
+        if (args.path !== undefined)
+          for (const r of this.sql.exec<{ key: string }>('SELECT key FROM pages WHERE mpath = ? AND prefix = ?', pathName(args.method, args.path), pre)) keys.add(r.key)
+      } else if (args.method === undefined || args.method.toUpperCase() === 'GET') {
+        // `{ prefix }` alone: every (GET) page of that prefix.
+        for (const r of this.sql.exec<{ key: string }>('SELECT key FROM pages WHERE prefix = ?', pre)) keys.add(r.key)
+      }
       this.dropKeys([...keys])
       return keys.size
     })

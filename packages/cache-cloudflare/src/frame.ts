@@ -8,6 +8,8 @@ export interface EntryMeta {
   tags: string[]
   method: string
   path: string
+  /** The route-cache key prefix (F493); absent in frames written before it = `''`. */
+  prefix?: string
   entryStamp: number | null
   storedAt: number
   expiresAt: number
