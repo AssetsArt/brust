@@ -1517,6 +1517,8 @@ struct ChildTpl {
     /// `per-row:<list>` or `per-row-literal`: the list; `None` = static.
     rows: Option<inputs::Rows>,
     props: inputs::PropsMap,
+    /// F502: the branch condition; the child's job runs for an instance (row) only where it holds.
+    when: Option<inputs::Guard>,
     /// `__<childId>_<k>`.
     slot: String,
     /// `<parentId>.<childId>_<k>`: the useId instance (`-<row>` appended per row).
@@ -1562,10 +1564,17 @@ impl PlanIndex {
                 };
                 let props =
                     inputs::PropsMap::child(&ch.props, &ch.literals, &ch.exprs, rows.clone())?;
+                let when = ch
+                    .when
+                    .as_ref()
+                    .map(inputs::Guard::new)
+                    .transpose()
+                    .map_err(|e| format!("component {id}: child {} when: {e}", ch.id))?;
                 children.push(ChildTpl {
                     child,
                     rows,
                     props,
+                    when,
                     slot: format!("__{}_{k}", ch.id),
                     use_id_instance: format!("{id}.{}_{k}", ch.id),
                     call_prefixes: m.components[&ch.id]
@@ -1857,6 +1866,10 @@ pub fn collect_jobs<'a>(
             let rows = ch.rows.as_ref().map(|list| list.count(ctx));
             for r in rows.map_or(0..1, |n| 0..n) {
                 let row = rows.map(|_| r);
+                // F502: a row whose branch does not render the child gets no job (the template never reads its slot).
+                if ch.when.as_ref().is_some_and(|w| !w.holds(ctx, row)) {
+                    continue;
+                }
                 let props = ch.props.eval(ctx, row)?;
                 for (ji, (j, prefix)) in child.jobs.iter().zip(&ch.call_prefixes).enumerate() {
                     let src = PlanSrc {
@@ -2946,6 +2959,62 @@ mod tests {
         seed_child_slots(&ix, "r2", &chain(&["detailPage_c3"]), &mut ctx).unwrap();
         let cells = at(&ctx, &["__children", "detailPage_c3", "__moveCard_d4_1"]);
         assert_eq!(cells.as_arr().map(|a| a.0.len()), Some(3));
+    }
+
+    /// F502: a per-row child whose record carries a branch condition is planned only for the rows where it holds.
+    #[test]
+    fn per_row_children_plan_only_the_rows_their_branch_renders() {
+        let mut m = manifest();
+        let ch = &mut m.components.get_mut("detailPage_c3").unwrap().children[0];
+        ch.instances = Instances::PerRow("pokemon.moves".into());
+        ch.props = [("move".to_string(), "pokemon.moves[idx]".to_string())].into();
+        ch.when = Some(crate::manifest::RowGuard::All(vec![
+            crate::manifest::RowGuard::Not(Box::new(crate::manifest::RowGuard::Eq(
+                "pokemon.moves[idx].kind".into(),
+                json!("hero"),
+            ))),
+            crate::manifest::RowGuard::Any(vec![
+                crate::manifest::RowGuard::Eq("pokemon.moves[idx].kind".into(), json!("price")),
+                crate::manifest::RowGuard::Truthy("pokemon.moves[idx].on".into()),
+            ]),
+        ]));
+        let ix = PlanIndex::new(&m).unwrap();
+        let ctx = n(json!({"pokemon": {"moves": [
+            {"name": "a", "kind": "hero"},
+            {"name": "b", "kind": "price"},
+            {"name": "c", "kind": "other"},
+            {"name": "d", "kind": "other", "on": 1},
+            {"name": "e", "kind": "hero", "on": true},
+            {"name": "f", "kind": "other", "on": ""},
+        ]}}));
+        let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &ctx).unwrap();
+        let moves: Vec<_> = plans
+            .iter()
+            .filter(|p| p.call_id().starts_with("detailPage_c3/moveCard_d4"))
+            .map(|p| j(&p.inputs)["move"]["name"].clone())
+            .collect();
+        assert_eq!(moves, [json!("b"), json!("d")]);
+    }
+
+    #[test]
+    fn guard_semantics_follow_js() {
+        use crate::inputs::Guard;
+        use crate::manifest::RowGuard as R;
+        let ctx = n(json!({"n": 1.0, "z": 0, "s": "", "o": {}, "a": [], "nil": null, "f": false}));
+        let g = |r: R| Guard::new(&r).unwrap().holds(&ctx, None);
+        assert!(g(R::Eq("n".into(), json!(1))), "1 === 1.0");
+        assert!(!g(R::Eq("n".into(), json!("1"))), "'1' !== 1");
+        assert!(
+            !g(R::Eq("missing".into(), json!(null))),
+            "undefined !== null"
+        );
+        assert!(g(R::Eq("nil".into(), json!(null))));
+        for falsy in ["z", "s", "nil", "f", "missing"] {
+            assert!(!g(R::Truthy(falsy.into())), "{falsy}");
+        }
+        for truthy in ["n", "o", "a"] {
+            assert!(g(R::Truthy(truthy.into())), "{truthy}");
+        }
     }
 
     #[test]

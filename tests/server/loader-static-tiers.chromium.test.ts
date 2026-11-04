@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { reactHtml } from '../../packages/brust/test/fixtures/loader-static/render'
+import { reactHtml, reactRowsHtml, type RowsPage } from '../../packages/brust/test/fixtures/loader-static/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/loader-static')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -59,10 +59,32 @@ for (const [path, page] of [['/list', 'list'], ['/prices', 'prices'], ['/section
   })
 }
 
+// F502: a row child's helper throws on the rows whose branch does not render it (hero rows have no price). The server runs its
+// job only where the branch holds: 200, every price formatted, the same HTML as React. A condition the server cannot evaluate
+// per row (gt) is not cloned: that list keeps its own tier and the page still renders.
+for (const page of ['if', 'switch', 'and', 'ternary', 'gt', 'root'] as RowsPage[]) {
+  test(`/rows-${page}: 200 and the same HTML as React (a job runs only where its branch renders)`, async () => {
+    const res = await fetch(`${base}/rows-${page}`)
+    const html = await res.text()
+    expect(res.status, html).toBe(200)
+    if (page === 'gt') {
+      expect(html).toContain('brust-island')
+    } else {
+      expect(html).not.toContain('<script')
+      expect(html).toBe(reactRowsHtml(page))
+    }
+    expect(html).toContain('12.50')
+    expect(html).toContain('1000.00')
+    const m = manifest()
+    const root = m.routes.find((r) => r.pattern === `/rows-${page}`)!.chain[0]!
+    expect(m.components[root]!.tier).toBe('static')
+  })
+}
+
 test('every fixed-props clone is static; the shared components keep their own tier', () => {
   const comps = Object.entries(manifest().components)
   const clones = comps.filter(([id]) => /_f[0-9a-f]{8}$/.test(id))
-  expect(clones.map(([id]) => id.split('_')[0]).sort()).toEqual(['list', 'pageView', 'priceList'])
+  expect(clones.map(([id]) => id.split('_')[0]).sort()).toEqual(['andList', 'ifList', 'list', 'pageView', 'priceList', 'switchList', 'ternaryList'])
   for (const [, c] of clones) expect(c.tier).toBe('static')
   expect(comps.find(([id]) => /^list_[0-9a-f]+$/.test(id))![1].tier).toBe('native')
 })

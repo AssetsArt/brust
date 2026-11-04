@@ -11,8 +11,8 @@ use crate::analyze::modules::{
 };
 use crate::ir::{
     Attr, ChildLink, ChildRef, ComponentIR, DiagClass, Diagnostic, Expr, ExternalRef, IdentKind,
-    InstanceRecord, JobDecl, JobKind, JsCtx, Node, PolyTag, RawExpr, RawKind, ServerExpr, Tier,
-    UnOp, component_id, named_component_id,
+    InstanceRecord, JobDecl, JobKind, JsCtx, Node, PolyTag, RawExpr, RawKind, RowGuard, ServerExpr,
+    Tier, UnOp, component_id, named_component_id,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
@@ -102,6 +102,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .iter()
             .any(|j| matches!(j.kind, crate::ir::JobKind::Precompute)),
         guard_depth: 0,
+        guards: Vec::new(),
         slot_depth: 0,
         spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
         rest_childless: ir.rest_childless,
@@ -606,6 +607,10 @@ struct Walker<'s, 'c> {
     own_job: bool,
     /// Open `If` branches: a fused child's job would run whether or not the branch renders (v1: refused).
     guard_depth: u32,
+    /// F502: the conditions of the open `If` branches, outermost first: `Ok(None)` = a condition the client may change
+    /// (state: the branch is an `x-if`, its hidden copy needs the job too), `Ok(Some)` = one the server evaluates,
+    /// `Err` = one it cannot.
+    guards: Vec<Result<Option<RowGuard>, ()>>,
     /// F277: open component children (slot content): the host may print them conditionally, or once per row.
     slot_depth: u32,
     /// F298: this component is a clone (a rest clone, `ComponentIR::rest_clone_of`, or any specialised one: F307 found
@@ -3238,10 +3243,18 @@ impl Walker<'_, '_> {
                 self.no_text = saved;
             }
             Node::Fragment(children) => children.iter_mut().for_each(|c| self.node(c)),
-            Node::If { then, else_, .. } => {
+            Node::If {
+                cond, then, else_, ..
+            } => {
                 self.guard_depth += 1;
+                let g = self.cond_guard(cond);
+                self.guards.push(g.clone());
                 then.iter_mut().for_each(|c| self.node(c));
+                self.guards.pop();
+                self.guards
+                    .push(g.map(|g| g.map(|g| RowGuard::Not(Box::new(g)))));
                 else_.iter_mut().for_each(|c| self.node(c));
+                self.guards.pop();
                 self.guard_depth -= 1;
             }
             Node::For {
@@ -5608,7 +5621,12 @@ impl Walker<'_, '_> {
     /// Re-bases the fed children of a static component inlined here onto this component (F164): each record of the
     /// wrapper becomes one of ours, numbered in template order, with the wrapper's prop paths replaced by what this
     /// call site passes. `Err` = a shape it cannot bind (the caller falls back to React).
-    fn rebase(&mut self, inner: &Inner, props: &[(String, Expr)]) -> Result<(), String> {
+    fn rebase(
+        &mut self,
+        inner: &Inner,
+        props: &[(String, Expr)],
+        linked: bool,
+    ) -> Result<(), String> {
         if !inner.rebasable {
             return Err(
                 "it has state or handlers of its own, so the server cannot feed its children"
@@ -5670,6 +5688,38 @@ impl Walker<'_, '_> {
             {
                 return Err("its child reads a computed value".into());
             }
+            // F502: the record's condition, over this call site's props, under this call site's own branches. A linked
+            // call site may change what the condition reads on the client: its job keeps running everywhere (as before).
+            let fixed_ctx = in_list || inner.fixed;
+            let mut when = r.when.clone();
+            let mut when_opaque = r.when_opaque;
+            if let Some(g) = &mut when {
+                let mut ok = true;
+                g.paths_mut(&mut |p| match self.rebase_path(p, props) {
+                    Some(np) => *p = np,
+                    None => ok = false,
+                });
+                if !ok {
+                    when = None;
+                    when_opaque = true;
+                }
+            }
+            match self.current_when() {
+                Ok(outer) => when = RowGuard::and(outer, when),
+                Err(()) => {
+                    when = None;
+                    when_opaque = true;
+                }
+            }
+            if linked {
+                when = None;
+            }
+            if when_opaque && fixed_ctx {
+                return Err(
+                    "its child has a job under a condition the server cannot evaluate per row"
+                        .into(),
+                );
+            }
             let mut rec = InstanceRecord {
                 child_id: r.child_id.clone(),
                 k: 0,
@@ -5678,6 +5728,8 @@ impl Walker<'_, '_> {
                 literals: r.literals.clone(),
                 exprs: r.exprs.clone(),
                 rows_literal: None,
+                when,
+                when_opaque,
             };
             for (n, path) in &r.props {
                 let Some(path) = path else {
@@ -6156,6 +6208,94 @@ impl Walker<'_, '_> {
                     let root = p.split(['.', '[']).next().unwrap_or(p);
                     !self.fixed_props.contains(root)
                 }))
+    }
+
+    /// F502: the guard of the branch an instance renders in here: every open condition, `Err` if one is not
+    /// server-expressible.
+    fn current_when(&self) -> Result<Option<RowGuard>, ()> {
+        let mut out = None;
+        for g in &self.guards {
+            out = RowGuard::and(out, g.clone()?);
+        }
+        Ok(out)
+    }
+
+    /// F502: a branch condition as a server guard. One that reads state is an `x-if` the client flips (no restriction).
+    fn cond_guard(&self, cond: &Expr) -> Result<Option<RowGuard>, ()> {
+        if self.reads_state(cond) {
+            return Ok(None);
+        }
+        match cond {
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => self.raw_guard(r).map(Some).ok_or(()),
+            _ => Err(()),
+        }
+    }
+
+    fn raw_guard(&self, r: &RawExpr) -> Option<RowGuard> {
+        let path = |r: &RawExpr| self.prop_path(&Expr::Raw(r.clone()));
+        match &r.kind {
+            RawKind::Unary {
+                op: crate::ir::UnOp::Not,
+                value,
+            } => Some(RowGuard::Not(Box::new(self.raw_guard(value)?))),
+            RawKind::Binary { op, left, right } => {
+                use crate::ir::BinOp;
+                match op {
+                    BinOp::And => Some(RowGuard::All(vec![
+                        self.raw_guard(left)?,
+                        self.raw_guard(right)?,
+                    ])),
+                    BinOp::Or => Some(RowGuard::Any(vec![
+                        self.raw_guard(left)?,
+                        self.raw_guard(right)?,
+                    ])),
+                    BinOp::StrictEq | BinOp::StrictNe => {
+                        let (p, lit) = match (path(left), right.json_literal()) {
+                            (Some(p), Some(l)) => (p, l),
+                            _ => (path(right)?, left.json_literal()?),
+                        };
+                        if !(lit.is_string()
+                            || lit.is_number()
+                            || lit.is_boolean()
+                            || lit.is_null())
+                        {
+                            return None;
+                        }
+                        let eq = RowGuard::Eq(p, lit);
+                        Some(if *op == BinOp::StrictEq {
+                            eq
+                        } else {
+                            RowGuard::Not(Box::new(eq))
+                        })
+                    }
+                    _ => None,
+                }
+            }
+            _ => path(r).map(RowGuard::Truthy),
+        }
+    }
+
+    /// F502: a record path of an inlined child (rooted at one of its props) over this call site's props.
+    fn rebase_path(&self, path: &str, props: &[(String, Expr)]) -> Option<String> {
+        let end = path.find(['.', '[']).unwrap_or(path.len());
+        let (root, rest) = path.split_at(end);
+        let v = props
+            .iter()
+            .rev()
+            .find(|(k, _)| k == root)
+            .map(|(_, v)| v)?;
+        if self.reads_state(v) {
+            return None;
+        }
+        Some(format!("{}{rest}", self.prop_path(v)?))
+    }
+
+    /// F502: this component is a fixed-props clone (F494): every row value it renders is the server's.
+    fn fixed_clone(&self) -> bool {
+        self.spec_salt.as_deref().is_some_and(|id| {
+            id.rsplit_once("_f")
+                .is_some_and(|(_, h)| h.len() == 8 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        })
     }
 
     /// F494: every enclosing list of the children pass has rows the client never re-creates: its source reads no state
@@ -6976,6 +7116,21 @@ impl Walker<'_, '_> {
                     ));
                 }
                 if child.fed && !fused {
+                    // F502: the job runs only where the branch renders the child.
+                    let (when, when_opaque) = match self.current_when() {
+                        Ok(w) => (w, false),
+                        Err(()) => (None, true),
+                    };
+                    if when_opaque && self.fixed_clone() {
+                        self.diagnostics.push(Diagnostic::fallback(
+                            "nested-instance",
+                            format!(
+                                "<{name}> has a job and sits under a condition the server cannot evaluate per row, so it cannot run the job only where React renders it"
+                            ),
+                            *loc,
+                            "compare a prop or a row field with a literal in the condition, or keep this component interactive with React",
+                        ));
+                    }
                     let mut record = InstanceRecord {
                         child_id: child_id.clone(),
                         k,
@@ -6989,6 +7144,8 @@ impl Walker<'_, '_> {
                         literals: Default::default(),
                         exprs: Default::default(),
                         rows_literal,
+                        when,
+                        when_opaque,
                     };
                     let child_name = name.clone();
                     for (name, v) in kept.iter() {
@@ -7336,7 +7493,13 @@ impl Walker<'_, '_> {
         // other child's rebased records still count, as before.
         let fed_in_slot = self.instances.len() > fed_before;
         if let Some(inner) = &child.inner
-            && let Err(why) = self.rebase(inner, props)
+            // A row-only link is dropped when the rows turn out fixed (`resolve_row_only`); only one that always stands
+            // lets the client change what a record's condition reads.
+            && let Err(why) = self.rebase(
+                inner,
+                props,
+                link.is_some_and(|l| !self.row_only.contains_key(&l)),
+            )
         {
             self.diagnostics.push(Diagnostic::fallback(
                 "nested-instance",
