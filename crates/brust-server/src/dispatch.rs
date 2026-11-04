@@ -431,6 +431,7 @@ pub async fn call_worker_cache_set(
             tags: &meta.tags,
             method: &meta.method,
             path: &meta.path,
+            prefix: &meta.prefix,
             stamp: meta.stamp,
         },
         heap: page.body.len(),
@@ -1275,6 +1276,7 @@ mod tests {
             tags: vec![],
             method: "GET".into(),
             path: "/".into(),
+            prefix: String::new(),
             stamp: None,
         }
     }

@@ -384,6 +384,8 @@ pub struct CacheSetMeta<'a> {
     pub tags: &'a [String],
     pub method: &'a str,
     pub path: &'a str,
+    /// The entry's key prefix (F493).
+    pub prefix: &'a str,
     pub stamp: Option<u64>,
 }
 

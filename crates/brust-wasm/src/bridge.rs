@@ -10,7 +10,7 @@
 //! | `CONFIG` | `string`, JSON (`config.rs`) |
 //! | `install` | `(rt: { invalidate, replay, l2Count }) => { cache } \| void`, called once by `#[event(start)]`; the app must not call `rt` at module top level. `cache` (cache adapters R11/R14) = `{ get, set, since?, origin }` or `null`/absent |
 //!
-//! `rt.invalidate(args)` takes `{key?, tags?, path?, method?}` and returns `{l1Removed, jobRemoved}`;
+//! `rt.invalidate(args)` takes `{key?, tags?, path?, method?, prefix?}` and returns `{l1Removed, jobRemoved}`;
 //! `rt.replay(args, seq)` is the cache adapter's own-invalidation replay (tier 1 + the floor);
 //! bad args throw a `TypeError`. workerd normalises `..` and `\` in the URL before brust sees it,
 //! so the actions `ambiguous_path` check never fires on Workers (accepted delta).
@@ -141,7 +141,11 @@ fn parse_args(args: JsValue) -> Result<InvalidateArgs, JsValue> {
     let json = js_sys::JSON::stringify(&args)
         .map(String::from)
         .map_err(|_| type_error("cache.invalidate: args are not JSON".into()))?;
-    serde_json::from_str(&json).map_err(|e| type_error(format!("cache.invalidate: {e}")))
+    let a: InvalidateArgs = serde_json::from_str(&json)
+        .map_err(|e| type_error(format!("cache.invalidate: {e}")))?;
+    // F493: `prefix` with `key` is refused, as on the native host.
+    a.validate().map_err(|m| type_error(m.into()))?;
+    Ok(a)
 }
 
 fn invalidate(core: &Core<WasmHost>, args: JsValue) -> Result<JsValue, JsValue> {
