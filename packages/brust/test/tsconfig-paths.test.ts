@@ -39,10 +39,54 @@ test('extends and references are not followed, and the note says so', () => {
   expect(ext.notes[0]).toContain('extends')
   const refs = readPathAliases(app(`{ "references": [{ "path": "./tsconfig.app.json" }] }`))
   expect(refs.notes[0]).toContain('references')
-  // An own `paths` still works next to an `extends`, with the note.
-  const both = readPathAliases(app(`{ "extends": "./base.json", "compilerOptions": { "paths": { "@/*": ["./*"] } } }`))
-  expect(both.aliases).toEqual([{ pattern: '@/*', targets: ['*'] }])
+})
+
+// F497: a local `paths` replaces any inherited one (TS), so the `extends` note is only worth printing when the
+// extended file could change them through `baseUrl`.
+function appWith(files: Record<string, string>): string {
+  const d = app(null)
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(join(d, name, '..'), { recursive: true })
+    writeFileSync(join(d, name), text)
+  }
+  return d
+}
+const PATHS = `"paths": { "@/*": ["./*"] }`
+
+test('a local `paths` next to an `extends` is quiet unless the extended file sets baseUrl (F497)', () => {
+  // No extended file to read (missing), or a package specifier: nothing to say.
+  expect(readPathAliases(app(`{ "extends": "./base.json", "compilerOptions": { ${PATHS} } }`)).notes).toEqual([])
+  expect(readPathAliases(app(`{ "extends": "@tsconfig/bun/tsconfig.json", "compilerOptions": { ${PATHS} } }`)).notes).toEqual([])
+  // The extended file has no baseUrl (the usual shared config): quiet, and the local aliases still work.
+  const quiet = readPathAliases(appWith({ 'tsconfig.json': `{ "extends": "./tsconfig.base.json", "compilerOptions": { ${PATHS} } }`, 'tsconfig.base.json': `{ // c\n "compilerOptions": { "strict": true } }` }))
+  expect(quiet.notes).toEqual([])
+  expect(quiet.aliases).toEqual([{ pattern: '@/*', targets: ['*'] }])
+  // Its own baseUrl wins over whatever the extended file says: quiet.
+  expect(
+    readPathAliases(appWith({ 'tsconfig.json': `{ "extends": "./base.json", "compilerOptions": { "baseUrl": ".", ${PATHS} } }`, 'base.json': `{ "compilerOptions": { "baseUrl": "src" } }` })).notes,
+  ).toEqual([])
+})
+
+test('a local `paths` whose baseUrl comes from a relative extended file is named once, with the file (F497)', () => {
+  const r = readPathAliases(
+    appWith({ 'tsconfig.json': `{ "extends": "./config/base", "compilerOptions": { ${PATHS} } }`, 'config/base.json': `{ "compilerOptions": { "baseUrl": "../src", }, }` }),
+  )
+  expect(r.notes).toEqual([
+    '`baseUrl` comes from config/base.json, which brust does not follow: aliases resolve from tsconfig.json\'s directory (set `baseUrl` in tsconfig.json)',
+  ])
+  // The aliases are still read from tsconfig.json's own directory, as the note says.
+  expect(r.aliases).toEqual([{ pattern: '@/*', targets: ['*'] }])
+  // An array of extends is read the same way; an unparseable extended file says nothing.
+  expect(readPathAliases(appWith({ 'tsconfig.json': `{ "extends": ["@x/y", "./b.json"], "compilerOptions": { ${PATHS} } }`, 'b.json': `{ "compilerOptions": { "baseUrl": "." } }` })).notes[0]).toContain('comes from b.json')
+  expect(readPathAliases(appWith({ 'tsconfig.json': `{ "extends": "./b.json", "compilerOptions": { ${PATHS} } }`, 'b.json': '{ not json' })).notes).toEqual([])
+})
+
+test('extends without a local `paths` and references keep their notes (F497)', () => {
+  const both = readPathAliases(app(`{ "extends": "./base.json", "references": [{ "path": "./x" }], "compilerOptions": { ${PATHS} } }`))
   expect(both.notes.length).toBe(1)
+  expect(both.notes[0]).toContain('references')
+  expect(both.aliases).toEqual([{ pattern: '@/*', targets: ['*'] }])
+  expect(readPathAliases(app(`{ "extends": "./base.json", "compilerOptions": { "strict": true } }`)).notes[0]).toContain('uses `extends`')
 })
 
 test('patterns the compiler does not follow are named, and targets outside the app are dropped', () => {
