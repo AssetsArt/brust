@@ -65,11 +65,11 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
 
       <h3>New</h3>
       <ul>
-        {/* source: PR #435 (F493); website/pages/docs/Caching.tsx#invalidate-prefix */}
+        {/* source: PR #435 (F493); the Caching docs page */}
         <li>
           <strong>Clear the cached pages of one prefix only (#435).</strong> A route cached with <code>prefix: &apos;request(host)&apos;</code> keeps one copy of each page per host, but <code>cache.invalidate({'{'} path {'}'})</code> and <code>{'{'} tags {'}'}</code> cleared that page for every host. <code>cache.invalidate({'{'} prefix: &apos;a.test&apos;, path: &apos;/about&apos; {'}'})</code>, <code>{'{'} prefix, tags {'}'}</code> and <code>{'{'} prefix {'}'}</code> alone now clear only the pages stored under that exact prefix, in memory, in Redis/Dragonfly and in the Cloudflare KV and Durable Object adapters, and on every instance. <code>prefix</code> applies to pages only, so passing it together with <code>key</code> throws a <code>TypeError</code>. See <a href="/docs/caching#invalidate-prefix">Caching</a>.
         </li>
-        {/* source: PR #434 (F495); website/pages/docs/Configuration.tsx#base-path */}
+        {/* source: PR #434 (F495); the Configuration docs page */}
         <li>
           <strong>Mount an app under a path with <code>[server] base_path</code> (#434).</strong> <code>base_path = &quot;/portal&quot;</code> moves every URL brust owns under <code>/portal</code>: <code>/_brust/*</code> (client files, actions, cache), <code>/public</code>, <code>/ping</code>, the navigation and asset tags, and the <code>brust dev</code> channel. Two apps can then sit behind one path-routing proxy on one origin, in production and in dev, without merging their <code>dist/client</code> folders. Routes and the URLs you write stay real paths (<code>&apos;/portal/orders&apos;</code>). A request outside the base gets a 404, and a link outside it does a full page load. The value is baked in at build time and exported as <code>basePath</code> from <code>@brust/core</code>. See <a href="/docs/configuration#base-path">Configuration</a>.
         </li>
@@ -77,11 +77,11 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
 
       <h3>Fixed</h3>
       <ul>
-        {/* source: PR #437 (F494), PR #439 (F502); website/pages/docs/RenderingTiers.tsx */}
+        {/* source: PR #437 (F494), PR #439 (F502); the RenderingTiers docs page */}
         <li>
           <strong>A list over loader data renders as plain HTML, even when it is not in the page component (#437, #439).</strong> A stateless component that the page passes loader data to (<code>&lt;PageView sections={'{'}data.sections{'}'} /&gt;</code>) used to ship the runtime and <code>x-for</code>. If a row child formatted a prop with a helper (<code>formatPrice(Number(price))</code>), it rendered with React instead. Wherever every prop a stateless child receives is a value the browser never changes, brust now renders that call site as static HTML with no script, through nested components too. The same component keeps its interactive output where a parent passes state. A helper in a row now runs only for the rows whose branch renders it, so a helper that needs a field only some rows have no longer fails the page.
         </li>
-        {/* source: PR #436 (F499); website/pages/docs/ReactCoverage.tsx */}
+        {/* source: PR #436 (F499); the ReactCoverage docs page */}
         <li>
           <strong>A <code>switch</code> that returns in every case no longer forces React (#436).</strong> <code>switch (s.type) {'{'} case &apos;hero&apos;: return &lt;Hero /&gt; … {'}'}</code> on a variable or property path, with literal cases, now compiles like an <code>if</code>/<code>return</code> chain, so the component stays static or native. Matching is strict: <code>&apos;1&apos;</code> does not match <code>1</code>. A <code>switch</code> that could fall through, uses <code>break</code>, or tests a non-literal still renders with React, and the build now names it <code>switch-fallthrough</code>.
         </li>
@@ -93,11 +93,11 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
 
       <h3>Changes</h3>
       <ul>
-        {/* source: PR #433 (F496); website/pages/docs/Routing.tsx */}
+        {/* source: PR #433 (F496); the Routing docs page */}
         <li>
           <strong>Conflicting route patterns now fail <code>brust build</code> instead of <code>brust start</code> (#433).</strong> A <code>{'{*rest}'}</code> route next to a <code>{'{slug}'}</code> route at the same level used to build and then stop the server at boot. The build now fails with <code>route-conflict</code> and names both routes. The Routing page now covers <code>{'{*rest}'}</code>, which matches the rest of the path at any depth with status 200, alongside the <code>&apos;*&apos;</code> 404 catch-all. See <a href="/docs/routing">Routing</a>.
         </li>
-        {/* source: PR #438 (F501), PR #433 (F498); website/pages/docs/Css.tsx */}
+        {/* source: PR #438 (F501), PR #433 (F498); the Css docs page */}
         <li>
           <strong>Tailwind never scans brust&rsquo;s own build output (#438).</strong> Without a <code>.gitignore</code> covering <code>dist/</code> and <code>.brust/</code>, the second build read the first build&rsquo;s output and kept utilities your sources no longer use. Those stale utilities are now gone, which can make your stylesheet smaller. Tailwind scans the app root only: a <code>[build] source_roots</code> folder is scanned once your stylesheet names it with <code>@source</code>. See <a href="/docs/css">CSS</a>.
         </li>
