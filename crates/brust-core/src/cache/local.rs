@@ -469,9 +469,9 @@ impl<T: Clock + Default> PageCache for LocalL1<T> {
             self.inval.next(),
         );
         let now = self.time.now_ns();
-        self.store
-            .borrow_mut()
-            .remove_where(now, |k| k.prefix == prefix && method.is_none_or(|m| k.method == m))
+        self.store.borrow_mut().remove_where(now, |k| {
+            k.prefix == prefix && method.is_none_or(|m| k.method == m)
+        })
     }
 
     fn clear_all(&self) -> usize {

@@ -333,7 +333,11 @@ fn invalidate_with_a_prefix_drops_only_that_hosts_pages() {
 
     warm();
     assert_eq!(s.invalidate(scoped("a.test")).l1_removed, 1);
-    assert_eq!(s.invalidate(scoped("")).l1_removed, 0, "no page has an empty prefix");
+    assert_eq!(
+        s.invalidate(scoped("")).l1_removed,
+        0,
+        "no page has an empty prefix"
+    );
     assert_eq!(at("a.test").as_deref(), Some("MISS"));
     assert_eq!(at("b.test").as_deref(), Some("HIT"));
 

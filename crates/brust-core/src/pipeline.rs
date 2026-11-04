@@ -644,8 +644,7 @@ async fn l2_read<H: Host>(
             entry_stamp,
             stored_at_ms,
         } => {
-            if s
-                .l2_floor
+            if s.l2_floor
                 .with(|f| f.rejects(entry_stamp, &k.prefix, path, &c.tags))
             {
                 n.bump("rejected_floor");

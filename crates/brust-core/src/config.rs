@@ -425,8 +425,7 @@ pub struct InvalidateArgs {
 }
 
 /// The refusal text for `prefix` with `key` (the TS `cache.invalidate` throws the same).
-pub const PREFIX_WITH_KEY: &str =
-    "cache.invalidate: `prefix` narrows page entries; `key` names a job entry — call them separately";
+pub const PREFIX_WITH_KEY: &str = "cache.invalidate: `prefix` narrows page entries; `key` names a job entry — call them separately";
 
 impl InvalidateArgs {
     /// `prefix` together with `key` is refused (F493): `prefix` narrows page entries, `key` names a

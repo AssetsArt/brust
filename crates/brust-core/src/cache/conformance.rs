@@ -286,7 +286,13 @@ pub mod page {
         ];
         let theirs = [pkey("b.test", "GET", "/x", ""), pkey("", "GET", "/x", "")];
         for k in mine.iter().chain(&theirs) {
-            assert!(c.insert(k.clone(), rb_of(&k.prefix), TTL, &tags(&["t"]), c.read_stamp()));
+            assert!(c.insert(
+                k.clone(),
+                rb_of(&k.prefix),
+                TTL,
+                &tags(&["t"]),
+                c.read_stamp()
+            ));
         }
         c.settle();
         assert_eq!(c.invalidate_prefix("a.test", Some("POST")), 1);
@@ -321,7 +327,13 @@ pub mod page {
             pkey("b.test", "GET", "/p", ""),
             pkey("a.test", "GET", "/u", ""),
         );
-        assert!(c.insert(a.clone(), rb_of("a"), TTL, &tags(&["page", "t2"]), c.read_stamp()));
+        assert!(c.insert(
+            a.clone(),
+            rb_of("a"),
+            TTL,
+            &tags(&["page", "t2"]),
+            c.read_stamp()
+        ));
         assert!(c.insert(b.clone(), rb_of("b"), TTL, &tags(&["page"]), c.read_stamp()));
         assert!(c.insert(a_untagged.clone(), rb_of("u"), TTL, &[], c.read_stamp()));
         c.settle();
@@ -340,9 +352,7 @@ pub mod page {
 
     /// F493 race stamp: an insert stamped before `invalidate_prefix` does not land; one of another
     /// prefix (another slot) does.
-    pub fn invalidate_prefix_after_the_stamp_keeps_the_insert_out<C: ConformL1>(
-        make: Make<'_, C>,
-    ) {
+    pub fn invalidate_prefix_after_the_stamp_keeps_the_insert_out<C: ConformL1>(make: Make<'_, C>) {
         let c = l1(make);
         let a = pkey("a.test", "GET", "/p", "x=1");
         let other = (0..)

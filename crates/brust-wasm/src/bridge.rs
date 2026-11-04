@@ -141,8 +141,8 @@ fn parse_args(args: JsValue) -> Result<InvalidateArgs, JsValue> {
     let json = js_sys::JSON::stringify(&args)
         .map(String::from)
         .map_err(|_| type_error("cache.invalidate: args are not JSON".into()))?;
-    let a: InvalidateArgs = serde_json::from_str(&json)
-        .map_err(|e| type_error(format!("cache.invalidate: {e}")))?;
+    let a: InvalidateArgs =
+        serde_json::from_str(&json).map_err(|e| type_error(format!("cache.invalidate: {e}")))?;
     // F493: `prefix` with `key` is refused, as on the native host.
     a.validate().map_err(|m| type_error(m.into()))?;
     Ok(a)
