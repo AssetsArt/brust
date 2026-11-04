@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { reactHtml, reactRowsHtml, type RowsPage } from '../../packages/brust/test/fixtures/loader-static/render'
+import { reactConstHtml, reactHtml, reactRowsHtml, type RowsPage } from '../../packages/brust/test/fixtures/loader-static/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/loader-static')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -80,6 +80,35 @@ for (const page of ['if', 'switch', 'and', 'ternary', 'gt', 'root'] as RowsPage[
     expect(m.components[root]!.tier).toBe('static')
   })
 }
+
+// F503 (ruling 14e7d46b): a constant-input instance (F149 evaluates it at build) whose helper throws, under a branch this
+// request does not take. The build does not fail: the evaluation is a warning and the instance keeps its job, guarded by its
+// branch (F502), so the page renders.
+test('/const: a throwing build-evaluated instance under an untaken branch: build warning, record keeps when, page 200', async () => {
+  expect(buildOut).toMatch(/warning build-eval ConstPage\.tsx:\d+:\d+ <amount_[0-9a-f]+> not evaluated at build, its job stays/)
+  const m = manifest() as unknown as { components: Record<string, { children: { id: string; when?: unknown }[] }>; routes: { pattern: string; chain: string[] }[] }
+  const root = m.routes.find((r) => r.pattern === '/const')!.chain[0]!
+  const kids = m.components[root]!.children
+  expect(kids).toHaveLength(1)
+  expect(kids[0]!.when).toEqual({ eq: ['rows.length', 0] })
+  const res = await fetch(`${base}/const`)
+  const html = await res.text()
+  expect(res.status, html).toBe(200)
+  expect(html).toBe(reactConstHtml())
+})
+
+// Review 05ee17fd (b): the same on a page with state of its own. A route root's props are the loader's, fixed for the
+// life of the page (SPA navigation swaps server markup), so the branch still guards the job: 200, not the helper's throw.
+test('/const-stateful: a stateful page keeps the branch guard over its own props: page 200', async () => {
+  const m = manifest() as unknown as { components: Record<string, { tier: string; children: { when?: unknown }[] }>; routes: { pattern: string; chain: string[] }[] }
+  const root = m.routes.find((r) => r.pattern === '/const-stateful')!.chain[0]!
+  expect(m.components[root]!.tier).toBe('native')
+  expect(m.components[root]!.children.map((c) => c.when)).toEqual([{ eq: ['rows.length', 0] }])
+  const res = await fetch(`${base}/const-stateful`)
+  const html = await res.text()
+  expect(res.status, html).toBe(200)
+  expect(html).toMatch(/<p[^>]*>5<\/p>/)
+})
 
 test('every fixed-props clone is static; the shared components keep their own tier', () => {
   const comps = Object.entries(manifest().components)

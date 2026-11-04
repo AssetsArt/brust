@@ -6,6 +6,8 @@ import AndRowsPage from './AndRowsPage'
 import TernaryRowsPage from './TernaryRowsPage'
 import GtRowsPage from './GtRowsPage'
 import RootRowsPage from './RootRowsPage'
+import ConstPage from './ConstPage'
+import StatefulConstPage from './StatefulConstPage'
 import ListPage from './ListPage'
 import PricesPage from './PricesPage'
 import SectionsPage from './SectionsPage'
@@ -19,6 +21,8 @@ export const routes = defineRoutes([
   { path: '/prices', Component: PricesPage, loader },
   { path: '/sections', Component: SectionsPage, loader },
   { path: '/stateful', Component: StatefulPage },
+  { path: '/const', Component: ConstPage, loader: rows },
+  { path: '/const-stateful', Component: StatefulConstPage, loader: rows },
   { path: '/rows-if', Component: IfRowsPage, loader: rows },
   { path: '/rows-switch', Component: SwitchRowsPage, loader: rows },
   { path: '/rows-and', Component: AndRowsPage, loader: rows },
