@@ -164,3 +164,34 @@ test('review F1: Tailwind older than 4.1.0 fails the build with tailwind-version
   expect(readdirSync(join(dist, 'client'))).toEqual(['.keep'])
   expect([versionBelow('4.0.17', '4.1.0'), versionBelow('4.1.0', '4.1.0'), versionBelow('4.3.3', '4.1.0'), versionBelow('4.1.0-beta.1', '4.1.0')]).toEqual([true, false, false, false])
 })
+
+// F498: what Tailwind scans. The app root is scanned; a `[build] source_roots` directory is not, until the stylesheet says
+// `@source` for it (css.ts hands `loadTailwind` the app root only); `@source not` then carves part of it out.
+// tw-roots/app imports `../shared/Btn` (`bg-red-700`) and `../shared/hero/Hero` (`bg-yellow-300`); `shared/skip` is
+// imported by nothing (`bg-pink-300`); the app's own Home uses `text-green-600`.
+function scannedWith(appCss: string): Record<string, boolean> {
+  const dir = join(import.meta.dir, 'fixtures/.tw-roots-run')
+  rmSync(dir, { recursive: true, force: true })
+  cpSync(join(import.meta.dir, 'fixtures/tw-roots'), dir, { recursive: true, filter: (src) => !src.includes('/dist') })
+  copies.push(dir)
+  writeFileSync(join(dir, 'app/app.css'), appCss)
+  const app = join(dir, 'app')
+  const b = build(app)
+  if (b.code !== 0) throw new Error(`brust build failed:\n${b.stderr}`)
+  const m = JSON.parse(readFileSync(join(app, 'dist/manifest.json'), 'utf8')) as { routes: { css?: string[] }[] }
+  const out = m.routes[0]!.css!.map((f) => readFileSync(join(app, 'dist', f), 'utf8')).join('\n')
+  return Object.fromEntries(['text-green-600', 'bg-red-700', 'bg-yellow-300', 'bg-pink-300'].map((c) => [c, out.includes(`.${c}`)]))
+}
+
+test('F498: without @source the app root is scanned, a [build] source_roots directory is not', () => {
+  expect(scannedWith('@import "tailwindcss";')).toEqual({ 'text-green-600': true, 'bg-red-700': false, 'bg-yellow-300': false, 'bg-pink-300': false })
+}, 300_000)
+
+test('F498: `@source "../shared"` scans the whole directory, and `@source not` excludes part of it', () => {
+  expect(scannedWith('@import "tailwindcss";\n@source "../shared";')).toEqual({ 'text-green-600': true, 'bg-red-700': true, 'bg-yellow-300': true, 'bg-pink-300': true })
+  const notHero = scannedWith('@import "tailwindcss";\n@source "../shared";\n@source not "../shared/hero";')
+  expect(notHero).toEqual({ 'text-green-600': true, 'bg-red-700': true, 'bg-yellow-300': false, 'bg-pink-300': true })
+  // `@source not` removes; it adds nothing by itself.
+  const alone = scannedWith('@import "tailwindcss";\n@source not "../shared/hero";')
+  expect(alone).toEqual({ 'text-green-600': true, 'bg-red-700': false, 'bg-yellow-300': false, 'bg-pink-300': false })
+}, 300_000)

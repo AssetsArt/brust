@@ -9,6 +9,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
+import { assertRoutesInstallable, type CheckPatterns, nativeCheckPatterns } from './route-conflicts'
 import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, nestedOf, storeModules } from './bundle'
 import { runActionsOnly } from './actions-only'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
@@ -106,6 +107,8 @@ export async function runBuild(opts: {
   strict?: boolean
   /** The cache key grammar's read-set (static; tests swap it). Default: the addon. */
   exprReads?: ExprReads
+  /** The router's refusal of a pattern set (F496; tests swap it). Default: the addon. */
+  checkPatterns?: CheckPatterns
   /** `--wasm-from-source` (cloudflare only). */
   wasmFromSource?: boolean
   /** `--actions-only` (L16 R16.3): no pages, only the `[actions]` app; with `bun` (default) or `cloudflare`. */
@@ -142,6 +145,8 @@ export async function runBuild(opts: {
     if (e instanceof BrustRouteError) throw new BuildError(e.rule, e.message)
     throw e
   }
+  // F496: what the server's router would refuse at `brust start` (a `{*rest}` next to a `{slug}`) fails here.
+  assertRoutesInstallable(leaves, opts.checkPatterns ?? (await nativeCheckPatterns()))
   let actionsEntry: string | null = null
   if (actions) {
     actionsEntry = resolve(appRoot, actions.entry)

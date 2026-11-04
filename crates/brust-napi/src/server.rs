@@ -454,6 +454,8 @@ pub struct NapiInvalidateArgs {
     pub tags: Option<Vec<String>>,
     pub path: Option<String>,
     pub method: Option<String>,
+    /// F493: narrow the page invalidation to this exact key prefix.
+    pub prefix: Option<String>,
 }
 
 #[napi(object)]
@@ -462,19 +464,32 @@ pub struct NapiInvalidateResult {
     pub job_removed: u32,
 }
 
-/// `cache.invalidate({ key?, tags?, path?, method? })` (spec §5).
-#[napi]
-pub fn cache_invalidate(args: NapiInvalidateArgs) -> napi::Result<NapiInvalidateResult> {
-    let r = current()?.invalidate(InvalidateArgs {
+/// The core args; `prefix` with `key` is refused (`InvalidateArgs::validate`, F493).
+fn core_args(args: NapiInvalidateArgs) -> napi::Result<InvalidateArgs> {
+    let a = InvalidateArgs {
         key: args.key,
         tags: args.tags.unwrap_or_default(),
         path: args.path,
         method: args.method,
-    });
-    Ok(NapiInvalidateResult {
+        prefix: args.prefix,
+    };
+    a.validate()
+        .map_err(|m| napi::Error::new(napi::Status::InvalidArg, m))?;
+    Ok(a)
+}
+
+fn napi_result(r: brust_server::InvalidateResult) -> NapiInvalidateResult {
+    NapiInvalidateResult {
         l1_removed: u32::try_from(r.l1_removed).unwrap_or(u32::MAX),
         job_removed: u32::try_from(r.job_removed).unwrap_or(u32::MAX),
-    })
+    }
+}
+
+/// `cache.invalidate({ key?, tags?, path?, method?, prefix? })` (spec §5).
+#[napi]
+pub fn cache_invalidate(args: NapiInvalidateArgs) -> napi::Result<NapiInvalidateResult> {
+    let args = core_args(args)?;
+    Ok(napi_result(current()?.invalidate(args)))
 }
 
 /// A broadcast invalidation another process published (worker 0's subscriber, cache-adapter R10):
@@ -484,19 +499,10 @@ pub fn cache_replay(
     args: NapiInvalidateArgs,
     seq: Option<i64>,
 ) -> napi::Result<NapiInvalidateResult> {
-    let r = current()?.l2_replay(
-        InvalidateArgs {
-            key: args.key,
-            tags: args.tags.unwrap_or_default(),
-            path: args.path,
-            method: args.method,
-        },
-        seq.and_then(|n| u64::try_from(n).ok()),
-    );
-    Ok(NapiInvalidateResult {
-        l1_removed: u32::try_from(r.l1_removed).unwrap_or(u32::MAX),
-        job_removed: u32::try_from(r.job_removed).unwrap_or(u32::MAX),
-    })
+    let args = core_args(args)?;
+    Ok(napi_result(
+        current()?.l2_replay(args, seq.and_then(|n| u64::try_from(n).ok())),
+    ))
 }
 
 /// Bump the `stats.l2` counter `name` (the JS side's counts, R9). `false` = unknown name, no

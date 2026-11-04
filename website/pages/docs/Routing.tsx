@@ -106,6 +106,18 @@ export default function Routing({ blocks }: RoutingData) {
           <code>'*'</code> is the catch-all. It is allowed once, at the root, and it renders with status <strong>404</strong>. Without one, an unknown path gets a plain 404.
         </li>
         <li>
+          {/* source: crates/brust-core/src/routing/routes.rs:1364 (the whole tail, percent-decoded, one character at least: /docs and /docs/ do not match) and :256 (decode at the production site);
+              packages/brust/test/build-safety.test.ts:303 (built and served: /docs/a/b/c and /docs/a%20b/c answer 200 with params.rest "a/b/c" and "a b/c"). */}
+          A segment <code>{'{*rest}'}</code> at the end of a pattern takes the rest of the path, at any depth: <code>{'/docs/{*rest}'}</code> answers <code>/docs/a</code> and <code>/docs/a/b/c</code> with <code>params.rest</code> set to{' '}
+          <code>&quot;a/b/c&quot;</code>, decoded like any other param. Unlike <code>'*'</code> it is an ordinary route: status <strong>200</strong>, and a <code>cache</code> on the route, with its <code>prefix</code>, applies. It needs at least one
+          character after the prefix, so <code>/docs</code> and <code>/docs/</code> do not match it: add a <code>/docs</code> route if they should answer.
+        </li>
+        <li>
+          {/* source: crates/brust-core/src/routing/routes.rs:674 (/{*rest} next to /{slug} is refused, naming the earlier route) and packages/brust/test/build-safety.test.ts:288 (the build fails with route-conflict, the router's message and both route ids). */}
+          A <code>{'{*rest}'}</code> and a <code>{'{slug}'}</code> at the same level conflict, whatever order they are written in: the router holds only one of them, and the build fails with <code>route-conflict</code>, naming both routes. Put the param route
+          under a longer literal prefix, or drop one.
+        </li>
+        <li>
           Two routes that differ only in a param name, such as <code>/a/{'{id}'}</code> and <code>/a/{'{slug}'}</code>, are the same route: the build fails with <code>duplicate-route</code>.
         </li>
       </ul>
@@ -155,6 +167,14 @@ export default function Routing({ blocks }: RoutingData) {
               <code>duplicate-route</code>
             </td>
             <td>Two routes match the same paths.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>route-conflict</code>
+            </td>
+            <td>
+              The server&rsquo;s router refuses the routes together, such as <code>{'/{*rest}'}</code> next to <code>{'/{slug}'}</code>. The message is the router&rsquo;s own and names both route ids; without this check the app would fail at <code>brust start</code>.
+            </td>
           </tr>
           <tr>
             <td>

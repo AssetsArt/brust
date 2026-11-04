@@ -192,8 +192,15 @@ pub trait PageCache {
         since: ReadStamp,
     ) -> bool;
     fn read_stamp(&self) -> ReadStamp;
-    fn invalidate_tags(&self, tags: &[String]) -> usize;
-    fn invalidate_path(&self, method: &str, path: &str) -> usize;
+    /// Entries carrying any of `tags`; with `prefix` (F493) only those whose key prefix equals it
+    /// (other prefixes' entries stay indexed). The distinct count.
+    fn invalidate_tags(&self, tags: &[String], prefix: Option<&str>) -> usize;
+    /// Entries for `method` + `path`, any query; with `prefix` (F493) only that key prefix. The
+    /// live count.
+    fn invalidate_path(&self, method: &str, path: &str, prefix: Option<&str>) -> usize;
+    /// Every entry whose key prefix equals `prefix` (F493), of `method` when given; any path and
+    /// query. The live count.
+    fn invalidate_prefix(&self, prefix: &str, method: Option<&str>) -> usize;
     /// Drop every entry (an L2 broadcast gap); entries stamped before it are refused. The count.
     fn clear_all(&self) -> usize;
     fn stats(&self) -> CacheStats;

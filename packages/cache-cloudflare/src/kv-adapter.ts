@@ -50,8 +50,9 @@ export function kvAdapter(options: KvOptions = {}, deps: KvDeps = {}): KvAdapter
       if (meta.ttlMs < minTtlS * 1000) return false
       if (page.body.length > store.maxBodyBytes) return false
       const at = now()
-      const frame = encodeEntry(page, { tags: meta.tags, method: meta.method, path: meta.path, entryStamp: meta.stamp, storedAt: at, expiresAt: at + meta.ttlMs })
-      const fp = `${fingerprint(page.body)}:${JSON.stringify([page.status, page.headers, meta.tags, meta.method, meta.path, meta.stamp])}`
+      const prefix = meta.prefix ?? ''
+      const frame = encodeEntry(page, { tags: meta.tags, method: meta.method, path: meta.path, prefix, entryStamp: meta.stamp, storedAt: at, expiresAt: at + meta.ttlMs })
+      const fp = `${fingerprint(page.body)}:${JSON.stringify([page.status, page.headers, meta.tags, meta.method, meta.path, prefix, meta.stamp])}`
       const prev = memo.get(key)
       if (prev && prev.fp === fp && at - prev.at < 60_000) return true
       try {
@@ -66,7 +67,8 @@ export function kvAdapter(options: KvOptions = {}, deps: KvDeps = {}): KvAdapter
       return true
     },
     async invalidate(_args: InvalidateArgs) {
-      // R5: an L2Key hashes prefix+method+path+query, so a tag or path cannot be enumerated without index writes; KV alone is "stale <= ttl".
+      // R5: an L2Key hashes prefix+method+path+query, so a tag, path or prefix cannot be enumerated without index writes; KV alone is
+      // "stale <= ttl". Paired with the DO broadcast (combine), the floors judge each hit by its stored prefix too (F493): no index.
     },
   }
   return { name: 'cloudflare-kv', runtimes: ['workers'], store }

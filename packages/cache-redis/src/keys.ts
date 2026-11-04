@@ -7,8 +7,11 @@ export interface Keys {
   page(l2Key: string): string
   tag(tag: string): string
   path(method: string | undefined, path: string): string
+  /** F493: every page of one route-cache key prefix (the prefix is JSON-quoted: `:` in a host is safe). */
+  pfx(prefix: string): string
   markTag(tag: string): string
   markPath(method: string | undefined, path: string): string
+  markPfx(prefix: string): string
   seq: string
   stage(id: string): string
   channel: string
@@ -24,8 +27,10 @@ export function keys(ns: string): Keys {
     page: (k) => `${p}:page:${k}`,
     tag: (t) => `${p}:tag:${t}`,
     path: (m, path) => `${p}:path:${pathName(m, path)}`,
+    pfx: (x) => `${p}:pfx:${JSON.stringify(x)}`,
     markTag: (t) => `${p}:inval:tag:${t}`,
     markPath: (m, path) => `${p}:inval:path:${pathName(m, path)}`,
+    markPfx: (x) => `${p}:inval:pfx:${JSON.stringify(x)}`,
     seq: `${p}:seq`,
     stage: (id) => `${p}:stage:${id}`,
     channel: `brust:${ns}:inval`,
@@ -38,10 +43,11 @@ export function canonical(a: InvalidateArgs): string {
   return JSON.stringify({
     tags: [...new Set(a.tags ?? [])].sort(),
     ...(a.path !== undefined ? { path: a.path, method: (a.method ?? 'GET').toUpperCase() } : {}),
+    ...(a.prefix !== undefined ? { prefix: a.prefix, ...(a.path === undefined && a.method !== undefined ? { method: a.method.toUpperCase() } : {}) } : {}),
   })
 }
 
 /** Does the invalidation touch pages? (A key-only one is tier 1's business: the store holds none by key.) */
 export function hasStoreWork(a: InvalidateArgs): boolean {
-  return (a.tags?.length ?? 0) > 0 || a.path !== undefined
+  return (a.tags?.length ?? 0) > 0 || a.path !== undefined || a.prefix !== undefined
 }

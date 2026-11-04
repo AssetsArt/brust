@@ -343,7 +343,7 @@ impl Host for WasmHost {
         let json = serde_json::json!({
             "status": page.status,
             "headers": page.headers,
-            "meta": {"ttlMs": meta.ttl_ms, "tags": meta.tags, "method": meta.method, "path": meta.path, "stamp": meta.stamp},
+            "meta": {"ttlMs": meta.ttl_ms, "tags": meta.tags, "method": meta.method, "path": meta.path, "prefix": meta.prefix, "stamp": meta.stamp},
         })
         .to_string();
         let body = js_sys::Uint8Array::from(&page.body[..]);

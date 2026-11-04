@@ -196,6 +196,32 @@ pub(crate) fn take_tagged<K: Clone + Eq + std::hash::Hash>(
         .collect()
 }
 
+/// As [`take_tagged`], but only the keys `keep` selects (F493: one prefix's pages): they leave the
+/// index, every other key of those tags stays indexed; emptied tag sets are dropped.
+pub(crate) fn take_tagged_where<K: Clone + Eq + std::hash::Hash>(
+    index: &TagIndex<K>,
+    tags: &[String],
+    keep: impl Fn(&K) -> bool,
+) -> HashSet<K> {
+    let mut idx = index.lock();
+    let mut out = HashSet::new();
+    for t in tags {
+        let Some(set) = idx.get_mut(t) else { continue };
+        set.retain(|k, _| {
+            if keep(k) {
+                out.insert(k.clone());
+                false
+            } else {
+                true
+            }
+        });
+        if set.is_empty() {
+            idx.remove(t);
+        }
+    }
+    out
+}
+
 /// L1 = a read-mostly front + moka as the policy (see the module docs).
 ///
 /// Reads hit only the front (`SHARDS` `ShardedLock<HashMap>`s): a sub-lock read guard, the entry's
@@ -214,10 +240,13 @@ pub(crate) fn take_tagged<K: Clone + Eq + std::hash::Hash>(
 ///
 /// Read stamps (F86): an insert lands only if no covering invalidation took a clock value after its
 /// `ReadStamp`. A covering invalidation is a tag of the insert (by slot), its method+path (by slot),
-/// or `clear`. Tag invalidation and `clear` publish under the exclusive gate, and the insert checks
-/// under the shared gate. `invalidate_path` is gate-free on purpose: the front is a superset of moka
-/// and the key stripe orders same-key writers. It publishes before scanning and scans shard i under
-/// `stripes[i]`, which an insert holds across check and write. A slot collision or an already-seen
+/// its key prefix (by slot, F493), or `clear`. Tag invalidation and `clear` publish under the
+/// exclusive gate, and the insert checks under the shared gate. `invalidate_path` and
+/// `invalidate_prefix` are gate-free on purpose: the front is a superset of moka and the key stripe
+/// orders same-key writers. They publish before scanning and scan shard i under `stripes[i]`, which
+/// an insert holds across check and write. A prefix-scoped path or tag invalidation publishes the
+/// unscoped (method, path) / tag slot: an insert of another prefix racing it is refused (a later
+/// MISS, never a stale HIT). A slot collision or an already-seen
 /// invalidation only skips caching one render. Lock order unchanged: gate -> stripe -> (index |
 /// front).
 pub struct L1Cache {
@@ -248,6 +277,8 @@ pub struct L1Cache {
     tag_inval: Box<[AtomicU64]>,
     /// The latest clock value of an `invalidate_path`, per hashed (method, path) slot.
     path_inval: Box<[AtomicU64]>,
+    /// The latest clock value of an `invalidate_prefix`, per hashed key-prefix slot (F493).
+    prefix_inval: Box<[AtomicU64]>,
     /// The clock value of the latest `clear`.
     cleared_at: AtomicU64,
     hits: StripedCounter,
@@ -315,6 +346,7 @@ impl L1Cache {
             clock,
             tag_inval: inval_slots(),
             path_inval: inval_slots(),
+            prefix_inval: inval_slots(),
             cleared_at: AtomicU64::new(0),
             hits: StripedCounter::new(),
             misses: StripedCounter::new(),
@@ -384,12 +416,13 @@ impl L1Cache {
         (self.hasher.hash_one(v) as usize) % INVAL_SLOTS
     }
 
-    /// Whether a covering invalidation (`clear`, this key's method + path, or one of `tags`, each
-    /// by slot) took a sequence number after `since`.
+    /// Whether a covering invalidation (`clear`, this key's method + path, its prefix, or one of
+    /// `tags`, each by slot) took a sequence number after `since`.
     fn invalidated_since(&self, key: &CacheKey, tags: &[String], since: ReadStamp) -> bool {
         let after = |a: &AtomicU64| a.load(Ordering::SeqCst) > since.0;
         after(&self.cleared_at)
             || after(&self.path_inval[self.slot(&(key.method.as_str(), key.path.as_str()))])
+            || after(&self.prefix_inval[self.slot(key.prefix.as_str())])
             || tags
                 .iter()
                 .any(|t| after(&self.tag_inval[self.slot(t.as_str())]))
@@ -485,16 +518,34 @@ impl L1Cache {
     }
 
     /// Remove every entry whose key has the given method + path (regardless
-    /// of query string or vary values). Returns the number of live matching
-    /// entries at the time of the call. Hits/misses counters are NOT reset.
+    /// of query string or vary values) and, with `prefix` (F493), that key prefix. Returns the
+    /// number of live matching entries at the time of the call. Hits/misses counters are NOT reset.
     /// The entries are gone from the read front when this returns.
     ///
     /// Gate-free (see the struct invariant): it publishes its sequence number first, then scans
     /// shard i under `stripes[i]`, so an insert of a matching key either landed before the scan
-    /// (and is removed) or checks after the publish (and is rejected).
-    pub fn invalidate_path(&self, method: &str, path: &str) -> usize {
+    /// (and is removed) or checks after the publish (and is rejected). A prefix-scoped call
+    /// publishes the same (method, path) slot: a racing insert of another prefix is refused too.
+    pub fn invalidate_path(&self, method: &str, path: &str, prefix: Option<&str>) -> usize {
         let seq = self.next_inval();
         self.path_inval[self.slot(&(method, path))].fetch_max(seq, Ordering::SeqCst);
+        self.scan_remove(|k| {
+            k.method == method && k.path == path && prefix.is_none_or(|p| k.prefix == p)
+        })
+    }
+
+    /// Remove every entry whose key prefix equals `prefix` (F493) and, when given, whose method is
+    /// `method`; any path and query. The live count, as `invalidate_path`. Gate-free the same way:
+    /// it publishes the prefix slot first, which every insert checks under its stripe.
+    pub fn invalidate_prefix(&self, prefix: &str, method: Option<&str>) -> usize {
+        let seq = self.next_inval();
+        self.prefix_inval[self.slot(prefix)].fetch_max(seq, Ordering::SeqCst);
+        self.scan_remove(|k| k.prefix == prefix && method.is_none_or(|m| k.method == m))
+    }
+
+    /// The scan half of the gate-free invalidations: shard i under `stripes[i]`, the keys `hit`
+    /// selects removed from moka and the front; the count of the live ones.
+    fn scan_remove(&self, hit: impl Fn(&CacheKey) -> bool) -> usize {
         let now = Instant::now();
         let mut live = 0;
         for (shard, s) in self.front.iter().enumerate() {
@@ -502,7 +553,7 @@ impl L1Cache {
             let keys: Vec<CacheKey> = {
                 let m = s.read();
                 m.iter()
-                    .filter(|(k, _)| k.method == method && k.path == path)
+                    .filter(|(k, _)| hit(k))
                     .map(|(k, e)| {
                         live += usize::from(e.expires_at.is_none_or(|t| now < t));
                         k.clone()
@@ -529,14 +580,20 @@ impl L1Cache {
     /// `invalidate` does internal eviction-scheduling work, and holding the
     /// Mutex across a large tag group would block every concurrent tagged
     /// `insert`. moka invalidation is eventual, so we drive `run_pending_tasks`.
-    pub fn invalidate_tags(&self, tags: &[String]) -> usize {
+    ///
+    /// With `prefix` (F493) only keys of that prefix leave the index and the cache; the tag slots
+    /// are published all the same (a racing insert of another prefix is refused: a later MISS).
+    pub fn invalidate_tags(&self, tags: &[String], prefix: Option<&str>) -> usize {
         let n = {
             let _gate = self.gate.write(); // no insert is mid-way (see `insert`)
             let seq = self.next_inval();
             for t in tags {
                 self.tag_inval[self.slot(t.as_str())].fetch_max(seq, Ordering::SeqCst);
             }
-            let keys = take_tagged(&self.tag_index, tags);
+            let keys = match prefix {
+                None => take_tagged(&self.tag_index, tags),
+                Some(p) => take_tagged_where(&self.tag_index, tags, |k| k.prefix == p),
+            };
             let n = keys.len();
             for k in keys {
                 self.remove(&k);
@@ -588,6 +645,12 @@ impl L1Cache {
     #[cfg(test)]
     pub(crate) fn path_slot(&self, m: &str, p: &str) -> usize {
         self.slot(&(m, p))
+    }
+
+    /// The `prefix_inval` slot of `p` (test hook, as `tag_slot`).
+    #[cfg(test)]
+    pub(crate) fn prefix_slot(&self, p: &str) -> usize {
+        self.slot(p)
     }
 
     /// Entries in the read front (test hook: it must track moka's).
@@ -670,7 +733,7 @@ mod tests {
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 2);
-        c.invalidate_tags(&["a".to_string()]);
+        c.invalidate_tags(&["a".to_string()], None);
         c.run_pending();
         assert_eq!(
             c.tag_index_size(),
@@ -698,7 +761,7 @@ mod tests {
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 2);
-        c.invalidate_path("GET", "/p");
+        c.invalidate_path("GET", "/p", None);
         c.run_pending();
         assert_eq!(
             c.tag_index_size(),
@@ -749,7 +812,7 @@ mod tests {
         );
         c.run_pending();
 
-        let removed = c.invalidate_path("GET", "/a");
+        let removed = c.invalidate_path("GET", "/a", None);
         c.run_pending();
         assert_eq!(removed, 2);
         assert!(html(&c, &key("GET", "/a", "")).is_none());
@@ -771,8 +834,8 @@ mod tests {
             c.read_stamp(),
         );
         c.run_pending();
-        assert_eq!(c.invalidate_path("GET", "/missing"), 0);
-        assert_eq!(c.invalidate_path("POST", "/a"), 0);
+        assert_eq!(c.invalidate_path("GET", "/missing", None), 0);
+        assert_eq!(c.invalidate_path("POST", "/a", None), 0);
         c.run_pending();
         assert_eq!(c.stats().len, 1);
     }
@@ -803,7 +866,7 @@ mod tests {
         );
         c.run_pending();
 
-        c.invalidate_tags(&["grp".to_string()]);
+        c.invalidate_tags(&["grp".to_string()], None);
         c.run_pending();
         assert!(html(&c, &key("GET", "/a", "")).is_none());
         assert!(html(&c, &key("GET", "/a", "x=1")).is_none());
@@ -825,7 +888,7 @@ mod tests {
             c.read_stamp(),
         );
         c.run_pending();
-        c.invalidate_tags(&["missing".to_string()]);
+        c.invalidate_tags(&["missing".to_string()], None);
         c.run_pending();
         assert_eq!(
             html(&c, &key("GET", "/a", "")),
@@ -880,7 +943,7 @@ mod tests {
         assert_eq!(c.stats().hits, 1);
         assert_eq!(c.stats().misses, 1);
 
-        c.invalidate_path("GET", "/a");
+        c.invalidate_path("GET", "/a", None);
         assert_eq!(c.stats().hits, 1);
         assert_eq!(c.stats().misses, 1);
 
@@ -921,7 +984,7 @@ mod tests {
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 1, "new entry stays indexed");
-        assert_eq!(c.invalidate_tags(&["t".to_string()]), 1);
+        assert_eq!(c.invalidate_tags(&["t".to_string()], None), 1);
         assert!(
             html(&c, &k).is_none(),
             "tag invalidation reaches the new entry"
@@ -955,7 +1018,7 @@ mod tests {
             )
         });
         rx.recv().unwrap();
-        c.invalidate_tags(&["t".to_string()]);
+        c.invalidate_tags(&["t".to_string()], None);
         ins.join().unwrap();
         assert!(html(&c, &k).is_none(), "invalidated entry must not survive");
         c.run_pending();
@@ -1007,9 +1070,9 @@ mod tests {
         ins(&c, key("GET", "/a", ""), "a", ttl, &["g"]);
         ins(&c, key("GET", "/b", "x=1"), "b", ttl, &[]);
         ins(&c, key("GET", "/d", ""), "d", ttl, &["g"]);
-        assert_eq!(c.invalidate_path("GET", "/b"), 1);
+        assert_eq!(c.invalidate_path("GET", "/b", None), 1);
         assert!(html(&c, &key("GET", "/b", "x=1")).is_none());
-        assert_eq!(c.invalidate_tags(&["g".to_string()]), 2);
+        assert_eq!(c.invalidate_tags(&["g".to_string()], None), 2);
         assert!(html(&c, &key("GET", "/a", "")).is_none());
         assert!(html(&c, &key("GET", "/d", "")).is_none());
         ins(&c, key("GET", "/a", ""), "a", ttl, &[]);
@@ -1043,7 +1106,7 @@ mod tests {
         });
         c.run_pending();
         assert_eq!(c.front_len(), 1);
-        assert_eq!(c.invalidate_tags(&["t".to_string()]), 1);
+        assert_eq!(c.invalidate_tags(&["t".to_string()], None), 1);
         assert!(html(&c, &k).is_none());
         assert_eq!(c.front_len(), 0);
     }
@@ -1100,7 +1163,7 @@ mod tests {
         let c = L1Cache::new();
         let k = key("GET", "/k", "");
         let s = c.read_stamp();
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         assert!(!c.insert(k.clone(), rb_of("old"), TTL, &tags(&["t"]), s));
         assert!(html(&c, &k).is_none());
         c.run_pending();
@@ -1116,7 +1179,7 @@ mod tests {
         let k = key("GET", "/k", "");
         let s = c.read_stamp();
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &tags(&["t"]), s));
-        assert_eq!(c.invalidate_tags(&tags(&["t"])), 1);
+        assert_eq!(c.invalidate_tags(&tags(&["t"]), None), 1);
         assert!(html(&c, &k).is_none());
     }
 
@@ -1124,7 +1187,7 @@ mod tests {
     fn a_stamp_after_the_invalidation_lands() {
         let c = L1Cache::new();
         let k = key("GET", "/k", "");
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         let s = c.read_stamp();
         assert!(c.insert(k.clone(), rb_of("new"), TTL, &tags(&["t"]), s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"new")));
@@ -1135,7 +1198,7 @@ mod tests {
         let c = L1Cache::new();
         let k = key("GET", "/k", "");
         let s = c.read_stamp();
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
     }
@@ -1149,7 +1212,7 @@ mod tests {
             .find(|b| c.tag_slot(b) != c.tag_slot("t"))
             .unwrap();
         let s = c.read_stamp();
-        c.invalidate_tags(&[b]);
+        c.invalidate_tags(&[b], None);
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &tags(&["t"]), s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
     }
@@ -1169,7 +1232,7 @@ mod tests {
         let c = L1Cache::new();
         let k = key("GET", "/k", "");
         let s1 = c.read_stamp();
-        c.invalidate_tags(&tags(&["t"]));
+        c.invalidate_tags(&tags(&["t"]), None);
         let s2 = c.read_stamp();
         assert!(c.insert(k.clone(), rb_of("new"), TTL, &tags(&["t"]), s2));
         assert!(!c.insert(k.clone(), rb_of("old"), TTL, &tags(&["t"]), s1));
@@ -1183,7 +1246,7 @@ mod tests {
         let c = L1Cache::new();
         let k = key("GET", "/p", "x=1");
         let s = c.read_stamp();
-        c.invalidate_path("GET", "/p");
+        c.invalidate_path("GET", "/p", None);
         assert!(!c.insert(k.clone(), rb_of("old"), TTL, &[], s));
         assert!(html(&c, &k).is_none());
     }
@@ -1197,7 +1260,7 @@ mod tests {
             .find(|q| c.path_slot("GET", q) != c.path_slot("GET", "/p"))
             .unwrap();
         let s = c.read_stamp();
-        c.invalidate_path("GET", &q);
+        c.invalidate_path("GET", &q, None);
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
     }
@@ -1208,6 +1271,8 @@ mod tests {
     enum Inval {
         Tag,
         Path,
+        /// F493: `invalidate_prefix("a.test")`, renders of that prefix over many paths.
+        Prefix,
     }
 
     impl Inval {
@@ -1215,23 +1280,30 @@ mod tests {
             match self {
                 Inval::Tag => key("GET", &format!("/r{i}"), ""),
                 Inval::Path => key("GET", "/r", &format!("x={i}")),
+                Inval::Prefix => CacheKey {
+                    prefix: "a.test".into(),
+                    ..key("GET", &format!("/r{i}"), "")
+                },
             }
         }
 
         fn tags(self) -> Vec<String> {
             match self {
                 Inval::Tag => tags(&["t"]),
-                Inval::Path => Vec::new(),
+                Inval::Path | Inval::Prefix => Vec::new(),
             }
         }
 
         fn run(self, c: &L1Cache) {
             match self {
                 Inval::Tag => {
-                    c.invalidate_tags(&tags(&["t"]));
+                    c.invalidate_tags(&tags(&["t"]), None);
                 }
                 Inval::Path => {
-                    c.invalidate_path("GET", "/r");
+                    c.invalidate_path("GET", "/r", None);
+                }
+                Inval::Prefix => {
+                    c.invalidate_prefix("a.test", None);
                 }
             }
         }
@@ -1352,6 +1424,56 @@ mod tests {
     }
 
     #[test]
+    fn renders_racing_a_prefix_invalidation_never_land_stale_phased() {
+        renders_racing_an_invalidation_phased(Inval::Prefix);
+    }
+
+    #[test]
+    fn renders_racing_prefix_invalidations_end_fresh_free_running() {
+        renders_racing_invalidations_end_fresh(Inval::Prefix);
+    }
+
+    #[test]
+    fn invalidate_prefix_publishes_before_it_scans() {
+        // As `invalidate_path_publishes_before_it_scans`, for the gate-free prefix scan (F493).
+        let c = Arc::new(L1Cache::new());
+        let k = CacheKey {
+            prefix: "a.test".into(),
+            ..key("GET", "/p", "x=1")
+        };
+        let s = c.read_stamp();
+        let landed = Arc::new(Mutex::new(None));
+        let (c2, k2, landed2) = (Arc::downgrade(&c), k.clone(), Arc::clone(&landed));
+        *c.after_path_scan.lock() = Some(Box::new(move || {
+            let c = c2.upgrade().unwrap();
+            *landed2.lock() = Some(c.insert(k2.clone(), rb_of("old"), TTL, &[], s));
+        }));
+        c.invalidate_prefix("a.test", None);
+        assert_eq!(*landed.lock(), Some(false));
+        assert!(html(&c, &k).is_none());
+    }
+
+    #[test]
+    fn invalidate_path_with_a_prefix_removes_only_that_prefix() {
+        let c = L1Cache::new();
+        let at = |p: &str, q: &str| CacheKey {
+            prefix: p.into(),
+            ..key("GET", "/a", q)
+        };
+        for k in [at("a.test", ""), at("a.test", "x=1"), at("b.test", "")] {
+            assert!(c.insert(k, rb_of("v"), TTL, &[], c.read_stamp()));
+        }
+        c.run_pending();
+        assert_eq!(c.invalidate_path("GET", "/a", Some("a.test")), 2);
+        c.run_pending();
+        assert!(html(&c, &at("a.test", "")).is_none());
+        assert!(html(&c, &at("a.test", "x=1")).is_none());
+        assert_eq!(html(&c, &at("b.test", "")), Some(Bytes::from_static(b"v")));
+        assert_eq!(c.front_len(), 1);
+        assert_eq!(c.stats().len, 1);
+    }
+
+    #[test]
     fn invalidate_path_publishes_before_it_scans() {
         // Deterministic: a render stamped before `invalidate_path` inserts once every shard was
         // scanned. Publishing after the scan would let it land, stale, in an already-scanned shard.
@@ -1364,7 +1486,7 @@ mod tests {
             let c = c2.upgrade().unwrap();
             *landed2.lock() = Some(c.insert(k2.clone(), rb_of("old"), TTL, &[], s));
         }));
-        c.invalidate_path("GET", "/p");
+        c.invalidate_path("GET", "/p", None);
         assert_eq!(*landed.lock(), Some(false));
         assert!(html(&c, &k).is_none());
     }

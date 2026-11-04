@@ -46,7 +46,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 8 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 167 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 9 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 17 | `context-state` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 14 | `jsx-expression` diagnostic (docs/react-coverage.md) |
-| 11 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 27 | `control-flow` diagnostic (docs/react-coverage.md) |
+| 11 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 26 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 1 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
 | 13 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
 | 14 | fallback:slot-native | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-native` diagnostic (docs/react-coverage.md) |
@@ -92,15 +92,16 @@ One line per thing that keeps a row or a library component off the static/native
 | 54 | fallback:hook-in-expression | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `hook-in-expression` diagnostic (docs/react-coverage.md) |
 | 55 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `local-component` diagnostic (docs/react-coverage.md) |
 | 56 | fallback:ref-in-render | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `ref-in-render` diagnostic (docs/react-coverage.md) |
-| 57 | React.Children | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | d-children-map: fallback:jsx-expression |
-| 58 | useSyncExternalStore | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | c-usesyncexternalstore: fallback:hook-unsupported |
-| 59 | fallback:hook-return-shape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `hook-return-shape` diagnostic (docs/react-coverage.md) |
-| 60 | fallback:prop-default-shape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `prop-default-shape` diagnostic (docs/react-coverage.md) |
-| 61 | fallback:raw-text-child | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `raw-text-child` diagnostic (docs/react-coverage.md) |
+| 57 | fallback:switch-fallthrough | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `switch-fallthrough` diagnostic (docs/react-coverage.md) |
+| 58 | React.Children | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | d-children-map: fallback:jsx-expression |
+| 59 | useSyncExternalStore | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | c-usesyncexternalstore: fallback:hook-unsupported |
+| 60 | fallback:hook-return-shape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `hook-return-shape` diagnostic (docs/react-coverage.md) |
+| 61 | fallback:prop-default-shape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `prop-default-shape` diagnostic (docs/react-coverage.md) |
+| 62 | fallback:raw-text-child | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `raw-text-child` diagnostic (docs/react-coverage.md) |
 
 ## Classification
 
-Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (46 survey truth, 15 census). The fixture is the CLI output unedited (the `@/` imports resolve through its `tsconfig.json` `paths`), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
+Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (47 survey truth, 15 census). The fixture is the CLI output unedited (the `@/` imports resolve through its `tsconfig.json` `paths`), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
 
 ### History: the named-export build rule (S0 → S1.1, PR #198)
 
@@ -987,7 +988,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | lib/components/panel/Panel.tsx | Panel | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:let-var, fallback:module-side-effect) | useContext / use*Context, useSyncExternalStore, rest-props spread, useEffect, useRef, useId |
 | lib/components/separator/Separator.tsx | Separator | function | react (fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:prop-pattern) | useContext / use*Context, rest-props spread, useId |
 | lib/components/separator/SeparatorClone.tsx | SeparatorClone | function | react (fallback:body-shape, fallback:hook-unsupported) | useRef |
-| lib/components/separator/SeparatorOverlayRenderer.tsx | SeparatorOverlayRenderer | function | react (fallback:control-flow, fallback:let-var) | rest-props spread |
+| lib/components/separator/SeparatorOverlayRenderer.tsx | SeparatorOverlayRenderer | function | react (fallback:let-var, fallback:switch-fallthrough) | rest-props spread |
 | lib/components/shared/ResizeSeparator.tsx | ResizeSeparator | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:let-var, fallback:prop-quoted-key) | useEffect, useState, useRef |
 
 ### recharts 3.10.1
@@ -1129,7 +1130,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/component/ResponsiveContainer.tsx | ResponsiveContainerContextProvider | function | not exported | Context.Provider / *Provider, useMemo / useCallback |
 | webpack:/Recharts/src/component/ResponsiveContainer.tsx | SizeDetectorContainer | forwardRef | not exported | forwardRef, Context.Provider / *Provider, useImperativeHandle, useEffect, useState, useRef, useMemo / useCallback |
 | webpack:/Recharts/src/component/ResponsiveContainer.tsx | ResponsiveContainer | forwardRef | react (fallback:body-shape, fallback:hook-unsupported, fallback:jsx-expression, fallback:module-side-effect) | forwardRef, useContext / use*Context, Context.Provider / *Provider, rest-props spread |
-| webpack:/Recharts/src/component/Text.tsx | Text | forwardRef | react (fallback:body-shape, fallback:control-flow, fallback:forwardref-ref, fallback:let-var) | forwardRef, rest-props spread, useMemo / useCallback |
+| webpack:/Recharts/src/component/Text.tsx | Text | forwardRef | react (fallback:body-shape, fallback:control-flow, fallback:forwardref-ref, fallback:let-var, fallback:switch-fallthrough) | forwardRef, rest-props spread, useMemo / useCallback |
 | webpack:/Recharts/src/component/Tooltip.tsx | Tooltip | function | react (fallback:body-shape, fallback:control-flow, fallback:hook-shape, fallback:hook-unsupported, fallback:let-var) | createPortal / Portal, rest-props spread, useEffect |
 | webpack:/Recharts/src/component/TooltipBoundingBox.tsx | TooltipBoundingBoxImpl | function | not exported | rest-props spread, useEffect, useState, DOM globals (document / window), addEventListener |
 | webpack:/Recharts/src/container/ClipPathProvider.tsx | ClipPathProvider | function | react (fallback:body-shape, fallback:context-state, fallback:hook-unsupported, fallback:jsx-const-child) | Context.Provider / *Provider, useState |

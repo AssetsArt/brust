@@ -55,8 +55,10 @@ export function createAdapter(name: 'redis' | 'dragonfly', raw: Record<string, u
       const method = meta.method.toUpperCase()
       const tags = [...new Set(meta.tags)]
       const stage = K.stage(crypto.randomUUID())
-      const idx = [...tags.map((t) => K.tag(t)), K.path(method, meta.path)]
-      const marks = [...tags.map((t) => K.markTag(t)), K.markPath(method, meta.path)]
+      // F493: every page joins its prefix's set (one more SADD, one more marker GET per store).
+      const prefix = meta.prefix ?? ''
+      const idx = [...tags.map((t) => K.tag(t)), K.path(method, meta.path), K.pfx(prefix)]
+      const marks = [...tags.map((t) => K.markTag(t)), K.markPath(method, meta.path), K.markPfx(prefix)]
       const frame = encodeFrame(page, { entryStamp: meta.stamp, storedAt: Date.now(), tags, method, path: meta.path })
       // Both commands go out on the one auto-pipelined connection: one round trip.
       const staged = c.set(stage, frame, 'PX', STAGE_TTL_MS)

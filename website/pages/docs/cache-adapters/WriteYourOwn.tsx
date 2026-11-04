@@ -25,7 +25,7 @@ const SRC = {
     file: '@brust/core/cache-adapter',
     code: `interface CacheStore {
   get(key: string): Promise<{ page: StoredPage | null; stamp: number | null; entryStamp: number | null; storedAt: number | null }>
-  set(key: string, page: StoredPage, meta: { ttlMs: number; tags: string[]; method: string; path: string; stamp: number | null }): Promise<boolean>
+  set(key: string, page: StoredPage, meta: { ttlMs: number; tags: string[]; method: string; path: string; prefix?: string; stamp: number | null }): Promise<boolean>
   invalidate(args: InvalidateArgs): Promise<void>
   readonly maxBodyBytes: number
 }
@@ -149,6 +149,11 @@ export default function WriteYourOwn({ blocks }: WriteYourOwnData) {
         </li>
         <li>
           <code>invalidate</code> deletes by tag or by path. It ignores <code>key</code>. Record the invalidation <i>before</i> deleting, so a racing stale <code>set</code> is refused even before the broadcast.
+        </li>
+        {/* source: packages/brust/src/cache-adapter/types.ts (SetMeta.prefix, CacheStore.invalidate), packages/brust/src/cache-adapter/memory.ts (covers: the reference rule) */}
+        <li>
+          <code>meta.prefix</code> is the page&rsquo;s evaluated route-cache prefix (<code>''</code> when it has none). Keep it with the page: an <code>invalidate</code> with <code>prefix</code> deletes only the pages whose prefix equals it, combined with its <code>tags</code> or{' '}
+          <code>path</code> when given, or every page of that prefix when alone. Pages of other prefixes must stay. A write guard may be coarser (refusing other prefixes&rsquo; racing writes costs a miss, never a stale page). The conformance suite has these cases.
         </li>
         <li>Bodies are binary. Preserve every byte value, and the order and repeats of headers.</li>
       </ul>

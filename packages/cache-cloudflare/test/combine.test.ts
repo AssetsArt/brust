@@ -63,6 +63,24 @@ describe('combine', () => {
     expect((await c.store!.get('kx')).page).toBeNull()
     expect((await c.store!.get('ky')).page).not.toBeNull()
   })
+  test('F493: a replayed prefix-scoped event hides only that prefix\'s KV entries; a new isolate seeds it', async () => {
+    const { f, isolate } = world()
+    const c = isolate(); await c.init!(init)
+    const g = await c.store!.get('k')
+    await c.store!.set('ka', page('a'), meta({ stamp: g.stamp, prefix: 'a.test' }))
+    await c.store!.set('kb', page('b'), meta({ stamp: g.stamp, prefix: 'b.test' }))
+    await f.epoch().publish({ prefix: 'a.test', path: '/p' }, 'remote')
+    await c.broadcast!.since!(0)
+    expect((await c.store!.get('ka')).page).toBeNull()
+    expect((await c.store!.get('kb')).page).not.toBeNull()
+    const fresh = isolate(); await fresh.init!(init)
+    expect((await fresh.store!.get('ka')).page).toBeNull()
+    expect((await fresh.store!.get('kb')).page).not.toBeNull()
+    // `{ prefix }` alone, through this isolate's own store.invalidate: every page of b.test.
+    await c.store!.invalidate({ prefix: 'b.test' })
+    expect((await c.store!.get('kb')).page).toBeNull()
+    expect(await c.store!.set('kb', page('b'), meta({ stamp: g.stamp, prefix: 'b.test' }))).toBe(false)
+  })
   test('an unknown name with evicted 7 and entryStamp 5 is a miss', async () => {
     const { f, isolate } = world()
     f.epoch().evicted = 7

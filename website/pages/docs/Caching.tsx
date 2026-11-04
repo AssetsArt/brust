@@ -42,7 +42,12 @@ const INVALIDATE = `// actions.ts: drop every page tagged 'team' after a real ch
 import { cache } from '@brust/core'
 
 if (added) cache.invalidate({ tags: ['team'] })
-cache.invalidate({ path: '/pokemon/pikachu' })   // every cached query of that path, GET by default`
+cache.invalidate({ path: '/pokemon/pikachu' })   // every cached query of that path, GET by default
+
+// one app serving many hosts: a route with prefix: 'request(host)'
+cache.invalidate({ prefix: 'a.test', path: '/about' })  // that path, that host only
+cache.invalidate({ prefix: 'a.test', tags: ['page'] })  // that host's tagged pages only
+cache.invalidate({ prefix: 'a.test' })                  // every cached page of that host`
 
 // recorded from `brust build && brust start --port 0` of this site, three `curl -sI` runs; do not edit by hand
 const RECORDED = `$ curl -sI 'http://127.0.0.1:53577/demo/pokemon/eevee?v=docs'
@@ -392,9 +397,35 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
       <h2 id="invalidate">Invalidate</h2>
       <p>Call it from server code (a loader or an action) after the data changed:</p>
       <CodeBlock code={blocks.invalidate.code} lang={blocks.invalidate.lang} file={blocks.invalidate.file} html={blocks.invalidate.html} />
+      {/* source: crates/brust-core/src/core.rs:192-221 (Core::invalidate: tags -> both caches, path -> pages of that path, prefix narrows the page side and skips the job cache) */}
       <p>
         <code>tags</code> drops the tagged pages and the server results cached under those tags; <code>path</code> drops that path's pages. In the browser, <code>cache.invalidate</code> throws: it is server-only.
       </p>
+      <h3 id="invalidate-prefix">One prefix at a time</h3>
+      {/* source: crates/brust-server/src/cache/l1.rs:529-545 (invalidate_path / invalidate_prefix compare the stored key prefix with ==), crates/brust-core/src/cache/local.rs (same on Workers) */}
+      <p>
+        When a route's key has a <a href="#prefix">prefix</a>, every value of it is its own set of pages. One app serving many hosts with <code>prefix: 'request(host)'</code> keeps a copy of <code>/about</code> per host. Add <code>prefix</code> to the call to reach one of them:
+        with <code>path</code> it drops that path for that prefix, with <code>tags</code> that prefix's tagged pages, and alone every cached page of that prefix (any path, query and method; add <code>method</code> to keep to one). Without{' '}
+        <code>prefix</code> the call drops every prefix's pages, as before.
+      </p>
+      <ul>
+        {/* source: crates/brust-core/src/cache/conformance.rs (invalidate_path_with_a_prefix_leaves_other_prefixes: '' matches only routes with no prefix) */}
+        <li>
+          The value is compared with the evaluated prefix exactly, as the key stores it: the string your expression produced for that request, not the expression. <code>''</code> is a value too: it matches the pages of routes with no prefix (or whose prefix evaluated to nothing).
+        </li>
+        {/* source: crates/brust-core/src/core.rs:202-205 (with a prefix, tags do not reach the job cache) */}
+        <li>
+          <code>prefix</code> reaches pages only. Server results cached with <code>cache(Component, {'{ tags }'})</code> carry no prefix, so <code>{'{ prefix, tags }'}</code> leaves them alone and reports <code>jobRemoved: 0</code>; call <code>{'{ tags }'}</code> without a prefix to drop them too.
+        </li>
+        {/* source: packages/brust/src/cache.ts:13-21 (checkInvalidateArgs), crates/brust-core/src/config.rs:428-441 (InvalidateArgs::validate) */}
+        <li>
+          <code>prefix</code> with <code>key</code> is refused with a <code>TypeError</code>: <code>key</code> names a server result, not a page. Make two calls.
+        </li>
+        {/* source: packages/brust/src/cache-adapter/runtime.ts (afterInvalidate: store.invalidate then publish with the same args), crates/brust-core/src/l2.rs:276-300 (the replayed floor is scoped by prefix) */}
+        <li>
+          With a <a href="/docs/cache-adapters/overview">cache adapter</a> the prefix goes with the event: the shared store deletes that prefix's pages only, and every instance replays it the same way.
+        </li>
+      </ul>
 
       <h2 id="shared">Across instances</h2>
       <p>

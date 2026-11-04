@@ -889,3 +889,70 @@ fn use_id_in_a_conditional_position_is_refused_by_name() {
         );
     }
 }
+
+// ---- F499: what a `switch` in a component may be, and the refusals ----
+
+fn switch_body(body: &str) -> ComponentIR {
+    ir(&format!(
+        "export default function V({{ t, o }}: any) {{ {body} }}"
+    ))
+}
+
+#[test]
+fn a_switch_that_returns_in_every_case_reads_without_a_fallback() {
+    for body in [
+        // literals of every kind, stacked cases, a default first
+        "switch (t) { default: return <i/>; case 'a': case 'b': return <b/>; case 1: return <u/>; case true: return <s/>; case null: return <q/>; case -2: return <p/> }",
+        // a member chain with optional chaining, braces, a const in a braced case
+        "switch (o?.kind.type) { case 'a': { const x = 'x'; return <b>{x}</b> } default: return <i/> }",
+        // no default: the rest of the body is the else
+        "switch (t) { case 'a': return <b/> }\n return <i/>",
+        // a default that throws a literal-message Error
+        "switch (t) { case 'a': return <b/>; default: throw new Error('no') }",
+    ] {
+        let c = switch_body(body);
+        assert!(c.diagnostics.is_empty(), "{body}: {:?}", c.diagnostics);
+    }
+}
+
+#[test]
+fn a_switch_that_could_fall_through_or_leave_is_refused_with_switch_fallthrough() {
+    for body in [
+        // a non-empty case that does not return
+        "switch (t) { case 'a': console.log(1); case 'b': return <b/>; default: return <i/> }",
+        // break
+        "switch (t) { case 'a': break; default: return <i/> }\n return <b/>",
+        // a declaration without braces is visible to the other cases
+        "switch (t) { case 'a': const x = 1; return <b>{x}</b>; default: return <i/> }",
+        // a case test that is not a literal
+        "switch (t) { case o: return <b/>; default: return <i/> }",
+        // a trailing case with no body
+        "switch (t) { default: return <i/>; case 'a': }",
+        // a case that returns nothing
+        "switch (t) { case 'a': return; default: return <i/> }",
+        // a throw outside the default
+        "switch (t) { case 'a': throw new Error('x'); default: return <i/> }",
+    ] {
+        let c = switch_body(body);
+        assert!(
+            c.diagnostics.iter().any(|d| d.rule == "switch-fallthrough"),
+            "{body}: {:?}",
+            c.diagnostics
+        );
+    }
+}
+
+#[test]
+fn a_switch_discriminant_that_is_not_a_pure_path_keeps_the_control_flow_fallback() {
+    for body in [
+        "switch (f(t)) { case 'a': return <b/>; default: return <i/> }",
+        "switch (t + o) { case 'a': return <b/>; default: return <i/> }",
+    ] {
+        let c = switch_body(body);
+        assert!(
+            c.diagnostics.iter().any(|d| d.rule == "control-flow"),
+            "{body}: {:?}",
+            c.diagnostics
+        );
+    }
+}

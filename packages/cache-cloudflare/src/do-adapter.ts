@@ -109,8 +109,9 @@ export function doAdapter(options: DoOptions = {}, deps: DoDeps = {}): DoAdapter
         if (page.body.length > MAX_DO_BODY_BYTES) return false
         const at = now()
         const expiresAt = at + meta.ttlMs
-        const frame = encodeEntry(page, { tags: meta.tags, method: meta.method, path: meta.path, entryStamp: meta.stamp, storedAt: at, expiresAt })
-        return (await shard(shardIndex(key))).set(key, frame, { tags: meta.tags, method: meta.method, path: meta.path, expiresAt }, meta.stamp)
+        const prefix = meta.prefix ?? ''
+        const frame = encodeEntry(page, { tags: meta.tags, method: meta.method, path: meta.path, prefix, entryStamp: meta.stamp, storedAt: at, expiresAt })
+        return (await shard(shardIndex(key))).set(key, frame, { tags: meta.tags, method: meta.method, path: meta.path, prefix, expiresAt }, meta.stamp)
       },
       async invalidate(args: InvalidateArgs) {
         const head = await (await epoch()).head()

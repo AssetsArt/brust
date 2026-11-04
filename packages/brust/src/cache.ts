@@ -9,8 +9,19 @@ import { type InvalidateArgs, type InvalidateResult, cacheInvalidate } from './n
 export type { ComponentCacheOptions } from './cache-core'
 
 const NO_SERVER = 'cache.invalidate needs a running server (call it inside `brust start`)'
+/** Same text as brust-core `PREFIX_WITH_KEY` (the Rust hosts refuse it too). */
+export const PREFIX_WITH_KEY = 'cache.invalidate: `prefix` narrows page entries; `key` names a job entry — call them separately'
+
+/** F493: `prefix` is a string and never comes with `key`. Throws a TypeError otherwise. */
+export function checkInvalidateArgs(args: InvalidateArgs): void {
+  const prefix = (args as { prefix?: unknown } | null | undefined)?.prefix
+  if (prefix === undefined) return
+  if (typeof prefix !== 'string') throw new TypeError(`cache.invalidate: \`prefix\` must be a string (got ${prefix === null ? 'null' : typeof prefix})`)
+  if (args.key !== undefined) throw new TypeError(PREFIX_WITH_KEY)
+}
 
 function invalidate(args: InvalidateArgs): InvalidateResult {
+  checkInvalidateArgs(args)
   let r: InvalidateResult
   try {
     r = cacheInvalidate(args)

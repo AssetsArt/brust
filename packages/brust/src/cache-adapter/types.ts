@@ -21,6 +21,11 @@ export interface SetMeta {
   tags: string[]
   method: string
   path: string
+  /**
+   * The entry's evaluated route-cache key prefix (`''` = none), for `invalidate({ prefix })` (F493).
+   * Absent only from callers older than F493: treat it as `''`.
+   */
+  prefix?: string
   /** The `stamp` the lookup returned (read before the render); `null` = unguarded write. */
   stamp: number | null
 }
@@ -45,7 +50,8 @@ export interface CacheStore {
   /**
    * Shared-side delete by tags/path (`key` is a no-op: the store holds pages only). Records the
    * invalidation marker BEFORE deleting, so a concurrent stale `set` is refused even before the
-   * publish (ruling L7b).
+   * publish (ruling L7b). With `prefix` (F493) only entries whose `SetMeta.prefix` equals it are
+   * deleted (`{ prefix }` alone: every page of that prefix); entries of other prefixes stay.
    */
   invalidate(args: InvalidateArgs): Promise<void>
   readonly maxBodyBytes: number

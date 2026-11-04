@@ -226,10 +226,11 @@ pub fn request(
                 .await
                 .unwrap();
         tokio::spawn(conn);
-        let mut b = http::Request::builder()
-            .method(method)
-            .uri(path)
-            .header("host", "fx");
+        let mut b = http::Request::builder().method(method).uri(path);
+        // `Host: fx` unless the caller names its own host.
+        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
+            b = b.header("host", "fx");
+        }
         for (k, v) in headers {
             b = b.header(*k, *v);
         }
@@ -285,10 +286,11 @@ pub fn request_raw(
                 .await
                 .unwrap();
         tokio::spawn(conn);
-        let mut b = http::Request::builder()
-            .method(method)
-            .uri(path)
-            .header("host", "fx");
+        let mut b = http::Request::builder().method(method).uri(path);
+        // `Host: fx` unless the caller names its own host.
+        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
+            b = b.header("host", "fx");
+        }
         for (k, v) in headers {
             b = b.header(*k, *v);
         }

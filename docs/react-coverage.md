@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 62 | 40 | 16 | 6 | 0 | 0 | 0 | 0 |
 | B Composition | 245 | 129 | 20 | 96 | 0 | 0 | 0 | 0 |
-| C Hooks | 237 | 76 | 75 | 86 | 0 | 0 | 0 | 0 |
+| C Hooks | 241 | 79 | 76 | 86 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 76 | 33 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 653 | 291 | 127 | 231 | 3 | 1 | 0 | 0 |
+| **Total** | 657 | 294 | 128 | 231 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -572,6 +572,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-chain-throw-state | an early return chain that ends in a throw, tested on state | static | static | ssr | ok | 4.3 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
 | c-chain-throw-msg | a chain that ends in throw new Error(prop) | static | static | ssr | ok | 4.3 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
 | c-chain-throw-value | a chain that ends in throw of a string | static | static | ssr | ok | 4.3 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-switch-return | a switch on a prop whose every case returns: stacked cases, a braced case with a const, a default | static | static | 0 | ok | 0 | — | F499: lowered like an early-return chain of `if (d === L) return`, `===` strict; a case that would fall through or leave the switch stays React with switch-fallthrough |
+| c-switch-return-throw | a switch on a prop whose default throws new Error(literal) | static | static | 0 | ok | 0 | — | F499: the default is the chain's render-error arm (HTTP 500 through the existing path, no message) |
+| c-switch-return-state | a switch on useState whose every case returns a button | native | native | 0 | ok | 5.7 | — | F499: the discriminant reads state, so the chain is an x-if that follows the clicks |
+| c-switch-fallthrough | a switch with a non-empty case that does not return (it falls through) | static | static | ssr | ok | 4.3 | — | F499: the switch component is refused with switch-fallthrough (it stays React, an island under a static page): end every case with return |
 | c-ref-write-render-stable | a render-time ref write of a []-deps callback and a setter (useStableComposedRefs) | native | native | 0 | ok | 5.1 | — | F288 G9 (Mellow A2): one unconditional top-level write of stable leaves, read only in effects/handlers, is the useRef initialiser |
 | c-ref-write-render-member | a render-time ref write of a field of a const object literal | native | native | 0 | ok | 5.1 | — | F288 G9 ruling 255806ff (a): o.k of a const static-key literal never written or escaping is its field |
 | c-ref-write-render-logical | a render-time ref write of \|\| / ?? / && over stable operands | native | native | 0 | ok | 5.1 | — | F288 G9 ruling 255806ff (b): a logical expression is one of its operands, stable when every operand is |

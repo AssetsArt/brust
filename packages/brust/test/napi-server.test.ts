@@ -70,7 +70,10 @@ test('startServer + one worker answers pages, HIT skips Bun, invalidate forces M
   const r3 = await fetch(`${base}/pokemon/pikachu`)
   expect(r3.headers.get('x-brust-cache')).toBe('MISS')
   await r3.text()
-  expect(cacheInvalidate({ path: '/pokemon/pikachu' })).toEqual({ l1Removed: 1, jobRemoved: 0 })
+  // F493: the fixture route has no prefix (stored ''): another prefix misses it, '' hits it.
+  expect(cacheInvalidate({ prefix: 'a.test', path: '/pokemon/pikachu' })).toEqual({ l1Removed: 0, jobRemoved: 0 })
+  expect(cacheInvalidate({ prefix: '', path: '/pokemon/pikachu' })).toEqual({ l1Removed: 1, jobRemoved: 0 })
+  expect(() => cacheInvalidate({ prefix: 'a.test', key: 'k' })).toThrow('`prefix` narrows page entries')
 
   await beginDrain(1000)
   expect(() => startServer({ host: '127.0.0.1', port: 0, distDir: '/nonexistent', workers: 0 })).toThrow(/manifest: .*manifest\.json/)

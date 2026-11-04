@@ -283,6 +283,64 @@ test('duplicate route patterns (trailing slash, param names) fail with duplicate
   await expect(build(dir, tmpOut(), 'dup-plain.tsx')).rejects.toMatchObject({ rule: 'duplicate-route', message: expect.stringContaining('/b/{') })
 }, 60_000)
 
+// ---- 6b. patterns the server's router refuses fail at build (F496) ----
+
+test('a {*rest} route next to a {slug} sibling fails the build with the router message and both route ids', async () => {
+  const dir = join(safety, 'routes-invalid')
+  const out = tmpOut()
+  const err = await build(dir, out, 'rest-slug.tsx').then(
+    () => null,
+    (e: unknown) => e as { rule: string; message: string },
+  )
+  expect(err?.rule).toBe('route-conflict')
+  // The server's own text (`RouteInstallError::Insert`, routing/routes.rs) plus the two ids and patterns.
+  expect(err?.message).toContain('invalid route pattern "/{slug}": Insertion failed due to conflict with previously registered route: /{*rest}')
+  expect(err?.message).toContain('r1 (/{*rest})')
+  expect(err?.message).toContain('r2 (/{slug})')
+  expect(existsSync(join(out, 'manifest.json'))).toBe(false)
+}, 60_000)
+
+test('a {*rest} route alone builds and serves a nested path with params.rest percent-decoded', async () => {
+  const app = join(import.meta.dir, 'fixtures/rest-route')
+  const built = cli(['build', 'routes.tsx'], app)
+  if (built.code !== 0) throw new Error(`brust build failed:\n${built.err}`)
+  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
+  const proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
+  let log = ''
+  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
+  const dec = new TextDecoder()
+  try {
+    while (!/\[brust\] ready/.test(log)) {
+      const { done, value } = await reader.read()
+      if (done) throw new Error(`brust start exited before ready:\n${log}`)
+      log += dec.decode(value, { stream: true })
+    }
+    const base = `http://${/listening on (\S+)/.exec(log)![1]}`
+    void (async () => {
+      for (;;) {
+        const { done } = await reader.read()
+        if (done) return
+      }
+    })()
+    for (const [path, want] of [
+      ['/docs/a/b/c', 'a/b/c'],
+      ['/docs/a%20b/c', 'a b/c'],
+    ] as const) {
+      const r = await fetch(`${base}${path}`)
+      expect(r.status).toBe(200)
+      expect(await r.text()).toContain(`<p id="rest">${want}</p>`)
+    }
+  } finally {
+    proc.kill('SIGINT')
+    const exited = await Promise.race([proc.exited, Bun.sleep(5000).then(() => undefined)])
+    if (exited === undefined) {
+      proc.kill('SIGKILL')
+      await proc.exited
+    }
+    rmSync(join(app, 'dist'), { recursive: true, force: true })
+  }
+}, 120_000)
+
 // ---- 7. native client chunks share modules ----
 
 test('two native components importing the same store ship one copy of it', async () => {

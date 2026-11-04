@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { assertRoutesInstallable } from '../src/build/route-conflicts'
 import { defineRoutes, flattenRoutes, httpError, isHttpErrorTrigger, isVerdict, notFound, Outlet, redirect } from '../src/routes'
 
 const L = () => null,
@@ -93,4 +94,26 @@ test('cache on a layout route (has children) is rejected in M2', () => {
   expect(() => defineRoutes([{ path: '/', Component: L, cache: { ttl_seconds: 60 }, children: [{ path: '/a', Component: H }] }])).toThrow(
     'cache on a layout route is not supported in M2 (M3)',
   )
+})
+
+// ---- F496: the router's refusal, named by route id (the check itself is the addon's, crates/brust-napi) ----
+
+test('assertRoutesInstallable passes catch-all leaves out, and names both routes of a refusal', () => {
+  const C = () => null
+  const { leaves } = flattenRoutes([
+    { path: '/{*rest}', Component: C },
+    { path: '*', Component: C },
+    { path: '/{slug}', Component: C },
+  ])
+  let seen: string[] = []
+  const refuse = (patterns: string[]) => {
+    seen = patterns
+    return { index: 1, withIndex: 0, message: 'refused' }
+  }
+  expect(() => assertRoutesInstallable(leaves, refuse)).toThrow(
+    expect.objectContaining({ rule: 'route-conflict', message: 'routes r0 (/{*rest}) and r2 (/{slug}) cannot be installed together: refused' }),
+  )
+  expect(seen).toEqual(['/{*rest}', '/{slug}'])
+  expect(() => assertRoutesInstallable(leaves, () => null)).not.toThrow()
+  expect(() => assertRoutesInstallable(leaves, () => ({ index: 1, message: 'bad' }))).toThrow('route r2 (/{slug}) cannot be installed: bad')
 })
