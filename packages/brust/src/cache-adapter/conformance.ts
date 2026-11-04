@@ -129,6 +129,48 @@ export function runConformance(make: () => CacheAdapter | Promise<CacheAdapter>,
       expect((await s.get(k2)).page).not.toBeNull()
     })
 
+    if (caps.invalidate !== false) test('F493: prefix + path drops that prefix\'s page only', async () => {
+      const { s } = await store()
+      const [a, b, none] = [key(), key(), key()]
+      await s.set(a, page('a'), meta({ path: '/x', prefix: 'a.test' }))
+      await s.set(b, page('b'), meta({ path: '/x', prefix: 'b.test' }))
+      await s.set(none, page('n'), meta({ path: '/x', prefix: '' }))
+      await s.invalidate({ prefix: 'a.test', path: '/x' })
+      expect((await s.get(a)).page).toBeNull()
+      expect((await s.get(b)).page).not.toBeNull()
+      expect((await s.get(none)).page).not.toBeNull()
+      // `''` is exact: it matches the entry with no prefix only.
+      await s.invalidate({ prefix: '', path: '/x' })
+      expect((await s.get(none)).page).toBeNull()
+      expect((await s.get(b)).page).not.toBeNull()
+    })
+
+    if (caps.invalidate !== false) test('F493: prefix + tags drops that prefix\'s tagged pages; the other prefix stays tagged', async () => {
+      const { s } = await store()
+      const [a, b, a2] = [key(), key(), key()]
+      await s.set(a, page('a'), meta({ tags: ['page'], path: '/p', prefix: 'a.test' }))
+      await s.set(b, page('b'), meta({ tags: ['page'], path: '/p', prefix: 'b.test' }))
+      await s.set(a2, page('a2'), meta({ tags: ['other'], path: '/q', prefix: 'a.test' }))
+      await s.invalidate({ prefix: 'a.test', tags: ['page'] })
+      expect((await s.get(a)).page).toBeNull()
+      expect((await s.get(b)).page).not.toBeNull()
+      expect((await s.get(a2)).page).not.toBeNull()
+      await s.invalidate({ tags: ['page'] })
+      expect((await s.get(b)).page).toBeNull()
+    })
+
+    if (caps.invalidate !== false) test('F493: prefix alone drops every page of that prefix', async () => {
+      const { s } = await store()
+      const [a1, a2, b] = [key(), key(), key()]
+      await s.set(a1, page('1'), meta({ path: '/x', prefix: 'a.test' }))
+      await s.set(a2, page('2'), meta({ tags: ['t'], path: '/y', prefix: 'a.test' }))
+      await s.set(b, page('b'), meta({ path: '/x', prefix: 'b.test' }))
+      await s.invalidate({ prefix: 'a.test' })
+      expect((await s.get(a1)).page).toBeNull()
+      expect((await s.get(a2)).page).toBeNull()
+      expect((await s.get(b)).page).not.toBeNull()
+    })
+
     test('key invalidation is a store no-op', async () => {
       const { s } = await store()
       const k = key()
@@ -167,6 +209,39 @@ export function runConformance(make: () => CacheAdapter | Promise<CacheAdapter>,
         expect((await s.get(k)).page).toBeNull()
       })
     }
+
+    if (caps.guard) {
+      test('F493: a set whose stamp predates an invalidation of its prefix is refused; another prefix lands', async () => {
+        const { a, s } = await store()
+        const [k, other] = [key(), key()]
+        const g = await s.get(k)
+        await s.invalidate({ prefix: 'a.test' })
+        await a.broadcast?.publish({ prefix: 'a.test' }, 'conf')
+        expect(await s.set(k, page('stale'), meta({ path: '/p', prefix: 'a.test', stamp: g.stamp }))).toBe(false)
+        expect((await s.get(k)).page).toBeNull()
+        expect(await s.set(other, page('b'), meta({ path: '/p', prefix: 'b.test', stamp: g.stamp }))).toBe(true)
+        const g2 = await s.get(k)
+        expect(await s.set(k, page('fresh'), meta({ path: '/p', prefix: 'a.test', stamp: g2.stamp }))).toBe(true)
+      })
+    }
+
+    test('F493: the broadcast carries prefix in its args', async () => {
+      const a = await fresh()
+      if (!a.broadcast?.subscribe && !a.broadcast?.since) return
+      const args = { prefix: 'a.test', path: '/b' }
+      if (a.broadcast.subscribe) {
+        const got: InvalidationEvent[] = []
+        const stop = await a.broadcast.subscribe(e => got.push(e), () => {})
+        const seq = await a.broadcast.publish(args, 'o1')
+        await until('delivery', () => got.length === 1)
+        expect(got[0]).toEqual({ seq, origin: 'o1', args })
+        await stop()
+      } else {
+        const base = (await a.broadcast.since!(0)).seq
+        await a.broadcast.publish(args, 'o1')
+        expect((await a.broadcast.since!(base)).events.map(e => e.args)).toEqual([args])
+      }
+    })
 
     test('publish seqs strictly increase; get().stamp is the last seq (one space)', async () => {
       const a = await fresh()
