@@ -47,6 +47,10 @@ export interface BrustConfig {
    * root), absent when nothing set it. A build setting too (`brust build` bakes it into the manifest): `brust start` refuses a manifest
    * built for another one, and with none set serves the one the manifest names. */
   basePath?: string
+  /** F506 `[server] trailing_slash` / `run({ config: { trailingSlash } })`: what a page request whose path ends in `/` gets — `strict` (matched
+   * as written, the default), `redirect` (GET/HEAD answer 308 to the path without it, query kept) or `ignore` (the slash is dropped before
+   * matching). A build setting too (baked into the manifest): `brust start` refuses a manifest built with another one. */
+  trailingSlash?: TrailingSlash
   /** L16 R16.1: the origin the browser `client()` calls (page script `__BRUST_ACTION_BASE__`); absent = same origin. */
   actionsBaseUrl?: string
   /** L16 R16.2: the client's default `RequestInit.credentials` (`__BRUST_ACTION_CREDENTIALS__`); absent = `same-origin`. */
@@ -55,6 +59,16 @@ export interface BrustConfig {
 
 /** What `run({ config })` / `loadConfig`'s `cli` accepts: any setting, and `cors: null` to turn a toml `[cors]` off. */
 export type ConfigOverrides = Omit<Partial<BrustConfig>, 'cors'> & { cors?: (Omit<CorsConfig, 'credentials'> & { credentials?: boolean }) | null }
+
+/** F506: the `[server] trailing_slash` values. */
+export const TRAILING_SLASH = ['strict', 'redirect', 'ignore'] as const
+export type TrailingSlash = (typeof TRAILING_SLASH)[number]
+
+/** F506: `[server] trailing_slash`, validated; the reason it is refused otherwise. */
+export function checkTrailingSlash(raw: unknown): { ok: true; value: TrailingSlash } | { ok: false; why: string } {
+  if (typeof raw === 'string' && (TRAILING_SLASH as readonly string[]).includes(raw)) return { ok: true, value: raw as TrailingSlash }
+  return { ok: false, why: `must be one of ${TRAILING_SLASH.map((v) => JSON.stringify(v)).join(', ')} (got ${JSON.stringify(raw)})` }
+}
 
 /** F495: `[server] base_path`, validated: `/seg[/seg…]`, no trailing `/`, each segment `[A-Za-z0-9._~-]+` (not `.`/`..`), the
  * same alphabet as the actions prefix, so it needs no percent-encoding anywhere it is printed. `""` and `"/"` mean the
@@ -130,6 +144,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
     ioThreads: env.ioThreads ?? cli.ioThreads,
     ...(cors ? { cors } : {}),
     ...pick('basePath', cli.basePath ?? fromToml.basePath),
+    ...pick('trailingSlash', cli.trailingSlash ?? fromToml.trailingSlash),
     ...pick('actionsBaseUrl', env.actionsBaseUrl ?? cli.actionsBaseUrl ?? fromToml.actionsBaseUrl),
     ...pick('actionsCredentials', cli.actionsCredentials ?? fromToml.actionsCredentials),
   }
@@ -173,6 +188,10 @@ function checkCli(cli: ConfigOverrides): void {
     if (!r.ok) throw new BrustConfigError(`config.basePath ${r.why}`, null)
     cli.basePath = r.value
   }
+  if (cli.trailingSlash !== undefined) {
+    const r = checkTrailingSlash(cli.trailingSlash)
+    if (!r.ok) throw new BrustConfigError(`config.trailingSlash ${r.why}`, null)
+  }
   if (cli.actionsBaseUrl !== undefined) {
     const why = baseUrlError(cli.actionsBaseUrl)
     if (why) throw new BrustConfigError(`config.actionsBaseUrl ${why}`, null)
@@ -203,6 +222,11 @@ function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
       const r = normalizeBasePath(server.base_path)
       if (!r.ok) throw new BrustConfigError(`${file}: server.base_path ${r.why}`, file)
       out.basePath = r.value
+    }
+    if (server.trailing_slash !== undefined) {
+      const r = checkTrailingSlash(server.trailing_slash)
+      if (!r.ok) throw new BrustConfigError(`${file}: server.trailing_slash ${r.why}`, file)
+      out.trailingSlash = r.value
     }
     const cap = tomlInt(server.max_loader_response_bytes, 'server.max_loader_response_bytes', MIN_LOADER_RESPONSE_BYTES, MAX_LOADER_RESPONSE_BYTES, file)
     if (cap !== undefined) out.maxLoaderResponseBytes = cap

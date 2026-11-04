@@ -22,7 +22,7 @@ import {
   streamEntryError,
 } from '../actions/prefix'
 import { ADAPTER_NAMES, BUILTINS, installHint } from '../cache-adapter/load'
-import { normalizeBasePath } from '../config'
+import { checkTrailingSlash, normalizeBasePath, type TrailingSlash } from '../config'
 import { BuildError } from './errors'
 import { posixOf } from './posix'
 
@@ -111,6 +111,8 @@ export interface BuildConfig {
   sourceRoots: string[]
   /** `[server] base_path` (F495), normalised (`/portal`); `''` = the app is mounted at the root. Baked into every URL brust emits. */
   basePath: string
+  /** `[server] trailing_slash` (F506), baked into the manifest; `strict` (the default) = the path is matched as written. */
+  trailingSlash: TrailingSlash
 }
 
 const isTable = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -414,10 +416,18 @@ function parseBasePath(file: string, server: unknown): string {
   return r.value
 }
 
+/** `[server] trailing_slash` (F506): the one validator is config.ts's; a bad value is a build error here too. */
+function parseTrailingSlash(file: string, server: unknown): TrailingSlash {
+  if (!isTable(server) || server.trailing_slash === undefined) return 'strict'
+  const r = checkTrailingSlash(server.trailing_slash)
+  if (!r.ok) throw new BuildError('config', `${file}: server.trailing_slash ${r.why}`)
+  return r.value
+}
+
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], basePath: '' }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], basePath: '', trailingSlash: 'strict' }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -426,17 +436,18 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   }
   const root = (parsed ?? {}) as Record<string, unknown>
   const basePath = parseBasePath(file, root.server)
+  const trailingSlash = parseTrailingSlash(file, root.server)
   const actions = parseActions(file, root.actions, o.actionsOnly === true, basePath)
   const cloudflare = parseCloudflare(file, appRoot, root.cloudflare)
   const cache = await parseCache(file, appRoot, root.cache)
   const cssGlobal = parseCss(file, root.css)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], basePath }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], basePath, trailingSlash }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, basePath }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, basePath, trailingSlash }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, basePath }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, basePath, trailingSlash }
 }

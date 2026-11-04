@@ -18,6 +18,7 @@ address = "127.0.0.1"   # default localhost
 port = 1337             # 1..65535, default 1337
 max_loader_response_bytes = 8388608   # 256 KiB..64 MiB, default 8 MiB (env BRUST_MAX_LOADER_RESPONSE_BYTES)
 base_path = "/portal"   # mount the app under a path (a build setting), default the root
+trailing_slash = "redirect"   # "strict" | "redirect" | "ignore" (a build setting), default "strict"
 
 [workers]
 count = 4               # 1..1024, default one per CPU core
@@ -76,6 +77,7 @@ export async function configurationLoader(): Promise<ConfigurationData> {
       { id: 'server', title: 'Server and workers' },
       { id: 'code', title: 'Configure from code' },
       { id: 'toml-only', title: 'What only brust.toml sets' },
+      { id: 'trailing-slash', title: 'Trailing slashes' },
       { id: 'base-path', title: 'Mount under a path' },
       { id: 'try', title: 'Try it' },
       { id: 'size', title: 'Response size' },
@@ -135,6 +137,19 @@ export default function Configuration({ blocks }: ConfigurationData) {
       <p>
         <code>[actions]</code>, <code>[cache]</code> and <code>[build]</code> are read by <code>brust build</code> and recorded in the manifest, so they are decided at build time. A build with no <code>brust.toml</code> has no actions and no
         shared cache, whatever <code>server.ts</code> says.
+      </p>
+
+      <h2 id="trailing-slash">Trailing slashes</h2>
+      {/* source: packages/brust/src/config.ts:68 (checkTrailingSlash: the three values) and :226 (the toml key), crates/brust-core/src/config.rs:441 (TrailingSlash::strip: `/` and a %2F are not trailing slashes), crates/brust-core/src/pipeline.rs:171-205 (the step: after brust's own paths and the method gate, before matching and the page cache), packages/brust/src/run.ts:99 (trailing-slash-mismatch), packages/brust/src/build/static.ts:183 (the static warning), crates/brust-server/tests/trailing_slash.rs (served) */}
+      <p>
+        <code>[server] trailing_slash</code> decides what a page request whose path ends in <code>/</code> gets. <code>"strict"</code>, the default, is the behaviour you had: the path is matched as written, so <code>/cart/</code> is a 404 next to
+        a <code>/cart</code> route. <code>"redirect"</code> answers a GET or HEAD with <strong>308</strong> to the same path without the slash, the query string kept and the base path too (<code>/portal/</code> goes to <code>/portal</code>), before
+        any route is matched or the page cache read. <code>"ignore"</code> drops the slash before matching: both spellings answer the same page from one cache entry. Other methods, <code>/</code> itself, a path ending in <code>%2F</code>, and
+        brust&rsquo;s own paths (<code>/_brust/…</code>, <code>/public/…</code>, <code>/ping</code>) are never touched.
+      </p>
+      <p>
+        Like <code>base_path</code>, it is baked into the manifest by <code>brust build</code>; a <code>brust.toml</code> or <code>run({'{ config: { trailingSlash } }'})</code> that names another value stops <code>brust start</code> with 
+        <code>trailing-slash-mismatch</code>. With <code>--target static</code> the static host serves the files its own way: the build warns <code>trailing-slash-static</code> unless the value is <code>"strict"</code>.
       </p>
 
       <h2 id="base-path">Mount under a path</h2>

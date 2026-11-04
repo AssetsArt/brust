@@ -168,6 +168,40 @@ pub async fn handle<H: Host>(
         return resp;
     }
 
+    // F506: one trailing-slash policy per app, before route matching and the page cache (brust's own paths returned
+    // above; only GET/HEAD reach here).
+    let slashless;
+    let mut full = full;
+    if let Some(stripped) = crate::config::TrailingSlash::strip(path_only)
+        // `/ping/` stays what it is today (a page path that answers 404): brust's own paths are never rewritten.
+        && crate::config::TrailingSlash::strip(fw) != Some("/ping")
+    {
+        match s.manifest.trailing_slash {
+            crate::config::TrailingSlash::Strict => {}
+            crate::config::TrailingSlash::Redirect => {
+                let location = match full.split_once('?') {
+                    Some((_, q)) => format!("{stripped}?{q}"),
+                    None => stripped.to_string(),
+                };
+                tracing::debug!(target: "brust::request", path = path_only, status = 308u16, "trailing slash");
+                let resp = body::resp(
+                    308,
+                    "text/plain",
+                    &[("location".into(), location)],
+                    Vec::new(),
+                );
+                return if head { head_only(resp) } else { resp };
+            }
+            crate::config::TrailingSlash::Ignore => {
+                slashless = match full.split_once('?') {
+                    Some((_, q)) => format!("{stripped}?{q}"),
+                    None => stripped.to_string(),
+                };
+                full = slashless.as_str();
+            }
+        }
+    }
+
     let t0 = s.host.now_ns();
     let traced = s.dev_token.as_deref().is_some_and(|t| {
         headers

@@ -422,6 +422,31 @@ impl ActionsConfig {
     }
 }
 
+/// F506: `[server] trailing_slash`, baked into the manifest at build: what a page request whose path ends in `/` gets.
+/// `strict` (the default) = today: the path is matched as written. `redirect` = a GET/HEAD answers 308 to the same path
+/// without the trailing slash(es), query kept. `ignore` = the slash is dropped before matching and the cache key.
+/// brust's own paths (`/_brust/…`, `/public/…`, `/ping`) and other methods are never touched.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrailingSlash {
+    #[default]
+    Strict,
+    Redirect,
+    Ignore,
+}
+
+impl TrailingSlash {
+    /// `path` (no query) without its trailing slash(es), when it has any and is not `/`; `None` = nothing to do.
+    /// A percent-encoded `%2F` is not a slash (params are decoded after matching).
+    pub fn strip(path: &str) -> Option<&str> {
+        if path.len() <= 1 || !path.ends_with('/') {
+            return None;
+        }
+        let t = path.trim_end_matches('/');
+        Some(if t.is_empty() { "/" } else { t })
+    }
+}
+
 /// `cache.invalidate({ key?, tags?, path?, method?, prefix? })` (spec §5).
 ///
 /// `prefix` (F493) narrows the page (L1/L2) invalidation to entries whose evaluated, stored key
@@ -811,6 +836,26 @@ mod tests {
             j.ends_with(r#","missing_slots":0,"l2":{"adapter":"custom","hits":0,"misses":0,"timeouts":0,"errors":0,"rejected_floor":0,"sets":0,"set_refused":0,"set_dropped":0,"set_oversize":0,"published":0,"publish_errors":0,"received":0,"skipped_own":0,"resets":0,"epoch_polls":0,"poll_errors":0}}"#),
             "{j}"
         );
+    }
+
+    #[test]
+    fn trailing_slash_strips_only_real_trailing_slashes() {
+        use super::TrailingSlash as T;
+        assert_eq!(T::strip("/"), None);
+        assert_eq!(T::strip("/a"), None);
+        assert_eq!(T::strip("/a/"), Some("/a"));
+        assert_eq!(T::strip("/a/b//"), Some("/a/b"));
+        assert_eq!(T::strip("//"), Some("/"));
+        assert_eq!(T::strip("/portal/"), Some("/portal"));
+        // A percent-encoded slash is part of the last segment, not a trailing slash.
+        assert_eq!(T::strip("/a%2F"), None);
+        assert_eq!(T::strip("/a%2f"), None);
+        assert_eq!(
+            serde_json::from_str::<T>(r#""redirect""#).unwrap(),
+            T::Redirect
+        );
+        assert_eq!(T::default(), T::Strict);
+        assert!(serde_json::from_str::<T>(r#""Redirect""#).is_err());
     }
 
     #[test]

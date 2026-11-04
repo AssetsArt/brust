@@ -37,6 +37,8 @@ export interface RunManifest {
   cache?: { adapter: string; getTimeoutMs: number; maxBodyBytes: number; namespace: string; buildId: string } | null
   /** F495: the `[server] base_path` the build baked in; absent = the app is at the root. */
   base_path?: string
+  /** F506: the `[server] trailing_slash` the build baked in; absent = `strict`. */
+  trailing_slash?: string
   /** F165: `false` = no route can call a worker; absent (older manifests) = the pool is needed. */
   needs_workers?: boolean
 }
@@ -92,6 +94,14 @@ export function basePathMismatch(cfg: Pick<BrustConfig, 'basePath'>, m: Pick<Run
   return `base-path-mismatch: server.base_path is ${show(cfg.basePath)} but this build is for ${show(built)}; the base path is baked in at build time, so rebuild (brust build)`
 }
 
+/** F506: the message when the config names a trailing-slash policy other than the one the manifest was built with
+ * (`trailing-slash-mismatch`), else null. A config that sets none serves the manifest's. */
+export function trailingSlashMismatch(cfg: Pick<BrustConfig, 'trailingSlash'>, m: Pick<RunManifest, 'trailing_slash'>): string | null {
+  const built = m.trailing_slash ?? 'strict'
+  if (cfg.trailingSlash === undefined || cfg.trailingSlash === built) return null
+  return `trailing-slash-mismatch: server.trailing_slash is ${JSON.stringify(cfg.trailingSlash)} but this build is for ${JSON.stringify(built)}; it is baked in at build time, so rebuild (brust build)`
+}
+
 /** Every worker's response buffer, kept reachable until the process exits (see run()). */
 const workerBuffers: SharedArrayBuffer[] = []
 
@@ -122,7 +132,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     fail((e as Error).message)
   }
 
-  const mismatch = basePathMismatch(cfg, m)
+  const mismatch = basePathMismatch(cfg, m) ?? trailingSlashMismatch(cfg, m)
   if (mismatch) fail(mismatch)
   // `basePath` of `@brust/core` in the app's modules (the workers inherit the env).
   process.env.BRUST_BASE_PATH = m.base_path ?? ''
