@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-36', title: '2.0.0-alpha.36' },
       { id: 'alpha-35', title: '2.0.0-alpha.35' },
       { id: 'alpha-34', title: '2.0.0-alpha.34' },
       { id: 'alpha-33', title: '2.0.0-alpha.33' },
@@ -58,6 +59,54 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-36">2.0.0-alpha.36 · 4 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.35: #441–#449 (ledger F481–F483, F492, F503–F508; plan 2026-11-04-open-rows) */}
+      <p>This version adds a trailing-slash setting and closes the cache stats endpoint by default. It also fixes a form handler that rendered with React, the Cloudflare dev date, and stopping a server on Windows. If you read <code>/_brust/cache/stats</code>, see Changes before you upgrade.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #447 (F506); the Configuration docs page (trailing-slash) and the Routing docs page */}
+        <li>
+          <strong>Pick one trailing-slash policy with <code>[server] trailing_slash</code> (#447).</strong> <code>&quot;redirect&quot;</code> answers a GET or HEAD for <code>/about/</code> with a 308 to <code>/about</code>, keeping the query string and the base path, before route matching and the page cache. <code>&quot;ignore&quot;</code> serves both spellings from one cache entry. <code>&quot;strict&quot;</code>, the default, behaves as before: <code>/cart/</code> is a 404 and a <code>{'{*rest}'}</code> route also matches the slashed path. The value is baked in at build time, so <code>brust start</code> refuses a different one (<code>trailing-slash-mismatch</code>). See <a href="/docs/configuration#trailing-slash">Configuration</a>.
+        </li>
+        {/* source: PR #448 (F507), PR #449 (F508); the Configuration docs page (stats) */}
+        <li>
+          <strong>Control who can read <code>/_brust/cache/stats</code> with <code>[server] stats</code> (#448, #449).</strong> The setting takes <code>&quot;off&quot;</code>, <code>&quot;public&quot;</code> or <code>&quot;token&quot;</code>. With <code>&quot;token&quot;</code>, a request must send <code>Authorization: Bearer &lt;token&gt;</code>, where the token is read from <code>stats_token = &quot;env:NAME&quot;</code>. A wrong or missing token gets a 404, so the endpoint is not revealed. The response always carries <code>cache-control: no-store</code>. <code>/ping</code> stays public. On Cloudflare Workers the choice is <code>off</code> or <code>public</code>. See <a href="/docs/configuration#stats">Configuration</a>.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #445 (F483); the cookbook FormAction page */}
+        <li>
+          <strong>A handler written as <code>const submit = async (e) =&gt; {'{'}…{'}'}</code> builds native (#445).</strong> It used to render with React, with the warning <code>client-function-in-job … names setMsg</code>, although the same handler as an <code>async function</code> or written inline in <code>onSubmit</code> was native. The Form action cookbook page now builds as the page says.
+        </li>
+        {/* source: PR #443 (F482); the Cloudflare Workers docs page */}
+        <li>
+          <strong><code>brust dev --target cloudflare</code> starts without pinning a date (#443).</strong> The default <code>compatibility_date</code> could be newer than the workerd your wrangler installs, so <code>wrangler dev</code> refused to start. The default is now capped at the newest date your installed workerd supports. A date you set in <code>[cloudflare] compatibility_date</code> is used as written, with the warning <code>cf-compat-date</code> when workerd is older.
+        </li>
+        {/* source: PR #442 (F492); the Installation docs page */}
+        <li>
+          <strong>Windows: a server stops reliably with its launcher, and on Ctrl+Break (#442).</strong> If Windows gave the launcher&rsquo;s process id to another program, the server could keep running after the launcher died. It now compares the launcher&rsquo;s start time as well. Ctrl+Break in the console now drains the server the same way Ctrl+C does.
+        </li>
+        {/* source: PR #441 (F505); the Css docs page */}
+        <li>
+          <strong>Tailwind skips brust&rsquo;s build output in every layout (#441).</strong> Since alpha.35 Tailwind ignores <code>dist/</code> and <code>.brust/</code>, but it still scanned an out dir outside the app root, an out dir whose name holds glob characters, and, under <code>brust dev</code>, a production <code>dist/</code> left by an earlier build. All three are now skipped too.
+        </li>
+        {/* source: PR #446 (F481); packages/brust/src/build/bundle.ts */}
+        <li>
+          <strong>The <code>server-only-in-client</code> error names every island and writer (#446).</strong> When server-only code reached the browser through a loader&rsquo;s writer, the error named only the first island and writer. It now lists them all, sorted, up to three, followed by &ldquo;and N more&rdquo;.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #448 (F507); the Configuration docs page (stats) */}
+        <li>
+          <strong><code>/_brust/cache/stats</code> is off by default in <code>brust start</code> (#448).</strong> It used to answer any client, and behind an edge that forwards every path, every domain the app serves exposed the cache numbers. It now answers 404 unless you set <code>[server] stats = &quot;public&quot;</code> or <code>&quot;token&quot;</code>, or <code>BRUST_STATS</code>. If a monitor reads it, set one of these before you upgrade. <code>brust dev</code> keeps it public.
+        </li>
+      </ul>
 
       <h2 id="alpha-35">2.0.0-alpha.35 · 4 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.34: #433–#439 (ledger F493–F502; plan 2026-11-04-tenant-issues) */}
