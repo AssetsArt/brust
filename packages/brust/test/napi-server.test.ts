@@ -235,6 +235,7 @@ test('F507: stats = public serves the JSON to anyone', async () => {
   const base = await statsServer({ stats: 'public' })
   const r = await fetch(`${base}/_brust/cache/stats`)
   expect(r.status).toBe(200)
+  expect(r.headers.get('cache-control')).toBe('no-store') // F508
   expect(await r.json()).toMatchObject({ loader_calls: 0, job_calls: 0 })
   await beginDrain(1000)
 })
@@ -242,7 +243,9 @@ test('F507: stats = public serves the JSON to anyone', async () => {
 test('F507: stats = token serves the bearer and answers 404 (never 401) to a wrong or missing token', async () => {
   const base = await statsServer({ stats: 'token', statsToken: 's3cret-token' })
   const get = (auth?: string) => fetch(`${base}/_brust/cache/stats`, auth ? { headers: { authorization: auth } } : {})
-  expect((await get('Bearer s3cret-token')).status).toBe(200)
+  const ok = await get('Bearer s3cret-token')
+  expect(ok.status).toBe(200)
+  expect(ok.headers.get('cache-control')).toBe('no-store') // F508: an edge that caches everything must not keep it
   for (const bad of [undefined, 'Bearer nope', 'Bearer s3cret-toke', 'Basic s3cret-token']) {
     const r = await get(bad)
     expect([bad, r.status]).toEqual([bad, 404])
