@@ -15,12 +15,42 @@ export function pidAlive(pid: number): boolean {
   }
 }
 
+/** F492 (PID reuse): the identity of a process that outlives a PID: its creation time (a FILETIME, 100 ns ticks since 1601), read once
+ * through kernel32 `GetProcessTimes` (`OpenProcess` with the query-limited right: no elevation, no process table, no PowerShell). A PID
+ * that is reused by another process has another creation time. `undefined` when it cannot be read (not Windows, the process is gone, no
+ * access, `bun:ffi` missing): the watch then keeps its pid-only behaviour. Synchronous, a few microseconds, nothing awaited. */
+export function processIdentity(pid: number): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  try {
+    const { dlopen, FFIType, ptr } = require('bun:ffi') as typeof import('bun:ffi')
+    const k = dlopen('kernel32.dll', {
+      OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
+      GetProcessTimes: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+      CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
+    }).symbols
+    const h = k.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, 0, pid)
+    if (!h) return undefined
+    try {
+      const t = new BigUint64Array(4) // creation, exit, kernel, user
+      const base = ptr(t)
+      if (!k.GetProcessTimes(h, base, ptr(t, 8), ptr(t, 16), ptr(t, 24))) return undefined
+      return t[0]!.toString()
+    } finally {
+      k.CloseHandle(h)
+    }
+  } catch {
+    return undefined
+  }
+}
+
 export interface LauncherWatchOptions {
   /** Runs once, when the parent is gone. */
   onGone: (pid: number) => void
   platform?: NodeJS.Platform
   ppid?: number
   alive?: (pid: number) => boolean
+  /** The parent's identity (default: its creation time, win32). Read once at boot and again on each tick while the pid answers alive: a different value means the pid was reused, so the launcher is gone. */
+  identity?: (pid: number) => string | undefined
   intervalMs?: number
   log?: (line: string) => void
 }
@@ -35,8 +65,10 @@ export function watchLauncher(opts: LauncherWatchOptions): { pid: number | undef
     ;(opts.log ?? console.error)(`[brust] launcher (pid ${ppid}) is already gone at boot: not watching it`)
     return none
   }
+  const identity = opts.identity ?? processIdentity
+  const born = identity(ppid)
   const timer = setInterval(() => {
-    if (alive(ppid)) return
+    if (alive(ppid) && (born === undefined || identity(ppid) === born)) return
     clearInterval(timer)
     opts.onGone(ppid)
   }, opts.intervalMs ?? 1000)
