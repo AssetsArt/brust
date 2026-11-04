@@ -274,11 +274,12 @@ export default function Css({ blocks }: CssData) {
       </p>
       {/* source: packages/brust/src/build/tailwind.ts:114 (with no source() the scanner's base is the app root, the glob of every file below it, and nothing else) and css.ts:229 (loadTailwind gets the app root; the [build] source_roots list is not passed);
           observed: packages/brust/test/tailwind.test.ts:186 (a class used only in a source_roots directory is not in the stylesheet), :190 (@source "../shared" adds the whole directory, files nothing imports included; @source not "../shared/hero" removes that part; @source not on its own adds nothing) */}
-      {/* source: packages/brust/src/build/tailwind.ts:117 (every scan gets negated sources for the out dir and .brust, last, so an explicit source() or @source cannot bring them back) and packages/brust/src/build/index.ts:261 (the dirs passed: the resolved out dir and .brust);
-          observed: packages/brust/test/tailwind.test.ts:227 (a stale class left in dist/ and .brust/ does not reach the next build's stylesheet, without or with a .gitignore covering them), :231 (a custom out dir, and an explicit @source still adds its own classes) */}
+      {/* source: packages/brust/src/build/tailwind.ts:119 (every scan gets one negated source per own-output directory, each the BASE of its own negation, after the root, source() and @source lines) and packages/brust/src/build/index.ts:261 (the directories: the out dir, dist, .brust);
+          observed: packages/brust/test/tailwind.test.ts:227 (a stale class left in dist/ and .brust/ does not reach the next build's stylesheet, without or with a .gitignore covering them), :231 (a custom out dir, and an explicit @source still adds its own classes), :264 (an out dir beside the app, with source("..") covering it), :270 (a name with glob characters), :276 (a dev build never scans the dist/ of an earlier production build) */}
       <p>
-        brust never scans its own build output: the out directory (<code>dist</code>, or the one you pass with <code>--out-dir</code>) and <code>.brust</code> are left out of every Tailwind scan, whether or not a <code>.gitignore</code> lists them, so a class that no
-        source uses any more cannot linger in the stylesheet because an earlier build wrote it into the output.
+        brust never scans its own build output: the out directory (<code>dist</code>, or the one you pass with <code>--out-dir</code>, wherever it is), <code>dist</code> and <code>.brust</code> are left out of every Tailwind scan, whether or not a{' '}
+        <code>.gitignore</code> lists them and whatever <code>source(...)</code> or <code>@source</code> say. A class that no source uses any more cannot linger in the stylesheet because an earlier build wrote it into the output, and <code>brust dev</code>{' '}
+        (which builds under <code>.brust</code>) does not pick up the classes of a production <code>dist</code> left beside it.
       </p>
       <h3>Classes outside the app root</h3>
       <p>

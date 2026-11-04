@@ -224,9 +224,9 @@ export async function buildCss(
       if (hit === undefined) via.set(k, (hit = tailwindUse([k]).using.length > 0))
       return hit
     }
-    // F501: the output dirs of this app that Tailwind must not scan, as app-root-relative patterns (only those under it).
-    const own = (o.ownOutput ?? []).map((d) => relative(real(appRoot), real(d)).split(sep).join('/')).filter((r) => r !== '' && r !== '..' && !r.startsWith('../') && !isAbsolute(r))
-    plugins.push(await loadTailwind(appRoot, tw.using[0]!, uses, o.log, [...new Set(own)]))
+    // F501/F505: brust's own output dirs, as real absolute paths: each is the base of its own negation in the scan.
+    const own = [...new Set((o.ownOutput ?? []).map(real))]
+    plugins.push(await loadTailwind(appRoot, tw.using[0]!, uses, o.log, own))
     if (tw.imports.length > 1)
       o.log?.(
         `[brust] warning tailwind @import "tailwindcss" is in ${tw.imports.length} files (${tw.imports.map((f) => relative(appRoot, f)).join(', ')}): each one ships the whole of Tailwind; import it once (e.g. app.css) and use @reference elsewhere`,
