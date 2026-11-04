@@ -1051,6 +1051,9 @@ struct Inner {
     /// F494: a fixed-props clone (every prop fixed at its one call site): its per-row records (lists over its props) can
     /// be rebased onto the caller's props paths, as the rows are the server's.
     fixed: bool,
+    /// F494: the component is static (no host of its own): only then are its records fed per row of a fixed list it sits
+    /// in (a native wrapper in a list keeps F328c's fallback).
+    is_static: bool,
 }
 
 impl Inner {
@@ -1068,6 +1071,7 @@ impl Inner {
                 Tier::Native => !fed_under_condition(ir),
                 _ => false,
             },
+            is_static: matches!(ir.tier, Tier::Static),
             fixed: ir.specialised
                 && matches!(ir.tier, Tier::Static)
                 && ir.props.iter().all(|p| {
@@ -5617,7 +5621,12 @@ impl Walker<'_, '_> {
         // F494: inside ONE list whose rows the client never re-creates (a stateless page's loader data, a fixed-props
         // clone's rows), the static child's records are fed per row of that list, as a direct child's are (F142).
         let in_list = !self.loop_sources.is_empty();
-        if in_list && !(self.loop_sources.len() == 1 && self.fixed_lists()) {
+        if in_list
+            && !(inner.is_static
+                && self.loop_sources.len() == 1
+                && self.loop_sources.iter().all(Option::is_some)
+                && self.fixed_lists())
+        {
             return Err("it sits in a list".into());
         }
         // A spread may carry any key: it matters only for a root a record binds from this wrapper's props (below).
