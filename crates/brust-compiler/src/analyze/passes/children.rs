@@ -45,6 +45,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         jobs: Vec::new(),
         diagnostics: Vec::new(),
         loop_scope: Vec::new(),
+        live_rows: 0,
         lists: Vec::new(),
         items: Vec::new(),
         indexes: Vec::new(),
@@ -613,6 +614,9 @@ struct Walker<'s, 'c> {
     spec_salt: Option<String>,
     /// F375: `ComponentIR::rest_childless` of the component walked.
     rest_childless: bool,
+    /// F494: open `For`s of the frames pass whose rows the client can re-create (`row_reactive`). A fixed-props clone is
+    /// made only where none is open: every row value there is the server's, once.
+    live_rows: u32,
     /// F295: what makes an instance of this component unable to mount again (`ComponentIR::mount_once`).
     mount_once: Vec<String>,
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
@@ -1044,6 +1048,9 @@ struct Inner {
     /// Static: its template is printed inline, so the caller can number and feed its children. A Native wrapper (state,
     /// handlers) keeps its records on itself, where no chain component's `instances[]` can see them.
     rebasable: bool,
+    /// F494: a fixed-props clone (every prop fixed at its one call site): its per-row records (lists over its props) can
+    /// be rebased onto the caller's props paths, as the rows are the server's.
+    fixed: bool,
 }
 
 impl Inner {
@@ -1061,6 +1068,13 @@ impl Inner {
                 Tier::Native => !fed_under_condition(ir),
                 _ => false,
             },
+            fixed: ir.specialised
+                && matches!(ir.tier, Tier::Static)
+                && ir.props.iter().all(|p| {
+                    p.name == "children"
+                        || p.name.starts_with("__ctx_")
+                        || ir.fixed_props.contains(&p.name)
+                }),
         })
     }
 }
@@ -3447,14 +3461,22 @@ impl Walker<'_, '_> {
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
             }
             Node::For {
-                body, item, index, ..
+                source,
+                body,
+                item,
+                index,
+                ..
             } => {
+                // F494: whether the client can re-create these rows (judged before the loop's names are in scope).
+                let live = self.row_reactive(source, body, self.live_rows > 0);
                 // F344: the row's names are loop bindings here too (a clone made in a row must not pin a row value).
                 let n = self.loop_scope.len();
                 self.loop_scope.push(item.clone());
                 self.loop_scope.extend(index.iter().cloned());
+                self.live_rows += u32::from(live);
                 body.iter_mut()
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                self.live_rows -= u32::from(live);
                 self.loop_scope.truncate(n);
             }
             Node::Component {
@@ -3518,6 +3540,23 @@ impl Walker<'_, '_> {
                             *loc,
                             "",
                         )),
+                    }
+                }
+                // F494: a stateless child given only values the client never changes here (a stateless page's loader
+                // data, literals, rows of a list the client cannot re-create) renders the same as on the server: a clone
+                // of it for this call site with every prop fixed lowers static (its rows unlinked, its own children
+                // cloned the same way). Kept only when the clone IS static; otherwise the call site stays as it was.
+                if children.is_empty()
+                    && let Some(from) = child.path.clone()
+                    && self.fixed_call(&cir, props)
+                {
+                    // A clone that is not static changes nothing: the call site keeps the shared component, silently.
+                    if let Ok((clone, id, key)) = self.specialise_fixed(&cir, &from, *loc) {
+                        *name = id;
+                        *source = Some(SPEC_SOURCE.to_string());
+                        *imported = Some(key);
+                        member.clear();
+                        cir = clone;
                     }
                 }
                 // A React island (and what it receives as children or element props) renders with React's own
@@ -4212,6 +4251,110 @@ impl Walker<'_, '_> {
             return Err(format!("the specialised component needs React ({reason})"));
         }
         Ok((clone, (id, key, inputs)))
+    }
+
+    /// F494: `cir` is a stateless module component that is not static on its own, and every prop this call site passes
+    /// is a value the client never changes here: it reads no state, no prop of this component that can change, and no
+    /// row of a list the client can re-create; no function, no spread, no context value.
+    fn fixed_call(&self, cir: &ComponentIR, props: &[(String, Expr)]) -> bool {
+        // Only a child whose own reasons are the ones fixed props remove: the runtime for rows that can change, or
+        // React for a value derived from a prop that changes / a fed child it cannot feed through a list.
+        let droppable = match &cir.tier {
+            Tier::Native => true,
+            Tier::React { .. } => {
+                let mut fb = cir
+                    .diagnostics
+                    .iter()
+                    .filter(|d| d.class == DiagClass::Fallback)
+                    .peekable();
+                fb.peek().is_some()
+                    && fb.all(|d| {
+                        matches!(
+                            d.rule.as_str(),
+                            "linked-prop-precompute" | "nested-instance"
+                        )
+                    })
+            }
+            _ => false,
+        };
+        if !droppable
+            || cir.specialised
+            || !cir.provides.is_empty()
+            || !cir.state.is_empty()
+            || !cir.effects.is_empty()
+            || !cir.handlers.is_empty()
+            || !cir.refs.is_empty()
+            || !cir.stores.is_empty()
+            || self.live_rows > 0
+        {
+            return false;
+        }
+        props.iter().all(|(k, v)| {
+            k != crate::ir::SPREAD_KEY
+                && k != REST_INPUT
+                && k != "children"
+                && !k.starts_with("__ctx_")
+                && matches!(v, Expr::Raw(_) | Expr::Server(_))
+                && !self.reads_state(v)
+                && self.changing_prop_roots(&self.deps_of(v)).is_empty()
+                && !self.reads_changing_prop(&self.deps_of(v))
+        })
+    }
+
+    /// F494: a clone of `cir` for this call site with every declared prop fixed (`fixed_call` holds), compiled as a
+    /// component of its own. `Err` unless the clone is static: a clone that still needs a runtime or React is dropped
+    /// and the call site keeps the shared component.
+    fn specialise_fixed(
+        &mut self,
+        cir: &Rc<ComponentIR>,
+        c_path: &str,
+        loc: u32,
+    ) -> Result<(Rc<ComponentIR>, String, String), String> {
+        let ctx = self.ctx;
+        let export = match &cir.export {
+            Some(n) => Export::Named(n.clone()),
+            None => Export::Default,
+        };
+        let exp = cir.export.as_deref().unwrap_or("default");
+        // `loc` alone may name two call sites (content spliced from another module): no clone could tell them apart.
+        if self.shared_locs.contains(&loc) {
+            return Err("another call site here has the same source offset".into());
+        }
+        let site = match &self.spec_salt {
+            Some(salt) => format!("{}#{salt}", ctx.path),
+            None => ctx.path.to_string(),
+        };
+        let id = format!("{}_f{:08x}", cir.id, spec_hash(&site, loc));
+        let key = format!("{c_path}#{exp}~fixed~{site}~{loc}");
+        let fixed: Vec<String> = cir
+            .props
+            .iter()
+            .filter(|p| !p.name.starts_with("__ctx_") && p.name != "children")
+            .map(|p| p.name.clone())
+            .collect();
+        let clone_id = id.clone();
+        let clone = crate::analyze::modules::compile_specialised(
+            c_path,
+            &export,
+            key.clone(),
+            ctx.opts,
+            ctx.modules,
+            &mut |ir: &mut ComponentIR, _: &crate::parse::Parsed| {
+                ir.fixed_props = fixed.clone();
+                ir.id = clone_id.clone();
+                ir.specialised = true;
+                Ok(())
+            },
+        )?;
+        if !matches!(clone.tier, Tier::Static) {
+            let why = match &clone.tier {
+                Tier::React { reason, .. } => format!("its clone still needs React ({reason})"),
+                _ => "its clone still needs the runtime".to_string(),
+            };
+            ctx.modules.borrow_mut().remove(&key);
+            return Err(why);
+        }
+        Ok((clone, id, key))
     }
 
     /// F307: a `slot-owner` refusal at `loc` the frames pass may answer by cloning the child with the content (on the
@@ -5471,16 +5614,47 @@ impl Walker<'_, '_> {
         if inner.folded {
             return Err("one of its instances was evaluated at build".into());
         }
-        if !self.loop_sources.is_empty() {
+        // F494: inside ONE list whose rows the client never re-creates (a stateless page's loader data, a fixed-props
+        // clone's rows), the static child's records are fed per row of that list, as a direct child's are (F142).
+        let in_list = !self.loop_sources.is_empty();
+        if in_list && !(self.loop_sources.len() == 1 && self.fixed_lists()) {
             return Err("it sits in a list".into());
         }
         // A spread may carry any key: it matters only for a root a record binds from this wrapper's props (below).
         let spread = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
         let mut out = Vec::new();
         for r in &inner.records {
-            if !r.loops.is_empty() || r.rows_literal.is_some() {
+            // F494: a fixed-props clone's own list (one, over a props path) rebases like its props do; anything deeper,
+            // a constant list, or a list inside a list here, stays refused.
+            if r.rows_literal.is_some()
+                || (!r.loops.is_empty() && (in_list || !inner.fixed || r.loops.len() > 1))
+            {
                 return Err("its child sits in a list".into());
             }
+            let loops = if in_list {
+                self.loop_sources.clone()
+            } else {
+                let mut loops = Vec::new();
+                for l in &r.loops {
+                    let Some(path) = l else {
+                        return Err("its child sits in a list that is not a props path".into());
+                    };
+                    let end = path.find(['.', '[']).unwrap_or(path.len());
+                    let (root, rest) = path.split_at(end);
+                    let Some(p) = props
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k == root)
+                        .and_then(|(_, v)| self.prop_path(v))
+                    else {
+                        return Err(format!(
+                            "its child sits in a list over `{root}`, which is not a props path here"
+                        ));
+                    };
+                    loops.push(Some(format!("{p}{rest}")));
+                }
+                loops
+            };
             if r.exprs
                 .values()
                 .any(|e| e != crate::lower::server_expr::UNDEFINED)
@@ -5490,7 +5664,7 @@ impl Walker<'_, '_> {
             let mut rec = InstanceRecord {
                 child_id: r.child_id.clone(),
                 k: 0,
-                loops: Vec::new(),
+                loops,
                 props: Default::default(),
                 literals: r.literals.clone(),
                 exprs: r.exprs.clone(),
@@ -5973,6 +6147,19 @@ impl Walker<'_, '_> {
                     let root = p.split(['.', '[']).next().unwrap_or(p);
                     !self.fixed_props.contains(root)
                 }))
+    }
+
+    /// F494: every enclosing list of the children pass has rows the client never re-creates: its source reads no state
+    /// and no prop that can change here.
+    fn fixed_lists(&self) -> bool {
+        self.lists.iter().all(|(paths, stateful)| {
+            !stateful
+                && (!self.props_reactive
+                    || paths.iter().all(|p| {
+                        let root = p.split(['.', '[']).next().unwrap_or(p);
+                        self.fixed_props.contains(root)
+                    }))
+        })
     }
 
     /// F325: the list source reads module-level data (an import, a module const).
@@ -7136,6 +7323,9 @@ impl Walker<'_, '_> {
         self.slot_depth += 1;
         children.iter_mut().for_each(|c| self.node(c));
         self.slot_depth -= 1;
+        // F494: the records a fixed-props clone's own template adds (rebased below) are not slot content it repeats; any
+        // other child's rebased records still count, as before.
+        let fed_in_slot = self.instances.len() > fed_before;
         if let Some(inner) = &child.inner
             && let Err(why) = self.rebase(inner, props)
         {
@@ -7215,9 +7405,10 @@ impl Walker<'_, '_> {
                 "move the interactive part into the component that owns its state, or keep this component interactive with React",
             ));
         }
+        let rebased_fixed = child.inner.as_ref().is_some_and(|i| i.fixed);
         if child.has_for
             && !matches!(child.tier, Tier::React { .. })
-            && self.instances.len() > fed_before
+            && (fed_in_slot || (self.instances.len() > fed_before && !rebased_fixed))
         {
             // Slot content is printed once and pasted per row: a job or `useId` inside it would repeat.
             self.diagnostics.push(Diagnostic::fallback(

@@ -61,6 +61,11 @@ pub fn compile_tree(
     // F153c: a package component compiled from source whose import fell back to the published export's island
     // (or an island only such a component asked for) is not part of the tree: never lowered, never bundled.
     let reachable = reachable_from(&root_rc, &by_id);
+    let fixed_cloned: Vec<String> = done
+        .iter()
+        .filter(|(_, ir)| ir.specialised)
+        .map(|(_, ir)| ir.id.clone())
+        .collect();
     for (_, ir) in done {
         if ir.id == root_rc.id {
             continue;
@@ -76,6 +81,17 @@ pub fn compile_tree(
             && (ir.specialised
                 || (!ir.provides.is_empty()
                     && ir.diagnostics.iter().any(|d| d.rule == "context-state")))
+        {
+            continue;
+        }
+        // F494: a component every call site of this tree replaced with a fixed-props clone is not part of the tree
+        // either (its own tier, and its fallback warnings, belong to callers that pass changing values).
+        let clone_head = format!("{}_f", ir.id);
+        if !reachable.contains(&ir.id)
+            && fixed_cloned.iter().any(|c| {
+                c.strip_prefix(&clone_head)
+                    .is_some_and(|h| h.len() == 8 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+            })
         {
             continue;
         }

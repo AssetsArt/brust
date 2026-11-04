@@ -1506,6 +1506,14 @@ export const rows: Row[] = [
     snippet: `import { Children } from 'react'\nexport default function C(props: any) { return <ul>{Children.map(props.children, (c: any) => <li>{c}</li>)}</ul> }` },
 
   // ---- E. v2 specifics ------------------------------------------------------
+  { id: 'e-static-list-nonroot', category: 'E', authoring: 'a stateless child mapping the page\'s loader rows to a pure child', expect: 'static', jobs: 0,
+    snippet: `import { List } from './List'\nexport default function C({ sections }: any) { return <main><List sections={sections} /></main> }`,
+    files: { 'List.tsx': `function Hero({ title }: any) { return <h2>{title}</h2> }\nexport function List({ sections }: any) { return <div>{sections.map((s: any) => <div key={s.id}><Hero title={s.title} /></div>)}</div> }` },
+    note: 'F494: the call site passes only fixed values (the stateless page\'s props), so List is cloned for it with every prop fixed: its rows never change on the client and the clone is static (the shared List, fed changing values, is native)' },
+  { id: 'e-static-helper-row', category: 'E', authoring: 'a stateless child whose row child derives a value from its prop with a helper', expect: 'static', jobs: 0,
+    snippet: `import { PriceList } from './PriceList'\nexport default function C({ sections }: any) { return <main><PriceList sections={sections} /></main> }`,
+    files: { 'PriceList.tsx': `const fmt = (n: number) => n.toFixed(2)\nfunction Price({ price }: any) { return <span>{fmt(Number(price))}</span> }\nexport function PriceList({ sections }: any) { return <ul>{sections.map((s: any) => <li key={s.id}><Price price={s.price} /></li>)}</ul> }` },
+    note: 'F494: in the fixed-props clone the helper call rides the per-row instance record (F142), rebased onto the page\'s props path; the shared PriceList, fed changing values, is React (linked-prop-precompute)' },
   { id: 'e-package-component', category: 'E', authoring: 'component from a package in a static parent', expect: 'static', jobs: 1,
     snippet: `import { Heart } from 'icons'\nexport default function C() { return <p>love <Heart size={16} /></p> }`,
     note: 'L22: a package export renders as a React island (one ssr job); the parent stays static' },

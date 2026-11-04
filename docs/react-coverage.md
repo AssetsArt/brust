@@ -12,8 +12,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 245 | 129 | 20 | 96 | 0 | 0 | 0 | 0 |
 | C Hooks | 237 | 76 | 75 | 86 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 651 | 289 | 127 | 231 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 76 | 33 | 15 | 24 | 3 | 1 | 0 | 0 |
+| **Total** | 653 | 291 | 127 | 231 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -639,6 +639,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-cn-fold-useid | a child with useId and a cn class | static | static | 0 | ok | 0 | info:build-eval-instance | F149 R34.92: ids are per request |
 | b-cn-fold-row-reading | a cva component reading each row of a constant list | static | static | 0 | ok | 0 | — | F149 ruling Q4: per-row instances (per-row-literal) keep their job in v1 |
 | b-cn-fold-denied-global | a class computed from Date in the child module | static | static | ssr | ok | 4.3 | — | F149 R34.92: time differs between runs. F215 allowlist: `Date.now()` at load time is not an accepted const, so the chip module is not clean and Chip renders as a React island (its SSR job); nothing is build-evaluated |
+| e-static-list-nonroot | a stateless child mapping the page's loader rows to a pure child | static | static | 0 | ok | 5.1 | — | F494: the call site passes only fixed values (the stateless page's props), so List is cloned for it with every prop fixed: its rows never change on the client and the clone is static (the shared List, fed changing values, is native) |
+| e-static-helper-row | a stateless child whose row child derives a value from its prop with a helper | static | static | 0 | ok | 0 | — | F494: in the fixed-props clone the helper call rides the per-row instance record (F142), rebased onto the page's props path; the shared PriceList, fed changing values, is React (linked-prop-precompute) |
 | e-package-component | component from a package in a static parent | static | static | ssr | ok | 4.3 | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
 | e-member-named-alias | member of a renamed named import (`<D.Root>`) in a static parent | static | static | ssr | ok | 4.3 | fallback:external-component | S1.4 R34.35: resolved to the package member, an island (external-component), no member-tag |
 | e-member-namespace | member of a namespace import (`<P.Group>`) | static | static | ssr | ok | 4.3 | fallback:external-component |  |
