@@ -362,6 +362,30 @@ test('clicks left to the browser: modifiers, other buttons, target, download, da
   expect(location.pathname).toBe('/a')
 })
 
+test('F495: with data-brust-base a link or navigate() outside the base path is left to the browser; inside it is swapped', async () => {
+  show({ ...app('1', 'a'), body: `${app('1', 'a').body}<a id="in" href="/portal/b">in</a><a id="out" href="/b">out</a><a id="near" href="/portalx/b">near</a>` })
+  document.querySelector('script[data-brust-nav]')!.setAttribute('data-brust-base', '/portal')
+  stop = boot(async (u) => { loaded.push(new URL(u).pathname) })
+  pages['/portal/b'] = { html: doc(app('1', 'b')) }
+  const browser = (e: Event) => e.preventDefault()
+  window.addEventListener('click', browser)
+  click($('#out')!)
+  click($('#near')!)
+  await settle()
+  expect(fetched).toEqual([]) // another app's paths: a full load, never a fetch
+  expect(names()).toEqual([])
+  click($('#in')!)
+  await settle()
+  window.removeEventListener('click', browser)
+  expect(fetched).toEqual(['http://localhost/portal/b'])
+  expect(names()).toEqual(['click', 'load', 'success'])
+  const assign = spyOn(location, 'assign').mockImplementation(() => {})
+  const nav = (globalThis as unknown as Record<symbol, NavBridge>)[Symbol.for('brust.nav')]!
+  await nav.navigate('/elsewhere')
+  expect(assign.mock.calls).toEqual([['http://localhost/elsewhere']])
+  assign.mockRestore()
+})
+
 test('a link to the URL on screen (not cached: the first load) fetches it and replaces the entry', async () => {
   start()
   pages['/a'] = { html: doc(app('1', 'a2')) }

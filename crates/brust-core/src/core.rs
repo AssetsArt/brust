@@ -127,6 +127,31 @@ impl<H: Host> Core<H> {
         if let Some(c) = &cfg.actions_client {
             c.validate().map_err(|e| format!("actions: {e}"))?;
         }
+        let action_prefix_tag: Option<Box<str>> = {
+            let base = loaded.manifest.base_path.as_str();
+            let actions = match &cfg.actions_client {
+                Some(c) => c.tags_under(base),
+                None => cfg.actions.as_ref().and_then(|a| {
+                    ActionsClient {
+                        prefix: Some(a.prefix.clone()),
+                        ..Default::default()
+                    }
+                    .tags_under(base)
+                }),
+            };
+            // F495: the client reads its mount point from one global, like the actions prefix.
+            let base_tag = (!base.is_empty()).then(|| {
+                format!(
+                    "<script>globalThis.__BRUST_BASE_PATH__={}</script>",
+                    crate::config::js_string(base)
+                )
+            });
+            match (base_tag, actions) {
+                (None, None) => None,
+                (b, a) => Some(b.unwrap_or_default() + &a.unwrap_or_default()),
+            }
+        }
+        .map(String::into_boxed_str);
         // One invalidation clock for both caches: `page()` stamps it once per request (F89).
         let clock = Arc::new(InvalClock::default());
         Ok(Core {
@@ -153,17 +178,8 @@ impl<H: Host> Core<H> {
             cors_resolved: cfg.cors.as_ref().map(ResolvedCors::from_config),
             cors: cfg.cors,
             // A4 verbatim (a validated prefix holds only [A-Za-z0-9._~/-], so no escaping); L16 adds the base.
-            action_prefix_tag: match &cfg.actions_client {
-                Some(c) => c.tags(),
-                None => cfg.actions.as_ref().and_then(|a| {
-                    ActionsClient {
-                        prefix: Some(a.prefix.clone()),
-                        ..Default::default()
-                    }
-                    .tags()
-                }),
-            }
-            .map(String::into_boxed_str),
+            action_prefix_tag,
+
             actions: cfg.actions,
             powered_by: powered_by(cfg.generator.as_deref()),
             generator_meta: cfg

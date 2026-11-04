@@ -5,6 +5,9 @@
 // config, no napi addon — a react island may import `cache` from the package root.
 import { cacheComponent } from './cache-core'
 export { buildTime } from './build-time'
+
+/** F495 `[server] base_path` (see index.ts): the page's `__BRUST_BASE_PATH__` global, `''` at the root. */
+export const basePath: string = (globalThis as { __BRUST_BASE_PATH__?: string }).__BRUST_BASE_PATH__ ?? ''
 export { clearNavigationCache, navigate } from './navigate-browser'
 export type { NavErrorDetail, NavLoadDetail, NavigateOptions, NavSuccessDetail, NavTrigger } from './navigate'
 import type { InvalidateArgs, InvalidateResult } from './native'

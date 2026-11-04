@@ -109,17 +109,19 @@ class BrustDevtools extends HTMLElement {
   }
 
   private async loadMeta(): Promise<void> {
-    try { this.meta = (await (await fetch('/_brust/dev/meta')).json()) as DevMeta } catch { this.meta = null }
+    try { this.meta = (await (await fetch(new URL('meta', import.meta.url))).json()) as DevMeta } catch { this.meta = null }
     this.paintIndicator()
     if (!this.panel.hidden) this.render()
   }
 
   private async loadEntries(): Promise<void> {
-    try { this.entries = ((await (await fetch('/_brust/dev/traces')).json()) as { traces: Entry[] }).traces } catch { this.entries = [] }
+    try { this.entries = ((await (await fetch(new URL('traces', import.meta.url))).json()) as { traces: Entry[] }).traces } catch { this.entries = [] }
   }
 
   private connect(): void {
-    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/_brust/dev/ws`)
+    const wsUrl = new URL('ws', import.meta.url)
+    wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+    const ws = new WebSocket(wsUrl)
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data as string) as { type: string; gen?: number; state?: BuildState['state']; diag?: BuildState['diag'] }
       if (m.type === 'hello') this.build = { state: m.state ?? 'ready', gen: m.gen ?? 0, diag: m.diag ?? null }

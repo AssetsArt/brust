@@ -377,6 +377,12 @@ export default function DevMode({ blocks }: DevModeData) {
       <CodeBlock code={blocks.meta.code} lang={blocks.meta.lang} file={blocks.meta.file} html={blocks.meta.html} />
 
       <h2 id="safety">What is dev only</h2>
+      {/* source: packages/brust/src/dev/proxy.ts:64-66 (devPaths: the dev channel under the base), packages/brust/src/dev/client.ts:80-85 and packages/brust/src/dev/devtools.ts:112-124 (the socket and the panels fetch next to their own script), packages/brust/src/dev/bun.ts (the base comes from [server] base_path) */}
+      <p>
+        With <code>[server] base_path</code> the dev channel moves under the base too: <code>/portal/_brust/dev/client.js</code>, <code>/portal/_brust/dev/ws</code>, <code>/portal/_brust/dev/devtools.js</code>, <code>/portal/_brust/dev/traces</code> and{' '}
+        <code>/portal/_brust/dev/meta</code>. The page's scripts find the socket next to themselves, so two <code>brust dev</code> processes behind one path-routing proxy each hot-reload their own pages. Send <code>/portal</code> and <code>/portal/*</code> to the portal's dev
+        port, everything else to the other: the proxy needs no rule for the dev URLs.
+      </p>
       {/* source: packages/brust/src/dev/proxy.ts:112-121 and :203-208 (the devtools bundle is built and served by the dev proxy only), crates/brust-core/src/trace.rs:4 (no token, no trace), packages/brust/src/build/index.ts:99 (dev.json and the dev client runtime only with --dev); tests/server/devtools.chromium.test.ts ("it is dev-only: brust start serves no <brust-devtools> and no devtools bundle") */}
       <p>
         <code>brust start</code> and <code>brust build</code> without <code>--dev</code> never include any of this: no overlay, no client script, no trace header, no <code>dev.json</code>. A production server has no dev token, so it records no trace.

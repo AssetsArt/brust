@@ -55,7 +55,12 @@ export interface BrowserCtx {
   /** F480: load-time writers shipped into an island chunk (F230), by real path: why each is there. A server-only import
    * reached through one names that chain in `server-only-in-client`. */
   loadWriters?: Map<string, string>
+  /** F495 `[server] base_path`: every `/_brust/…` URL a bundle names carries it (`/portal/_brust/…`); absent or `''` = the root. */
+  basePath?: string
 }
+
+/** F495: brust's own URL prefix for a build, `/_brust` or `<base>/_brust`. */
+export const brustRoot = (ctx: { basePath?: string }): string => `${ctx.basePath ?? ''}/_brust`
 
 /** `file` sits under `root`. */
 const inside = (root: string, file: string): boolean => file === root || file.startsWith(root.endsWith(sep) ? root : root + sep)
@@ -211,7 +216,7 @@ function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
     name: 'brust-server-only',
     setup(b) {
       b.onResolve({ filter: /.*/ }, (a) => {
-        if (!a.importer || a.path.startsWith('/_brust/')) return undefined
+        if (!a.importer || a.path.startsWith(`${brustRoot(ctx)}/`)) return undefined
         if (a.path === '@brust/core') return { path: BROWSER_ENTRY }
         if (!isServerOnly(a.path, a.importer, ctx)) {
           if (writers.size > 0) noteImport(a.path, a.importer)
@@ -247,7 +252,7 @@ async function browserBuild(
   try {
     res = await Bun.build({
       ...config,
-      plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir), ...(config.plugins ?? [])],
+      plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir, ctx.basePath), ...(config.plugins ?? [])],
       target: 'browser',
       format: 'esm',
       minify: true,
@@ -333,7 +338,7 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<Runti
     })
   ).get('runtime')!
   // Features import the core's API (`core-api`, and `core` for the store's re-exports) from the core file by URL.
-  const coreUrl = `/_brust/${core}`
+  const coreUrl = `${brustRoot(ctx)}/${core}`
   const coreFiles = new Set(['core-api', 'core'].map((f) => join(dir, f)))
   const names = [...RUNTIME_FEATURES, 'store'] as const
   const entries = names.map((n) => {
@@ -391,7 +396,7 @@ export async function buildClientChunks(dist: string, compiled: Map<string, Comp
   return browserBuild(dist, 'client chunks', ctx, {
     entrypoints,
     splitting: true,
-    external: ['/_brust/*'],
+    external: [`${brustRoot(ctx)}/*`],
     plugins: [runtimeAliasPlugin(runtimeUrl), specModulePlugin(join(dist, '.stage', 'client')), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
   })
 }
@@ -429,11 +434,11 @@ export async function projectionFallbacks(dist: string, compiled: Map<string, Co
     const res = await Bun.build({
       entrypoints,
       splitting: true,
-      external: ['/_brust/*'],
+      external: [`${brustRoot(ctx)}/*`],
       target: 'browser',
       format: 'esm',
       metafile: true,
-      plugins: [serverOnlyPlugin(ctx, []), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir), runtimeAliasPlugin(runtimeUrl), specModulePlugin(probeDir), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
+      plugins: [serverOnlyPlugin(ctx, []), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir, ctx.basePath), runtimeAliasPlugin(runtimeUrl), specModulePlugin(probeDir), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
     })
     if (!res.success || !res.metafile) throw new BuildError('bundle', `client chunks (projection probe): ${res.logs.map(String).join('\n')}`)
     const loaded = new Set(Object.keys(res.metafile.inputs).map((k) => real(resolve(k))))
@@ -685,7 +690,7 @@ export async function buildReactChunks(
   const out = await browserBuild(dist, 'react islands', ctx, {
     entrypoints,
     splitting: true,
-    external: ['/_brust/*'],
+    external: [`${brustRoot(ctx)}/*`],
     plugins: [runtimeAliasPlugin(runtimeUrl), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser'), exposePlugin(compiled)],
   })
   return new Map([...out].map(([stem, path]) => [stem.slice('react-'.length), path]))
@@ -721,8 +726,8 @@ const ACTIONS_EXTERNALS = [...JOBS_EXTERNALS, 'elysia', 'elysia/*', '@elysia/*']
 
 /** `dist/actions.js` (M3-F E1): the actions entry for the worker (`target: 'bun'`). No `define`: Elysia
  * and app code read NODE_ENV at runtime (run.ts sets production). */
-export async function buildActions(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps, join(dist, 'client')), workerStorePlugin] })
+export async function buildActions(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map(), basePath = ''): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps, join(dist, 'client'), basePath), workerStorePlugin] })
   if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'actions.js'), await res.outputs[0]!.text())
   return 'actions.js'
@@ -769,6 +774,8 @@ export async function buildJobs(
   reached?: { planned: ReadonlySet<string>; ssr: ReadonlySet<string> },
   /** F230: app modules that write another module's exports when they load: imported first (see `islandShim`). */
   writers: string[] = [],
+  /** F495: `[server] base_path`: an imported asset's URL carries it. */
+  basePath = '',
 ): Promise<void> {
   const imports: string[] = [writerImports(writers).trimEnd(), "import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"].filter((l) => l !== '')
   const entries: string[] = []
@@ -830,7 +837,7 @@ export async function buildJobs(
         (importer) => jobFiles.has(importer),
       ),
       serverOnlyEmptyPlugin(),
-      cssPlugin(cssMaps, join(dist, 'client')),
+      cssPlugin(cssMaps, join(dist, 'client'), basePath),
       workerStorePlugin,
       sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS),
       exposePlugin(compiled),

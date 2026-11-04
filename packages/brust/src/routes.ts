@@ -166,6 +166,19 @@ export function checkCatchAlls(leaves: FlatRoute[]): void {
     throw new BrustRouteError(`more than one '*' route (${all.map((l) => l.id).join(', ')}): M2 allows one root catch-all`, 'duplicate-catch-all')
 }
 
+/** F495: with `[server] base_path` every route is a real URL path under it (`/portal`, `/portal/orders/{id}`): a pattern
+ * outside the base would never be reached, because the server answers 404 for any path outside it. The root `'*'` stays
+ * (it becomes "anything under the base no route matched"). Named error `route-outside-base-path`, listing the ids. */
+export function checkBasePath(leaves: FlatRoute[], basePath: string): void {
+  if (basePath === '') return
+  const outside = leaves.filter((l) => !l.catchAll && l.pattern !== basePath && !l.pattern.startsWith(`${basePath}/`))
+  if (outside.length > 0)
+    throw new BrustRouteError(
+      `routes outside server.base_path ${JSON.stringify(basePath)}: ${outside.map((l) => `${l.id} (${l.pattern})`).join(', ')}; write every route with the base (nest them under { path: ${JSON.stringify(basePath)}, children })`,
+      'route-outside-base-path',
+    )
+}
+
 /** Placeholder for the child route slot inside a layout. The compiler replaces `<Outlet/>`
  * imported from `@brust/core/routes`; rendered by React directly it is empty. */
 export function Outlet(): null {

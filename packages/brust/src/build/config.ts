@@ -22,6 +22,7 @@ import {
   streamEntryError,
 } from '../actions/prefix'
 import { ADAPTER_NAMES, BUILTINS, installHint } from '../cache-adapter/load'
+import { normalizeBasePath } from '../config'
 import { BuildError } from './errors'
 import { posixOf } from './posix'
 
@@ -108,6 +109,8 @@ export interface BuildConfig {
   cssGlobal: string[]
   /** `[build] source_roots` (F256): directories outside the app a relative import may reach, normalised and relative to the app root (`../shared`). Empty = the app only. */
   sourceRoots: string[]
+  /** `[server] base_path` (F495), normalised (`/portal`); `''` = the app is mounted at the root. Baked into every URL brust emits. */
+  basePath: string
 }
 
 const isTable = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -274,7 +277,7 @@ function resolveAlias(file: string, appRoot: string, p: string): string {
   }
 }
 
-function parseActions(file: string, raw: unknown, actionsOnly: boolean): ActionsBuildConfig | null {
+function parseActions(file: string, raw: unknown, actionsOnly: boolean, basePath = ''): ActionsBuildConfig | null {
   if (raw === undefined) return null
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new BuildError('config', `${file}: [actions] must be a table`)
   const t = raw as Record<string, unknown>
@@ -283,12 +286,16 @@ function parseActions(file: string, raw: unknown, actionsOnly: boolean): Actions
     if (typeof t.entry !== 'string' || t.entry.trim() === '') throw new BuildError('config', `${file}: actions.entry must be a non-empty string`)
     entry = t.entry.trim().replace(/^\.\//, '')
   }
-  let prefix = DEFAULT_ACTION_PREFIX
+  // F495: the default prefix lives under the base path, like every URL brust owns.
+  let prefix = `${basePath}${DEFAULT_ACTION_PREFIX}`
   if (t.prefix !== undefined) {
     // `/` is the prefix of an actions-only deployment; a page-only build (base_url, no local app) may name it too.
     const why = prefixError(t.prefix, actionsOnly || t.base_url !== undefined)
     if (why) throw new BuildError('config', `${file}: actions.prefix ${why}`)
     prefix = t.prefix as string
+    // F495: an explicit prefix is used as written, and must itself be under the base path.
+    if (basePath !== '' && prefix !== basePath && !prefix.startsWith(`${basePath}/`))
+      throw new BuildError('config', `${file}: actions.prefix ${JSON.stringify(prefix)} must lie under server.base_path ${JSON.stringify(basePath)}`)
   }
   let maxBodyBytes = DEFAULT_MAX_BODY_BYTES
   if (t.max_body_bytes !== undefined) {
@@ -397,10 +404,20 @@ export function parseSourceRoots(file: string, appRoot: string, raw: unknown): s
   return [...out].sort()
 }
 
+/** `[server] base_path` (F495): the one validator is config.ts's; a bad value is a build error here too. */
+function parseBasePath(file: string, server: unknown): string {
+  if (server === undefined) return ''
+  if (!isTable(server)) throw new BuildError('config', `${file}: [server] must be a table`)
+  if (server.base_path === undefined) return ''
+  const r = normalizeBasePath(server.base_path)
+  if (!r.ok) throw new BuildError('config', `${file}: server.base_path ${r.why}`)
+  return r.value
+}
+
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [] }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], basePath: '' }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -408,17 +425,18 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
     throw new BuildError('config', `failed to parse ${file}: ${(e as Error).message}`)
   }
   const root = (parsed ?? {}) as Record<string, unknown>
-  const actions = parseActions(file, root.actions, o.actionsOnly === true)
+  const basePath = parseBasePath(file, root.server)
+  const actions = parseActions(file, root.actions, o.actionsOnly === true, basePath)
   const cloudflare = parseCloudflare(file, appRoot, root.cloudflare)
   const cache = await parseCache(file, appRoot, root.cache)
   const cssGlobal = parseCss(file, root.css)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [] }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], basePath }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, basePath }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, basePath }
 }

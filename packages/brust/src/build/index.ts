@@ -8,9 +8,9 @@ import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
-import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
+import { BrustRouteError, checkBasePath, type FlatRoute, validateRoutes } from '../routes'
 import { assertRoutesInstallable, type CheckPatterns, nativeCheckPatterns } from './route-conflicts'
-import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, nestedOf, storeModules } from './bundle'
+import { type BrowserCtx, brustRoot, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, nestedOf, storeModules } from './bundle'
 import { runActionsOnly } from './actions-only'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import { renderIcons } from './build-icons'
@@ -126,9 +126,11 @@ export async function runBuild(opts: {
   assertSafeOutDir(dist, appRoot, [entry, join(appRoot, 'public')])
   assertReplaceable(dist, opts.force)
   const built = await loadBuildConfig(appRoot, { actionsOnly: opts.actionsOnly === true })
+  // F495: `basePath` of `@brust/core` while the build loads the app's modules (route scan, static render).
+  process.env.BRUST_BASE_PATH = built.basePath
   if (opts.actionsOnly)
     return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
-  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots } = built
+  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, basePath } = built
   // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
   // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
   const remote =
@@ -141,6 +143,7 @@ export async function runBuild(opts: {
   let leaves: ReturnType<typeof validateRoutes>
   try {
     leaves = validateRoutes(routes)
+    checkBasePath(leaves, basePath)
   } catch (e) {
     if (e instanceof BrustRouteError) throw new BuildError(e.rule, e.message)
     throw e
@@ -181,7 +184,7 @@ export async function runBuild(opts: {
   // R9.3/R9.4: every reason to refuse a static build, before any write.
   const ssgPlan =
     opts.target === 'static'
-      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log, cache)
+      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log, cache, basePath)
       : null
 
   // Config, @brust/core-cf resolution and the user's wrangler file fail here, before any write.
@@ -195,7 +198,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, basePath, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -238,6 +241,8 @@ async function buildInto(
     cssGlobal: string[]
     /** `[build] source_roots` (F256): normalised, app-root-relative directories outside the app a relative import may reach. */
     sourceRoots: string[]
+    /** `[server] base_path` (F495), `''` = the root. */
+    basePath: string
     /** L16 R16.4b: the prefix of an actions app deployed elsewhere (a page-only build); absent = a local app or none. */
     actionsRemote: string | null
     /** `--target static` with `[actions]`: the worker is built without the cache (static pages are never cached). */
@@ -253,13 +258,13 @@ async function buildInto(
   const serverCss = [o.actionsEntry, o.cacheModule].flatMap((f) => (f ? graph.of(f) : []))
   mkdirSync(join(out, 'client'), { recursive: true })
   // Review N3: `brust dev` builds with BRUST_BUILD_MODE=development (as the JS bundles): readable, unminified CSS.
-  const css = await buildCss(out, [...new Set([...[...routeCss.values()].flat(), ...serverCss])], process.env.BRUST_BUILD_MODE !== 'development', { appRoot, log: o.log })
+  const css = await buildCss(out, [...new Set([...[...routeCss.values()].flat(), ...serverCss])], process.env.BRUST_BUILD_MODE !== 'development', { appRoot, log: o.log, basePath: o.basePath })
   for (const c of directCss(entry))
     o.log(`[brust] warning css ${relative(appRoot, entry)} imports ${c}: the route entry belongs to no route, so it is linked nowhere; import it from a layout, or list it in [css] global`)
-  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps, clientDir: join(out, 'client') }
+  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps, clientDir: join(out, 'client'), basePath: o.basePath }
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
-  const runtimeUrls = { core: `/_brust/${runtime.core}`, store: `/_brust/${runtime.store}` }
+  const runtimeUrls = { core: `${brustRoot(ctx)}/${runtime.core}`, store: `${brustRoot(ctx)}/${runtime.store}` }
   // F230: one scan per build for load-time writes into another app module's exports; every compile reads it.
   const loadWrites = scanAppWrites(appRoot, o.appModules, o.log, o.sourceRoots)
   // Where a React island renders, the load-time writers run first: every one in the SSR jobs bundle (server code the
@@ -351,10 +356,12 @@ async function buildInto(
     const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]
     if (files.length > 0) r.css = files
   }
-  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots, reachedJobs(manifest), writers)
+  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots, reachedJobs(manifest), writers, o.basePath)
+  // F495: absent without a base path, so an app at the root writes the manifest it always did.
+  if (o.basePath !== '') manifest.base_path = o.basePath
   manifest.actions =
     o.actions && o.actionsEntry
-      ? { entry: await buildActions(out, o.actionsEntry, css.maps), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite, ...o.actions.stream }
+      ? { entry: await buildActions(out, o.actionsEntry, css.maps, o.basePath), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite, ...o.actions.stream }
       : null
   if (o.actionsRemote !== null) manifest.actions_remote = { prefix: o.actionsRemote }
   if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule, css.maps)

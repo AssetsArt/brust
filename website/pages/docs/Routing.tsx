@@ -192,8 +192,21 @@ export default function Routing({ blocks }: RoutingData) {
               More than one <code>'*'</code>.
             </td>
           </tr>
+          <tr>
+            <td>
+              <code>route-outside-base-path</code>
+            </td>
+            <td>
+              With <code>[server] base_path</code>, a route whose pattern is not under it (the ids and patterns are listed).
+            </td>
+          </tr>
         </tbody>
       </table>
+      {/* source: packages/brust/src/routes.ts:172-181 (checkBasePath: every route but the root '*' must lie under the base), crates/brust-core/src/pipeline.rs:109-125 (a request outside the base is a 404 before any route is tried) */}
+      <p>
+        An app mounted under a path (<a href="/docs/configuration#base-path">Mount under a path</a>) writes its routes as the real URLs: <code>'/portal'</code>, <code>'/portal/orders/{'{id}'}'</code>. Nest them under one <code>{'{ path: \'/portal\', children }'}</code>{' '}
+        parent to write the base once. Links, <code>navigate()</code> and <code>redirect()</code> take the full path too, so nothing is prefixed behind your back. The root <code>'*'</code> then answers anything under the base that no route matched, with a 404.
+      </p>
     </>
   )
 }

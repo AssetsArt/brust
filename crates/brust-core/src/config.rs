@@ -252,12 +252,15 @@ impl ActionsClient {
     /// The `<script>` tags for the page head: the prefix one (unchanged since M3-F A4), then one for the base
     /// and the credentials default. A JSON string literal with `<`, `>`, `&`, U+2028 and U+2029 escaped.
     pub fn tags(&self) -> Option<String> {
+        self.tags_under("")
+    }
+
+    /// [`tags`](Self::tags) for an app mounted under `base` (F495): the prefix the client assumes by default is
+    /// `<base>/_brust/action`, so that one is not injected either.
+    pub fn tags_under(&self, base: &str) -> Option<String> {
+        let default = format!("{base}{DEFAULT_ACTION_PREFIX}");
         let mut out = String::new();
-        if let Some(p) = self
-            .prefix
-            .as_deref()
-            .filter(|p| *p != DEFAULT_ACTION_PREFIX)
-        {
+        if let Some(p) = self.prefix.as_deref().filter(|p| **p != default) {
             out.push_str(&format!(
                 "<script>globalThis.__BRUST_ACTION_PREFIX__=\"{p}\"</script>"
             ));
@@ -280,7 +283,7 @@ impl ActionsClient {
 }
 
 /// A JS string literal that is also safe inside `<script>`.
-fn js_string(s: &str) -> String {
+pub(crate) fn js_string(s: &str) -> String {
     let mut o = String::with_capacity(s.len() + 2);
     o.push('"');
     for c in s.chars() {
@@ -339,6 +342,11 @@ impl ActionsConfig {
         self.prefix == DEFAULT_ACTION_PREFIX
     }
 
+    /// F495: the prefix a build with no `[actions] prefix` uses under `base`.
+    pub fn default_prefix_under(base: &str) -> String {
+        format!("{base}{DEFAULT_ACTION_PREFIX}")
+    }
+
     /// R7; `start` prefixes the message with `actions: `.
     pub fn validate(&self, m: &Manifest) -> Result<(), String> {
         let p = self.prefix.as_str();
@@ -366,8 +374,18 @@ impl ActionsConfig {
                  [A-Za-z0-9._~-] (not '.' or '..'): {p:?}"
             ));
         }
-        if let Some(r) = RESERVED.iter().find(|r| under(p, r) || under(r, p)) {
-            return Err(format!("prefix {p:?} overlaps the reserved path {r:?}"));
+        // F495: the app's own URLs live under `base_path`, and so must the actions.
+        let base = m.base_path.as_str();
+        if !base.is_empty() && !under(p, base) {
+            return Err(format!("prefix {p:?} must lie under base_path {base:?}"));
+        }
+        if let Some(r) = RESERVED.iter().find(|r| {
+            let r = format!("{base}{r}");
+            under(p, &r) || under(&r, p)
+        }) {
+            return Err(format!(
+                "prefix {p:?} overlaps the reserved path \"{base}{r}\""
+            ));
         }
         // F470: a route under the prefix answers GET/HEAD of its own paths (the pipeline); the prefix itself stays the
         // actions app's mount point, and a `{*rest}` route there would take every GET from it.
@@ -517,6 +535,54 @@ mod tests {
             };
             assert!(c.validate().is_err(), "{bad}");
         }
+    }
+
+    /// F495: the default prefix the client assumes moves under the base path, so it is the one not injected.
+    #[test]
+    fn the_client_prefix_script_follows_the_base_path() {
+        let under = ActionsClient {
+            prefix: Some("/portal/_brust/action".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            under.tags_under("/portal"),
+            None,
+            "the default under the base"
+        );
+        assert!(
+            under
+                .tags_under("")
+                .unwrap()
+                .contains("/portal/_brust/action")
+        );
+        let own = ActionsClient {
+            prefix: Some("/portal/api".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            own.tags_under("/portal").unwrap(),
+            "<script>globalThis.__BRUST_ACTION_PREFIX__=\"/portal/api\"</script>"
+        );
+        assert_eq!(
+            ActionsConfig::default_prefix_under("/portal"),
+            "/portal/_brust/action"
+        );
+    }
+
+    #[test]
+    fn the_actions_prefix_must_lie_under_the_base_path_and_keep_off_its_reserved_paths() {
+        let mut m = fixture_manifest();
+        m.base_path = "/portal".into();
+        assert!(with_prefix("/portal/_brust/action").validate(&m).is_ok());
+        assert!(with_prefix("/portal/api").validate(&m).is_ok());
+        let e = with_prefix("/api").validate(&m).unwrap_err();
+        assert!(e.contains("must lie under base_path"), "{e}");
+        for p in ["/portal/ping", "/portal/public", "/portal/_brust/cache"] {
+            let e = with_prefix(p).validate(&m).unwrap_err();
+            assert!(e.contains("overlaps the reserved path"), "{p}: {e}");
+        }
+        // the root app's reserved paths are free under a base (they are another app's)
+        assert!(with_prefix("/portal/x").validate(&m).is_ok());
     }
 
     #[test]

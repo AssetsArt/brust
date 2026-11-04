@@ -35,6 +35,8 @@ export interface RunManifest {
   actions_remote?: { prefix: string } | null
   /** `[cache]`: the server's L2 settings (the workers load the adapter itself). */
   cache?: { adapter: string; getTimeoutMs: number; maxBodyBytes: number; namespace: string; buildId: string } | null
+  /** F495: the `[server] base_path` the build baked in; absent = the app is at the root. */
+  base_path?: string
   /** F165: `false` = no route can call a worker; absent (older manifests) = the pool is needed. */
   needs_workers?: boolean
 }
@@ -81,6 +83,15 @@ function actionsClient(cfg: BrustConfig, m: RunManifest): NonNullable<StartOptio
   return { ...(prefix ? { prefix } : {}), ...(cfg.actionsBaseUrl !== undefined ? { baseUrl: cfg.actionsBaseUrl } : {}), ...(credentials ? { credentials } : {}) }
 }
 
+/** F495: the message when the config names a base path that is not the one the manifest was built for (`base-path-mismatch`), else
+ * null. A config that sets none is fine: the manifest's own is what the server answers under. */
+export function basePathMismatch(cfg: Pick<BrustConfig, 'basePath'>, m: Pick<RunManifest, 'base_path'>): string | null {
+  const built = m.base_path ?? ''
+  if (cfg.basePath === undefined || cfg.basePath === built) return null
+  const show = (p: string) => (p === '' ? 'the root' : JSON.stringify(p))
+  return `base-path-mismatch: server.base_path is ${show(cfg.basePath)} but this build is for ${show(built)}; the base path is baked in at build time, so rebuild (brust build)`
+}
+
 /** Every worker's response buffer, kept reachable until the process exits (see run()). */
 const workerBuffers: SharedArrayBuffer[] = []
 
@@ -111,6 +122,10 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     fail((e as Error).message)
   }
 
+  const mismatch = basePathMismatch(cfg, m)
+  if (mismatch) fail(mismatch)
+  // `basePath` of `@brust/core` in the app's modules (the workers inherit the env).
+  process.env.BRUST_BASE_PATH = m.base_path ?? ''
   if (m.actions_remote && cfg.actionsBaseUrl === undefined)
     fail('this build has no local actions app: set [actions] base_url (or BRUST_ACTIONS_BASE_URL) to the deployment that serves them')
   const version: string = (await Bun.file(join(import.meta.dir, '../package.json')).json()).version

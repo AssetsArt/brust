@@ -78,7 +78,10 @@ function handle(m) {
 }
 
 function connect() {
-  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/_brust/dev/ws')
+  // F495: the socket lives next to this script (<base>/_brust/dev/ws), wherever the app is mounted.
+  const wsUrl = new URL('ws', import.meta.url)
+  wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+  const ws = new WebSocket(wsUrl)
   ws.onopen = () => {
     delay = 150
   }

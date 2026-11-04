@@ -94,7 +94,8 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> worker::Result<Respons
         .then(|| headers.get(http::header::ORIGIN).cloned())
         .flatten();
     let is_head = method == "HEAD";
-    let resp = if !STATS.with(Cell::get) && head::is_stats(&method, &full) {
+    let resp = if !STATS.with(Cell::get) && head::is_stats(&method, &full, &core.manifest.base_path)
+    {
         body::resp(404, "text/plain", &[], b"not found".to_vec())
     } else {
         let rq = RequestHead {

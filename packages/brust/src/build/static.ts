@@ -28,6 +28,7 @@ export async function prepareStatic(
   reads: ExprReads,
   log: (s: string) => void,
   cache?: Parameters<typeof assertNoCacheBindings>[0],
+  base = '',
 ): Promise<StaticPlan> {
   // L12: `[actions]` makes the output hybrid (static pages + a Pages Worker for the action prefix).
   if (actions) assertNoCacheBindings(cache)
@@ -65,7 +66,7 @@ export async function prepareStatic(
       throw new BuildError('ssg-params', `route ${leaf.id} (${leaf.pattern}) ssg.params() threw: ${(e as Error).message ?? String(e)}`)
     }
   }
-  return planStatic(leaves, params)
+  return planStatic(leaves, params, base)
 }
 
 export interface StaticReport {
@@ -167,7 +168,7 @@ export async function writeStatic(
   const dir = join(dist, 'static')
   rmSync(dir, { recursive: true, force: true })
   const assetsStage = join(dist, '.ssg-assets')
-  const assets = layoutAssets(dist, assetsStage, o.version)
+  const assets = layoutAssets(dist, assetsStage, o.version, (JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf8')) as { base_path?: string }).base_path ?? '')
   renameSync(join(assetsStage, 'assets'), dir)
   rmSync(assetsStage, { recursive: true, force: true })
   const warnings = [...assets.warnings]

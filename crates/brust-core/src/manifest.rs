@@ -21,6 +21,10 @@ pub struct Manifest {
     /// L16 (R16.3): `brust build --actions-only`: no page routes; everything but the actions prefix is a 404 problem+json.
     #[serde(default)]
     pub actions_only: bool,
+    /// F495: `[server] base_path` baked at build: the app answers under this path only, and every URL
+    /// brust owns (`/_brust/…`, `/public/…`, `/ping`, the actions prefix) lies below it. `""` = the root.
+    #[serde(default)]
+    pub base_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -255,6 +259,10 @@ pub enum ManifestError {
         "manifest version {0} unsupported (want {MANIFEST_VERSION}): rebuild the app with this brust version"
     )]
     Version(u32),
+    #[error(
+        "base_path {0:?} must start with '/', must not end with '/', and each segment must be [A-Za-z0-9._~-] (not '.' or '..')"
+    )]
+    BadBasePath(String),
     #[error("route {route}: unknown component {component}")]
     UnknownComponent { route: String, component: String },
     #[error("component {component}: missing file {path}")]
@@ -435,6 +443,20 @@ enum FileUse {
 /// [`walk`]'s file callback: `(component, rel path, use)` → a template's source, or nothing.
 type FileFn<'a> = dyn FnMut(&str, &str, FileUse) -> Result<Option<String>, ManifestError> + 'a;
 
+/// F495: a `base_path` the build wrote: `/seg[/seg…]`, no trailing `/`, each segment `[A-Za-z0-9._~-]+` (not `.`/`..`):
+/// the actions prefix alphabet, so it is printed into URLs and attributes as is.
+pub fn is_base_path(p: &str) -> bool {
+    p.len() > 1
+        && p.starts_with('/')
+        && p[1..].split('/').all(|s| {
+            !s.is_empty()
+                && s != "."
+                && s != ".."
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'~' | b'-'))
+        })
+}
+
 /// Every reference check of a parsed manifest, in `load`'s order (version, route chains, then per
 /// component: paths, job targets, the template, the client file, the children's job inputs; then
 /// the assets). `file(component, rel, use)` resolves each file reference: `Ok(Some(source))` for a
@@ -445,6 +467,9 @@ fn walk(
 ) -> Result<(Manifest, BTreeMap<String, String>), ManifestError> {
     if manifest.version != MANIFEST_VERSION {
         return Err(ManifestError::Version(manifest.version));
+    }
+    if !manifest.base_path.is_empty() && !is_base_path(&manifest.base_path) {
+        return Err(ManifestError::BadBasePath(manifest.base_path.clone()));
     }
     for r in &manifest.routes {
         for c in &r.chain {
@@ -656,6 +681,44 @@ mod tests {
         m["routes"][0]["css"] = serde_json::json!(["client/site-1a2b3c4d5e.css"]);
         let ok = Manifest::from_parts(&m.to_string(), &files).unwrap();
         assert_eq!(ok.manifest.routes[0].css, ["client/site-1a2b3c4d5e.css"]);
+    }
+
+    /// F495: a `base_path` is `/seg[/seg…]` of the actions-prefix alphabet; anything else is a boot error naming it.
+    #[test]
+    fn base_path_must_be_a_plain_mount_path() {
+        let (mut m, files) = parts();
+        assert_eq!(
+            Manifest::from_parts(&m.to_string(), &files)
+                .unwrap()
+                .manifest
+                .base_path,
+            "",
+            "absent = the root"
+        );
+        m["base_path"] = serde_json::json!("/portal/v1");
+        let ok = Manifest::from_parts(&m.to_string(), &files).unwrap();
+        assert_eq!(ok.manifest.base_path, "/portal/v1");
+        for bad in [
+            "portal",
+            "/",
+            "/portal/",
+            "/a//b",
+            "/a/..",
+            "/{id}",
+            "/a*",
+            "/a b",
+            "/a?x",
+            "/ข่าว",
+        ] {
+            m["base_path"] = serde_json::json!(bad);
+            assert!(
+                matches!(
+                    Manifest::from_parts(&m.to_string(), &files),
+                    Err(ManifestError::BadBasePath(_))
+                ),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

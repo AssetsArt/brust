@@ -71,9 +71,11 @@ pub fn action_url(headers: &HeaderMap, authority: Option<&str>, full: &str) -> S
     format!("http://{host}{full}")
 }
 
-/// A GET/HEAD of `/_brust/cache/stats` (the R11 gate runs before the core sees it).
-pub fn is_stats(method: &str, full: &str) -> bool {
-    matches!(method, "GET" | "HEAD") && full.split('?').next() == Some("/_brust/cache/stats")
+/// A GET/HEAD of `<base>/_brust/cache/stats` (the R11 gate runs before the core sees it); `base` is the manifest's
+/// `base_path` (F495), empty for an app at the root.
+pub fn is_stats(method: &str, full: &str, base: &str) -> bool {
+    matches!(method, "GET" | "HEAD")
+        && full.split('?').next().and_then(|p| p.strip_prefix(base)) == Some("/_brust/cache/stats")
 }
 
 #[cfg(test)]
@@ -164,10 +166,14 @@ mod tests {
 
     #[test]
     fn is_stats_only_for_get_and_head_of_the_stats_path() {
-        assert!(is_stats("GET", "/_brust/cache/stats"));
-        assert!(is_stats("HEAD", "/_brust/cache/stats?x=1"));
-        assert!(!is_stats("POST", "/_brust/cache/stats"));
-        assert!(!is_stats("GET", "/_brust/cache/statsx"));
-        assert!(!is_stats("GET", "/"));
+        assert!(is_stats("GET", "/_brust/cache/stats", ""));
+        assert!(is_stats("HEAD", "/_brust/cache/stats?x=1", ""));
+        assert!(!is_stats("POST", "/_brust/cache/stats", ""));
+        assert!(!is_stats("GET", "/_brust/cache/statsx", ""));
+        assert!(!is_stats("GET", "/", ""));
+        // F495: under a base path the stats URL moves with the app; the root one is another app's.
+        assert!(is_stats("GET", "/portal/_brust/cache/stats", "/portal"));
+        assert!(!is_stats("GET", "/_brust/cache/stats", "/portal"));
+        assert!(!is_stats("GET", "/portalx/_brust/cache/stats", "/portal"));
     }
 }
