@@ -207,7 +207,7 @@ export async function buildCss(
   dist: string,
   sources: string[],
   minify = true,
-  o: { appRoot?: string; log?: (s: string) => void; basePath?: string } = {},
+  o: { appRoot?: string; log?: (s: string) => void; basePath?: string; ownOutput?: string[] } = {},
 ): Promise<CssBuild> {
   const file = new Map<string, string>()
   const maps = new Map<string, Record<string, string>>()
@@ -224,7 +224,9 @@ export async function buildCss(
       if (hit === undefined) via.set(k, (hit = tailwindUse([k]).using.length > 0))
       return hit
     }
-    plugins.push(await loadTailwind(appRoot, tw.using[0]!, uses, o.log))
+    // F501: the output dirs of this app that Tailwind must not scan, as app-root-relative patterns (only those under it).
+    const own = (o.ownOutput ?? []).map((d) => relative(real(appRoot), real(d)).split(sep).join('/')).filter((r) => r !== '' && r !== '..' && !r.startsWith('../') && !isAbsolute(r))
+    plugins.push(await loadTailwind(appRoot, tw.using[0]!, uses, o.log, [...new Set(own)]))
     if (tw.imports.length > 1)
       o.log?.(
         `[brust] warning tailwind @import "tailwindcss" is in ${tw.imports.length} files (${tw.imports.map((f) => relative(appRoot, f)).join(', ')}): each one ships the whole of Tailwind; import it once (e.g. app.css) and use @reference elsewhere`,

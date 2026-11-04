@@ -68,8 +68,15 @@ const addCommand = (v: string) => `bun add -d --exact ${TAILWIND_PACKAGES.map((p
 /** The Tailwind plugin of the CSS build, resolved from the app. Missing packages → `tailwind-missing` with the
  * exact install command; versions that differ → one warning through `log` with the command that aligns them.
  * `uses(file)` says whether a stylesheet needs the compiler (it, or a relative `@import` of it, uses Tailwind);
- * other stylesheets stay Bun's. */
-export async function loadTailwind(appRoot: string, usedBy: string, uses: (file: string) => boolean, log?: (s: string) => void): Promise<BunPlugin> {
+ * other stylesheets stay Bun's. `ownOutput`: app-root-relative, `/`-separated directories of brust's own output that no
+ * scan may read (F501). */
+export async function loadTailwind(
+  appRoot: string,
+  usedBy: string,
+  uses: (file: string) => boolean,
+  log?: (s: string) => void,
+  ownOutput: string[] = [],
+): Promise<BunPlugin> {
   const v = tailwindVersions(appRoot)
   const missing = TAILWIND_PACKAGES.filter((p) => versionFrom(p, appRoot) === undefined)
   if (missing.length > 0)
@@ -105,7 +112,10 @@ export async function loadTailwind(appRoot: string, usedBy: string, uses: (file:
         const compiler = await node.compile(css, { base: dirname(a.path), from: a.path, shouldRewriteUrls: true, onDependency: () => {} })
         const root: SourceEntry[] =
           compiler.root === 'none' ? [] : compiler.root === null ? [{ base: appRoot, pattern: '**/*', negated: false }] : [{ ...compiler.root, negated: false }]
-        const scanner = new oxide.Scanner({ sources: [...root, ...compiler.sources] })
+        // F501: brust's own output (the dist dir, `.brust`) is never a source, whatever the ignore files say and whatever
+        // the stylesheet's `source(...)` and `@source` lines add: last, so a stale build can never feed the next one.
+        const own: SourceEntry[] = ownOutput.map((dir) => ({ base: appRoot, pattern: `${dir}/**`, negated: true }))
+        const scanner = new oxide.Scanner({ sources: [...root, ...compiler.sources, ...own] })
         let out = compiler.build(scanner.scan())
         // `@reference "./app.css"` pulls in Tailwind's license banner too; only the file that imports Tailwind ships it
         // (one banner per page, as before)

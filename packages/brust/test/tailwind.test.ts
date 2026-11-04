@@ -195,3 +195,40 @@ test('F498: `@source "../shared"` scans the whole directory, and `@source not` e
   const alone = scannedWith('@import "tailwindcss";\n@source not "../shared/hero";')
   expect(alone).toEqual({ 'text-green-600': true, 'bg-red-700': false, 'bg-yellow-300': false, 'bg-pink-300': false })
 }, 300_000)
+
+// F501: brust's own output (the dist dir, `.brust`) is never scanned, whatever the ignore files say. The repo's .gitignore
+// covers `dist/`, so the copied app carries its own `.gitignore` re-including both: an app whose ignore rules do not cover
+// them (no .gitignore, a nested app, a custom out dir). A first build, then stale files naming classes nothing uses are left
+// in the out dir and in `.brust/`, then the second build: those classes must not reach the stylesheet.
+function secondBuild(appCss: string, outDir: string): Record<string, boolean> {
+  const dir = join(import.meta.dir, 'fixtures/.tw-own-run')
+  rmSync(dir, { recursive: true, force: true })
+  cpSync(join(import.meta.dir, 'fixtures/tw-roots'), dir, { recursive: true, filter: (src) => !src.includes('/dist') })
+  copies.push(dir)
+  const app = join(dir, 'app')
+  writeFileSync(join(app, 'app.css'), appCss)
+  writeFileSync(join(app, '.gitignore'), `!${outDir}/\n!.brust/\n`)
+  const run = () => {
+    const p = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--out-dir', outDir], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+    if (p.exitCode !== 0) throw new Error(`brust build failed:\n${p.stderr.toString()}`)
+  }
+  run()
+  const stale = { 'bg-lime-400': `${outDir}/jinja/stale.jinja`, 'bg-fuchsia-300': '.brust/stale.txt' }
+  for (const [cls, f] of Object.entries(stale)) {
+    mkdirSync(join(app, f, '..'), { recursive: true })
+    writeFileSync(join(app, f), `<p class="${cls}">stale</p>`)
+  }
+  run()
+  const m = JSON.parse(readFileSync(join(app, outDir, 'manifest.json'), 'utf8')) as { routes: { css?: string[] }[] }
+  const out = m.routes[0]!.css!.map((f) => readFileSync(join(app, outDir, f), 'utf8')).join('\n')
+  return Object.fromEntries([...Object.keys(stale), 'text-green-600', 'bg-red-700'].map((c) => [c, out.includes(`.${c}`)]))
+}
+
+test('F501: a stale build in dist/ and .brust/ never feeds the next build, with the default out dir', () => {
+  expect(secondBuild('@import "tailwindcss";', 'dist')).toEqual({ 'bg-lime-400': false, 'bg-fuchsia-300': false, 'text-green-600': true, 'bg-red-700': false })
+}, 300_000)
+
+test('F501: the same with a custom out dir, and an explicit @source still adds its own classes', () => {
+  const r = secondBuild('@import "tailwindcss";\n@source "../shared";', 'out')
+  expect(r).toEqual({ 'bg-lime-400': false, 'bg-fuchsia-300': false, 'text-green-600': true, 'bg-red-700': true })
+}, 300_000)
