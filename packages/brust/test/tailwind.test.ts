@@ -232,3 +232,48 @@ test('F501: the same with a custom out dir, and an explicit @source still adds i
   const r = secondBuild('@import "tailwindcss";\n@source "../shared";', 'out')
   expect(r).toEqual({ 'bg-lime-400': false, 'bg-fuchsia-300': false, 'text-green-600': true, 'bg-red-700': true })
 }, 300_000)
+
+// F505: the gaps of F501. Every own-output dir is the base of its own negation, so the scanned root does not matter (a
+// stylesheet with `source("..")` over an out dir beside the app), nor do glob characters in the name (`dist[1]`), and
+// `dist/` is always one of them (a dev build writes under `.brust/dev/<n>`, a production `dist/` may sit next to it).
+// `first`: the out dir of the first build (default: the same as `out`). `stale`: class -> file (from the app dir) written
+// after it. Reads the classes of `out`'s stylesheet after the second build.
+function buildTwice(o: { css: string; out: string; first?: string; stale: Record<string, string>; ignore: string[] }): Record<string, boolean> {
+  const dir = join(import.meta.dir, 'fixtures/.tw-own-run')
+  rmSync(dir, { recursive: true, force: true })
+  cpSync(join(import.meta.dir, 'fixtures/tw-roots'), dir, { recursive: true, filter: (src) => !src.includes('/dist') })
+  copies.push(dir)
+  const app = join(dir, 'app')
+  writeFileSync(join(app, 'app.css'), o.css)
+  writeFileSync(join(dir, '.gitignore'), `${o.ignore.map((p) => `!${p}`).join('\n')}\n`)
+  const run = (outDir: string) => {
+    const p = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--out-dir', outDir], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+    if (p.exitCode !== 0) throw new Error(`brust build failed:\n${p.stderr.toString()}`)
+  }
+  run(o.first ?? o.out)
+  for (const [cls, f] of Object.entries(o.stale)) {
+    mkdirSync(join(app, f, '..'), { recursive: true })
+    writeFileSync(join(app, f), `<p class="${cls}">stale</p>`)
+  }
+  run(o.out)
+  const m = JSON.parse(readFileSync(join(app, o.out, 'manifest.json'), 'utf8')) as { routes: { css?: string[] }[] }
+  const css = m.routes[0]!.css!.map((f) => readFileSync(join(app, o.out, f), 'utf8')).join('\n')
+  return Object.fromEntries([...Object.keys(o.stale), 'text-green-600', 'bg-red-700'].map((c) => [c, css.includes(`.${c}`)]))
+}
+
+test('F505: an out dir beside the app is never scanned, although the stylesheet widens the root to cover it', () => {
+  const r = buildTwice({ css: '@import "tailwindcss" source("..");', out: '../out', stale: { 'bg-lime-400': '../out/jinja/stale.jinja' }, ignore: ['out/'] })
+  // the wider root still reads the real sources of both directories
+  expect(r).toEqual({ 'bg-lime-400': false, 'text-green-600': true, 'bg-red-700': true })
+}, 300_000)
+
+test('F505: an out dir whose name holds glob characters is never scanned', () => {
+  // `out{a,b}` read as a glob is `outa` and `outb`: a pattern built from the name would match neither
+  const r = buildTwice({ css: '@import "tailwindcss";', out: 'out{a,b}', stale: { 'bg-lime-400': 'out{a,b}/jinja/stale.jinja' }, ignore: [] })
+  expect(r).toEqual({ 'bg-lime-400': false, 'text-green-600': true, 'bg-red-700': false })
+}, 300_000)
+
+test('F505: a dev-style build under .brust never scans the production dist/ an earlier build left', () => {
+  const r = buildTwice({ css: '@import "tailwindcss";', first: 'dist', out: '.brust/dev/1', stale: { 'bg-lime-400': 'dist/jinja/stale.jinja' }, ignore: ['dist/', '.brust/'] })
+  expect(r).toEqual({ 'bg-lime-400': false, 'text-green-600': true, 'bg-red-700': false })
+}, 300_000)

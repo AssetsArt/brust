@@ -68,8 +68,7 @@ const addCommand = (v: string) => `bun add -d --exact ${TAILWIND_PACKAGES.map((p
 /** The Tailwind plugin of the CSS build, resolved from the app. Missing packages → `tailwind-missing` with the
  * exact install command; versions that differ → one warning through `log` with the command that aligns them.
  * `uses(file)` says whether a stylesheet needs the compiler (it, or a relative `@import` of it, uses Tailwind);
- * other stylesheets stay Bun's. `ownOutput`: app-root-relative, `/`-separated directories of brust's own output that no
- * scan may read (F501). */
+ * other stylesheets stay Bun's. `ownOutput`: absolute directories of brust's own output that no scan may read (F501, F505). */
 export async function loadTailwind(
   appRoot: string,
   usedBy: string,
@@ -112,9 +111,12 @@ export async function loadTailwind(
         const compiler = await node.compile(css, { base: dirname(a.path), from: a.path, shouldRewriteUrls: true, onDependency: () => {} })
         const root: SourceEntry[] =
           compiler.root === 'none' ? [] : compiler.root === null ? [{ base: appRoot, pattern: '**/*', negated: false }] : [{ ...compiler.root, negated: false }]
-        // F501: brust's own output (the dist dir, `.brust`) is never a source, whatever the ignore files say and whatever
+        // F501: brust's own output (the dist dirs, `.brust`) is never a source, whatever the ignore files say and whatever
         // the stylesheet's `source(...)` and `@source` lines add: last, so a stale build can never feed the next one.
-        const own: SourceEntry[] = ownOutput.map((dir) => ({ base: appRoot, pattern: `${dir}/**`, negated: true }))
+        // F505: each directory is the BASE of its own negation (verified: oxide honours a negated entry whose base differs
+        // from the scanned root, a base outside the root, a base that does not exist yet, and a name with glob characters
+        // such as `dist[1]`, none of which a pattern relative to the app root would survive).
+        const own: SourceEntry[] = ownOutput.map((dir) => ({ base: dir, pattern: '**/*', negated: true }))
         const scanner = new oxide.Scanner({ sources: [...root, ...compiler.sources, ...own] })
         let out = compiler.build(scanner.scan())
         // `@reference "./app.css"` pulls in Tailwind's license banner too; only the file that imports Tailwind ships it
