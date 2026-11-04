@@ -91,6 +91,9 @@ export interface CfBuildCtx {
   log: (s: string) => void
 }
 
+/** F495: the Worker bundle's `define`: production, and the app's base path baked in for `basePath` of `@brust/core` (cf.ts reads it; a Worker has no build-time env). */
+export const workerDefine = (basePath = ''): Record<string, string> => ({ ...PRODUCTION, 'process.env.BRUST_BASE_PATH': JSON.stringify(basePath) })
+
 /** The resolution conditions of the Worker bundle; the package-resolver probe (`sourceDirPlugin`) must carry the same (F223). */
 export const CF_CONDITIONS = ['workerd', 'worker', 'browser']
 
@@ -288,7 +291,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     target: 'browser',
     format: 'esm',
     conditions: CF_CONDITIONS,
-    define: PRODUCTION,
+    define: workerDefine(ctx.manifest.base_path),
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
     plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map(), join(out, 'client'), ctx.manifest.base_path ?? ''), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'], 'browser', CF_CONDITIONS), exposePlugin(ctx.compiled)],

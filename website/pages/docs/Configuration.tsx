@@ -155,7 +155,7 @@ export default function Configuration({ blocks }: ConfigurationData) {
       </p>
       {/* source: packages/brust/src/index.ts:6-11 (basePath on the server), packages/brust/src/browser.ts (basePath in the browser, from the page's __BRUST_BASE_PATH__), packages/runtime-dom/src/nav/nav.ts:27-30 (a link outside the base is a full page load) */}
       <p>
-        <code>import {'{ basePath }'} from '@brust/core'</code> gives the value (<code>''</code> at the root) on the server and in the browser, for code that builds URLs of its own. A link to a path outside the base is a full page load, never a swapped
+        <code>import {'{ basePath }'} from '@brust/core'</code> gives the value (<code>''</code> at the root) on the server and in the browser, for code that builds URLs of its own. Read it inside your app's modules (routes, components, loaders), not in the file that calls <code>run()</code>: that file loads before the manifest's value is known. On Cloudflare the build bakes it into the Worker. A link to a path outside the base is a full page load, never a swapped
         fetch, so the app's SPA navigation stays inside its own subtree. To run two apps on one machine, see <a href="/docs/deployment">Deployment</a>.
       </p>
 

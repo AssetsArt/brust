@@ -113,3 +113,19 @@ test('css: a url() under the base path is brust\'s own, not a file on this machi
   expect(leakedLocalPaths(css, ['/work/app'], '/portal')).toEqual([])
   expect(leakedLocalPaths('a{background:url(/work/app/z.png)}', ['/work/app'], '/portal')).toEqual(['/work/app/z.png'])
 })
+
+test('the Cloudflare Worker bundle bakes the base path in for basePath of @brust/core (cf.ts)', async () => {
+  const { workerDefine } = await import('../src/build/cloudflare')
+  expect(workerDefine('/portal')['process.env.BRUST_BASE_PATH']).toBe('"/portal"')
+  expect(workerDefine()['process.env.BRUST_BASE_PATH']).toBe('""')
+  // the very `basePath` line of cf.ts, bundled with the Worker define (the rest of cf.ts pulls the addon, which no browser bundle can load)
+  const line = /^export const basePath.*$/m.exec(readFileSync(join(import.meta.dir, '../src/cf.ts'), 'utf8'))![0]
+  const dir = tmp({ 'entry.ts': `${line}\nexport default basePath\n` })
+  for (const base of ['/portal', '']) {
+    const res = await Bun.build({ entrypoints: [join(dir, 'entry.ts')], target: 'browser', define: workerDefine(base), minify: false })
+    expect(res.success, res.logs.join('\n')).toBe(true)
+    const code = await res.outputs[0]!.text()
+    expect(code).toContain(`: ${JSON.stringify(base)};`)
+    expect(code).not.toContain('BRUST_BASE_PATH')
+  }
+})

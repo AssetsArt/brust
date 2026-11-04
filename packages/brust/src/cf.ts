@@ -3,8 +3,8 @@
 // the CF bundle's napi stub to the runtime the wasm glue installed at start (`server-handlers` `install`).
 export { buildTime } from './build-time'
 
-/** F495 `[server] base_path` (see index.ts). On a Worker the env is a var of the deployment (`BRUST_BASE_PATH`), `''` when none. */
-export const basePath: string = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.BRUST_BASE_PATH ?? ''
+/** F495 `[server] base_path` (see index.ts). The Cloudflare build bakes the manifest's value into the Worker bundle (`process.env.BRUST_BASE_PATH` is a `define`), `''` at the root. */
+export const basePath: string = typeof process === 'undefined' ? '' : (process.env.BRUST_BASE_PATH ?? '')
 export { navigate } from './navigate'
 export type { NavErrorDetail, NavLoadDetail, NavigateOptions, NavSuccessDetail, NavTrigger } from './navigate'
 export { cache } from './cache'
