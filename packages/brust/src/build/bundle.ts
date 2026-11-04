@@ -726,7 +726,7 @@ const ACTIONS_EXTERNALS = [...JOBS_EXTERNALS, 'elysia', 'elysia/*', '@elysia/*']
 
 /** `dist/actions.js` (M3-F E1): the actions entry for the worker (`target: 'bun'`). No `define`: Elysia
  * and app code read NODE_ENV at runtime (run.ts sets production). */
-export async function buildActions(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
+export async function buildActions(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map(), basePath = ''): Promise<string> {
   const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps, join(dist, 'client'), basePath), workerStorePlugin] })
   if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'actions.js'), await res.outputs[0]!.text())

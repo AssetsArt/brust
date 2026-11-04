@@ -28,6 +28,7 @@ export async function prepareStatic(
   reads: ExprReads,
   log: (s: string) => void,
   cache?: Parameters<typeof assertNoCacheBindings>[0],
+  base = '',
 ): Promise<StaticPlan> {
   // L12: `[actions]` makes the output hybrid (static pages + a Pages Worker for the action prefix).
   if (actions) assertNoCacheBindings(cache)
@@ -65,7 +66,7 @@ export async function prepareStatic(
       throw new BuildError('ssg-params', `route ${leaf.id} (${leaf.pattern}) ssg.params() threw: ${(e as Error).message ?? String(e)}`)
     }
   }
-  return planStatic(leaves, params)
+  return planStatic(leaves, params, base)
 }
 
 export interface StaticReport {

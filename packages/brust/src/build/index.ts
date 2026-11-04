@@ -179,7 +179,7 @@ export async function runBuild(opts: {
   // R9.3/R9.4: every reason to refuse a static build, before any write.
   const ssgPlan =
     opts.target === 'static'
-      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log, cache)
+      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log, cache, basePath)
       : null
 
   // Config, @brust/core-cf resolution and the user's wrangler file fail here, before any write.
@@ -356,7 +356,7 @@ async function buildInto(
   if (o.basePath !== '') manifest.base_path = o.basePath
   manifest.actions =
     o.actions && o.actionsEntry
-      ? { entry: await buildActions(out, o.actionsEntry, css.maps), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite, ...o.actions.stream }
+      ? { entry: await buildActions(out, o.actionsEntry, css.maps, o.basePath), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite, ...o.actions.stream }
       : null
   if (o.actionsRemote !== null) manifest.actions_remote = { prefix: o.actionsRemote }
   if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule, css.maps)

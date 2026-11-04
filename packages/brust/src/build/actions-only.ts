@@ -47,7 +47,7 @@ export async function runActionsOnly(o: {
       components: {},
       assets: { runtime: '', features: {} },
       jobs_module: 'jobs.js',
-      actions: { entry: await buildActions(tmp, entry), prefix: actions.prefix, maxBodyBytes: actions.maxBodyBytes, maxResponseBytes: actions.maxResponseBytes, crossSite: actions.crossSite, ...actions.stream },
+      actions: { entry: await buildActions(tmp, entry, undefined, config.basePath), prefix: actions.prefix, maxBodyBytes: actions.maxBodyBytes, maxResponseBytes: actions.maxResponseBytes, crossSite: actions.crossSite, ...actions.stream },
       actions_only: true,
       ...(config.basePath !== '' ? { base_path: config.basePath } : {}),
     }

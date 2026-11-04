@@ -77,7 +77,8 @@ function checkValue(leaf: FlatRoute, i: number, name: string, rest: boolean, v: 
 }
 
 /** Plans every page. `params` holds each dynamic route's resolved `ssg.params()` by route id. */
-export function planStatic(leaves: FlatRoute[], params: Map<string, unknown>): StaticPlan {
+/** F495: under `base` (`[server] base_path`) the not-found probe is a path under it, so the app's `*` route answers it rather than the server's plain 404. */
+export function planStatic(leaves: FlatRoute[], params: Map<string, unknown>, base = ''): StaticPlan {
   const pages: PlannedPage[] = []
   const skipped: StaticPlan['skipped'] = []
   let catchAll: FlatRoute | undefined
@@ -133,7 +134,7 @@ export function planStatic(leaves: FlatRoute[], params: Map<string, unknown>): S
     seen.set(key, p)
   }
   if (seen.has('404.html')) throw new BuildError('ssg-params', `${seen.get('404.html')!.path} would overwrite 404.html`)
-  if (catchAll) pages.push({ path: NOT_FOUND_PATH, file: '404.html', routeId: catchAll.id, pattern: catchAll.pattern, expect: 404 })
+  if (catchAll) pages.push({ path: `${base}${NOT_FOUND_PATH}`, file: '404.html', routeId: catchAll.id, pattern: catchAll.pattern, expect: 404 })
   return { pages, skipped, defaultNotFound: catchAll === undefined }
 }
 

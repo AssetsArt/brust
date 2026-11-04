@@ -47,6 +47,7 @@ export async function deploymentLoader(): Promise<DeploymentData> {
     toc: [
       { id: 'pick', title: 'Pick a target' },
       { id: 'bun', title: 'The Bun server' },
+      { id: 'one-origin', title: 'Two apps on one origin' },
       { id: 'static', title: 'Static files' },
       { id: 'pages-actions', title: 'Static pages + actions on Pages' },
       { id: 'workers', title: 'Cloudflare Workers' },
@@ -109,6 +110,28 @@ export default function Deployment({ blocks, panels }: DeploymentData) {
         </li>
         <li>
           The page cache is per process. For several instances, add a cache adapter so they share pages and invalidations: <a href="/docs/cache-adapters/overview">Cache adapters</a>.
+        </li>
+      </ul>
+
+      <h2 id="one-origin">Two apps on one origin</h2>
+      {/* source: packages/brust/src/config.ts:59-70 (the base_path shape), crates/brust-core/src/pipeline.rs:109-153 (under a base: /ping, /_brust/* and /public/* are matched below it, everything outside is a 404), packages/brust/src/build/manifest.ts (base_path in the manifest), packages/brust/src/run.ts:86-92 (base-path-mismatch) */}
+      <p>
+        Give each app its own path with <code>[server] base_path</code> (<a href="/docs/configuration#base-path">Configuration</a>) and a path-routing proxy needs one rule per app: <code>/portal</code> and <code>/portal/*</code> go to the app built with{' '}
+        <code>base_path = "/portal"</code>, everything else goes to the app at the root. There is no rule for brust's own URLs, because every URL an app prints already lies under its own base: <code>/portal/_brust/client/…</code>,{' '}
+        <code>/portal/_brust/action/…</code> and <code>/portal/public/…</code> reach the portal, <code>/_brust/…</code> and <code>/public/…</code> reach the root app. Nothing is merged: each app keeps its own <code>dist/</code> and its own client files.
+      </p>
+      <ul>
+        <li>
+          Build each app with its own <code>brust.toml</code>. The base is baked into <code>dist/manifest.json</code>: copy that <code>dist/</code> as it is, and keep a <code>[server] base_path</code> that disagrees out of the deployed <code>brust.toml</code> (the start refuses it).
+        </li>
+        <li>
+          Health-check each app at its own <code>/ping</code>: <code>/ping</code> for the root app, <code>/portal/ping</code> for the portal. A path outside an app's base answers 404 from that app, so a wrong proxy rule shows up at once.
+        </li>
+        <li>
+          Pass <code>Host</code> through, as for any proxy in front of brust, so same-origin action POSTs are not refused as cross-site.
+        </li>
+        <li>
+          <code>--target static</code> and <code>--target cloudflare</code> write the assets under the base (<code>portal/_brust/client/…</code>, <code>portal/public/…</code>), so the published tree serves the same URLs the pages print.
         </li>
       </ul>
 

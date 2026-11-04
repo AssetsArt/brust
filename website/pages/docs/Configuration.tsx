@@ -17,6 +17,7 @@ const SERVER = `[server]
 address = "127.0.0.1"   # default localhost
 port = 1337             # 1..65535, default 1337
 max_loader_response_bytes = 8388608   # 256 KiB..64 MiB, default 8 MiB (env BRUST_MAX_LOADER_RESPONSE_BYTES)
+base_path = "/portal"   # mount the app under a path (a build setting), default the root
 
 [workers]
 count = 4               # 1..1024, default one per CPU core
@@ -75,6 +76,7 @@ export async function configurationLoader(): Promise<ConfigurationData> {
       { id: 'server', title: 'Server and workers' },
       { id: 'code', title: 'Configure from code' },
       { id: 'toml-only', title: 'What only brust.toml sets' },
+      { id: 'base-path', title: 'Mount under a path' },
       { id: 'try', title: 'Try it' },
       { id: 'size', title: 'Response size' },
       { id: 'env', title: 'Environment variables' },
@@ -133,6 +135,28 @@ export default function Configuration({ blocks }: ConfigurationData) {
       <p>
         <code>[actions]</code>, <code>[cache]</code> and <code>[build]</code> are read by <code>brust build</code> and recorded in the manifest, so they are decided at build time. A build with no <code>brust.toml</code> has no actions and no
         shared cache, whatever <code>server.ts</code> says.
+      </p>
+
+      <h2 id="base-path">Mount under a path</h2>
+      {/* source: packages/brust/src/config.ts:59-70 (normalizeBasePath: the accepted shape) and :202-205 (the toml key), packages/brust/src/build/config.ts:408-415 (read by brust build, a bad value is a build error) and :288-297 (the default actions prefix moves under it), packages/brust/src/run.ts:86-92 (base-path-mismatch) */}
+      <p>
+        Two brust apps can share one origin when each one is mounted under its own path. Set <code>[server] base_path = "/portal"</code> and the app answers under <code>/portal</code> only. The value starts with <code>/</code>, has no trailing{' '}
+        <code>/</code>, and each segment is letters, digits, <code>.</code>, <code>_</code>, <code>~</code> or <code>-</code>. Absent, empty or <code>"/"</code> is the root, and the build is the one you had before.
+      </p>
+      {/* source: crates/brust-core/src/pipeline.rs:109-125 (a request outside the base is a plain 404; the framework paths are matched below it), crates/brust-core/src/render.rs:432-440 and :944-956 (the stylesheet, script and nav tags carry the base), packages/brust/src/build/cf-assets.ts:40-47 (the Cloudflare and static asset tree sits under it) */}
+      <p>
+        It is a <em>build</em> setting: <code>brust build</code> bakes it into <code>dist/manifest.json</code>, and the server answers under the base the manifest names. A <code>brust.toml</code> (or <code>run({'{ config: { basePath } }'})</code>) that names
+        another one stops <code>brust start</code> with <code>base-path-mismatch</code>: rebuild. With none set, the manifest's wins.
+      </p>
+      <p>
+        Every URL brust owns moves below the base: <code>/portal/_brust/client/…</code> (scripts, stylesheets, islands, fonts and images the bundles import), <code>/portal/_brust/action/…</code> (the default actions prefix; an explicit{' '}
+        <code>[actions] prefix</code> is used as written and has to lie under the base), <code>/portal/_brust/cache/stats</code>, <code>/portal/public/…</code> and <code>/portal/ping</code>. A path outside the base is a plain 404 from this app: it belongs to
+        another one on the same origin. The routes, your links, <code>navigate()</code> and <code>redirect()</code> keep writing real URL paths, with the base: see <a href="/docs/routing">Routing</a>.
+      </p>
+      {/* source: packages/brust/src/index.ts:6-11 (basePath on the server), packages/brust/src/browser.ts (basePath in the browser, from the page's __BRUST_BASE_PATH__), packages/runtime-dom/src/nav/nav.ts:27-30 (a link outside the base is a full page load) */}
+      <p>
+        <code>import {'{ basePath }'} from '@brust/core'</code> gives the value (<code>''</code> at the root) on the server and in the browser, for code that builds URLs of its own. A link to a path outside the base is a full page load, never a swapped
+        fetch, so the app's SPA navigation stays inside its own subtree. To run two apps on one machine, see <a href="/docs/deployment">Deployment</a>.
       </p>
 
       <h2 id="try">Try it</h2>
