@@ -422,7 +422,12 @@ impl ActionsConfig {
     }
 }
 
-/// `cache.invalidate({ key?, tags?, path?, method? })` (spec §5).
+/// `cache.invalidate({ key?, tags?, path?, method?, prefix? })` (spec §5).
+///
+/// `prefix` (F493) narrows the page (L1/L2) invalidation to entries whose evaluated, stored key
+/// prefix equals it exactly (`""` = routes with no prefix): with `path` that path of that prefix,
+/// with `tags` that prefix's tagged pages (the job cache is not touched: job keys carry no prefix),
+/// alone every page of that prefix. It cannot be combined with `key` ([`InvalidateArgs::validate`]).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct InvalidateArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -433,6 +438,22 @@ pub struct InvalidateArgs {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+}
+
+/// The refusal text for `prefix` with `key` (the TS `cache.invalidate` throws the same).
+pub const PREFIX_WITH_KEY: &str = "cache.invalidate: `prefix` narrows page entries; `key` names a job entry — call them separately";
+
+impl InvalidateArgs {
+    /// `prefix` together with `key` is refused (F493): `prefix` narrows page entries, `key` names a
+    /// job entry. Hosts call this before [`crate::core::Core::invalidate`].
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.prefix.is_some() && self.key.is_some() {
+            return Err(PREFIX_WITH_KEY);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
@@ -802,5 +823,24 @@ mod tests {
         let j = serde_json::to_string(&a).unwrap();
         assert_eq!(j, r#"{"tags":["a"],"path":"/x"}"#);
         assert_eq!(serde_json::from_str::<InvalidateArgs>(&j).unwrap(), a);
+    }
+
+    #[test]
+    fn invalidate_args_prefix_round_trips_and_refuses_key() {
+        let a = InvalidateArgs {
+            path: Some("/x".into()),
+            prefix: Some(String::new()),
+            ..Default::default()
+        };
+        let j = serde_json::to_string(&a).unwrap();
+        assert_eq!(j, r#"{"path":"/x","prefix":""}"#);
+        assert_eq!(serde_json::from_str::<InvalidateArgs>(&j).unwrap(), a);
+        assert_eq!(a.validate(), Ok(()));
+        let both = InvalidateArgs {
+            key: Some("k".into()),
+            prefix: Some("a.test".into()),
+            ..Default::default()
+        };
+        assert_eq!(both.validate(), Err(PREFIX_WITH_KEY));
     }
 }

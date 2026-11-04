@@ -285,3 +285,73 @@ fn a_job_invalidated_during_its_call_is_recomputed_by_the_next_page() {
         assert!(b.contains("tackle: MOVE tackle b2"), "{at}: {b}");
     }
 }
+
+/// F493: one app serving many hosts (`prefix: "request(host)"`): `invalidate({prefix, path})`
+/// drops that host's page only, `{prefix, tags}` that host's tagged pages only (the job cache is
+/// untouched), `{prefix}` every page of that host; `prefix` with `key` changes nothing (hosts
+/// refuse it before the core).
+#[test]
+fn invalidate_with_a_prefix_drops_only_that_hosts_pages() {
+    let dist = temp_dist(|m| {
+        m["routes"].as_array_mut().unwrap().insert(
+            0,
+            json!({ "id": "rh", "pattern": "/hosted", "chain": ["appLayout_a1", "homePage_b2"], "loaders": [],
+                    "cache": { "ttl_seconds": 60, "prefix": "request(host)", "bypass": null, "tags": ["page"] },
+                    "catch_all": false }),
+        );
+    });
+    let s = boot_in(fake(), dist.path());
+    let at = |host: &str| cache_hdr(&get(&s, "/hosted", &[("host", host)]).1).map(str::to_owned);
+    let warm = || {
+        for h in ["a.test", "b.test"] {
+            at(h);
+            assert_eq!(at(h).as_deref(), Some("HIT"), "{h} warm");
+        }
+    };
+    let scoped = |prefix: &str| InvalidateArgs {
+        prefix: Some(prefix.into()),
+        ..Default::default()
+    };
+
+    warm();
+    let r = s.invalidate(InvalidateArgs {
+        path: Some("/hosted".into()),
+        ..scoped("a.test")
+    });
+    assert_eq!((r.l1_removed, r.job_removed), (1, 0));
+    assert_eq!(at("a.test").as_deref(), Some("MISS"));
+    assert_eq!(at("b.test").as_deref(), Some("HIT"));
+
+    warm();
+    let r = s.invalidate(InvalidateArgs {
+        tags: vec!["page".into()],
+        ..scoped("b.test")
+    });
+    assert_eq!((r.l1_removed, r.job_removed), (1, 0));
+    assert_eq!(at("b.test").as_deref(), Some("MISS"));
+    assert_eq!(at("a.test").as_deref(), Some("HIT"));
+
+    warm();
+    assert_eq!(s.invalidate(scoped("a.test")).l1_removed, 1);
+    assert_eq!(
+        s.invalidate(scoped("")).l1_removed,
+        0,
+        "no page has an empty prefix"
+    );
+    assert_eq!(at("a.test").as_deref(), Some("MISS"));
+    assert_eq!(at("b.test").as_deref(), Some("HIT"));
+
+    warm();
+    let r = s.invalidate(InvalidateArgs {
+        key: Some("k".into()),
+        ..scoped("a.test")
+    });
+    assert_eq!((r.l1_removed, r.job_removed), (0, 0));
+    assert_eq!(at("a.test").as_deref(), Some("HIT"));
+    // Without a prefix the path drops every host's page, as before.
+    let r = s.invalidate(InvalidateArgs {
+        path: Some("/hosted".into()),
+        ..Default::default()
+    });
+    assert_eq!(r.l1_removed, 2);
+}

@@ -81,6 +81,13 @@ describe('kvAdapter', () => {
     const a = kvAdapter({}, { getEnv: async () => ({}) })
     await expect(a.store.get('k')).rejects.toThrow('KV binding "BRUST_CACHE" is not bound (add it to wrangler.jsonc)')
   })
+  test('F493: the stored frame carries the prefix (combine judges floors by it)', async () => {
+    const { a } = make()
+    await a.store.set('k', page('x'), meta({ prefix: 'a.test' }))
+    expect((await a.store.getWithMeta('k')).meta?.prefix).toBe('a.test')
+    await a.store.set('k0', page('x'), meta())
+    expect((await a.store.getWithMeta('k0')).meta?.prefix).toBe('')
+  })
   test('invalidate resolves with no KV call', async () => {
     const { a, kv } = make()
     await a.store.invalidate({ tags: ['t'] })

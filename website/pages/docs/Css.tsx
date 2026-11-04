@@ -10,7 +10,7 @@ import Lead from '../../components/docs/Lead'
 
 export interface CssData {
   toc: TocItem[]
-  blocks: Record<'imports' | 'global' | 'urls' | 'preload' | 'head' | 'mod' | 'modSrc' | 'compiled' | 'install' | 'entry' | 'layout' | 'apply' | 'layer', CodeBlockData>
+  blocks: Record<'imports' | 'global' | 'urls' | 'preload' | 'head' | 'mod' | 'modSrc' | 'compiled' | 'install' | 'entry' | 'layout' | 'apply' | 'layer' | 'sources', CodeBlockData>
 }
 
 const IMPORTS = `// Layout.tsx: site-wide, because every page's chain starts with this layout
@@ -92,6 +92,10 @@ const LAYER = `@layer components {
   .card { padding: 1rem; }   /* now a utility class can override it */
 }`
 
+const SOURCES = `@import "tailwindcss";
+@source "../shared";               /* a [build] source_roots directory */
+@source not "../shared/hero";      /* ...minus a folder you do not want scanned */`
+
 export async function cssLoader(): Promise<CssData> {
   return {
     toc: [
@@ -120,6 +124,7 @@ export async function cssLoader(): Promise<CssData> {
       layout: codeBlock({ lang: 'tsx', file: 'Layout.tsx', code: LAYOUT }),
       apply: codeBlock({ lang: 'text', file: 'Card.module.css', code: APPLY }),
       layer: codeBlock({ lang: 'text', file: 'Card.module.css', code: LAYER }),
+      sources: codeBlock({ lang: 'text', file: 'app.css', code: SOURCES }),
     },
   }
 }
@@ -266,6 +271,21 @@ export default function Css({ blocks }: CssData) {
       <p>
         Tailwind scans the app root for class names, so the utilities you use in <code>.tsx</code> files end up in the stylesheet, minified like the rest. Import <code>tailwindcss</code> once, in the stylesheet your root layout imports: the build warns when more than one
         file has <code>@import "tailwindcss"</code>, because each one ships all of Tailwind.
+      </p>
+      {/* source: packages/brust/src/build/tailwind.ts:107 (with no source() the scanner's base is the app root, the glob of every file below it, and nothing else) and css.ts:223 (loadTailwind gets the app root; the [build] source_roots list is not passed);
+          observed: packages/brust/test/tailwind.test.ts:186 (a class used only in a source_roots directory is not in the stylesheet), :190 (@source "../shared" adds the whole directory, files nothing imports included; @source not "../shared/hero" removes that part; @source not on its own adds nothing) */}
+      <h3>Classes outside the app root</h3>
+      <p>
+        <a href="/docs/configuration#other">
+          <code>[build] source_roots</code>
+        </a>{' '}
+        lets the app&rsquo;s imports reach a directory outside it, such as <code>../shared</code> in a monorepo, but it does not widen what Tailwind scans. A class that only a file in that directory uses is not in the stylesheet until you name the directory with{' '}
+        <code>@source</code>, relative to the stylesheet:
+      </p>
+      <CodeBlock code={blocks.sources.code} lang={blocks.sources.lang} file={blocks.sources.file} html={blocks.sources.html} />
+      <p>
+        <code>@source "../shared"</code> scans every file under that directory, including files nothing imports. <code>@source not</code> takes a path out of what the other sources add, so <code>@source not "../shared/hero"</code> leaves that folder unscanned while the rest
+        of <code>../shared</code> still is. It only removes: on its own it adds nothing.
       </p>
       {/* source: docs/css.md:99-105 (@apply in a CSS Module needs @reference to your Tailwind entry; brust does not add it) and :107 (cascade: v4 utilities are in @layer, unlayered CSS beats them whatever the file order; put the module rule in a layer to let a utility override it) */}
       <h3>Inside a CSS Module</h3>

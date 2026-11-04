@@ -36,14 +36,14 @@ export function combine(kvIn: CacheAdapter, d: DoAdapter): CacheAdapter {
       const { result, meta } = await kv.store.getWithMeta(key)
       if (!result.page || !meta) return { page: null, stamp, entryStamp: null, storedAt: null }
       // A hit written under a stamp below its floor (or one with no stamp at all) is judged invalid.
-      if (result.entryStamp === null || result.entryStamp < floors.floorOf(meta.tags, meta.method, meta.path)) return { page: null, stamp, entryStamp: null, storedAt: null }
+      if (result.entryStamp === null || result.entryStamp < floors.floorOf(meta.tags, meta.method, meta.path, meta.prefix)) return { page: null, stamp, entryStamp: null, storedAt: null }
       return { ...result, stamp }
     },
     async set(key: string, page: StoredPage, meta: SetMeta) {
       if (!seeded) await seed()
       // `stamp: null` = an unguarded write: it is stamped with the seq known now, so floors judge it from here on.
       const stamp = meta.stamp ?? lastSeq
-      if (meta.stamp !== null && stamp < floors.floorOf(meta.tags, meta.method, meta.path)) return false
+      if (meta.stamp !== null && stamp < floors.floorOf(meta.tags, meta.method, meta.path, meta.prefix)) return false
       return kv.store.set(key, page, { ...meta, stamp })
     },
     async invalidate(args: InvalidateArgs) {

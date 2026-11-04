@@ -32,6 +32,8 @@ interface Entry {
   tags: string[]
   method: string
   path: string
+  /** The route-cache key prefix (F493); `''` = none. */
+  prefix: string
   entryStamp: number | null
   storedAt: number
   expiresAt: number
@@ -57,6 +59,42 @@ export type MemoryAdapter = CacheAdapter & { store: CacheStore; __test: MemoryAd
 
 const pathName = (method: string | undefined, path: string) => `${method ?? 'GET'} ${path}`
 
+// Marker names (F493: scoped by prefix, so one prefix's invalidation refuses only that prefix's stale
+// writes). A prefix is JSON-quoted: self-delimiting, so names of different prefixes never meet.
+const tagName = (t: string) => `t:${t}`
+const pName = (m: string | undefined, p: string) => `p:${pathName(m, p)}`
+const px = (prefix: string) => `px:${JSON.stringify(prefix)}`
+const ptName = (prefix: string, t: string) => `pt:${JSON.stringify(prefix)}${t}`
+const ppName = (prefix: string, m: string | undefined, p: string) => `pp:${JSON.stringify(prefix)}${pathName(m, p)}`
+
+/** The marker names an invalidation raises. `{ prefix }` alone ignores `method` (conservative). */
+function invalidationNames(a: InvalidateArgs): string[] {
+  const tags = a.tags ?? []
+  const pre = a.prefix
+  if (pre === undefined) return [...tags.map(tagName), ...(a.path !== undefined ? [pName(a.method, a.path)] : [])]
+  if (!tags.length && a.path === undefined) return [px(pre)]
+  return [...tags.map(t => ptName(pre, t)), ...(a.path !== undefined ? [ppName(pre, a.method, a.path)] : [])]
+}
+
+/** Every marker name that covers an entry. */
+function entryNames(e: { tags: string[]; method: string; path: string; prefix: string }): string[] {
+  return [
+    ...e.tags.map(tagName),
+    pName(e.method, e.path),
+    px(e.prefix),
+    ...e.tags.map(t => ptName(e.prefix, t)),
+    ppName(e.prefix, e.method, e.path),
+  ]
+}
+
+/** Does `a` delete `e`? (`key` alone deletes nothing: the store holds pages only.) */
+function covers(a: InvalidateArgs, e: Entry): boolean {
+  if (a.prefix !== undefined && e.prefix !== a.prefix) return false
+  const tags = a.tags ?? []
+  if (!tags.length && a.path === undefined) return a.prefix !== undefined && (a.method === undefined || a.method === e.method)
+  return e.tags.some(t => tags.includes(t)) || (a.path !== undefined && pathName(e.method, e.path) === pathName(a.method, a.path))
+}
+
 export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
   const mode = o.broadcast ?? 'push'
   const ringCap = o.ring ?? 1024
@@ -64,8 +102,7 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
   const maxBodyBytes = o.maxBodyBytes ?? 8_388_608
   const now = o.now ?? Date.now
   const entries = new Map<string, Entry>()
-  const tagSeq = new Map<string, number>()
-  const pathSeq = new Map<string, number>()
+  const nameSeq = new Map<string, number>()
   let seq = 0
   // Drawn on first use: a Workers module may not make random values at global scope.
   let genValue: string | null = null
@@ -86,10 +123,8 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
     fail = false
     return true
   }
-  const raise = (m: Map<string, number>, k: string, s: number) => m.set(k, Math.max(m.get(k) ?? 0, s))
   const mark = (args: InvalidateArgs, s: number) => {
-    for (const t of args.tags ?? []) raise(tagSeq, t, s)
-    if (args.path !== undefined) raise(pathSeq, pathName(args.method, args.path), s)
+    for (const n of invalidationNames(args)) nameSeq.set(n, Math.max(nameSeq.get(n) ?? 0, s))
   }
 
   const store: CacheStore = {
@@ -113,10 +148,10 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
     async set(key: string, page: StoredPage, meta: SetMeta): Promise<boolean> {
       if (failing()) throw new Error('memory adapter: injected failure')
       if (page.body.length > maxBodyBytes) return false
+      const prefix = meta.prefix ?? ''
       if (meta.stamp !== null) {
         const s = meta.stamp
-        const stale = (m: Map<string, number>, k: string) => (m.get(k) ?? 0) > s
-        if (meta.tags.some(t => stale(tagSeq, t)) || stale(pathSeq, pathName(meta.method, meta.path))) return false
+        if (entryNames({ ...meta, prefix }).some(n => (nameSeq.get(n) ?? 0) > s)) return false
       }
       const at = now()
       entries.set(key, {
@@ -124,6 +159,7 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
         tags: [...meta.tags],
         method: meta.method,
         path: meta.path,
+        prefix,
         entryStamp: meta.stamp,
         storedAt: at,
         expiresAt: at + meta.ttlMs,
@@ -140,11 +176,7 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
       // L7b: the marker first, at the seq the matching publish will take (seq + 1), so a set whose
       // stamp was read before this call is refused from now on; then the delete.
       mark(args, seq + 1)
-      const tags = new Set(args.tags ?? [])
-      const p = args.path === undefined ? null : pathName(args.method, args.path)
-      for (const [k, e] of entries) {
-        if (e.tags.some(t => tags.has(t)) || (p !== null && pathName(e.method, e.path) === p)) entries.delete(k)
-      }
+      for (const [k, e] of entries) if (covers(args, e)) entries.delete(k)
     },
   }
 

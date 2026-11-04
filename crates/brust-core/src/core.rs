@@ -200,21 +200,38 @@ impl<H: Host> Core<H> {
     /// L1 pages built from an invalidated job value are NOT evicted by `key`.
     /// A job value computed by a call that began before the invalidation is not
     /// cached, and its page is not stored in L1 (F89).
+    ///
+    /// `prefix` (F493) narrows the page side to entries whose stored key prefix equals it: `tags`
+    /// then skip the job cache (job keys carry no prefix), and `prefix` alone drops every page of
+    /// that prefix (of `method` when given). Args that fail [`InvalidateArgs::validate`] (`prefix`
+    /// with `key`) change nothing; hosts refuse them before calling.
     pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult {
         let mut r = InvalidateResult::default();
+        if args.validate().is_err() {
+            return r;
+        }
+        let prefix = args.prefix.as_deref();
         if let Some(k) = &args.key {
             r.job_removed += self.jobs.invalidate_user_key(k);
         }
         if !args.tags.is_empty() {
-            r.l1_removed += self.l1.invalidate_tags(&args.tags);
-            r.job_removed += self.jobs.invalidate_tags(&args.tags);
+            r.l1_removed += self.l1.invalidate_tags(&args.tags, prefix);
+            if prefix.is_none() {
+                r.job_removed += self.jobs.invalidate_tags(&args.tags);
+            }
         }
         if let Some(p) = &args.path {
             let m = args.method.as_deref().unwrap_or("GET");
             // L24: the key's spelling (browser percent-encoding), whatever the caller wrote.
-            r.l1_removed += self
-                .l1
-                .invalidate_path(m, &crate::routing::routes::normalize_request_path(p));
+            r.l1_removed += self.l1.invalidate_path(
+                m,
+                &crate::routing::routes::normalize_request_path(p),
+                prefix,
+            );
+        } else if let Some(px) = prefix
+            && args.tags.is_empty()
+        {
+            r.l1_removed += self.l1.invalidate_prefix(px, args.method.as_deref());
         }
         r
     }

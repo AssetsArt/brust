@@ -583,10 +583,11 @@ async fn page<H: Host>(
             && let Some(c) = &route.cache
         {
             let b = Arc::clone(&body);
+            let prefix = k.prefix.clone();
             if s.l1
                 .insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags, since)
             {
-                l2_write_back(s, w, &b, c, full);
+                l2_write_back(s, w, &b, c, full, &prefix);
             } else {
                 tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
             }
@@ -657,7 +658,9 @@ async fn l2_read<H: Host>(
             entry_stamp,
             stored_at_ms,
         } => {
-            if s.l2_floor.with(|f| f.rejects(entry_stamp, path, &c.tags)) {
+            if s.l2_floor
+                .with(|f| f.rejects(entry_stamp, &k.prefix, path, &c.tags))
+            {
                 n.bump("rejected_floor");
                 return L2Read::Write(Some((key, stamp)));
             }
@@ -703,6 +706,7 @@ fn l2_write_back<H: Host>(
     b: &RenderedBody,
     c: &RouteCache,
     full: &str,
+    prefix: &str,
 ) {
     let Some(l2) = &s.l2 else { return };
     if b.html.len() > l2.max_body_bytes {
@@ -719,6 +723,7 @@ fn l2_write_back<H: Host>(
         tags: c.tags.clone(),
         method: "GET".into(),
         path: full.split('?').next().unwrap_or(full).to_owned(),
+        prefix: prefix.to_owned(),
         stamp,
     };
     s.host.l2_set(key, page, meta, &s.l2_counters);

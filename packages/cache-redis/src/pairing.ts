@@ -74,7 +74,18 @@ export class Pairing {
       idx.push(K.path(method, args.path))
       marks.push(K.markPath(method, args.path))
     }
-    const r = (await evalsha(this.c(), INVAL_SCRIPT, [K.seq, ...idx, ...marks], [mode, idx.length, this.markerTtlMs, this.channel(), JSON.stringify(origin), JSON.stringify(args)])) as (number | string)[]
+    // F493: `prefix` + tags/path deletes only that prefix's members (the prefix set filters), and marks the unscoped
+    // tag/path markers (conservative: a racing set of another prefix is refused, a later miss). `prefix` alone deletes the
+    // prefix's set and marks its marker. The store holds GET pages only: `{prefix, method: <not GET>}` deletes nothing.
+    const filter: string[] = []
+    if (args.prefix !== undefined) {
+      if (idx.length) filter.push(K.pfx(args.prefix))
+      else if (method === undefined || method.toUpperCase() === 'GET') {
+        idx.push(K.pfx(args.prefix))
+        marks.push(K.markPfx(args.prefix))
+      }
+    }
+    const r = (await evalsha(this.c(), INVAL_SCRIPT, [K.seq, ...idx, ...marks, ...filter], [mode, idx.length, this.markerTtlMs, this.channel(), JSON.stringify(origin), JSON.stringify(args), filter.length ? '1' : ''])) as (number | string)[]
     return { seq: Number(r[0]), members: r.slice(1).map(String) }
   }
 }

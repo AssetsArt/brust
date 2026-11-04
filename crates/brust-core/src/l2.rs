@@ -80,6 +80,8 @@ pub struct L2SetMeta {
     pub tags: Vec<String>,
     pub method: String,
     pub path: String,
+    /// The entry's evaluated key prefix (F493): a store indexes it for `invalidate({prefix})`.
+    pub prefix: String,
     pub stamp: Option<u64>,
 }
 
@@ -218,6 +220,8 @@ pub struct Floor {
     names: HashMap<String, (u64, u64)>,
     global: Option<u64>,
     tick: u64,
+    /// A prefix-scoped name (F493) was raised in this generation.
+    scoped: bool,
 }
 
 fn tag_name(t: &str) -> String {
@@ -226,6 +230,27 @@ fn tag_name(t: &str) -> String {
 
 fn path_name(method: &str, path: &str) -> String {
     format!("p:{method} {path}")
+}
+
+/// F493: a key prefix as a self-delimiting name part (a JSON string), so `pt:`/`pp:` names of
+/// different prefixes and tags never meet.
+fn prefix_part(prefix: &str) -> String {
+    serde_json::to_string(prefix).unwrap_or_default()
+}
+
+/// `{prefix}` alone: every page of that prefix.
+fn prefix_name(prefix: &str) -> String {
+    format!("px:{}", prefix_part(prefix))
+}
+
+/// `{prefix, tags}`: one tag of one prefix.
+fn prefix_tag_name(prefix: &str, t: &str) -> String {
+    format!("pt:{}{t}", prefix_part(prefix))
+}
+
+/// `{prefix, path}`: one path of one prefix.
+fn prefix_path_name(prefix: &str, method: &str, path: &str) -> String {
+    format!("pp:{}{method} {path}", prefix_part(prefix))
 }
 
 impl Floor {
@@ -246,14 +271,26 @@ impl Floor {
         }
     }
 
-    /// An invalidation with `seq` was replayed: raise the floors of its tags and path.
+    /// An invalidation with `seq` was replayed: raise the floors of its tags and path — scoped to
+    /// its key prefix when it has one (F493: other prefixes' L2 bodies stay hits).
     pub fn raise(&mut self, args: &InvalidateArgs, seq: u64) {
+        let px = args.prefix.as_deref();
+        self.scoped |= px.is_some();
         for t in &args.tags {
-            self.raise_name(tag_name(t), seq);
+            let name = px.map_or_else(|| tag_name(t), |px| prefix_tag_name(px, t));
+            self.raise_name(name, seq);
         }
         if let Some(p) = &args.path {
             let p = crate::routing::routes::normalize_request_path(p);
-            self.raise_name(path_name(args.method.as_deref().unwrap_or("GET"), &p), seq);
+            let m = args.method.as_deref().unwrap_or("GET");
+            let name = px.map_or_else(|| path_name(m, &p), |px| prefix_path_name(px, m, &p));
+            self.raise_name(name, seq);
+        } else if let Some(px) = px
+            && args.tags.is_empty()
+            // L2 holds GET pages only: a `{prefix, method: 'POST'}` floors none of them.
+            && args.method.as_deref().is_none_or(|m| m == "GET")
+        {
+            self.raise_name(prefix_name(px), seq);
         }
     }
 
@@ -267,8 +304,15 @@ impl Floor {
         *self = Floor::default();
     }
 
-    /// The hit is older than an invalidation of its tags/path (or a gap clear).
-    pub fn rejects(&self, entry_stamp: Option<u64>, path: &str, tags: &[String]) -> bool {
+    /// The hit (an entry under key prefix `prefix`) is older than an invalidation of its
+    /// tags/path, of its prefix (F493), or a gap clear.
+    pub fn rejects(
+        &self,
+        entry_stamp: Option<u64>,
+        prefix: &str,
+        path: &str,
+        tags: &[String],
+    ) -> bool {
         let Some(s) = entry_stamp else {
             return false;
         };
@@ -276,7 +320,16 @@ impl Floor {
             return true;
         }
         let below = |name: String| self.names.get(&name).is_some_and(|(f, _)| s < *f);
-        tags.iter().any(|t| below(tag_name(t))) || below(path_name("GET", path))
+        if tags.iter().any(|t| below(tag_name(t))) || below(path_name("GET", path)) {
+            return true;
+        }
+        // Prefix-scoped names exist only after a `{prefix…}` replay: skip the formatting otherwise.
+        if !self.scoped {
+            return false;
+        }
+        below(prefix_name(prefix))
+            || below(prefix_path_name(prefix, "GET", path))
+            || tags.iter().any(|t| below(prefix_tag_name(prefix, t)))
     }
 }
 
@@ -434,10 +487,10 @@ mod tests {
             9,
         );
         let t = ["items".to_string()];
-        assert!(f.rejects(Some(6), "/x", &t));
-        assert!(!f.rejects(Some(7), "/x", &t));
-        assert!(f.rejects(Some(8), "/a", &[]));
-        assert!(!f.rejects(Some(9), "/a", &[]));
+        assert!(f.rejects(Some(6), "", "/x", &t));
+        assert!(!f.rejects(Some(7), "", "/x", &t));
+        assert!(f.rejects(Some(8), "", "/a", &[]));
+        assert!(!f.rejects(Some(9), "", "/a", &[]));
         // A POST-path invalidation does not floor the GET page.
         f.raise(
             &InvalidateArgs {
@@ -447,15 +500,46 @@ mod tests {
             },
             20,
         );
-        assert!(!f.rejects(Some(1), "/b", &[]));
+        assert!(!f.rejects(Some(1), "", "/b", &[]));
+    }
+
+    #[test]
+    fn prefix_scoped_replays_floor_only_that_prefix() {
+        let mut f = Floor::default();
+        let scoped = |path: Option<&str>, t: &[&str], method: Option<&str>| InvalidateArgs {
+            prefix: Some("a.test".into()),
+            path: path.map(Into::into),
+            tags: t.iter().map(|s| s.to_string()).collect(),
+            method: method.map(Into::into),
+            ..Default::default()
+        };
+        f.raise(&scoped(Some("/p"), &[], None), 5);
+        assert!(f.rejects(Some(4), "a.test", "/p", &[]));
+        assert!(!f.rejects(Some(4), "b.test", "/p", &[]));
+        assert!(!f.rejects(Some(4), "", "/p", &[]));
+        assert!(!f.rejects(Some(4), "a.test", "/q", &[]));
+        f.raise(&scoped(None, &["page"], None), 6);
+        let page = ["page".to_string()];
+        assert!(f.rejects(Some(5), "a.test", "/q", &page));
+        assert!(!f.rejects(Some(5), "b.test", "/q", &page));
+        // A POST-only `{prefix, method}` floors no GET page; `{prefix}` floors every one.
+        f.raise(&scoped(None, &[], Some("POST")), 7);
+        assert!(!f.rejects(Some(6), "a.test", "/r", &[]));
+        f.raise(&scoped(None, &[], None), 8);
+        assert!(f.rejects(Some(7), "a.test", "/r", &[]));
+        assert!(!f.rejects(Some(8), "a.test", "/r", &[]));
+        assert!(!f.rejects(Some(7), "b.test", "/r", &[]));
+        // Names of one prefix never match another prefix whose JSON spelling shares a head.
+        assert!(!f.rejects(Some(1), "a.tes", "/r", &[]));
+        assert!(!f.rejects(Some(1), "a.test\"", "/r", &[]));
     }
 
     #[test]
     fn hit_below_a_tag_floor_is_rejected() {
         let mut f = Floor::default();
         f.raise(&tags(&["a", "b"]), 5);
-        assert!(f.rejects(Some(4), "/p", &["x".into(), "b".into()]));
-        assert!(!f.rejects(Some(4), "/p", &["x".into()]));
+        assert!(f.rejects(Some(4), "", "/p", &["x".into(), "b".into()]));
+        assert!(!f.rejects(Some(4), "", "/p", &["x".into()]));
     }
 
     #[test]
@@ -463,18 +547,18 @@ mod tests {
         let mut f = Floor::default();
         f.raise(&tags(&["a"]), 5);
         f.clear_at(100);
-        assert!(!f.rejects(None, "/p", &["a".into()]));
+        assert!(!f.rejects(None, "", "/p", &["a".into()]));
     }
 
     #[test]
     fn clear_same_gen_sets_global_floor() {
         let mut f = Floor::default();
         f.clear_at(10);
-        assert!(f.rejects(Some(9), "/any", &[]));
-        assert!(!f.rejects(Some(10), "/any", &[]));
+        assert!(f.rejects(Some(9), "", "/any", &[]));
+        assert!(!f.rejects(Some(10), "", "/any", &[]));
         f.clear_at(3);
         assert!(
-            f.rejects(Some(9), "/any", &[]),
+            f.rejects(Some(9), "", "/any", &[]),
             "a global floor never drops"
         );
     }
@@ -485,7 +569,7 @@ mod tests {
         f.raise(&tags(&["a"]), 5);
         f.clear_at(10);
         f.reset();
-        assert!(!f.rejects(Some(0), "/p", &["a".into()]));
+        assert!(!f.rejects(Some(0), "", "/p", &["a".into()]));
     }
 
     #[test]
@@ -496,7 +580,7 @@ mod tests {
             f.raise(&tags(&[&format!("t{i}")]), 5);
         }
         assert_eq!(f.names.len(), FLOOR_NAMES);
-        assert!(!f.rejects(Some(1), "/p", &["first".into()]));
-        assert!(f.rejects(Some(1), "/p", &[format!("t{}", FLOOR_NAMES - 1)]));
+        assert!(!f.rejects(Some(1), "", "/p", &["first".into()]));
+        assert!(f.rejects(Some(1), "", "/p", &[format!("t{}", FLOOR_NAMES - 1)]));
     }
 }

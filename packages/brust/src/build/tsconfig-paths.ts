@@ -3,7 +3,7 @@
 // this module reads out of the app's own `tsconfig.json` / `jsconfig.json`. v1 reads that one file: no `extends`, no
 // `references` (a named fallback below); exact and single-`*` patterns only. The bundler resolves the same specifiers
 // natively; `checkAliasAgreement` fails the build if the two ever disagree.
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { BuildError } from './errors'
 
@@ -26,10 +26,21 @@ export function readPathAliases(appRoot: string): { aliases: PathAlias[]; notes:
   }
   const notes: string[] = []
   const paths = json?.compilerOptions?.paths
-  if (json?.extends !== undefined || json?.references !== undefined)
+  const name = relative(appRoot, file)
+  const hasPaths = !!paths && typeof paths === 'object'
+  // TS semantics: a local `compilerOptions.paths` replaces any inherited `paths`, so beside a local `paths` an `extends`
+  // can only matter through the `baseUrl` it supplies (F497). Without local `paths` the aliases live elsewhere.
+  if (hasPaths ? json?.references !== undefined : json?.extends !== undefined || json?.references !== undefined)
     notes.push(
-      `${relative(appRoot, file)} uses \`${json.extends !== undefined ? 'extends' : 'references'}\`, which brust does not follow: \`paths\` aliases written in another tsconfig stay package imports (put \`paths\` in ${relative(appRoot, file)})`,
+      `${name} uses \`${json.extends !== undefined && !hasPaths ? 'extends' : 'references'}\`, which brust does not follow: \`paths\` aliases written in another tsconfig stay package imports (put \`paths\` in ${name})`,
     )
+  if (hasPaths && json?.extends !== undefined && typeof json.compilerOptions?.baseUrl !== 'string') {
+    const from = inheritedBaseUrlFile(file, json.extends)
+    if (from)
+      notes.push(
+        `\`baseUrl\` comes from ${relative(appRoot, from).split(sep).join('/')}, which brust does not follow: aliases resolve from ${name}'s directory (set \`baseUrl\` in ${name})`,
+      )
+  }
   if (!paths || typeof paths !== 'object') return { aliases: [], notes }
   const base = typeof json.compilerOptions?.baseUrl === 'string' ? json.compilerOptions.baseUrl : '.'
   const aliases: PathAlias[] = []
@@ -50,6 +61,23 @@ export function readPathAliases(appRoot: string): { aliases: PathAlias[]; notes:
     if (targets.length > 0) aliases.push({ pattern, targets })
   }
   return { aliases, notes }
+}
+
+/** The extended tsconfig that sets `baseUrl`, when `extends` names a relative file (one level, JSONC; a package specifier,
+ * an unreadable file or a file without `baseUrl` is none). */
+function inheritedBaseUrlFile(file: string, extendsValue: unknown): string | null {
+  const refs = Array.isArray(extendsValue) ? extendsValue : [extendsValue]
+  for (const ref of refs) {
+    if (typeof ref !== 'string' || !(ref.startsWith('./') || ref.startsWith('../'))) continue
+    const base = join(dirname(file), ref)
+    const target = [base, `${base}.json`].find((f) => existsSync(f) && statSync(f).isFile())
+    if (!target) continue
+    try {
+      const ext = Bun.JSONC.parse(readFileSync(target, 'utf8')) as { compilerOptions?: { baseUrl?: unknown } } | null
+      if (typeof ext?.compilerOptions?.baseUrl === 'string') return target
+    } catch {}
+  }
+  return null
 }
 
 /** The compiler's answer for every alias import must be the file the bundler resolves the same specifier to. */
