@@ -119,8 +119,10 @@ export default function FormAction({ blocks }: FormActionData) {
       <CodeBlock code={blocks.actions.code} lang={blocks.actions.lang} file={blocks.actions.file} html={blocks.actions.html} />
 
       <Step n={3} id="form" title="Call it from a form" />
+      {/* source: tests/server/form-action.chromium.test.ts:62 (the form's tier is native, no brust-island) and :69 (real Chromium: the form posts, the message after 25 -> Team: 1/6, 25 again, 0 -> Failed with 422, five more ids, a seventh -> The team is full); :56 (the fixture is this page's own code);
+          crates/brust-compiler/src/analyze/hooks.rs:2449 (a const async arrow is a handler, as the sync arrow and an async function declaration are) */}
       <p>
-        <code>client&lt;App&gt;()</code> is Eden Treaty wired to the actions mount. The <code>import type</code> is erased, so the browser bundle carries no Elysia. This form has state and handlers but nothing the native tier cannot express, so it compiles to a <Tier t="native">native</Tier> component.
+        <code>client&lt;App&gt;()</code> is Eden Treaty wired to the actions mount. The <code>import type</code> is erased, so the browser bundle carries no Elysia. This form has state and an <code>async</code> submit handler that awaits the action, and nothing the native tier cannot express, so it compiles to a <Tier t="native">native</Tier> component: no React island, and the message follows the response (success, the same id again, a 422 and a 409).
       </p>
       <CodeBlock code={blocks.api.code} lang={blocks.api.lang} file={blocks.api.file} html={blocks.api.html} />
       <CodeBlock code={blocks.form.code} lang={blocks.form.lang} file={blocks.form.file} html={blocks.form.html} />
