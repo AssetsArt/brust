@@ -73,6 +73,12 @@ fn redirect_answers_308_to_the_slashless_path_with_the_query() {
     // `/` is the root, not a trailing slash; a percent-encoded slash is not one either.
     assert_eq!(get(&s, "/", &[]).0, 200);
     assert_ne!(get(&s, "/docs/a%2F", &[]).0, 308);
+    // Never a protocol-relative Location (an open redirect): such a path is matched as written.
+    for evil in ["//evil.example/", "//evil.example//", "/\\evil.example/"] {
+        let (st, h, _) = get(&s, evil, &[]);
+        assert_ne!(st, 308, "{evil}");
+        assert!(location(&h).is_none(), "{evil}");
+    }
     // Other methods are untouched (no 308 that would re-post).
     assert_eq!(request(&s, "POST", "/cart/", &[]).0, 405);
     // brust's own paths are untouched.

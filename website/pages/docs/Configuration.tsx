@@ -140,7 +140,7 @@ export default function Configuration({ blocks }: ConfigurationData) {
       </p>
 
       <h2 id="trailing-slash">Trailing slashes</h2>
-      {/* source: packages/brust/src/config.ts:68 (checkTrailingSlash: the three values) and :226 (the toml key), crates/brust-core/src/config.rs:441 (TrailingSlash::strip: `/` and a %2F are not trailing slashes), crates/brust-core/src/pipeline.rs:171-205 (the step: after brust's own paths and the method gate, before matching and the page cache), packages/brust/src/run.ts:99 (trailing-slash-mismatch), packages/brust/src/build/static.ts:183 (the static warning), crates/brust-server/tests/trailing_slash.rs (served) */}
+      {/* source: packages/brust/src/config.ts:68 (checkTrailingSlash: the three values) and :226 (the toml key), crates/brust-core/src/config.rs:441 (TrailingSlash::strip: `/` and a %2F are not trailing slashes), crates/brust-core/src/pipeline.rs:171-209 (the step: after brust's own paths and the method gate, before matching and the page cache), packages/brust/src/run.ts:99 (trailing-slash-mismatch), packages/brust/src/build/static.ts:183 (the static warning), crates/brust-server/tests/trailing_slash.rs (served) */}
       <p>
         <code>[server] trailing_slash</code> decides what a page request whose path ends in <code>/</code> gets. <code>"strict"</code>, the default, is the behaviour you had: the path is matched as written, so <code>/cart/</code> is a 404 next to
         a <code>/cart</code> route. <code>"redirect"</code> answers a GET or HEAD with <strong>308</strong> to the same path without the slash, the query string kept and the base path too (<code>/portal/</code> goes to <code>/portal</code>), before

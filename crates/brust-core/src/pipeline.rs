@@ -178,6 +178,10 @@ pub async fn handle<H: Host>(
     {
         match s.manifest.trailing_slash {
             crate::config::TrailingSlash::Strict => {}
+            // A path starting `//` or `/\` would make the Location protocol-relative (`//evil.example`): an open
+            // redirect. Such a path is matched as written (strict).
+            crate::config::TrailingSlash::Redirect
+                if stripped.starts_with("//") || stripped.starts_with("/\\") => {}
             crate::config::TrailingSlash::Redirect => {
                 let location = match full.split_once('?') {
                     Some((_, q)) => format!("{stripped}?{q}"),
