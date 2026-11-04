@@ -36,7 +36,7 @@ afterEach(() => {
 })
 
 test('checkTrailingSlash: strict | redirect | ignore, anything else is refused with the choices', () => {
-  for (const v of ['strict', 'redirect', 'ignore']) expect(checkTrailingSlash(v)).toEqual({ ok: true, value: v })
+  for (const v of ['strict', 'redirect', 'ignore'] as const) expect(checkTrailingSlash(v)).toEqual({ ok: true, value: v })
   for (const bad of ['Redirect', 'off', '', true, null, 3]) {
     const r = checkTrailingSlash(bad)
     expect(r.ok).toBe(false)
