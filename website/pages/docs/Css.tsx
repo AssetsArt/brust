@@ -272,9 +272,9 @@ export default function Css({ blocks }: CssData) {
         Tailwind scans the app root for class names, so the utilities you use in <code>.tsx</code> files end up in the stylesheet, minified like the rest. Import <code>tailwindcss</code> once, in the stylesheet your root layout imports: the build warns when more than one
         file has <code>@import "tailwindcss"</code>, because each one ships all of Tailwind.
       </p>
-      {/* source: packages/brust/src/build/tailwind.ts:114 (with no source() the scanner's base is the app root, the glob of every file below it, and nothing else) and css.ts:225 (loadTailwind gets the app root; the [build] source_roots list is not passed);
+      {/* source: packages/brust/src/build/tailwind.ts:114 (with no source() the scanner's base is the app root, the glob of every file below it, and nothing else) and css.ts:229 (loadTailwind gets the app root; the [build] source_roots list is not passed);
           observed: packages/brust/test/tailwind.test.ts:186 (a class used only in a source_roots directory is not in the stylesheet), :190 (@source "../shared" adds the whole directory, files nothing imports included; @source not "../shared/hero" removes that part; @source not on its own adds nothing) */}
-      {/* source: packages/brust/src/build/tailwind.ts:117 (every scan gets negated sources for the out dir and .brust, last, so an explicit source() or @source cannot bring them back) and packages/brust/src/build/index.ts:256 (the dirs passed: the resolved out dir and .brust);
+      {/* source: packages/brust/src/build/tailwind.ts:117 (every scan gets negated sources for the out dir and .brust, last, so an explicit source() or @source cannot bring them back) and packages/brust/src/build/index.ts:261 (the dirs passed: the resolved out dir and .brust);
           observed: packages/brust/test/tailwind.test.ts:227 (a stale class left in dist/ and .brust/ does not reach the next build's stylesheet, without or with a .gitignore covering them), :231 (a custom out dir, and an explicit @source still adds its own classes) */}
       <p>
         brust never scans its own build output: the out directory (<code>dist</code>, or the one you pass with <code>--out-dir</code>) and <code>.brust</code> are left out of every Tailwind scan, whether or not a <code>.gitignore</code> lists them, so a class that no
