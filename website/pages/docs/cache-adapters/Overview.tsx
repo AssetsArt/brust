@@ -400,7 +400,7 @@ export default function Overview({ blocks }: OverviewData) {
         A tier-2 hit answers with <code>x-brust-cache: HIT-L2</code>; a tier-1 hit stays <code>HIT</code>. A stored page&rsquo;s TTL is what is left of its original TTL, so a page never lives longer in total than its route&rsquo;s <code>ttl_seconds</code>.
       </p>
       <p>
-        With an adapter configured, <code>/_brust/cache/stats</code> gains an <code>l2</code> object. Without one, the JSON is unchanged. On Workers the path needs <code>[cloudflare] stats = true</code>, and the numbers are per isolate.
+        With an adapter configured, <code>/_brust/cache/stats</code> gains an <code>l2</code> object. Without one, the JSON is unchanged. The path is off by default: set <code>[server] stats</code> to <code>"public"</code> or <code>"token"</code> to read it (see <a href="/docs/configuration#stats">Configuration</a>); <code>brust dev</code> serves it. On Workers the path needs <code>[cloudflare] stats = true</code>, and the numbers are per isolate.
       </p>
       <CodeBlock code={blocks.stats.code} lang={blocks.stats.lang} file={blocks.stats.file} html={blocks.stats.html} />
       <TableWrap label="l2 counters">

@@ -46,6 +46,10 @@ export interface StartOptions {
   l2?: L2Options
   /** `brust dev` only (L14): a request carrying this token (`x-brust-dev-token`) is traced; absent in production. */
   devToken?: string
+  /** F507: who may read `/_brust/cache/stats`; absent = `off` (404). Boot error `stats: …` for a mode and token that do not go together. */
+  stats?: 'off' | 'public' | 'token'
+  /** F507: the secret `stats: 'token'` compares `Authorization: Bearer` with, resolved from its env reference; never logged. */
+  statsToken?: string
 }
 /** napi `NapiL2Options`; defaults 50 ms, 1048576 bytes. */
 export interface L2Options {

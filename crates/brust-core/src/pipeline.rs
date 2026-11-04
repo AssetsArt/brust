@@ -134,7 +134,9 @@ pub async fn handle<H: Host>(
     }
 
     // L16 (R16.3): an actions-only deployment has no pages; its own paths stay (`/ping`, stats).
-    if s.manifest.actions_only && fw != "/ping" && fw != "/_brust/cache/stats" {
+    // F507: the stats path is the app's own only for a request that may read it; any other gets what an unknown path gets.
+    let stats = fw == "/_brust/cache/stats" && s.stats_access.allows(headers);
+    if s.manifest.actions_only && fw != "/ping" && !stats {
         return body::error_404_problem();
     }
 
@@ -146,7 +148,7 @@ pub async fn handle<H: Host>(
         tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "ping");
         return body::resp(200, "text/plain", &[], b"pong\n".to_vec());
     }
-    if fw == "/_brust/cache/stats" {
+    if stats {
         tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "stats");
         let json = serde_json::to_vec(&s.stats()).unwrap_or_else(|_| b"{}".to_vec());
         return body::resp(200, "application/json", &[], json);

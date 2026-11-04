@@ -462,6 +462,74 @@ pub struct InvalidateResult {
     pub job_removed: usize,
 }
 
+/// Who may read `/_brust/cache/stats` (F507). A request that is not allowed gets what any unknown path gets (404), so
+/// the endpoint is not revealed. `Off` is the default of the core and of `brust start`; `brust dev` sets `Public`.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub enum StatsAccess {
+    /// Nobody: the path answers 404.
+    #[default]
+    Off,
+    /// Anybody who reaches the app.
+    Public,
+    /// A request carrying `Authorization: Bearer <this token>`.
+    Token(String),
+}
+
+// The token is a secret: never printed with the config.
+impl std::fmt::Debug for StatsAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Off => f.write_str("Off"),
+            Self::Public => f.write_str("Public"),
+            Self::Token(_) => f.write_str("Token(<redacted>)"),
+        }
+    }
+}
+
+impl StatsAccess {
+    /// `mode` is `"off"`, `"public"` or `"token"` (what `[server] stats` says); `token` is the resolved secret and
+    /// belongs to `"token"` only.
+    pub fn parse(mode: &str, token: Option<String>) -> Result<Self, String> {
+        match (mode, token) {
+            ("off", None) => Ok(Self::Off),
+            ("public", None) => Ok(Self::Public),
+            ("token", Some(t)) if !t.is_empty() => Ok(Self::Token(t)),
+            ("token", _) => Err("stats = \"token\" needs a non-empty token".into()),
+            ("off" | "public", Some(_)) => Err(format!(
+                "a stats token belongs to stats = \"token\", not \"{mode}\""
+            )),
+            _ => Err(format!(
+                "stats must be \"off\", \"public\" or \"token\" (got \"{mode}\")"
+            )),
+        }
+    }
+
+    /// Whether a request with these headers may read the stats.
+    pub fn allows(&self, headers: &http::HeaderMap) -> bool {
+        match self {
+            Self::Off => false,
+            Self::Public => true,
+            Self::Token(t) => bearer(headers).is_some_and(|got| ct_eq(got, t.as_bytes())),
+        }
+    }
+}
+
+/// The token of an `Authorization: Bearer <token>` header (the scheme is case-insensitive).
+fn bearer(headers: &http::HeaderMap) -> Option<&[u8]> {
+    let v = headers.get(http::header::AUTHORIZATION)?.as_bytes();
+    let (scheme, rest) = (v.get(..7)?, v.get(7..)?);
+    scheme.eq_ignore_ascii_case(b"bearer ").then_some(rest)
+}
+
+/// Equality that takes the same time for every input of the same length (and never stops at the first difference).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    let mut diff = a.len() ^ b.len();
+    for i in 0..a.len().max(b.len()) {
+        diff |= usize::from(a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0));
+    }
+    std::hint::black_box(diff) == 0
+}
+
 /// `/_brust/cache/stats` (spec §7).
 #[derive(Debug, Serialize)]
 pub struct Stats {
@@ -786,6 +854,57 @@ mod tests {
             serde_json::to_string(&s).unwrap(),
             r#"{"l1":{"hits":1,"misses":2,"len":3,"capacity":4},"job":{"hits":11,"misses":12,"len":13,"capacity":14},"loader_calls":5,"job_calls":6,"worker_calls":7,"timed_out_calls":8,"missing_slots":9}"#
         );
+    }
+
+    #[test]
+    fn stats_access_parses_the_three_modes_and_refuses_the_rest() {
+        assert_eq!(StatsAccess::parse("off", None), Ok(StatsAccess::Off));
+        assert_eq!(StatsAccess::parse("public", None), Ok(StatsAccess::Public));
+        assert_eq!(
+            StatsAccess::parse("token", Some("s3".into())),
+            Ok(StatsAccess::Token("s3".into()))
+        );
+        for (mode, token) in [
+            ("token", None),
+            ("token", Some("")),
+            ("off", Some("x")),
+            ("public", Some("x")),
+            ("maybe", None),
+        ] {
+            assert!(
+                StatsAccess::parse(mode, token.map(String::from)).is_err(),
+                "{mode} {token:?}"
+            );
+        }
+        assert_eq!(StatsAccess::default(), StatsAccess::Off);
+    }
+
+    #[test]
+    fn stats_access_allows_by_mode_and_the_bearer_token() {
+        let with = |v: Option<&str>| {
+            let mut h = http::HeaderMap::new();
+            if let Some(v) = v {
+                h.insert(http::header::AUTHORIZATION, v.parse().unwrap());
+            }
+            h
+        };
+        assert!(!StatsAccess::Off.allows(&with(Some("Bearer s3"))));
+        assert!(StatsAccess::Public.allows(&with(None)));
+        let t = StatsAccess::Token("s3cret".into());
+        assert!(t.allows(&with(Some("Bearer s3cret"))));
+        assert!(t.allows(&with(Some("bearer s3cret"))));
+        for bad in [
+            None,
+            Some("Bearer s3cre"),
+            Some("Bearer s3cretX"),
+            Some("Bearer "),
+            Some("Bearer"),
+            Some("Basic s3cret"),
+            Some("s3cret"),
+        ] {
+            assert!(!t.allows(&with(bad)), "{bad:?}");
+        }
+        assert_eq!(format!("{t:?}"), "Token(<redacted>)");
     }
 
     #[test]

@@ -364,7 +364,7 @@ Everything on the request path has a budget and fails open:
 
 A tier-2 hit answers with `x-brust-cache: HIT-L2`; a tier-1 hit stays `HIT`. A stored page's TTL is what is left of its original TTL, so a page never lives longer in total than its route's `ttl_seconds`.
 
-With an adapter configured, `/_brust/cache/stats` gains an `l2` object. Without one, the JSON is unchanged. On Workers the path needs `[cloudflare] stats = true`, and the numbers are per isolate.
+With an adapter configured, `/_brust/cache/stats` gains an `l2` object. Without one, the JSON is unchanged. The path is off by default (404): set `[server] stats` to `"public"` or `"token"` to read it; `brust dev` serves it. On Workers the path needs `[cloudflare] stats = true`, and the numbers are per isolate.
 
 ```json
 "l2": { "adapter": "custom", "hits": 0, "misses": 0, "timeouts": 0, "errors": 0, "rejected_floor": 0,

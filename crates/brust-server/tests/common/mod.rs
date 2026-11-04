@@ -130,6 +130,8 @@ pub fn config(dist_dir: &Path) -> Config {
             claim_timeout_ms: 500,
             ..Default::default()
         },
+        // F507: the suites read `/_brust/cache/stats`; the product default is off (stats_gate.rs).
+        stats: brust_core::config::StatsAccess::Public,
         ..Default::default()
     }
 }
