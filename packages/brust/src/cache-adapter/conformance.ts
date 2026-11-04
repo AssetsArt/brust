@@ -214,14 +214,16 @@ export function runConformance(make: () => CacheAdapter | Promise<CacheAdapter>,
       test('F493: a set whose stamp predates an invalidation of its prefix is refused; another prefix lands', async () => {
         const { a, s } = await store()
         const [k, other] = [key(), key()]
+        // A path of its own: a store's namespace may outlive one case (an earlier case's path marker must not refuse it).
+        const path = `/${k}`
         const g = await s.get(k)
         await s.invalidate({ prefix: 'a.test' })
         await a.broadcast?.publish({ prefix: 'a.test' }, 'conf')
-        expect(await s.set(k, page('stale'), meta({ path: '/p', prefix: 'a.test', stamp: g.stamp }))).toBe(false)
+        expect(await s.set(k, page('stale'), meta({ path, prefix: 'a.test', stamp: g.stamp }))).toBe(false)
         expect((await s.get(k)).page).toBeNull()
-        expect(await s.set(other, page('b'), meta({ path: '/p', prefix: 'b.test', stamp: g.stamp }))).toBe(true)
+        expect(await s.set(other, page('b'), meta({ path, prefix: 'b.test', stamp: g.stamp }))).toBe(true)
         const g2 = await s.get(k)
-        expect(await s.set(k, page('fresh'), meta({ path: '/p', prefix: 'a.test', stamp: g2.stamp }))).toBe(true)
+        expect(await s.set(k, page('fresh'), meta({ path, prefix: 'a.test', stamp: g2.stamp }))).toBe(true)
       })
     }
 
