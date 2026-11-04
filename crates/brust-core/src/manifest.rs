@@ -167,6 +167,22 @@ pub struct ChildRecord {
     /// source (a module `const` or an array literal, F142 R34.43); absent otherwise.
     #[serde(default)]
     pub rows: Option<serde_json::Value>,
+    /// F502: the condition of the branch the instance renders in; its job runs for an instance (a row) only where it
+    /// holds. Absent = always.
+    #[serde(default)]
+    pub when: Option<RowGuard>,
+}
+
+/// F502: a branch condition over parent-context paths (`[idx]` = the current row), JS semantics: `truthy` = the value
+/// there is truthy (missing = `undefined`), `eq` = strict equality with a JSON literal.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RowGuard {
+    Truthy(String),
+    Eq(String, serde_json::Value),
+    Not(Box<RowGuard>),
+    All(Vec<RowGuard>),
+    Any(Vec<RowGuard>),
 }
 
 impl ChildRecord {

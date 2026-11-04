@@ -30,6 +30,8 @@ export type ComponentIR = Record<string, any> & {
     exprs?: Record<string, string>
     /** F142 R34.43: the rows of a constant enclosing list (`loops` is then `[null]`). */
     rows_literal?: unknown[]
+    /** F502: the branch condition the server checks per instance before it runs the child's job. */
+    when?: unknown
   }[]
   /** F149: inlined instances whose child job the build may run once (`decls.rs` `BuildEvalInstance`). */
   build_eval_instances?: {

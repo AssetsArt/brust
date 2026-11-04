@@ -36,6 +36,9 @@ export interface ChildRecord {
   exprs?: Record<string, string>
   /** F142 R34.43: the list of a `per-row-literal` instance (a constant the compiler read). */
   rows?: unknown[]
+  /** F502: the branch condition (`{truthy}`/`{eq}`/`{not}`/`{all}`/`{any}` over props paths) the server checks per instance before
+   * it runs the child's job: a row whose branch does not render the child gets no job. */
+  when?: unknown
 }
 
 export interface ComponentRecord {
@@ -317,6 +320,7 @@ export function childRecords(c: Compiled, clientOnly: string[] = []): ChildRecor
     if (inst.literals && Object.keys(inst.literals).length > 0) rec.literals = { ...inst.literals }
     if (inst.exprs && Object.keys(inst.exprs).length > 0) rec.exprs = { ...inst.exprs }
     if (literal) rec.rows = inst.rows_literal
+    if (inst.when !== undefined && inst.when !== null) rec.when = inst.when
     return rec
   })
   for (const id of clientOnly) out.push({ id, instances: 'static', props: {} })

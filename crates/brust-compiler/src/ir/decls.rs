@@ -219,6 +219,52 @@ pub struct InstanceRecord {
     /// server feeds the instance once per row. `loops` is then `[None]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rows_literal: Option<serde_json::Value>,
+    /// F502: the condition of the branch the instance renders in (the `If`s between the row, or the component's
+    /// root, and the child), over the same props paths as `props` (`[idx]` = the current row). The server runs the
+    /// child's job for an instance (a row) only where it holds; the template reads the slot only under the same
+    /// condition. `None` = no condition the client cannot change (or none at all).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<RowGuard>,
+    /// F502: a condition the server cannot evaluate guards the instance (not a path, a literal comparison or a
+    /// `!`/`&&`/`||` of those). Its job runs for every instance, as before; a fixed-props clone or a fixed list does
+    /// not take such a record (it would run the job where React does not render the child).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub when_opaque: bool,
+}
+
+/// F502: a branch condition the server evaluates per instance, JS semantics: `truthy` = the value at a props path is
+/// truthy (a missing path is `undefined`), `eq` = strict equality (`===`) of that value with a JSON literal.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RowGuard {
+    Truthy(String),
+    Eq(String, serde_json::Value),
+    Not(Box<RowGuard>),
+    All(Vec<RowGuard>),
+    Any(Vec<RowGuard>),
+}
+
+impl RowGuard {
+    /// Every props path the guard reads, mutable (a rebase maps them like `props`).
+    pub fn paths_mut(&mut self, f: &mut dyn FnMut(&mut String)) {
+        match self {
+            RowGuard::Truthy(p) | RowGuard::Eq(p, _) => f(p),
+            RowGuard::Not(g) => g.paths_mut(f),
+            RowGuard::All(gs) | RowGuard::Any(gs) => gs.iter_mut().for_each(|g| g.paths_mut(f)),
+        }
+    }
+
+    /// `a` and `b` (either may be absent).
+    pub fn and(a: Option<RowGuard>, b: Option<RowGuard>) -> Option<RowGuard> {
+        match (a, b) {
+            (None, x) | (x, None) => x,
+            (Some(RowGuard::All(mut x)), Some(y)) => {
+                x.push(y);
+                Some(RowGuard::All(x))
+            }
+            (Some(x), Some(y)) => Some(RowGuard::All(vec![x, y])),
+        }
+    }
 }
 
 /// One child component used by the template (deduplicated by name).

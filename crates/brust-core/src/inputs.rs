@@ -122,6 +122,62 @@ impl Path {
     }
 }
 
+/// F502: a [`crate::manifest::RowGuard`] with its paths parsed once (at boot).
+#[derive(Debug, Clone)]
+pub enum Guard {
+    Truthy(Path),
+    Eq(Path, Node),
+    Not(Box<Guard>),
+    All(Vec<Guard>),
+    Any(Vec<Guard>),
+}
+
+impl Guard {
+    pub fn new(g: &crate::manifest::RowGuard) -> Result<Guard, String> {
+        use crate::manifest::RowGuard as R;
+        Ok(match g {
+            R::Truthy(p) => Guard::Truthy(Path::parse(p)?),
+            R::Eq(p, v) => Guard::Eq(Path::parse(p)?, Node::from(v.clone())),
+            R::Not(g) => Guard::Not(Box::new(Guard::new(g)?)),
+            R::All(gs) => Guard::All(gs.iter().map(Guard::new).collect::<Result<_, _>>()?),
+            R::Any(gs) => Guard::Any(gs.iter().map(Guard::new).collect::<Result<_, _>>()?),
+        })
+    }
+
+    /// Whether the condition holds in `ctx` (at row `idx`).
+    pub fn holds(&self, ctx: &Node, idx: Option<usize>) -> bool {
+        match self {
+            Guard::Truthy(p) => p.find(ctx, idx).is_some_and(js_truthy),
+            Guard::Eq(p, lit) => p.find(ctx, idx).is_some_and(|v| js_strict_eq(v, lit)),
+            Guard::Not(g) => !g.holds(ctx, idx),
+            Guard::All(gs) => gs.iter().all(|g| g.holds(ctx, idx)),
+            Guard::Any(gs) => gs.iter().any(|g| g.holds(ctx, idx)),
+        }
+    }
+}
+
+/// JS truthiness of a context value.
+fn js_truthy(v: &Node) -> bool {
+    match v {
+        Node::Null => false,
+        Node::Bool(b) => *b,
+        Node::Num(n) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
+        Node::Str(s) => !s.is_empty(),
+        Node::Arr(_) | Node::Map(_) => true,
+    }
+}
+
+/// JS `===` of a context value with a literal (numbers by value: `1 === 1.0`; objects never equal a literal).
+fn js_strict_eq(v: &Node, lit: &Node) -> bool {
+    match (v, lit) {
+        (Node::Num(a), Node::Num(b)) => a.as_f64().zip(b.as_f64()).is_some_and(|(a, b)| a == b),
+        (Node::Null, Node::Null) => true,
+        (Node::Bool(a), Node::Bool(b)) => a == b,
+        (Node::Str(a), Node::Str(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// Key a segment occupies in a projection. Index segments become bracketed
 /// keys (`"[0]"`, `"[idx]"`) which no `Seg::Key` can spell (parse splits on
 /// `[`), so `a[0]` and `a.0` never share a slot.
