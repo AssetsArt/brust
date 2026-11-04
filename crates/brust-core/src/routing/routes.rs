@@ -156,12 +156,12 @@ impl RouteTable {
                 compiled.push(CompiledCache::default());
                 continue;
             }
-            router
-                .insert(normalize_route_pattern(&c.path).into_owned(), idx as u32)
-                .map_err(|e| RouteInstallError::Insert {
+            insert_route(&mut router, &c.path, idx as u32).map_err(|e| {
+                RouteInstallError::Insert {
                     pattern: c.path.clone(),
                     reason: e.to_string(),
-                })?;
+                }
+            })?;
             let compiled_cache = match &c.cache {
                 Some(cc) => {
                     let prefix =
@@ -343,6 +343,64 @@ pub enum RouteInstallError {
         field: &'static str,
         reason: String,
     },
+}
+
+/// The one place a pattern enters the router: the server's install and the build's conflict check both go
+/// through here, so they cannot disagree on what the router accepts.
+fn insert_route(
+    router: &mut matchit::Router<u32>,
+    pattern: &str,
+    route_id: u32,
+) -> Result<(), matchit::InsertError> {
+    router.insert(normalize_route_pattern(pattern).into_owned(), route_id)
+}
+
+/// Two route patterns the router will not hold together (F496), found by [`find_pattern_conflict`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternConflict {
+    /// Index (into the slice given) of the pattern the router refused.
+    pub index: usize,
+    /// Index of the earlier pattern it conflicts with, when the router's refusal comes from one of them.
+    pub with_index: Option<usize>,
+    /// The `RouteInstallError::Insert` text `brust start` would fail with for this pattern.
+    pub message: String,
+}
+
+/// Inserts `patterns` in order into a fresh router, exactly as `RouteTable::install_with_config` does, and returns
+/// the first one it refuses (a conflict such as `/{*rest}` next to `/{slug}`, or an invalid pattern). Catch-all
+/// (`notFound`) routes never enter the router, so the caller leaves them out. `brust build` runs this so a
+/// conflict fails the build instead of the first `brust start`.
+pub fn find_pattern_conflict<S: AsRef<str>>(patterns: &[S]) -> Option<PatternConflict> {
+    let mut router = matchit::Router::new();
+    for (i, p) in patterns.iter().enumerate() {
+        let p = p.as_ref();
+        let Err(e) = insert_route(&mut router, p, i as u32) else {
+            continue;
+        };
+        // The partner: the earlier pattern this one is refused next to. A pattern the router refuses on its own
+        // (an invalid one) has none.
+        let valid_alone = insert_route(&mut matchit::Router::new(), p, 0).is_ok();
+        let with_index = valid_alone
+            .then(|| {
+                (0..i).find(|&j| {
+                    let mut pair = matchit::Router::new();
+                    insert_route(&mut pair, patterns[j].as_ref(), 0).is_ok()
+                        && insert_route(&mut pair, p, 1).is_err()
+                })
+            })
+            .flatten();
+        let message = RouteInstallError::Insert {
+            pattern: p.to_string(),
+            reason: e.to_string(),
+        }
+        .to_string();
+        return Some(PatternConflict {
+            index: i,
+            with_index,
+            message,
+        });
+    }
+    None
 }
 
 #[doc(hidden)]
@@ -610,6 +668,55 @@ mod tests {
             map.append(name, http::HeaderValue::from_str(v).unwrap());
         }
         map
+    }
+
+    #[test]
+    fn find_pattern_conflict_names_the_refused_pattern_and_its_partner() {
+        let c = find_pattern_conflict(&["/", "/{*rest}", "/about", "/{slug}"]).unwrap();
+        assert_eq!(c.index, 3);
+        assert_eq!(c.with_index, Some(1));
+        assert!(
+            c.message.starts_with("invalid route pattern \"/{slug}\": "),
+            "{}",
+            c.message
+        );
+        assert!(c.message.contains("conflict"), "{}", c.message);
+        // Either order: the later of the two is the one refused.
+        let c = find_pattern_conflict(&["/{slug}", "/{*rest}"]).unwrap();
+        assert_eq!((c.index, c.with_index), (1, Some(0)));
+    }
+
+    #[test]
+    fn find_pattern_conflict_is_the_install_error() {
+        // Same text `brust start` fails with (install_with_config uses the same insert).
+        let patterns = ["/a/{id}", "/a/{slug}"];
+        let c = find_pattern_conflict(&patterns).unwrap();
+        let configs: Vec<RouteConfig> = patterns
+            .iter()
+            .map(|p| RouteConfig {
+                path: (*p).to_string(),
+                ..Default::default()
+            })
+            .collect();
+        let err = RouteTable::new().install_with_config(&configs).unwrap_err();
+        assert_eq!(c.message, err.to_string());
+    }
+
+    #[test]
+    fn find_pattern_conflict_accepts_a_catch_all_alone_and_distinct_siblings() {
+        assert_eq!(find_pattern_conflict(&["/{*rest}"]), None);
+        assert_eq!(
+            find_pattern_conflict(&["/", "/a", "/a/{id}", "/b/{*rest}"]),
+            None
+        );
+        assert_eq!(find_pattern_conflict::<&str>(&[]), None);
+    }
+
+    #[test]
+    fn find_pattern_conflict_reports_an_invalid_pattern_without_a_partner() {
+        let c = find_pattern_conflict(&["/ok", "/{*rest}/tail"]).unwrap();
+        assert_eq!(c.index, 1);
+        assert_eq!(c.with_index, None);
     }
 
     #[test]
@@ -1254,6 +1361,23 @@ mod tests {
                     .collect(),
             )
         })
+    }
+
+    #[test]
+    fn rest_param_takes_the_whole_tail_decoded_and_needs_one_character() {
+        let t = table(&["/", "/docs/{*rest}"]);
+        let rest = |path: &str| route_of(&t, path).map(|(id, p)| (id, p.into_iter().next()));
+        assert_eq!(
+            rest("/docs/a/b/c"),
+            Some((1, Some(("rest".into(), "a/b/c".into()))))
+        );
+        assert_eq!(
+            rest("/docs/a%20b/c"),
+            Some((1, Some(("rest".into(), "a b/c".into()))))
+        );
+        // Nothing after the prefix is not a match (a `/docs` route must say so).
+        assert_eq!(rest("/docs"), None);
+        assert_eq!(rest("/docs/"), None);
     }
 
     #[test]
