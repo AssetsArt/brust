@@ -180,6 +180,16 @@ export default function Redis({ blocks }: RedisData) {
               </td>
               <td>Sets of the page keys under a tag or a path.</td>
             </tr>
+            {/* source: packages/cache-redis/src/keys.ts (pfx, markPfx), packages/cache-redis/src/adapter.ts (set adds every page to its prefix set) */}
+            <tr>
+              <td>
+                <code>{'{brust:ns}:pfx:"<prefix>"'}</code>, <code>{'{brust:ns}:inval:pfx:"<prefix>"'}</code>
+              </td>
+              <td>
+                The page keys of one route-cache prefix (JSON-quoted, <code>""</code> for none), and its invalidation marker. Every stored page joins one, so a write costs one more set add and one more marker read. Used by{' '}
+                <code>{'cache.invalidate({ prefix })'}</code>.
+              </td>
+            </tr>
             <tr>
               <td>
                 <code>{'{brust:ns}:inval:tag:<tag>'}</code>, <code>{'{brust:ns}:inval:path:<METHOD> <path>'}</code>
@@ -214,10 +224,10 @@ export default function Redis({ blocks }: RedisData) {
       <h2 id="guard">Guard and invalidation</h2>
       <ul>
         <li>
-          <b>A stale write is refused exactly.</b> <code>get</code> returns the counter as the stamp. <code>set</code> runs a Lua script that checks the invalidation markers of the page&rsquo;s tags and of its <code>METHOD path</code>, and refuses (returns false) if any is newer than the stamp. A page rendered before an invalidation therefore cannot be stored after it, even if the two race.
+          <b>A stale write is refused exactly.</b> <code>get</code> returns the counter as the stamp. <code>set</code> runs a Lua script that checks the invalidation markers of the page&rsquo;s tags, of its <code>METHOD path</code> and of its prefix, and refuses (returns false) if any is newer than the stamp. A page rendered before an invalidation therefore cannot be stored after it, even if the two race.
         </li>
         <li>
-          <b>Invalidate and publish are one script.</b> It increments the counter, raises the markers and drops the index sets. The adapter then deletes the pages (<code>UNLINK</code>, in batches) and publishes <code>{'{seq, origin, args}'}</code> on the channel. Every script declares all its keys, as Dragonfly requires.
+          <b>Invalidate and publish are one script.</b> It increments the counter, raises the markers and drops the index sets. With a <code>prefix</code> and tags or a path, it takes only the members those sets share with the prefix&rsquo;s set and removes them from both, so other prefixes&rsquo; pages stay indexed; the prefix alone drops its set. The adapter then deletes the pages (<code>UNLINK</code>, in batches) and publishes <code>{'{seq, origin, args}'}</code> on the channel. Every script declares all its keys, as Dragonfly requires.
         </li>
         <li>
           <b>Receiving.</b> Worker 0 of each process holds the subscription and replays events into the process&rsquo;s tier 1. Events from the same process are skipped.
