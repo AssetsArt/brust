@@ -792,6 +792,15 @@ export function jobImportPlugin(fileOf: (id: string) => string | undefined, isJo
   }
 }
 
+/** F512: JSON drops an `undefined` property, so brust-core would read a missed `find` (a top-level output that is
+ * `undefined`) as a slot the job never wrote. The job returns `null` for it instead: React renders both nothing and
+ * both are falsy. Top-level outputs only; nested values are left as they are. */
+export const SLOTS_HELPER = `const __slots = (f: (p: any) => any) => (p: any) => {
+  const r = f(p)
+  if (r !== null && typeof r === 'object' && !Array.isArray(r)) for (const k of Object.keys(r)) if (r[k] === undefined) r[k] = null
+  return r
+}`
+
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
 export async function buildJobs(
@@ -843,7 +852,7 @@ export async function buildJobs(
       jobFiles.add(file).add(realpathSync(file))
       if (reached === undefined || reached.planned.has(c.id)) {
         imports.push(`import * as j${n} from ${JSON.stringify(file)}`)
-        fns.push(`precompute: j${n}.precompute`)
+        fns.push(`precompute: __slots(j${n}.precompute)`)
       }
     }
     if (isReact(c) && !c.ir.tier.React.client_only && (reached === undefined || reached.ssr.has(c.id))) {
@@ -856,7 +865,7 @@ export async function buildJobs(
     n++
   }
   const entry = join(dist, '.stage', 'jobs.ts')
-  write(entry, `${imports.join('\n')}\nexport default {\n${entries.join('\n')}\n}\n${storesTable(storePaths)}`)
+  write(entry, `${imports.join('\n')}\n${SLOTS_HELPER}\nexport default {\n${entries.join('\n')}\n}\n${storesTable(storePaths)}`)
   const res = await Bun.build({
     entrypoints: [entry],
     target: 'bun',

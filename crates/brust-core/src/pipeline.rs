@@ -2261,8 +2261,8 @@ fn child_cell<'a>(
     cell.map_mut()
 }
 
-/// A precompute result that lacks a declared output (a `dist/jobs.js` built before the
-/// generated `precompute` returned every slot) renders that slot empty; warn once per
+/// A precompute result that lacks a declared output (a `dist/jobs.js` older than the build, or a
+/// job that returned no value for it; an `undefined` output arrives as `null`, F512) renders that slot empty; warn once per
 /// (component, slot) per process and count it in the stats.
 fn note_missing_slots<H: Host>(s: &Core<H>, p: &JobPlan, v: &Node) {
     if !matches!(p.kind, JobKind::Precompute) {
@@ -2275,7 +2275,7 @@ fn note_missing_slots<H: Host>(s: &Core<H>, p: &JobPlan, v: &Node) {
             .lock()
             .is_ok_and(|mut m| m.insert((p.component_id.to_string(), n.clone())));
         if first {
-            tracing::warn!(component_id = %p.component_id, slot = %n, "precompute result has no slot; rendering it empty (rebuild dist/jobs.js)");
+            tracing::warn!(component_id = %p.component_id, slot = %n, "precompute result has no slot; rendering it empty (a dist/jobs.js older than the build, or a job that returned no value)");
         }
     }
 }
