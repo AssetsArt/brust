@@ -1,8 +1,8 @@
 //! F515: the rows of a list whose source never changes on the client (a module const nothing writes, a literal, a fixed
 //! prop, a row of such a list) are the server's for good. A read of their bindings with nothing else reactive in it is
 //! decided on the server: a conditional on a row value prints only its matching arm per row, even when the row is an
-//! `x-for` row for another read (`s.count` below). A list over state, a module `let` that is reassigned or a const that
-//! is written stays a client list whose row conditionals print both copies. Served: tests/server/if-chain.chromium.test.ts (38 cases × 36 rows of a module const).
+//! `x-for` row for another read (`s.count` below). A list over state (or a fixed list inside a client-built row) stays a
+//! client list whose row conditionals print both copies; a module binding something writes never reaches a native row. Served: tests/server/if-chain.chromium.test.ts (38 cases × 36 rows of a module const).
 use brust_compiler::analyze::component::AnalyzeOptions;
 use brust_compiler::ir::Tier;
 use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
@@ -14,16 +14,15 @@ struct Page {
     jinja: String,
 }
 
-/// `body` compiled as a page in tests/fixtures/store-read (`cart` from its cart.ts), native.
-fn page(body: &str) -> Page {
+/// `body` compiled as a page in tests/fixtures/store-read (`cart` from its cart.ts): (tier, template).
+fn compile(body: &str) -> (Tier, String) {
     let src = format!(
         "import {{ useState }} from 'react'\nimport {{ useStore }} from 'brust/store/react'\nimport {{ cart }} from './cart'\n{body}"
     );
-    let s = src.clone();
-    let (tier, jinja) = run_on_compiler_thread(move || {
+    run_on_compiler_thread(move || {
         let tree = compile_tree(
             "tests/fixtures/store-read/F.tsx",
-            Some(s.into_bytes()),
+            Some(src.into_bytes()),
             &AnalyzeOptions {
                 root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
                 ..Default::default()
@@ -32,9 +31,24 @@ fn page(body: &str) -> Page {
         )
         .unwrap();
         (tree[0].ir.tier.clone(), tree[0].artifacts.jinja.clone())
-    });
-    assert!(matches!(tier, Tier::Native), "{tier:?}\n{src}");
+    })
+}
+
+/// `body` compiled as a native page.
+fn page(body: &str) -> Page {
+    let (tier, jinja) = compile(body);
+    assert!(matches!(tier, Tier::Native), "{tier:?}\n{body}");
     Page { jinja }
+}
+
+/// A module binding something writes never reaches a native row: the module-effects guard (F215) makes the
+/// component a React island first. (`Printer::fixed_source` / `fixed_list` fail closed on it too.)
+fn react_on_a_module_write(body: &str) {
+    let (tier, _) = compile(body);
+    assert!(
+        matches!(&tier, Tier::React { reason, .. } if reason.contains("module")),
+        "{tier:?}\n{body}"
+    );
 }
 
 fn render(jinja: &str, count: i64) -> String {
@@ -128,23 +142,23 @@ fn rows_of_state_stay_client_rows() {
 }
 
 #[test]
-fn rows_of_a_reassigned_module_let_stay_client_rows() {
-    both_copies(&page(&format!(
+fn rows_of_a_reassigned_module_let_are_never_native_rows() {
+    react_on_a_module_write(&format!(
         "let ITEMS = [{{ key: 'k0' }}, {{ key: 'k1' }}, {{ key: 'k2' }}]\n\
          export function reset() {{ ITEMS = [] }}\n\
          export default function F() {{ const s = useStore(cart)\n\
          return <nav>{{ITEMS.map((it) => {ROW})}}</nav> }}"
-    )));
+    ));
 }
 
 #[test]
-fn rows_of_a_written_module_const_stay_client_rows() {
-    both_copies(&page(&format!(
+fn rows_of_a_written_module_const_are_never_native_rows() {
+    react_on_a_module_write(&format!(
         "const ITEMS = [{{ key: 'k0' }}, {{ key: 'k1' }}, {{ key: 'k2' }}]\n\
          export function add() {{ ITEMS.push({{ key: 'k3' }}) }}\n\
          export default function F() {{ const s = useStore(cart)\n\
          return <nav>{{ITEMS.map((it) => {ROW})}}</nav> }}"
-    )));
+    ));
 }
 
 #[test]
