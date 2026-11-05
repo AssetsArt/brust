@@ -1,0 +1,2 @@
+// The icon each key renders in Icon.tsx, for the served test.
+export const ICONS = ["AppWindow", "Bell", "Braces", "ChartLine", "ChartPie", "Cookie", "CreditCard", "Files", "Gauge", "Globe", "History", "Images", "LayoutTemplate", "Mail", "MailOpen", "MapPin", "Megaphone", "Menu", "MousePointerClick", "Newspaper", "Package", "Palette", "PanelBottom", "PanelLeft", "PanelTop", "Plug", "Receipt", "Search", "ShoppingCart", "SlidersHorizontal", "Smartphone", "Store", "TicketPercent", "Truck", "User", "Users", "Wallet", "Wrench"]

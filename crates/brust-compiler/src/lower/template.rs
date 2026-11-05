@@ -18,8 +18,8 @@ use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja};
 use super::{LowerCtx, Member, MemberDef, Paint};
 use crate::analyze::passes::children::REST_INPUT;
 use crate::ir::{
-    Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobKind, Node, RawExpr, RawKind, ServerExpr,
-    Tier, VOID,
+    Attr, BinOp, ComponentIR, Diagnostic, Expr, IdentKind, JobKind, Node, RawExpr, RawKind,
+    ServerExpr, Tier, UnOp, VOID,
 };
 use brust_jinja::{
     AttrKind, attr_kind, attr_name, escape_attr, is_boolean_attr, is_refused_attr, is_url_attr,
@@ -319,6 +319,24 @@ pub struct Printer<'a, 'c> {
     skip_value_print: bool,
     /// F432: the value expression `spread_open` found for a `<select>` / `<textarea>` with a spread, for `element` to paint.
     spread_control: Option<String>,
+    /// F511: the work [`Self::twice`] has done for this component, shared with the printers of the components inlined
+    /// into it: how many copies the text being printed sits in now, the deepest that reached, the bytes of every
+    /// visible + hidden pair printed so far, and whether the budget was reported.
+    twice: Rc<TwiceWork>,
+}
+
+/// F511: the bytes of visible + hidden copies one component may print. Each nesting level of reactive branches and
+/// `x-for` rows doubles what is under it; past the budget the build stops with `reactive-if-depth` instead of printing
+/// 2^depth copies. About 60x the largest template the CI corpus builds (the website's release notes page, 138 KB on
+/// 2026-11-05): a component that builds today never meets it.
+pub(crate) const TWICE_BUDGET: usize = 8 << 20;
+
+#[derive(Default)]
+struct TwiceWork {
+    depth: Cell<u32>,
+    deepest: Cell<u32>,
+    bytes: Cell<usize>,
+    blown: Cell<bool>,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -357,6 +375,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             component_children: 0,
             skip_value_print: false,
             spread_control: None,
+            twice: Rc::default(),
         })
     }
 
@@ -1824,6 +1843,48 @@ impl<'a, 'c> Printer<'a, 'c> {
                 self.out.push_str("{% endif %}");
             }
             Some(b) => {
+                // F511: a reactive else-if run prints each arm once (linear), never nested in its else.
+                let mut links = vec![Link {
+                    cond,
+                    raw: raw.unwrap(),
+                    then,
+                    st,
+                    bindings: b.clone(),
+                }];
+                let (mut tail, mut stail) = (else_.as_slice(), se.as_slice());
+                while let Some((
+                    Node::If {
+                        cond, then, else_, ..
+                    },
+                    Node::If {
+                        cond: sc,
+                        then: st,
+                        else_: se,
+                        ..
+                    },
+                )) = else_if(tail, stail)
+                {
+                    let raw = match sc {
+                        Expr::Raw(r) => Some(r),
+                        _ => None,
+                    };
+                    // A non-reactive test ends the run: it and what follows are the run's trailing else.
+                    let Some(b) = self.reactive(raw, cond) else {
+                        break;
+                    };
+                    links.push(Link {
+                        cond,
+                        raw: raw.unwrap(),
+                        then,
+                        st,
+                        bindings: b,
+                    });
+                    (tail, stail) = (else_.as_slice(), se.as_slice());
+                }
+                if links.len() > 1 {
+                    self.if_chain(&links, tail, stail);
+                    return;
+                }
                 let yes = self.next("_c");
                 self.push_member(&yes, raw.unwrap(), b.clone(), false, Paint::Raw);
                 let no = format!("{yes}_not");
@@ -1846,9 +1907,115 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
     }
 
+    /// F511: a reactive `if / else if / … / else` run as sibling branches. The server picks the arm once (`{% set %}` of
+    /// its index, flat: each test is evaluated only while no earlier one held, as JS does); arm `i` is guarded on the
+    /// client by `!c1 && … && !c(i-1) && ci` (the trailing else by every test negated). Each arm goes through
+    /// [`Self::twice`] exactly once, so the template and the work grow linearly with the run, where nesting each else
+    /// in the previous arm's printed both copies of the rest (2^n).
+    fn if_chain(&mut self, links: &[Link<'_>], tail: &[Node], stail: &[Node]) {
+        let first = self.next("_c");
+        let sel = self.jinja_free(format!("{first}_arm"));
+        let mut out = format!("{{% set {sel} = -1 %}}");
+        for (i, l) in links.iter().enumerate() {
+            let c = self.value(l.cond);
+            let test = if i == 0 {
+                format!("({c}) | truthy")
+            } else {
+                format!("{sel} < 0 and (({c}) | truthy)")
+            };
+            out.push_str(&format!(
+                "{{% if {test} %}}{{% set {sel} = {i} %}}{{% endif %}}"
+            ));
+        }
+        let mut negated: Option<RawExpr> = None;
+        let mut reads: Vec<&[String]> = Vec::new();
+        for (i, l) in links.iter().enumerate() {
+            reads.push(&l.bindings);
+            let guard = match &negated {
+                None => l.raw.clone(),
+                Some(n) => and(n, l.raw),
+            };
+            negated = Some(match &negated {
+                None => not(l.raw),
+                Some(n) => and(n, &not(l.raw)),
+            });
+            let member = if i == 0 {
+                first.clone()
+            } else {
+                self.next("_c")
+            };
+            let bindings = self.in_frame_order(&reads);
+            self.push_member(&member, &guard, bindings.clone(), false, Paint::Raw);
+            let d = directive(&member, &bindings);
+            let (on, off) = self.twice(|p, hidden| p.branch(l.then, l.st, &d, hidden));
+            out.push_str(&format!(
+                "{{% if {sel} == {i} %}}{on}{{% else %}}{off}{{% endif %}}"
+            ));
+        }
+        if !tail.is_empty() {
+            let member = self.next("_c");
+            let bindings = self.in_frame_order(&reads);
+            let guard = negated.expect("a run has at least two links");
+            self.push_member(&member, &guard, bindings.clone(), false, Paint::Raw);
+            let d = directive(&member, &bindings);
+            let (on, off) = self.twice(|p, hidden| p.branch(tail, stail, &d, hidden));
+            out.push_str(&format!(
+                "{{% if {sel} < 0 %}}{on}{{% else %}}{off}{{% endif %}}"
+            ));
+        }
+        self.out.push_str(&out);
+    }
+
+    /// The loop bindings any of `reads` names, in loop order (a member's parameter list).
+    fn in_frame_order(&self, reads: &[&[String]]) -> Vec<String> {
+        let all: BTreeSet<&String> = reads.iter().flat_map(|r| r.iter()).collect();
+        let mut b = Vec::new();
+        for f in &self.frames {
+            if all.contains(&f.item) {
+                b.push(f.item.clone());
+            }
+            if let Some(i) = &f.index
+                && all.contains(i)
+            {
+                b.push(i.clone());
+            }
+        }
+        b
+    }
+
     /// Prints the visible copy, then the hidden copy of the same nodes with the
     /// same member numbers (the hidden copy defines no new members).
     fn twice(&mut self, mut f: impl FnMut(&mut Self, bool) -> String) -> (String, String) {
+        let w = self.twice.clone();
+        if w.bytes.get() > TWICE_BUDGET {
+            if !w.blown.replace(true) {
+                self.diagnostics.push(Diagnostic::error(
+                    "reactive-if-depth",
+                    format!(
+                        "`{}` (rendered inside `{}`) nests reactive conditionals / lists {} deep and printed more than \
+                         {} MiB of their copies ({} bytes); each level doubles the template, so the build stops here",
+                        self.f.ir.id,
+                        self.inst_ir.id,
+                        w.deepest.get(),
+                        TWICE_BUDGET >> 20,
+                        w.bytes.get()
+                    ),
+                    0,
+                    "split the nested conditionals / lists into child components",
+                ));
+            }
+            return (String::new(), String::new());
+        }
+        let depth = w.depth.get() + 1;
+        w.depth.set(depth);
+        w.deepest.set(w.deepest.get().max(depth));
+        let (visible, hidden) = self.twice_inner(&mut f);
+        w.depth.set(depth - 1);
+        w.bytes.set(w.bytes.get() + visible.len() + hidden.len());
+        (visible, hidden)
+    }
+
+    fn twice_inner(&mut self, f: &mut impl FnMut(&mut Self, bool) -> String) -> (String, String) {
         let before = (
             self.counts.clone(),
             self.ssr.clone(),
@@ -2586,6 +2753,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         p.blank = self.blank;
         p.in_select = self.in_select;
+        p.twice = self.twice.clone();
         // The inlined component numbers its fed children with this printer's counters (F164 re-base).
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
@@ -2848,6 +3016,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         p.blank = self.blank;
         p.in_select = self.in_select;
+        p.twice = self.twice.clone();
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
         // F494: this printer's open loops stay open around the inlined child.
@@ -3017,6 +3186,46 @@ fn seed_tree(paths: &BTreeSet<String>) -> std::collections::BTreeMap<String, See
         }
     }
     roots
+}
+
+/// F511: one test of a reactive else-if run and the arm it guards.
+struct Link<'a> {
+    cond: &'a Expr,
+    raw: &'a RawExpr,
+    then: &'a [Node],
+    st: &'a [Node],
+    bindings: Vec<String>,
+}
+
+/// The `else if` an else branch is: its one node an `If` (alone or as the one child of a fragment), with the
+/// structural snapshot's twin.
+fn else_if<'a>(ns: &'a [Node], ss: &'a [Node]) -> Option<(&'a Node, &'a Node)> {
+    match (ns, ss) {
+        ([n @ Node::If { .. }], [s @ Node::If { .. }]) => Some((n, s)),
+        ([Node::Fragment(n)], [Node::Fragment(s)]) => else_if(n, s),
+        _ => None,
+    }
+}
+
+fn not(r: &RawExpr) -> RawExpr {
+    RawExpr {
+        loc: r.loc,
+        kind: RawKind::Unary {
+            op: UnOp::Not,
+            value: Box::new(r.clone()),
+        },
+    }
+}
+
+fn and(l: &RawExpr, r: &RawExpr) -> RawExpr {
+    RawExpr {
+        loc: l.loc,
+        kind: RawKind::Binary {
+            op: BinOp::And,
+            left: Box::new(l.clone()),
+            right: Box::new(r.clone()),
+        },
+    }
 }
 
 /// `x-*` value: `member` or `member:b1,b2`.
