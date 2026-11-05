@@ -91,6 +91,16 @@ test('the 38-case switch in store-reactive rows builds within budget, its templa
   expect(total).toBeLessThan(4 << 20)
 })
 
+test('rows of a module const are server-decided: one icon per row, no hidden arm, no host around the icon (F515)', async () => {
+  const html = await (await fetch(`${base}/`)).text()
+  const nav = /<nav[^>]*>([\s\S]*?)<\/nav>/.exec(html)![1]!
+  // Before F515 every row printed all 38 arms (visible + hidden) and wrapped Icon in a linked <brust-host>.
+  expect((nav.match(/<svg/g) ?? []).length).toBe(36)
+  expect(nav).not.toMatch(/\shidden[\s>=]/)
+  expect(nav).not.toContain('brust-host')
+  expect(nav).not.toContain('x-props-bind')
+})
+
 test('first paint (no script): the right arm per row and per switch, every other arm hidden', async () => {
   const ctx = await browser.newContext({ javaScriptEnabled: false })
   const p = await ctx.newPage()

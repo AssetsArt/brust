@@ -64,5 +64,7 @@ fn interactive_fragment_root_keeps_the_host_and_warns_with_a_location() {
         .find(|d| d.rule == "fragment-root")
         .expect("warning");
     assert!(w.message.contains("child combinators"), "{}", w.message);
+    // F515: the finding says what makes the component interactive.
+    assert!(w.message.contains("(it holds state `"), "{}", w.message);
     assert_eq!((w.line, w.col), (7, 5)); // the `<>` of the return
 }

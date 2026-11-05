@@ -2,8 +2,10 @@
 //! ternaries in the else position) lowers to sibling branches, each printed once: the template and the work grow
 //! linearly with the run. Before, each else nested the rest of the run inside both the visible and the hidden copy of the
 //! previous arm (2^n: a 38-case store-driven switch never finished building). Nesting that still doubles (a reactive
-//! conditional inside an arm, a reactive list row) stops the build past `REACTIVE_DEPTH_CAP` levels with
-//! `reactive-if-depth` instead of printing 2^depth copies. Served: tests/server/if-chain.chromium.test.ts.
+//! conditional inside an arm, a reactive list row) is held to a work budget (`TWICE_BUDGET`, bytes of visible + hidden
+//! copies per component): past it the build stops with `reactive-if-depth` instead of printing 2^depth copies.
+//! F515: a test on a row of a fixed list (a module const) is server-decided, so a run can start or end with one: the
+//! prefix stays a plain server `if`, a later one is the run's trailing else. Served: tests/server/if-chain.chromium.test.ts.
 use brust_compiler::analyze::component::AnalyzeOptions;
 use brust_compiler::ir::{Diagnostic, Tier};
 use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
@@ -252,6 +254,95 @@ fn a_row_test_after_the_state_tests_joins_the_run() {
         "{html}\n{}",
         p.jinja
     );
+}
+
+/// A store-reading page (tests/fixtures/store-read/cart.ts) rendering `chain` in each row of a module const: the row
+/// value `m` never changes on the client (F515), the store does.
+fn fixed_rows(chain: &str) -> Page {
+    let src = format!(
+        "import {{ useStore }} from 'brust/store/react'\nimport {{ cart }} from './cart'\n\
+         const MODES = ['x', 'y']\n\
+         export default function F() {{ const s = useStore(cart)\n\
+         return <main>{{MODES.map((m) => <p key={{m}} data-c={{s.count}}>{{{chain}}}</p>)}}</main> }}"
+    );
+    let s = src.clone();
+    let p = run_on_compiler_thread(move || {
+        compile_tree(
+            "tests/fixtures/store-read/F.tsx",
+            Some(s.into_bytes()),
+            &AnalyzeOptions {
+                root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .map(|tree| Page {
+            tier: tree[0].ir.tier.clone(),
+            jinja: tree[0].artifacts.jinja.clone(),
+            client: tree[0].artifacts.client_js.clone().unwrap_or_default(),
+        })
+    })
+    .unwrap();
+    assert!(matches!(p.tier, Tier::Native), "{:?}\n{src}", p.tier);
+    // The row test is a plain server `if` (no `x-if=\"_cN:m\"` member of `m`).
+    assert!(!p.jinja.contains(":m\""), "{}", p.jinja);
+    p
+}
+
+/// Per `<p>` row: (the `<b>` texts a user sees, how many `<b>` the row holds).
+fn p_rows(html: &str) -> Vec<(Vec<String>, usize)> {
+    html.split("<p ")
+        .skip(1)
+        .map(|row| {
+            let row = &row[..row.find("</p>").unwrap()];
+            (
+                visible(row, "b"),
+                row.matches("<b ").count() + row.matches("<b>").count(),
+            )
+        })
+        .collect()
+}
+
+fn count(n: i64) -> serde_json::Value {
+    serde_json::json!({ "__store": { "cart": { "count": n } } })
+}
+
+#[test]
+fn a_fixed_row_test_before_the_run_stays_a_plain_if() {
+    let p = fixed_rows(
+        "m === 'x' ? <b>x</b> : s.count === 0 ? <b>0</b> : s.count === 1 ? <b>1</b> : <b>z</b>",
+    );
+    // Row `x`: the prefix holds on the server, nothing of the run is printed. Row `y`: the run, each arm once.
+    let html = render(&p.jinja, count(1));
+    assert_eq!(
+        p_rows(&html),
+        vec![(vec!["x".to_string()], 1), (vec!["1".to_string()], 3)],
+        "{html}\n{}",
+        p.jinja
+    );
+    assert_eq!(p_rows(&render(&p.jinja, count(7)))[1].0, vec!["z"]);
+    // Only the run's 3 arms have members, each once visible + once hidden.
+    assert_eq!(p.jinja.matches("x-if=").count(), 6, "{}", p.jinja);
+}
+
+#[test]
+fn a_fixed_row_test_after_the_run_is_its_trailing_else() {
+    let p = fixed_rows(
+        "s.count === 0 ? <b>0</b> : s.count === 1 ? <b>1</b> : m === 'x' ? <b>x</b> : <b>z</b>",
+    );
+    // The trailing else holds the server-decided test: `x` in row `x`, `z` in row `y`, one of them per row.
+    let html = render(&p.jinja, count(5));
+    assert_eq!(
+        p_rows(&html),
+        vec![(vec!["x".to_string()], 3), (vec!["z".to_string()], 3)],
+        "{html}\n{}",
+        p.jinja
+    );
+    let html = render(&p.jinja, count(0));
+    assert_eq!(p_rows(&html)[0].0, vec!["0"], "{html}");
+    assert_eq!(p_rows(&html)[1].0, vec!["0"], "{html}");
+    // Two reactive arms + the trailing else, each once visible + once hidden.
+    assert_eq!(p.jinja.matches("x-if=").count(), 6, "{}", p.jinja);
 }
 
 /// `depth` state conditionals, each in the previous one's `then`: no run to flatten, every level doubles.
