@@ -105,6 +105,14 @@ export default function ReactCoverage({ reference, summary, groups }: ReactCover
       <p>
         A <code>switch</code> that could fall through, leave with <code>break</code>, declare a <code>const</code> outside braces, or test something that is not a literal stays a React island, and the build names it <code>switch-fallthrough</code>. End every case with <code>return</code> to keep it native or static.
       </p>
+      {/* source: crates/brust-compiler/src/lower/template.rs (Printer::if_chain: one branch per case; Printer::twice: TWICE_BUDGET, reactive-if-depth);
+          crates/brust-compiler/tests/if_chain.rs; tests/server/if-chain.chromium.test.ts (a 38-case switch in the rows of a store-reactive list). */}
+      <p>
+        However long the chain, each case is printed once. Conditionals nested inside one another are different: a level that follows state, a store or a list row
+        prints both of its branches, so what sits under it doubles. A component whose nested conditionals and lists print more than 8 MiB of such copies stops the
+        build with <code>reactive-if-depth</code>, naming the component and the depth. Turn the nesting into one <code>if / else if</code> chain or{' '}
+        <code>switch</code>, or compute the choice into one value first.
+      </p>
 
       {groups.map((g) => (
         <section style={{ display: 'contents' }} key={g.id}>
