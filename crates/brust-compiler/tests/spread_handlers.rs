@@ -116,11 +116,12 @@ fn handlers_in_a_list_on_a_text_field_and_on_two_elements() {
         "",
         "const [n, setN] = useState(''); return <div><p>{n}</p>{['a', 'b'].map((it) => <button key={it} data-slot=\"button\" data-variant=\"default\" onClick={() => setN(it)}>{it}</button>)}</div>",
     );
-    // The row is client-rendered (`x-for`) so the runtime has `it` for the handler, as hand-written.
+    // The row is client-rendered (`x-for`) so the runtime has `it` for the handler, as hand-written. F515: the list is a
+    // literal, so the row text is the server's (no `x-text` wrapper the client would never update).
     let html = render(&l.jinja, serde_json::json!({}));
     assert_eq!(
         html,
-        "<div x-data=\"p_ad7a9ebf\"><p x-text=\"_c1\"></p><button x-for=\"it in _l1 by _k1\" data-slot=\"button\" data-variant=\"default\" x-on-click=\"_h1:it\"><span x-text=\"_c2:it\">a</span></button><button x-for=\"it in _l1 by _k1\" data-slot=\"button\" data-variant=\"default\" x-on-click=\"_h1:it\"><span x-text=\"_c2:it\">b</span></button></div>"
+        "<div x-data=\"p_ad7a9ebf\"><p x-text=\"_c1\"></p><button x-for=\"it in _l1 by _k1\" data-slot=\"button\" data-variant=\"default\" x-on-click=\"_h1:it\">a</button><button x-for=\"it in _l1 by _k1\" data-slot=\"button\" data-variant=\"default\" x-on-click=\"_h1:it\">b</button></div>"
     );
     assert!(render(&hand.jinja, serde_json::json!({})).contains(" x-on-click=\"_h1:it\""));
     assert_eq!(l.chunk, hand.chunk);
