@@ -46,6 +46,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         diagnostics: Vec::new(),
         loop_scope: Vec::new(),
         live_rows: 0,
+        fixed_scope: Vec::new(),
         lists: Vec::new(),
         items: Vec::new(),
         indexes: Vec::new(),
@@ -625,6 +626,9 @@ struct Walker<'s, 'c> {
     /// F494: open `For`s of the frames pass whose rows the client can re-create (`row_reactive`). A fixed-props clone is
     /// made only where none is open: every row value there is the server's, once.
     live_rows: u32,
+    /// F515: the loop bindings open in the frames pass and in `resolve_row_only`, innermost last, each with whether its
+    /// list is fixed (`fixed_list`).
+    fixed_scope: Vec<(String, bool)>,
     /// F295: what makes an instance of this component unable to mount again (`ComponentIR::mount_once`).
     mount_once: Vec<String>,
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
@@ -3488,15 +3492,23 @@ impl Walker<'_, '_> {
                 ..
             } => {
                 // F494: whether the client can re-create these rows (judged before the loop's names are in scope).
-                let live = self.row_reactive(source, body, self.live_rows > 0);
+                // F515: the rows of a fixed list are the server's for good, whatever directives they carry.
+                let enclosing = self.live_rows > 0;
+                let fixed = !enclosing && self.fixed_list(source);
+                let live = !fixed && self.row_reactive(source, body, enclosing);
                 // F344: the row's names are loop bindings here too (a clone made in a row must not pin a row value).
                 let n = self.loop_scope.len();
                 self.loop_scope.push(item.clone());
                 self.loop_scope.extend(index.iter().cloned());
+                let m = self.fixed_scope.len();
+                self.fixed_scope.push((item.clone(), fixed));
+                self.fixed_scope
+                    .extend(index.iter().map(|i| (i.clone(), fixed)));
                 self.live_rows += u32::from(live);
                 body.iter_mut()
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
                 self.live_rows -= u32::from(live);
+                self.fixed_scope.truncate(m);
                 self.loop_scope.truncate(n);
             }
             Node::Component {
@@ -6323,6 +6335,30 @@ impl Walker<'_, '_> {
     }
 
     /// F325: the list source reads module-level data (an import, a module const).
+    /// F515: a list source the client never changes (`lower::template::Printer::fixed_source`'s twin): no state, store,
+    /// browser global, opaque code or live prop (a fixed one is fine), only rows of fixed lists, and of module scope only
+    /// imports and consts nothing in this module writes (`module_consts`; a module `let` fails closed).
+    fn fixed_list(&self, source: &Expr) -> bool {
+        let d = self.deps_of(source);
+        !self.reads_state(source)
+            && !d.browser
+            && !d.opaque
+            && d.props.iter().all(|p| {
+                let root = p.split(['.', '[']).next().unwrap_or(p);
+                self.fixed_props.contains(root)
+            })
+            && d.loop_bindings.iter().all(|b| {
+                self.fixed_scope
+                    .iter()
+                    .rev()
+                    .find(|(n, _)| n == b)
+                    .is_some_and(|(_, f)| *f)
+            })
+            && d.module_locals
+                .iter()
+                .all(|n| self.module_consts.contains_key(n))
+    }
+
     fn module_list(&self, source: &Expr) -> bool {
         crate::lower::template::module_source(&self.deps_of(source))
     }
@@ -6486,11 +6522,27 @@ impl Walker<'_, '_> {
     fn resolve_row_only(&mut self, nodes: &mut [Node], reactive: bool) {
         for n in nodes {
             match n {
-                Node::For { source, body, .. } => {
+                Node::For {
+                    source,
+                    body,
+                    item,
+                    index,
+                    ..
+                } => {
                     let module = self.module_list(source);
                     self.module_rows
                         .set(self.module_rows.get() + usize::from(module));
                     let r = self.row_reactive(source, body, reactive);
+                    // F515: the client never re-creates the rows of a fixed list, even an `x-for` one: a row-only link
+                    // there is plain HTML too (the props its rows read are still followed by the row's directives).
+                    let fixed = !reactive && self.fixed_list(source);
+                    let n = self.loop_scope.len();
+                    self.loop_scope.push(item.clone());
+                    self.loop_scope.extend(index.iter().cloned());
+                    let m = self.fixed_scope.len();
+                    self.fixed_scope.push((item.clone(), fixed));
+                    self.fixed_scope
+                        .extend(index.iter().map(|i| (i.clone(), fixed)));
                     if !r {
                         // F319: rows printed once (no x-for): a prop they read would not be followed.
                         let mut exprs = Vec::new();
@@ -6500,7 +6552,9 @@ impl Walker<'_, '_> {
                             self.frozen.extend(roots);
                         }
                     }
-                    self.resolve_row_only(body, r);
+                    self.resolve_row_only(body, r && !fixed);
+                    self.fixed_scope.truncate(m);
+                    self.loop_scope.truncate(n);
                     self.module_rows
                         .set(self.module_rows.get() - usize::from(module));
                 }

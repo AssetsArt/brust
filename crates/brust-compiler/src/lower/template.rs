@@ -268,6 +268,10 @@ struct Frame {
     directive: bool,
     /// F325: the list's source reads module-level data (`module_source`): props do not make its rows reactive.
     module: bool,
+    /// F515: the list's source never changes on the client (a module const nothing writes, a literal, a fixed prop, a row
+    /// of a fixed list) and no client-built row encloses it: its rows are the server's for good, so a read of its
+    /// bindings is decided on the server (`Printer::reactive_as`).
+    fixed: bool,
 }
 
 pub struct Printer<'a, 'c> {
@@ -323,6 +327,9 @@ pub struct Printer<'a, 'c> {
     /// into it: how many copies the text being printed sits in now, the deepest that reached, the bytes of every
     /// visible + hidden pair printed so far, and whether the budget was reported.
     twice: Rc<TwiceWork>,
+    /// F515: this printer prints inside a row the client builds from its blank template (an `x-for` row of a list that
+    /// can change, here or in a printer this one is inlined into): nothing in it is server-decided for good.
+    in_client_row: bool,
 }
 
 /// F511: the bytes of visible + hidden copies one component may print. Each nesting level of reactive branches and
@@ -376,6 +383,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             skip_value_print: false,
             spread_control: None,
             twice: Rc::default(),
+            in_client_row: false,
         })
     }
 
@@ -740,7 +748,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         // `plain_fn::client_value`), in a component whose props are a signal: the job paints first, the chunk follows.
         let client_ok = (matches!(placed, Expr::Server(_)) && !self.reaches_props_only_slot(raw))
             || (self.f.ir.props_are_signal() && self.recomputable(raw));
-        let loop_read = in_row && !deps.loop_bindings.is_empty() && client_ok;
+        // F515: a binding of a fixed list is the server's for good.
+        let loop_read =
+            in_row && deps.loop_bindings.iter().any(|b| !self.fixed_binding(b)) && client_ok;
         // Props are a signal in the chunk (a linked child's change after
         // first paint): in a native component a prop read is reactive too —
         // unless it also reads a loop binding outside an x-for row (no scope).
@@ -771,6 +781,64 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
         }
         Some(b)
+    }
+
+    /// F515: what makes this component interactive, for a finding that says so.
+    fn interactive_why(&self) -> String {
+        let ir = self.f.ir;
+        if let Some(st) = ir.state.first() {
+            format!("it holds state `{}`", st.name)
+        } else if let Some(h) = ir.handlers.first() {
+            format!("it handles events (`{}`)", h.name)
+        } else if !ir.effects.is_empty() {
+            "it runs an effect".into()
+        } else if !ir.refs.is_empty() {
+            "it takes a ref".into()
+        } else if !ir.stores.is_empty() {
+            "it reads a store".into()
+        } else if (self.ctx.linked)(&ir.id) {
+            "a caller passes it props that change on the client (a list row the client re-creates, or state)".into()
+        } else {
+            "its props change on the client".into()
+        }
+    }
+
+    /// F515: a row the client may build from its blank template encloses what is printed now.
+    fn in_client_row(&self) -> bool {
+        self.in_client_row || self.frames.iter().any(|f| f.directive && !f.fixed)
+    }
+
+    /// F515: `name` is the item or index of the innermost open list that binds it, and that list is fixed.
+    fn fixed_binding(&self, name: &str) -> bool {
+        self.frames
+            .iter()
+            .rev()
+            .find(|f| f.item == name || f.index.as_deref() == Some(name))
+            .is_some_and(|f| f.fixed)
+    }
+
+    /// F515: a list source the client never changes: it reads no state, store, browser global, opaque code or live
+    /// prop (a fixed one, S2, is fine), only rows of fixed lists, and of module scope only imports and consts nothing in
+    /// this module writes (a module `let`, or a const with a use that is not a proven read, fails closed). An import
+    /// binding cannot be reassigned here, and a change another module makes in place is no signal the client's list
+    /// would follow either.
+    fn fixed_source(&self, raw: &RawExpr) -> bool {
+        let d = self.f.deps(raw, &self.scope());
+        let ir = self.f.ir;
+        !d.reactive()
+            && !d.browser
+            && !d.opaque
+            && d.props.iter().all(|p| {
+                let root = p.split(['.', '[']).next().unwrap_or(p);
+                ir.fixed_props.iter().any(|f| f == root)
+            })
+            && d.loop_bindings.iter().all(|b| self.fixed_binding(b))
+            && d.module_locals.iter().all(|n| {
+                ir.module_decls
+                    .iter()
+                    .flat_map(|m| &m.consts)
+                    .any(|c| &c.name == n && !c.mutated)
+            })
     }
 
     /// F337: `raw` (a value placed as, or reaching, a props-only slot) is one the chunk recomputes exactly.
@@ -946,8 +1014,12 @@ impl<'a, 'c> Printer<'a, 'c> {
         if *synthetic && *host && root && self.inline.is_none() {
             self.diagnostics.push(Diagnostic::warning(
                 "fragment-root",
-                "an interactive component does not return a single element, so it is wrapped in <brust-host style=\"display:contents\">; \
-                 that breaks child combinators (`>`) and table/list parents (`<tbody>`, `<ul>`, `<select>`)",
+                format!(
+                    "an interactive component ({}) does not return a single element, so it is wrapped in \
+                     <brust-host style=\"display:contents\">; that breaks child combinators (`>`) and table/list parents \
+                     (`<tbody>`, `<ul>`, `<select>`)",
+                    self.interactive_why()
+                ),
                 *loc,
                 "return one element",
             ));
@@ -2116,6 +2188,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             || src_raw
                 .as_ref()
                 .is_some_and(|r| module_source(&self.f.deps(r, &self.scope())));
+        let fixed = !self.in_client_row() && src_raw.as_ref().is_some_and(|r| self.fixed_source(r));
         let directive_row = self.native
             && (src_raw
                 .as_ref()
@@ -2204,6 +2277,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             index_used: Cell::new(!x_for.is_empty() && index.is_some()),
             directive: !x_for.is_empty(),
             module,
+            fixed,
         });
         let (row, empty) = if x_for.is_empty() {
             (self.row(body, sb, &x_for, false), String::new())
@@ -2756,6 +2830,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         p.blank = self.blank;
         p.in_select = self.in_select;
         p.twice = self.twice.clone();
+        p.in_client_row = self.in_client_row();
         // The inlined component numbers its fed children with this printer's counters (F164 re-base).
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
@@ -3019,6 +3094,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         p.blank = self.blank;
         p.in_select = self.in_select;
         p.twice = self.twice.clone();
+        p.in_client_row = self.in_client_row();
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
         // F494: this printer's open loops stay open around the inlined child.

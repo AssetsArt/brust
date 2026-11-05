@@ -148,6 +148,18 @@ fn an_imported_list_is_declared_projected_instead_of_imported() {
     }
 }
 
+/// F515: the rows of an imported list nothing writes are the server's; a field only the server prints (`{it.name}`) is no
+/// longer a client read, so the projection drops it with the unread ones (the handler still reads `id`).
+#[test]
+fn a_field_only_the_server_prints_is_not_projected() {
+    let c = native("imported_server_read.tsx");
+    assert!(
+        c.contains(r#"const ITEMS = [{ id: 1 }, { id: 2 }];"#),
+        "{c}"
+    );
+    assert!(!c.contains("name: ") && !c.contains("SECRET"), "{c}");
+}
+
 /// PR2, C1: the import stays (the data module is bundled whole, as before) when its module writes the list (at load or in
 /// a function), runs anything at load or imports another module (Afrojack), when the
 /// value has a name in it, or when the chunk's own use is not recognised (a row bare; another printed declaration reads it, F1).
