@@ -2001,7 +2001,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                         w.bytes.get()
                     ),
                     0,
-                    "split the nested conditionals / lists into child components",
+                    // An inlined child is printed inside both copies too: only fewer levels help.
+                    "turn the nested conditionals into one `if / else if` chain or `switch` (each case is printed once), \
+                     or compute the choice into one value first",
                 ));
             }
             return (String::new(), String::new());
