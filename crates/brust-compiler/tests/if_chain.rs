@@ -289,18 +289,37 @@ fn fixed_rows(chain: &str) -> Page {
     p
 }
 
-/// Per `<p>` row: (the `<b>` texts a user sees, how many `<b>` the row holds).
+/// Per `<p>` row: (the `<b>` texts a user sees, how many `<b>` the row holds). A `<b>` inside a hidden
+/// `<brust-if>` wrapper (a branch of more than one element, or of a nested `if`) is not seen.
 fn p_rows(html: &str) -> Vec<(Vec<String>, usize)> {
     html.split("<p ")
         .skip(1)
         .map(|row| {
             let row = &row[..row.find("</p>").unwrap()];
-            (
-                visible(row, "b"),
-                row.matches("<b ").count() + row.matches("<b>").count(),
-            )
+            let arms = row.matches("<b ").count() + row.matches("<b>").count();
+            let mut shown = String::new();
+            let mut rest = row;
+            while let Some(i) = rest.find("<brust-if ") {
+                shown.push_str(&rest[..i]);
+                let tag_end = i + rest[i..].find('>').unwrap();
+                let close = tag_end + rest[tag_end..].find("</brust-if>").unwrap();
+                if !rest[i..tag_end].split(' ').any(|a| a == "hidden") {
+                    shown.push_str(&rest[tag_end + 1..close]);
+                }
+                rest = &rest[close + "</brust-if>".len()..];
+            }
+            shown.push_str(rest);
+            (visible(&shown, "b"), arms)
         })
         .collect()
+}
+
+/// `x-if=` in the row template the server prints (the `{% else %}` after it is the empty-list template the client
+/// clones, the same row again).
+fn row_x_ifs(jinja: &str) -> usize {
+    jinja[..jinja.find("<!--x-for-->").unwrap_or(jinja.len())]
+        .matches("x-if=")
+        .count()
 }
 
 fn count(n: i64) -> serde_json::Value {
@@ -322,7 +341,7 @@ fn a_fixed_row_test_before_the_run_stays_a_plain_if() {
     );
     assert_eq!(p_rows(&render(&p.jinja, count(7)))[1].0, vec!["z"]);
     // Only the run's 3 arms have members, each once visible + once hidden.
-    assert_eq!(p.jinja.matches("x-if=").count(), 6, "{}", p.jinja);
+    assert_eq!(row_x_ifs(&p.jinja), 6, "{}", p.jinja);
 }
 
 #[test]
@@ -342,7 +361,7 @@ fn a_fixed_row_test_after_the_run_is_its_trailing_else() {
     assert_eq!(p_rows(&html)[0].0, vec!["0"], "{html}");
     assert_eq!(p_rows(&html)[1].0, vec!["0"], "{html}");
     // Two reactive arms + the trailing else, each once visible + once hidden.
-    assert_eq!(p.jinja.matches("x-if=").count(), 6, "{}", p.jinja);
+    assert_eq!(row_x_ifs(&p.jinja), 6, "{}", p.jinja);
 }
 
 /// `depth` state conditionals, each in the previous one's `then`: no run to flatten, every level doubles.
