@@ -146,12 +146,15 @@ fn a_three_arm_chain_shows_one_arm_with_stable_members() {
     assert_eq!(guard.matches('!').count(), 3, "{guard}");
 }
 
-/// A stateless page reading `cart.count` (tests/fixtures/store-read/cart.ts): its props are fixed for the life of the
-/// page, so a test on `mode` is decided on the server alone, a test on the store is reactive.
-fn store_page(chain: &str) -> Page {
+/// A page reading `cart.count` (tests/fixtures/store-read/cart.ts) that renders `chain` once per row of a module-constant
+/// list: the row variable `m` is fixed for the life of the page (the list never changes), so a test on it is decided on
+/// the server alone, a test on the store is reactive.
+fn store_rows(chain: &str) -> Page {
     let src = format!(
         "import {{ useStore }} from 'brust/store/react'\nimport {{ cart }} from './cart'\n\
-         export default function F({{ mode }}: any) {{ const s = useStore(cart)\n{chain} }}"
+         const MODES = ['x', 'y']\n\
+         export default function F() {{ const s = useStore(cart)\n\
+         return <main>{{MODES.map((m) => <p key={{m}}>{{{chain}}}</p>)}}</main> }}"
     );
     let s = src.clone();
     let p = run_on_compiler_thread(move || {
@@ -175,48 +178,59 @@ fn store_page(chain: &str) -> Page {
     p
 }
 
-fn at(mode: &str, count: i64) -> serde_json::Value {
-    serde_json::json!({ "mode": mode, "__store": { "cart": { "count": count } } })
+/// Per `<p>` row: (the `<b>` texts a user sees, how many `<b>` arms the row holds).
+fn rows(html: &str) -> Vec<(Vec<String>, usize)> {
+    html.split("<p")
+        .skip(1)
+        .map(|row| {
+            let row = &row[..row.find("</p>").unwrap()];
+            let arms = row.matches("<b ").count() + row.matches("<b>").count();
+            (visible(row, "b"), arms)
+        })
+        .collect()
+}
+
+fn count(n: i64) -> serde_json::Value {
+    serde_json::json!({ "__store": { "cart": { "count": n } } })
 }
 
 #[test]
 fn a_non_reactive_prefix_keeps_its_plain_if() {
-    let p = store_page(
-        "if (mode === 'x') return <b>x</b>\n\
-         if (s.count === 0) return <b>0</b>\n\
-         if (s.count === 1) return <b>1</b>\n\
-         return <b>z</b>",
+    let p = store_rows(
+        "m === 'x' ? <b>x</b> : s.count === 0 ? <b>0</b> : s.count === 1 ? <b>1</b> : <b>z</b>",
     );
-    // The prefix is a plain server `if`: no member, nothing of the run is printed when it holds.
-    let html = render(&p.jinja, at("x", 1));
-    assert_eq!(visible(&html, "b"), vec!["x"], "{html}");
-    assert_eq!(html.matches("<b").count(), 1, "{html}");
-    // Otherwise the run: one arm visible, every arm once.
-    let html = render(&p.jinja, at("y", 1));
-    assert_eq!(visible(&html, "b"), vec!["1"], "{html}");
-    assert_eq!(html.matches("<b").count(), 3, "{html}");
-    let html = render(&p.jinja, at("y", 7));
-    assert_eq!(visible(&html, "b"), vec!["z"], "{html}");
+    // Row `x`: the prefix holds on the server, nothing of the run is printed. Row `y`: the run, every arm once.
+    let html = render(&p.jinja, count(1));
+    assert_eq!(
+        rows(&html),
+        vec![(vec!["x".to_string()], 1), (vec!["1".to_string()], 3)],
+        "{html}\n{}",
+        p.jinja
+    );
+    let html = render(&p.jinja, count(7));
+    assert_eq!(rows(&html)[1].0, vec!["z"], "{html}");
+    // The run's 3 arms, each once visible + once hidden; the prefix arm has no member.
     assert_eq!(p.jinja.matches("x-if=").count(), 6, "{}", p.jinja);
 }
 
 #[test]
 fn a_non_reactive_test_after_the_run_is_its_trailing_else() {
-    let p = store_page(
-        "if (s.count === 0) return <b>0</b>\n\
-         if (s.count === 1) return <b>1</b>\n\
-         if (mode === 'x') return <b>x</b>\n\
-         return <b>z</b>",
+    let p = store_rows(
+        "s.count === 0 ? <b>0</b> : s.count === 1 ? <b>1</b> : m === 'x' ? <b>x</b> : <b>z</b>",
     );
-    // Two reactive arms and the trailing else holding the server-decided `mode` test.
-    let html = render(&p.jinja, at("x", 5));
-    assert_eq!(visible(&html, "b"), vec!["x"], "{html}");
-    let html = render(&p.jinja, at("y", 5));
-    assert_eq!(visible(&html, "b"), vec!["z"], "{html}");
-    let html = render(&p.jinja, at("y", 0));
-    assert_eq!(visible(&html, "b"), vec!["0"], "{html}");
-    // The trailing else is one hidden branch here, whichever of `x` / `z` it holds.
-    assert_eq!(html.matches("<b").count(), 3, "{html}");
+    let html = render(&p.jinja, count(5));
+    // The trailing else holds the server-decided test: `x` in row `x`, `z` in row `y`, one arm each.
+    assert_eq!(
+        rows(&html),
+        vec![(vec!["x".to_string()], 3), (vec!["z".to_string()], 3)],
+        "{html}\n{}",
+        p.jinja
+    );
+    let html = render(&p.jinja, count(0));
+    assert_eq!(rows(&html)[0].0, vec!["0"], "{html}");
+    assert_eq!(rows(&html)[1].0, vec!["0"], "{html}");
+    // Two reactive arms + the trailing else, each once visible + once hidden.
+    assert_eq!(p.jinja.matches("x-if=").count(), 6, "{}", p.jinja);
 }
 
 /// `depth` state conditionals, each in the previous one's `then`: no run to flatten, every level doubles.
@@ -240,7 +254,7 @@ fn nesting_past_the_work_budget_stops_the_build_with_the_reason() {
     assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
     assert_eq!(err.rule, "reactive-if-depth", "{err:?}");
     assert!(
-        err.message.contains("`F_"),
+        err.message.contains("`f_"),
         "names the component: {}",
         err.message
     );

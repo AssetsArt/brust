@@ -4,7 +4,7 @@ import { sel } from './store'
 
 export function Big() {
   const s = useStore(sel)
-  switch (s.active.value) {
+  switch (s.active) {
     case 'k0':
       return <p data-testid="big">zero</p>
     case 'k1':

@@ -50,7 +50,7 @@ export function Side() {
         <a
           key={it.label}
           data-testid={`row-${it.key}`}
-          className={s.active.value === it.key ? 'on' : 'off'}
+          className={s.active === it.key ? 'on' : 'off'}
         >
           <Icon k={it.key} />
           <span>{it.label}</span>
