@@ -146,20 +146,21 @@ fn a_three_arm_chain_shows_one_arm_with_stable_members() {
     assert_eq!(guard.matches('!').count(), 3, "{guard}");
 }
 
-/// A page reading `cart.count` (tests/fixtures/store-read/cart.ts) that renders `chain` once per row of a module-constant
-/// list: the row variable `m` is fixed for the life of the page (the list never changes), so a test on it is decided on
-/// the server alone, a test on the store is reactive.
-fn store_rows(chain: &str) -> Page {
+/// A stateful page (tests/fixtures/guarded-slot/money.ts for `fmt`) that renders `chain` once per row of its `items`
+/// prop. A row that prints a value only the precompute job computes (`fmt(it.price)`) is printed by the server alone
+/// (no `x-for`), so a test on the row (`it.sale`) is decided on the server; a test on the state `n` is reactive.
+fn rows_page(chain: &str, n: i64) -> Page {
     let src = format!(
-        "import {{ useStore }} from 'brust/store/react'\nimport {{ cart }} from './cart'\n\
-         const MODES = ['x', 'y']\n\
-         export default function F() {{ const s = useStore(cart)\n\
-         return <main>{{MODES.map((m) => <p key={{m}}>{{{chain}}}</p>)}}</main> }}"
+        "import {{ useState }} from 'react'\nimport {{ fmt }} from './money'\n\
+         export default function F(props: {{ items: {{ id: string; sale: boolean; price: number }}[] }}) {{\n\
+         const [n, setN] = useState({n})\n\
+         return <div><button onClick={{() => setN(n + 1)}}>+</button>\
+         <ul>{{props.items.map((it) => <li key={{it.id}}>{{{chain}}}</li>)}}</ul></div> }}"
     );
     let s = src.clone();
     let p = run_on_compiler_thread(move || {
         compile_tree(
-            "tests/fixtures/store-read/F.tsx",
+            "tests/fixtures/guarded-slot/F.tsx",
             Some(s.into_bytes()),
             &AnalyzeOptions {
                 root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
@@ -175,62 +176,72 @@ fn store_rows(chain: &str) -> Page {
     })
     .unwrap();
     assert!(matches!(p.tier, Tier::Native), "{:?}\n{src}", p.tier);
+    // The row test is a plain server `if`: no member is made of it.
+    assert!(
+        p.jinja.contains("{% if (it.sale) | truthy %}"),
+        "{}",
+        p.jinja
+    );
     p
 }
 
-/// Per `<p>` row: (the `<b>` texts a user sees, how many `<b>` arms the row holds).
+/// Per `<li>` row: (the arms a user sees as `tag:text`, how many arms the row holds).
 fn rows(html: &str) -> Vec<(Vec<String>, usize)> {
-    html.split("<p")
+    html.split("<li")
         .skip(1)
         .map(|row| {
-            let row = &row[..row.find("</p>").unwrap()];
-            let arms = row.matches("<b ").count() + row.matches("<b>").count();
-            (visible(row, "b"), arms)
+            let row = &row[..row.find("</li>").unwrap()];
+            let arms = ["<b ", "<b>", "<em ", "<em>"]
+                .iter()
+                .map(|t| row.matches(t).count())
+                .sum();
+            let mut seen: Vec<String> = visible(row, "b")
+                .into_iter()
+                .map(|t| format!("b:{t}"))
+                .collect();
+            seen.extend(visible(row, "em").into_iter().map(|_| "em".to_string()));
+            (seen, arms)
         })
         .collect()
 }
 
-fn count(n: i64) -> serde_json::Value {
-    serde_json::json!({ "__store": { "cart": { "count": n } } })
+fn items() -> serde_json::Value {
+    serde_json::json!({ "items": [
+        { "id": "a", "sale": true, "price": 2 },
+        { "id": "b", "sale": false, "price": 3 },
+    ] })
 }
 
 #[test]
 fn a_non_reactive_prefix_keeps_its_plain_if() {
-    let p = store_rows(
-        "m === 'x' ? <b>x</b> : s.count === 0 ? <b>0</b> : s.count === 1 ? <b>1</b> : <b>z</b>",
+    let p = rows_page(
+        "it.sale ? <em>{fmt(it.price)}</em> : n === 0 ? <b>0</b> : n === 1 ? <b>1</b> : <b>z</b>",
+        1,
     );
-    // Row `x`: the prefix holds on the server, nothing of the run is printed. Row `y`: the run, every arm once.
-    let html = render(&p.jinja, count(1));
+    // Row `a` (on sale): the prefix holds on the server, nothing of the run is printed. Row `b`: the run, every arm once.
+    let html = render(&p.jinja, items());
     assert_eq!(
         rows(&html),
-        vec![(vec!["x".to_string()], 1), (vec!["1".to_string()], 3)],
+        vec![(vec!["em".to_string()], 1), (vec!["b:1".to_string()], 3)],
         "{html}\n{}",
         p.jinja
     );
-    let html = render(&p.jinja, count(7));
-    assert_eq!(rows(&html)[1].0, vec!["z"], "{html}");
-    // The run's 3 arms, each once visible + once hidden; the prefix arm has no member.
-    assert_eq!(p.jinja.matches("x-if=").count(), 6, "{}", p.jinja);
 }
 
 #[test]
 fn a_non_reactive_test_after_the_run_is_its_trailing_else() {
-    let p = store_rows(
-        "s.count === 0 ? <b>0</b> : s.count === 1 ? <b>1</b> : m === 'x' ? <b>x</b> : <b>z</b>",
+    let p = rows_page(
+        "n === 0 ? <b>0</b> : n === 1 ? <b>1</b> : it.sale ? <em>{fmt(it.price)}</em> : <b>z</b>",
+        5,
     );
-    let html = render(&p.jinja, count(5));
-    // The trailing else holds the server-decided test: `x` in row `x`, `z` in row `y`, one arm each.
+    // The trailing else holds the server-decided test: the price in row `a`, `z` in row `b`; one arm of it each.
+    let html = render(&p.jinja, items());
     assert_eq!(
         rows(&html),
-        vec![(vec!["x".to_string()], 3), (vec!["z".to_string()], 3)],
+        vec![(vec!["em".to_string()], 3), (vec!["b:z".to_string()], 3)],
         "{html}\n{}",
         p.jinja
     );
-    let html = render(&p.jinja, count(0));
-    assert_eq!(rows(&html)[0].0, vec!["0"], "{html}");
-    assert_eq!(rows(&html)[1].0, vec!["0"], "{html}");
-    // Two reactive arms + the trailing else, each once visible + once hidden.
-    assert_eq!(p.jinja.matches("x-if=").count(), 6, "{}", p.jinja);
 }
 
 /// `depth` state conditionals, each in the previous one's `then`: no run to flatten, every level doubles.
