@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-38', title: '2.0.0-alpha.38' },
       { id: 'alpha-37', title: '2.0.0-alpha.37' },
       { id: 'alpha-36', title: '2.0.0-alpha.36' },
       { id: 'alpha-35', title: '2.0.0-alpha.35' },
@@ -60,6 +61,30 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-38">2.0.0-alpha.38 · 5 November 2026</h2>
+      {/* source: the pull request merged after v2.0.0-alpha.37: #454 (ledger F515, also F514; plan 2026-11-05-if-chain-blowup) */}
+      <p>This version makes the rows of a list that never changes smaller: the server picks what each row shows, so the page no longer carries every hidden case for every row.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #454 (F515); crates/brust-compiler/src/lower/template.rs (Frame.fixed); crates/brust-compiler/src/analyze/passes/children.rs (fixed_list); crates/brust-compiler/tests/fixed_rows.rs; tests/server/if-chain.chromium.test.ts */}
+        <li>
+          <strong>Rows of a list that never changes are decided on the server (#454).</strong> This covers a list from a module-level <code>const</code> (imported ones too, if nothing writes them), a literal, a fixed prop, or the rows of such a list. A <code>switch</code> or <code>if</code> chain in a row, or in a child rendered by it, now prints only the matching case for each row. Before, every row printed every case, hidden, so a 38-case icon <code>switch</code> over 36 rows put 36 &times; 38 icons in the page. A stateless child that is given only such row values stays static, with no <code>&lt;brust-host&gt;</code> and no client props. Other reads in the same row that follow state or a store still update in the browser. A list that can change (state, a store, a live prop, a module <code>let</code>, or a <code>const</code> written anywhere) is unchanged.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #454 (F515); crates/brust-compiler/tests/module_projection.rs (a_field_only_the_server_prints_is_not_projected) */}
+        <li>
+          <strong>The data sent to the browser for such a list holds only the fields the browser reads (#454).</strong> A field that only the server prints, such as <code>{'{'}it.name{'}'}</code> in a row, is no longer sent, while a field a handler reads, such as <code>id</code>, still is.
+        </li>
+        {/* source: PR #454 (F515); crates/brust-compiler/tests/transparent_root.rs (the finding says what makes the component interactive) */}
+        <li>
+          <strong>The <code>fragment-root</code> warning now says why the component is interactive (#454).</strong> The text names the cause: it holds state, handles events, runs an effect, takes a ref, reads a store, or is passed props that change in the browser.
+        </li>
+      </ul>
 
       <h2 id="alpha-37">2.0.0-alpha.37 · 5 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.36: #451–#452 (ledger F512, F511; plan 2026-11-05-if-chain-blowup) */}
