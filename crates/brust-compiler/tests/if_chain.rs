@@ -147,8 +147,8 @@ fn a_three_arm_chain_shows_one_arm_with_stable_members() {
 }
 
 /// A stateful page (tests/fixtures/guarded-slot/money.ts for `fmt`) that renders `chain` once per row of its `items`
-/// prop. A row that prints a value only the precompute job computes (`fmt(it.price)`) is printed by the server alone
-/// (no `x-for`), so a test on the row (`it.sale`) is decided on the server; a test on the state `n` is reactive.
+/// prop. The page has state, so its props reach the client (`x-props`) and the rows are an `x-for`: a test on the row
+/// (`it.sale`) is reactive like the test on the state `n`, and joins the same run.
 fn rows_page(chain: &str, n: i64) -> Page {
     let src = format!(
         "import {{ useState }} from 'react'\nimport {{ fmt }} from './money'\n\
@@ -176,9 +176,10 @@ fn rows_page(chain: &str, n: i64) -> Page {
     })
     .unwrap();
     assert!(matches!(p.tier, Tier::Native), "{:?}\n{src}", p.tier);
-    // The row test is a plain server `if`: no member is made of it.
+    // The rows are a client list, so the row test is a member of the run (`x-if="_cN:it"`), not a plain server `if`.
+    assert!(p.jinja.contains("<li x-for="), "{}", p.jinja);
     assert!(
-        p.jinja.contains("{% if (it.sale) | truthy %}"),
+        !p.jinja.contains("{% if (it.sale) | truthy %}<"),
         "{}",
         p.jinja
     );
@@ -213,32 +214,41 @@ fn items() -> serde_json::Value {
 }
 
 #[test]
-fn a_non_reactive_prefix_keeps_its_plain_if() {
+fn a_row_test_first_in_the_chain_joins_the_run() {
     let p = rows_page(
         "it.sale ? <em>{fmt(it.price)}</em> : n === 0 ? <b>0</b> : n === 1 ? <b>1</b> : <b>z</b>",
         1,
     );
-    // Row `a` (on sale): the prefix holds on the server, nothing of the run is printed. Row `b`: the run, every arm once.
+    // One flat run of 4 arms in every row (linear): row `a` (on sale) shows the price, row `b` the state arm `1`.
     let html = render(&p.jinja, items());
     assert_eq!(
         rows(&html),
-        vec![(vec!["em".to_string()], 1), (vec!["b:1".to_string()], 3)],
+        vec![(vec!["em".to_string()], 4), (vec!["b:1".to_string()], 4)],
         "{html}\n{}",
         p.jinja
     );
+    assert!(p.jinja.contains("<em x-if=\"_c1:it\">"), "{}", p.jinja);
 }
 
 #[test]
-fn a_non_reactive_test_after_the_run_is_its_trailing_else() {
-    let p = rows_page(
-        "n === 0 ? <b>0</b> : n === 1 ? <b>1</b> : it.sale ? <em>{fmt(it.price)}</em> : <b>z</b>",
-        5,
-    );
-    // The trailing else holds the server-decided test: the price in row `a`, `z` in row `b`; one arm of it each.
+fn a_row_test_after_the_state_tests_joins_the_run() {
+    let chain =
+        "n === 0 ? <b>0</b> : n === 1 ? <b>1</b> : it.sale ? <em>{fmt(it.price)}</em> : <b>z</b>";
+    // No state test holds: the row test picks the price in row `a`, the trailing else `z` in row `b`.
+    let p = rows_page(chain, 5);
     let html = render(&p.jinja, items());
     assert_eq!(
         rows(&html),
-        vec![(vec!["em".to_string()], 3), (vec!["b:z".to_string()], 3)],
+        vec![(vec!["em".to_string()], 4), (vec!["b:z".to_string()], 4)],
+        "{html}\n{}",
+        p.jinja
+    );
+    // An earlier state test wins over the row test, as in JS.
+    let p = rows_page(chain, 0);
+    let html = render(&p.jinja, items());
+    assert_eq!(
+        rows(&html),
+        vec![(vec!["b:0".to_string()], 4), (vec!["b:0".to_string()], 4)],
         "{html}\n{}",
         p.jinja
     );
