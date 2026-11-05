@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-37', title: '2.0.0-alpha.37' },
       { id: 'alpha-36', title: '2.0.0-alpha.36' },
       { id: 'alpha-35', title: '2.0.0-alpha.35' },
       { id: 'alpha-34', title: '2.0.0-alpha.34' },
@@ -59,6 +60,30 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-37">2.0.0-alpha.37 · 5 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.36: #451–#452 (ledger F512, F511; plan 2026-11-05-if-chain-blowup) */}
+      <p>This version fixes a build that never finished for a component with a long <code>if / else if</code> chain or <code>switch</code> that follows state, a store or a list row. It also stops a false &ldquo;no slot&rdquo; warning when a value is <code>undefined</code>.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #452 (F511); crates/brust-compiler/src/lower/template.rs (Printer::if_chain); tests/server/if-chain.chromium.test.ts */}
+        <li>
+          <strong>A long <code>if / else if</code> chain, <code>switch</code> with a <code>return</code> per case, early-return chain or nested ternary no longer hangs the build (#452).</strong> When the tests followed state, a store or a row of a store-driven list, every case doubled the template, so a 38-case <code>switch</code> in such a list never finished building. Each case is now printed once, so the build time and the template grow in line with the number of cases. The page renders the same as before: one case is visible on first paint and a change shows the right case with no duplicate in the DOM.
+        </li>
+        {/* source: PR #451 (F512); packages/brust/src/build/bundle.ts (SLOTS_HELPER); crates/brust-core/src/pipeline.rs (note_missing_slots) */}
+        <li>
+          <strong>A value that is <code>undefined</code> renders like React and no longer logs <code>precompute result has no slot</code> (#451).</strong> For example, <code>arr.find(…)</code> that finds nothing on the server now renders nothing, or the falsy branch of <code>{'{'}x ? x.name : &lsquo;none&rsquo;{'}'}</code>, with no warning on every request. A genuinely missing slot still logs the warning, and its text no longer blames a stale <code>dist/jobs.js</code> as the only cause.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #452 (F511); crates/brust-compiler/src/lower/template.rs (TWICE_BUDGET, reactive-if-depth); website/pages/docs/ReactCoverage.tsx (control-flow) */}
+        <li>
+          <strong>Deeply nested reactive conditionals now stop the build with <code>reactive-if-depth</code> (#452).</strong> A conditional nested inside another one that follows state, a store or a list row still prints both branches, so what sits under it doubles. When one component would print more than 8 MiB of those copies, the build stops at once and names the component and the depth, instead of running out of memory. Turn the nesting into one <code>if / else if</code> chain or <code>switch</code>, or compute the choice into one value first. See <a href="/docs/react-coverage#control-flow">Early returns and switch</a>.
+        </li>
+      </ul>
 
       <h2 id="alpha-36">2.0.0-alpha.36 · 4 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.35: #441–#449 (ledger F481–F483, F492, F503–F508; plan 2026-11-04-open-rows) */}
