@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-40', title: '2.0.0-alpha.40' },
       { id: 'alpha-39', title: '2.0.0-alpha.39' },
       { id: 'alpha-38', title: '2.0.0-alpha.38' },
       { id: 'alpha-37', title: '2.0.0-alpha.37' },
@@ -62,6 +63,18 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-40">2.0.0-alpha.40 · 11 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.39: #466 (ledger F528) */}
+      <p>This version keeps a wrapper component static when it passes its props to a list of components that render themselves.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #466 (F528); crates/brust-compiler/src/analyze/passes/children.rs (fixed_droppable); crates/brust-compiler/tests/recursive_static.rs; tests/server/recursive.chromium.test.ts */}
+        <li>
+          <strong>A component that maps its props to a component that renders itself no longer renders with React when the route feeds it fixed props (#466).</strong> For example <code>Body({'{'} nodes {'}'})</code> returning <code>nodes.map(n =&gt; &lt;NodeView n={'{'}n{'}'} /&gt;)</code>, rendered by the route with loader data, was reported as <code>recursion-unsupported</code> and shipped client code, while the same list written inside the route was static. It now compiles to a static template, with no island and no <code>x-data</code>, and the HTML equals React&rsquo;s <code>renderToString</code>. This also holds when the wrapper is given an expression such as <code>nodes={'{'}s.nodes ?? []{'}'}</code>, which was reported as <code>island-prop</code>. A call site fed by state, and a child that is truly interactive, still render with React as before.
+        </li>
+      </ul>
 
       <h2 id="alpha-39">2.0.0-alpha.39 · 11 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.38: #456, #457, #459, #460, #461, #462, #463, #464 (ledger F517, F518, F519, F520, F521, F523, F524, F525; plan 2026-11-11-runtime-components) */}
