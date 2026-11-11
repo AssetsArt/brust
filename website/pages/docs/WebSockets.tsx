@@ -165,7 +165,8 @@ export default function WebSockets({ blocks }: WebSocketsData) {
           A topic is a name. <code>ws.subscribe(topic)</code> joins it; <code>ws.publish(topic, data)</code> sends to every subscriber <strong>on any worker</strong>, except the publisher unless the route sets <code>publishToSelf: true</code>.
         </li>
         <li>
-          Publishing is done from a socket handler (<code>ws.publish</code>). An HTTP action cannot publish into a topic in this release.
+          Publish only with <code>ws.publish</code> inside a socket handler. <code>server.publish</code> does not reach the sockets in this release, both in an HTTP action (<code>server</code> is null) and from module scope (<code>app.server</code> is not set
+          on your app, so a message-bus subscriber cannot publish into a topic).
         </li>
         <li>A message is queued once and shared by every subscriber&rsquo;s queue. A socket leaves its topics when it closes.</li>
       </ul>
@@ -257,7 +258,7 @@ export default function WebSockets({ blocks }: WebSocketsData) {
       <h2 id="instances">More than one instance</h2>
       <Note tag="Scope">
         Topics live inside one server process, and brust does not forward them to another process or machine. If you run several instances, carry messages between them yourself with a message bus (NATS, Redis pub/sub or the like), and have each
-        instance deliver what it receives to its own sockets. A client that reconnects lands on whichever instance the load balancer picks.
+        instance deliver what it receives to the sockets it holds (a bus subscriber cannot publish into a topic yet, see <a href="#topics">Topics</a>, so keep those sockets in your handlers&rsquo; own state). A client that reconnects lands on whichever instance the load balancer picks.
       </Note>
 
       <h2 id="close">Close codes, drain and restart</h2>
@@ -334,6 +335,9 @@ export default function WebSockets({ blocks }: WebSocketsData) {
         </li>
         <li>
           <strong>Sockets in page routes and loaders.</strong> Only the actions app has <code>.ws()</code>; an upgrade anywhere else is an ordinary request.
+        </li>
+        <li>
+          <strong>Publishing into a topic from outside a socket handler.</strong> From an HTTP action or from module scope (a message-bus subscriber, a timer) there is no way to reach the sockets yet; see <a href="#topics">Topics</a>.
         </li>
         <li>
           <strong>Server-sent events and endless streamed responses.</strong> A response body is read in full before it is sent (limited by <code>max_response_bytes</code> and a 30 second deadline), so a stream that never ends is a 504. Use a WebSocket for
