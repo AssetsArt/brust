@@ -57,3 +57,21 @@ fn the_engine_limit_leaves_room_for_32_levels_under_three_nested_lists() {
     assert!(depths.windows(2).all(|w| w[0] >= w[1]), "{depths:?}");
     assert!(depths[3] >= 48, "three nested lists: {depths:?}");
 }
+
+/// C5: past the cap the render fails through `recursion_limit`, naming the component and the cap.
+#[test]
+fn recursion_limit_names_the_component_and_the_cap() {
+    let t = "{% macro f(n, d) %}{% if d > 3 %}{{ recursion_limit('NodeView', 3) }}{% endif %}{% if n %}{{ f(n - 1, d + 1) }}{% endif %}.{% endmacro %}{{ f(10, 0) }}";
+    let e = env().render_str(t, ()).unwrap_err();
+    assert!(
+        e.to_string()
+            .contains("<NodeView> nested more than 3 levels"),
+        "{e}"
+    );
+    assert_eq!(
+        env()
+            .render_str(&t.replace("f(10, 0)", "f(2, 0)"), ())
+            .unwrap(),
+        "..."
+    );
+}
