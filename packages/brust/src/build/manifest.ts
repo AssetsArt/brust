@@ -50,6 +50,8 @@ export interface ComponentRecord {
   needs_worker: boolean
   use_id_slots: number
   stores: string[]
+  /** F519 (R4.4): the component's own template, children inlined, holds a `<Dynamic>` slot. Absent = none. */
+  dynamic?: true
   /** L33: the client runtime feature modules (`assets.features` keys) this component's output needs, in load order. */
   features: string[]
 }
@@ -373,6 +375,7 @@ export function writeManifest(opts: {
       use_id_slots: c.ir.use_id_slots ?? 0,
       stores: storesOf(compiled, c.id),
       features: featuresOf(c.id, c.jinja, tierOf(c.ir) === 'react'),
+      ...(c.ir.dynamic === true ? { dynamic: true as const } : {}),
     }
     for (const f of components[c.id]!.features)
       if (!(f in opts.runtime.features)) throw new BuildError('runtime-feature-missing', `${c.id}: needs the client runtime feature ${f}, which the build did not ship`)
