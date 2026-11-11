@@ -15,6 +15,7 @@ import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
 import { BuildError } from './errors'
+import { type ExposedModule, wrapperSource } from './expose'
 import { isServerOnlyMarker, serverOnlyEmptyPlugin } from './server-only'
 import { RUNTIME_FEATURES } from './features'
 import { RELATIVE_SPEC, type ResolveTarget, resolveNative } from './esm-resolve'
@@ -400,12 +401,19 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<Runti
  * import (a store) lands once in a shared `chunk-<hex>.js`, so one page has one instance of it.
  * The runtime import stays the absolute `/_brust/client/runtime-<hex>.js` URL the compiler
  * printed (external: one runtime for every chunk). */
-export async function buildClientChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Map<string, string>> {
+export async function buildClientChunks(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  ctx: BrowserCtx,
+  runtimeUrl: RuntimeUrls,
+  /** F517 `[build] expose`: each module is one more entry of this build, so a chunk that imports it and the entry's URL are one module instance. */
+  exposed: ExposedModule[] = [],
+): Promise<{ chunks: Map<string, string>; exposed: Record<string, string> }> {
   const entrypoints: string[] = []
   const shared = new Map<string, string>()
   // F362 PR2: a chunk that declares an imported list projected keeps it only while its data module is out of the client
   // graph: another importer (a module that pushes into the list) would hold the real one, which the copy never sees.
-  const whole = await projectionFallbacks(dist, compiled, ctx, runtimeUrl)
+  const whole = await projectionFallbacks(dist, compiled, ctx, runtimeUrl, exposed)
   for (const c of compiled.values()) {
     if (c.clientJs === undefined) continue
     const file = join(dist, '.stage', 'client', `${c.id}.js`)
@@ -424,20 +432,35 @@ export async function buildClientChunks(dist: string, compiled: Map<string, Comp
     stage(ctx.sourceOf, file, c)
     entrypoints.push(file)
   }
-  if (entrypoints.length === 0) return new Map()
-  return browserBuild(dist, 'client chunks', ctx, {
+  // `x-<stem>.js` re-exports the module under its own names; the bundler puts the module itself in a chunk the component
+  // chunks import too (one instance), and names the entry `x-<stem>-<hex10>.js`.
+  for (const m of exposed) {
+    const file = join(dist, '.stage', 'client', `x-${m.stem}.js`)
+    write(file, wrapperSource(m))
+    entrypoints.push(file)
+  }
+  if (entrypoints.length === 0) return { chunks: new Map(), exposed: {} }
+  const built = await browserBuild(dist, 'client chunks', ctx, {
     entrypoints,
     splitting: true,
     external: [`${brustRoot(ctx)}/*`],
     plugins: [runtimeAliasPlugin(runtimeUrl), specModulePlugin(join(dist, '.stage', 'client')), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
   })
+  const files: Record<string, string> = {}
+  for (const m of exposed) {
+    const f = built.get(`x-${m.stem}`)
+    if (f === undefined) throw new BuildError('expose', `build.expose ${m.rel}: the bundler wrote no entry for it`)
+    files[m.rel] = f
+    built.delete(`x-${m.stem}`)
+  }
+  return { chunks: built, exposed: files }
 }
 
 /** F362 PR2: the ids of the chunks that must import their lists as written. A probe build (metafile only, nothing
  * written to `client/`) lists every module the client graph loads; a chunk whose projected data module is among them
  * falls back to `clientJsWhole`, which brings that module in, so the probe repeats until no projected module is in the
  * graph. Without a projected chunk nothing is probed. */
-export async function projectionFallbacks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Set<string>> {
+export async function projectionFallbacks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls, exposed: ExposedModule[] = []): Promise<Set<string>> {
   const whole = new Set<string>()
   const projecting = [...compiled.values()].filter((c) => c.clientJs !== undefined && c.projectedModules?.length && c.clientJsWhole !== undefined)
   if (projecting.length === 0) return whole
@@ -461,6 +484,12 @@ export async function projectionFallbacks(dist: string, compiled: Map<string, Co
         stage(ctx.sourceOf, mf, c)
       }
       stage(ctx.sourceOf, file, c)
+      entrypoints.push(file)
+    }
+    // An exposed module is part of the client graph too: a projected data module it imports is loaded for real.
+    for (const m of exposed) {
+      const file = join(probeDir, `x-${m.stem}.js`)
+      write(file, wrapperSource(m))
       entrypoints.push(file)
     }
     const res = await Bun.build({

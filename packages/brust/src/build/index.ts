@@ -23,6 +23,7 @@ import { BuildError } from './errors'
 import { escapes, relPosix } from './posix'
 import { swapDist } from './swap'
 import { importsStore } from './features'
+import { exposedModules, exposedStores } from './expose'
 import { type CacheRecord, type ManifestJson, needsWorkers, reachedJobs, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 import { type ExprReads, prepareStatic, writeStatic } from './static'
@@ -130,7 +131,7 @@ export async function runBuild(opts: {
   process.env.BRUST_BASE_PATH = built.basePath
   if (opts.actionsOnly)
     return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
-  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, basePath, trailingSlash } = built
+  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, basePath, trailingSlash } = built
   // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
   // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
   const remote =
@@ -139,6 +140,7 @@ export async function runBuild(opts: {
   if (actions?.prefix === '/') throw new BuildError('config', 'actions.prefix "/" is only for an actions-only build (brust build --actions-only) or a page-only build that points at one')
 
   // Everything that can fail on the app's own input runs before a byte is written.
+  exposedModules(appRoot, expose) // F517: an exposed file with no export is refused here, not after the compile
   const { routes, componentFile, componentIssue, appModules, appGraph } = await scanRoutes(entry, appRoot, sourceRoots)
   let leaves: ReturnType<typeof validateRoutes>
   try {
@@ -198,7 +200,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -241,6 +243,8 @@ async function buildInto(
     cssGlobal: string[]
     /** `[build] source_roots` (F256): normalised, app-root-relative directories outside the app a relative import may reach. */
     sourceRoots: string[]
+    /** `[build] expose` (F517): app modules runtime components import, app-root relative. */
+    expose: string[]
     /** `[server] base_path` (F495), `''` = the root. */
     basePath: string
     /** `[server] trailing_slash` (F506); `strict` = the default (not written). */
@@ -351,7 +355,10 @@ async function buildInto(
   mkdirSync(join(out, 'jinja'), { recursive: true })
   for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
 
-  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writersFor))])
+  // F517: the modules `[build] expose` shares with runtime components are entries of the native-chunk build.
+  const exposedMods = exposedModules(appRoot, o.expose)
+  const client = await buildClientChunks(out, compiled, ctx, runtimeUrls, exposedMods)
+  const chunks = new Map([...client.chunks, ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writersFor))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store }, nav: runtime.nav }, chunks })
   // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.
   const readClient = (rel: string) => (existsSync(join(out, rel)) ? readFileSync(join(out, rel), 'utf8') : undefined)
@@ -360,7 +367,10 @@ async function buildInto(
     const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]
     if (files.length > 0) r.css = files
   }
-  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots, reachedJobs(manifest), writers, o.basePath)
+  // R1.3/R1.4: the exposed modules and the stores they define; the worker's store table holds those modules too, so it can touch and snapshot them.
+  const exposedRt = exposedStores(appRoot, exposedMods)
+  if (exposedMods.length > 0) manifest.runtime = { exposed: client.exposed, stores: exposedRt.stores }
+  await buildJobs(out, compiled, ctx.sourceOf, appRoot, [...new Set([...storeModules(manifest), ...exposedRt.storeModules])].sort(), css.maps, routeRoots, reachedJobs(manifest), writers, o.basePath)
   // F495: absent without a base path, so an app at the root writes the manifest it always did.
   if (o.basePath !== '') manifest.base_path = o.basePath
   // F506: absent when strict (the default), so an app that sets nothing writes the manifest it always did.
