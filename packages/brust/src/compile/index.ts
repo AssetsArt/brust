@@ -45,7 +45,42 @@ export interface Diagnostic {
   file?: string | null
 }
 
-export type CompileResult = { ok: true; artifact: RuntimeArtifact; diagnostics: Diagnostic[] } | { ok: false; diagnostics: Diagnostic[] }
+/**
+ * What the source FILE refers to (F520, R6), from the compiler's own parse and symbol table, over the whole file: the
+ * render, every handler and effect, and module-level helpers. Present whenever the text parses, on `ok: false` too.
+ *
+ * The facts NAME what the source refers to; they are an input to an allowlist, not a proof of isolation: a computed member
+ * (`window[k]`), `eval` or a dynamic `import()` can reach a name the walk never sees (they are listed in `risky` so a check
+ * can refuse them), and what an imported function does is outside the file. Pair them with a Content-Security-Policy.
+ * Type-only imports are erased by the parser before this walk and never appear in `imports`.
+ */
+export interface Facts {
+  /** Runtime imports, one entry per specifier as written; `names`: imported names (`default`, `*`), empty for a bare import, `require()` or `import('x')`. */
+  imports: { specifier: string; names: string[] }[]
+  /** Every unbound identifier read, written or called (`fetch`, `document`, `window`, `Math`), sorted. */
+  globals: string[]
+  /** Calls named `useX` (bare or a member such as `React.useState`); `from`: the specifier it is imported from, `null` for a local or global one. */
+  hooks: { name: string; from: string | null }[]
+  /** JSX tags: host elements and components as written (`Dialog.Root`); fragments excluded. Sorted. */
+  tags: string[]
+  /** Every prop name written on a JSX element, incl. `dangerouslySetInnerHTML`, `ref`, `style`. Sorted. */
+  attrs: string[]
+  /** A JSX spread attribute appears. */
+  spreads: boolean
+  /** `dangerouslySetInnerHTML` is written on an element. */
+  rawHtml: boolean
+  /** Every `onX` prop in source order, with the calls its function makes (block bodies, nested callbacks and the local functions it calls included). */
+  handlers: { event: string; tag: string; line: number; col: number; callees: { name: string; kind: 'import' | 'local' | 'setter' | 'global' | 'member' | 'unknown'; from?: string }[] }[]
+  /** Constructs that can reach a name the walk cannot see, in source order. */
+  risky: { kind: 'dynamic-import' | 'computed-member' | 'constructor-access' | 'eval'; line: number; col: number }[]
+}
+
+export type CompileResult =
+  | { ok: true; artifact: RuntimeArtifact; diagnostics: Diagnostic[]; facts?: Facts }
+  | { ok: false; diagnostics: Diagnostic[]; facts?: Facts }
+
+/** The longest artifact id the app's registry accepts. */
+export const MAX_ID_LENGTH = 128
 
 export interface CompileOptions {
   /** The component's source text (TSX). */
@@ -200,7 +235,7 @@ const fromNapi = (d: { class: string; rule: string; message: string; line: numbe
 type Ir = Record<string, any> // biome-ignore lint/suspicious/noExplicitAny: IR JSON, read structurally
 
 /** R3.4: what this tree needs that a runtime component cannot have. */
-function checkTree(tree: CompiledComponent[], ctx: Context, jinja: string): Diagnostic[] {
+function checkTree(tree: CompiledComponent[], ctx: Context): Diagnostic[] {
   const out: Diagnostic[] = []
   const names = new Set<string>()
   for (const c of tree) {
@@ -237,7 +272,8 @@ function checkTree(tree: CompiledComponent[], ctx: Context, jinja: string): Diag
   }
   for (const n of names)
     if (!(n in ctx.stores)) out.push(err('runtime-store', `reads the store "${n}", which no exposed module defines (runtime.stores lists ${Object.keys(ctx.stores).join(', ') || 'none'})`, 'export it from a module listed in `[build] expose` and rebuild'))
-  if (/\bbrust_dynamic\s*\(/.test(jinja)) out.push(err('runtime-dynamic', 'contains a <Dynamic> slot: a runtime component cannot place another runtime component', 'place it from a page or layout of the app'))
+  // The compiler's own flag (R4.4), not a search of the template text: markup that merely contains `brust_dynamic(` is fine.
+  if (tree.some((c) => (JSON.parse(c.ir) as Ir).dynamic === true)) out.push(err('runtime-dynamic', 'contains a <Dynamic> slot: a runtime component cannot place another runtime component', 'place it from a page or layout of the app'))
   return out
 }
 
@@ -274,18 +310,24 @@ export async function compileComponent(opts: CompileOptions): Promise<CompileRes
     iconSvgs: JSON.stringify({ final: true, svgs: {} }),
   })
   const rename = (d: Diagnostic) => renameIn(d, virtual, filename)
-  if (tree.error) return { ok: false, diagnostics: [...importProblems, rename(fromNapi(tree.error))] }
+  // F520: the facts are of the file as written, so their positions are the caller's own.
+  const facts = tree.facts ? (JSON.parse(tree.facts) as Facts) : undefined
+  const refuse = (diagnostics: Diagnostic[]): CompileResult => (facts ? { ok: false, diagnostics, facts } : { ok: false, diagnostics })
+  if (tree.error) return refuse([...importProblems, rename(fromNapi(tree.error))])
   const diagnostics = [...importProblems, ...tree.components.flatMap((c) => c.diagnostics.map((d) => rename(fromNapi(d))))]
   const root = tree.components[0]!
-  const refusals = checkTree(tree.components, ctx, root.jinja).map(rename)
-  if (diagnostics.some((d) => d.class === 'error') || refusals.length > 0) return { ok: false, diagnostics: [...diagnostics, ...refusals] }
+  // The id is the stem, 16 hex digits and 8 more: a long file name makes an id the registry refuses later.
+  if (root.id.length > MAX_ID_LENGTH)
+    return refuse([...diagnostics, err('runtime-filename', `the file name "${filename}" makes the component id ${root.id.length} characters long; the limit is ${MAX_ID_LENGTH}`, 'use a shorter file name')])
+  const refusals = checkTree(tree.components, ctx).map(rename)
+  if (diagnostics.some((d) => d.class === 'error') || refusals.length > 0) return refuse([...diagnostics, ...refusals])
 
   const client = await bundleClient(tree.components, ctx, { appRoot, filename })
-  if (client.problems.length > 0) return { ok: false, diagnostics: [...diagnostics, ...client.problems.map(rename)] }
+  if (client.problems.length > 0) return refuse([...diagnostics, ...client.problems.map(rename)])
   const sizes: Diagnostic[] = []
   if (bytes(root.jinja) > MAX_JINJA_BYTES) sizes.push(err('runtime-size', `the template is ${bytes(root.jinja)} bytes; the limit is ${MAX_JINJA_BYTES}`, 'split the component or trim its markup'))
   if (client.code !== null && bytes(client.code) > MAX_CLIENT_BYTES) sizes.push(err('runtime-size', `the client module is ${bytes(client.code)} bytes; the limit is ${MAX_CLIENT_BYTES}`, 'import shared code from an exposed module instead of bundling it'))
-  if (sizes.length > 0) return { ok: false, diagnostics: [...diagnostics, ...sizes] }
+  if (sizes.length > 0) return refuse([...diagnostics, ...sizes])
 
   // R3.6: the build's own `featuresOf`, then the store rule the build applies to a chunk that imports the store module. An
   // artifact that reads a store reaches that module through the exposed module that defines it, so it counts too.
@@ -296,5 +338,5 @@ export async function compileComponent(opts: CompileOptions): Promise<CompileRes
   // The root can be a static shell around a native child: the page needs the runtime whenever there is client code.
   const tier = client.code === null ? 'static' : 'native'
   const artifact: RuntimeArtifact = { v: 1, build: ctx.build, id: root.id, tier, jinja: root.jinja, client: client.code, features, stores }
-  return { ok: true, artifact, diagnostics }
+  return facts ? { ok: true, artifact, diagnostics, facts } : { ok: true, artifact, diagnostics }
 }

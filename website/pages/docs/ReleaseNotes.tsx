@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-39', title: '2.0.0-alpha.39' },
       { id: 'alpha-38', title: '2.0.0-alpha.38' },
       { id: 'alpha-37', title: '2.0.0-alpha.37' },
       { id: 'alpha-36', title: '2.0.0-alpha.36' },
@@ -61,6 +62,30 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-39">2.0.0-alpha.39 · 11 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.38: #456, #457, #459, #460 (ledger F517, F518, F519, F520; plan 2026-11-11-runtime-components) */}
+      <p>This version can render a component whose source was stored after <code>brust build</code>: you expose some of your modules, compile a source text with <code>@brust/core/compile</code>, and place the result with <code>&lt;Dynamic&gt;</code>.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #456 (F517); packages/brust/src/build/config.ts; tests/server/expose.chromium.test.ts */}
+        <li>
+          <strong><code>[build] expose</code> builds app modules once for runtime components (#456).</strong> A built component and a runtime component that import an exposed module share one instance in the browser, so both read and write the same store. The manifest gains a <code>runtime</code> block (<code>exposed</code> and <code>stores</code>); it is additive.
+        </li>
+        {/* source: PR #459 (F518); packages/brust/src/compile/index.ts; packages/brust/test/compile-component.test.ts */}
+        <li>
+          <strong><code>compileComponent</code> in <code>@brust/core/compile</code> compiles a source string into a runtime artifact (#459).</strong> It compiles as the build would, against the real <code>dist/</code>, and refuses what cannot be one template and one client module, with a rule name and a position.
+        </li>
+        {/* source: PR #460 (F520); packages/brust/src/compile/index.ts (Facts); packages/brust/test/compile-facts.test.ts */}
+        <li>
+          <strong><code>compileComponent</code> returns <code>facts</code> for a check of your own (#460).</strong> They list the imports, globals, hooks, tags, props, handlers with their calls, and risky constructs of the whole file, on a refused result too. They feed an allowlist; they do not prove isolation, so pair them with a Content-Security-Policy.
+        </li>
+        {/* source: PR #457 (F519); packages/brust/src/routes.ts (Dynamic, RuntimeComponents); tests/server/dynamic-slot.chromium.test.ts; tests/server/runtime-components.chromium.test.ts */}
+        <li>
+          <strong><code>&lt;Dynamic component={'{'}ref{'}'} props={'{'}…{'}'} /&gt;</code> renders a runtime component on the server (#457).</strong> The routes entry exports <code>components</code> with a <code>resolve(ref, {'{'} build {'}'})</code>. A missing, refused or failing component prints nothing and the page still answers 200. <code>brust build --target static</code>, the Cloudflare target and <code>--ssg</code> refuse an app that has a slot. New option: <code>[components] cache_entries</code>. See <a href="/docs/runtime-components">Runtime components</a>.
+        </li>
+      </ul>
 
       <h2 id="alpha-38">2.0.0-alpha.38 · 5 November 2026</h2>
       {/* source: the pull request merged after v2.0.0-alpha.37: #454 (ledger F515, also F514; plan 2026-11-05-if-chain-blowup) */}
