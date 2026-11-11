@@ -29,6 +29,8 @@ use brust_server::{
 use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
 
 static SERVER: RwLock<Option<Arc<Server>>> = RwLock::new(None);
+/// F529: the current server's socket sink (`registerSockets` adds each worker's handler to it).
+static WS_SINK: RwLock<Option<Arc<crate::ws::NapiWsSink>>> = RwLock::new(None);
 /// Workers the current server waits for (`StartOptions.workers`).
 static EXPECTED: AtomicU32 = AtomicU32::new(0);
 /// Workers registered with the current server. `brust-server` has no
@@ -72,7 +74,15 @@ fn bound<T>(cur: &Option<Binding<T>>) -> Option<(Arc<T>, u32)> {
     Some((b.server.upgrade()?, b.id))
 }
 
-fn current() -> napi::Result<Arc<Server>> {
+/// F529: the current server's socket sink.
+pub(crate) fn ws_sink() -> napi::Result<Arc<crate::ws::NapiWsSink>> {
+    WS_SINK
+        .read()
+        .clone()
+        .ok_or_else(|| napi::Error::from_reason("startServer has not been called"))
+}
+
+pub(crate) fn current() -> napi::Result<Arc<Server>> {
     SERVER
         .read()
         .clone()
@@ -126,6 +136,34 @@ pub struct NapiActionsOptions {
     pub stream_total_ms: Option<u32>,
     /// F475: streamed bodies at once (default a quarter of the worker slots, at least 1).
     pub max_streams: Option<u32>,
+    /// F529 `[actions.ws]`; absent keys (or the whole object) take the defaults.
+    pub ws: Option<NapiWsOptions>,
+}
+
+/// F529 `[actions.ws]` (`manifest.actions.ws`): `{ enabled?, maxPayloadBytes?, idleTimeoutS?, pingIntervalS?,
+/// maxConnections?, backpressureBytes? }`. Out of range = boot error `actions: ws.…`.
+#[napi(object)]
+pub struct NapiWsOptions {
+    pub enabled: Option<bool>,
+    pub max_payload_bytes: Option<u32>,
+    pub idle_timeout_s: Option<u32>,
+    pub ping_interval_s: Option<u32>,
+    pub max_connections: Option<u32>,
+    pub backpressure_bytes: Option<u32>,
+}
+
+/// Absent keys take the `[actions.ws]` defaults.
+fn ws_config(o: Option<NapiWsOptions>) -> brust_core::config::WsConfig {
+    let d = brust_core::config::WsConfig::default();
+    let Some(o) = o else { return d };
+    brust_core::config::WsConfig {
+        enabled: o.enabled.unwrap_or(d.enabled),
+        max_payload_bytes: o.max_payload_bytes.unwrap_or(d.max_payload_bytes),
+        idle_timeout_s: o.idle_timeout_s.unwrap_or(d.idle_timeout_s),
+        ping_interval_s: o.ping_interval_s.unwrap_or(d.ping_interval_s),
+        max_connections: o.max_connections.unwrap_or(d.max_connections),
+        backpressure_bytes: o.backpressure_bytes.unwrap_or(d.backpressure_bytes),
+    }
 }
 
 /// L16: what the page tells the browser client. `credentials`: `"same-origin"` (default), `"include"` or `"omit"`.
@@ -194,7 +232,7 @@ fn actions_config(a: NapiActionsOptions) -> Result<ActionsConfig, String> {
             _ => CrossSite::Reject,
         },
         stream,
-        ws: Default::default(),
+        ws: ws_config(a.ws),
     })
 }
 
@@ -310,6 +348,10 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
         ..Config::default()
     };
     let s = start(cfg).map_err(napi::Error::from_reason)?;
+    // F529: the socket sink goes in before any worker can register, so no upgrade meets a server without one (501).
+    let sink = Arc::new(crate::ws::NapiWsSink::default());
+    s.set_ws_sink(Arc::clone(&sink) as Arc<dyn brust_server::WsSink>);
+    *WS_SINK.write() = Some(sink);
     let mut cur = SERVER.write();
     EXPECTED.store(opts.workers, Ordering::SeqCst);
     REGISTERED.store(0, Ordering::SeqCst);
@@ -628,6 +670,7 @@ mod tests {
             stream_idle_ms: None,
             stream_total_ms: None,
             max_streams: None,
+            ws: None,
         };
         assert_eq!(actions_config(none), Ok(ActionsConfig::default()));
         assert_eq!(ActionsConfig::default().max_response_bytes, 8_388_608);
@@ -641,6 +684,7 @@ mod tests {
             stream_idle_ms: Some(5),
             stream_total_ms: Some(6),
             max_streams: Some(2),
+            ws: None,
         };
         assert_eq!(
             actions_config(set),
@@ -672,6 +716,7 @@ mod tests {
             stream_idle_ms: None,
             stream_total_ms: None,
             max_streams: None,
+            ws: None,
         };
         let e = actions_config(bad).unwrap_err();
         assert!(
@@ -719,6 +764,31 @@ mod tests {
         assert_eq!(
             resolve_bind_addr("127.0.0.1", 4000).unwrap().to_string(),
             "127.0.0.1:4000"
+        );
+    }
+
+    #[test]
+    fn actions_ws_options_fill_the_defaults_key_by_key() {
+        assert_eq!(ws_config(None), brust_core::config::WsConfig::default());
+        let w = ws_config(Some(NapiWsOptions {
+            enabled: Some(false),
+            max_payload_bytes: Some(4096),
+            idle_timeout_s: None,
+            ping_interval_s: Some(0),
+            max_connections: Some(7),
+            backpressure_bytes: None,
+        }));
+        let d = brust_core::config::WsConfig::default();
+        assert_eq!(
+            w,
+            brust_core::config::WsConfig {
+                enabled: false,
+                max_payload_bytes: 4096,
+                idle_timeout_s: d.idle_timeout_s,
+                ping_interval_s: 0,
+                max_connections: 7,
+                backpressure_bytes: d.backpressure_bytes,
+            }
         );
     }
 }

@@ -191,6 +191,7 @@ dependencies = [
  "brust-compiler",
  "brust-core",
  "brust-server",
+ "bytes",
  "mimalloc",
  "napi",
  "napi-build",
