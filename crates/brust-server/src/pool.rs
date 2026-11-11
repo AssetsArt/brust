@@ -327,6 +327,8 @@ pub struct WorkerPool {
     /// that hit `AllBusy` await this instead of returning 503, letting
     /// conn-workers exceed render-workers without dropping requests.
     idle_notify: Arc<tokio::sync::Notify>,
+    /// F529: the server's sockets (set once by `start`); a socket is pinned to one of these workers.
+    ws: std::sync::OnceLock<Arc<crate::ws::WsHub>>,
 }
 
 impl WorkerPool {
@@ -499,11 +501,28 @@ impl WorkerPool {
         ClaimResult::AllBusy
     }
 
+    /// F529: the server's socket hub (`None` for a pool `start` did not build).
+    pub(crate) fn ws_hub(&self) -> Option<Arc<crate::ws::WsHub>> {
+        self.ws.get().cloned()
+    }
+
+    pub(crate) fn set_ws_hub(&self, hub: Arc<crate::ws::WsHub>) {
+        let _ = self.ws.set(hub);
+    }
+
     /// Fast-lane claim: reserve an idle slot via the lock-free `idle` CAS but
     /// do NOT store a chunk_tx (no mutex touched at all). For single-chunk
     /// dispatch (action/native) where the worker takes the fast lane and never
     /// calls `napi_render_chunk`. Drop releases `idle` without locking.
+    ///
+    /// F529 D5: inside a WebSocket upgrade request ([`crate::ws::WS_PICK`]) the call goes to the worker with the
+    /// fewest open sockets that has a free slot, and the pick is recorded: the socket is pinned to that worker.
     pub fn try_claim_render_lockfree(&self) -> ClaimResult {
+        if let Ok(pick) = crate::ws::WS_PICK.try_with(Arc::clone)
+            && let Some(hub) = self.ws.get()
+        {
+            return self.try_claim_for_socket(hub, &pick);
+        }
         let entries = self.entries.read();
         if entries.is_empty() {
             return ClaimResult::PoolEmpty;
@@ -529,12 +548,51 @@ impl WorkerPool {
         ClaimResult::AllBusy
     }
 
+    /// The D5 claim: workers in order of open sockets (fewest first, registration order on a tie).
+    fn try_claim_for_socket(
+        &self,
+        hub: &Arc<crate::ws::WsHub>,
+        pick: &crate::ws::WsPick,
+    ) -> ClaimResult {
+        let entries = self.entries.read();
+        if entries.is_empty() {
+            return ClaimResult::PoolEmpty;
+        }
+        let mut order: Vec<(usize, &Arc<WorkerEntry>)> =
+            entries.iter().map(|e| (hub.open_count(e.id), e)).collect();
+        order.sort_by_key(|(n, _)| *n);
+        for (_, entry) in order {
+            for (i, slot) in entry.slots.iter().enumerate() {
+                if slot
+                    .idle
+                    .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    continue;
+                }
+                entry.in_flight.fetch_add(1, Ordering::Relaxed);
+                pick.set(hub.count(entry.id));
+                return ClaimResult::Claimed(RenderClaim {
+                    entry: Arc::clone(entry),
+                    slot: i as u32,
+                    lockfree: true,
+                    idle_notify: Arc::clone(&self.idle_notify),
+                });
+            }
+        }
+        ClaimResult::AllBusy
+    }
+
     pub fn entry(&self, id: u32) -> Option<Arc<WorkerEntry>> {
         self.entries.read().iter().find(|e| e.id == id).cloned()
     }
 
     pub fn remove(&self, id: u32) {
         self.entries.write().retain(|e| e.id != id);
+        // F529: its sockets cannot reach their handlers any more.
+        if let Some(h) = self.ws.get() {
+            h.close_worker(id);
+        }
     }
 
     /// Drop EVERY registered worker entry. Dev-mode hot reload calls this (via
@@ -549,7 +607,12 @@ impl WorkerPool {
     /// its own `Arc` clone, so this can't free an entry mid-dispatch. No-op in
     /// production (workers are registered once and never replaced).
     pub fn clear(&self) {
-        self.entries.write().clear();
+        let gone: Vec<u32> = self.entries.write().drain(..).map(|e| e.id).collect();
+        if let Some(h) = self.ws.get() {
+            for id in gone {
+                h.close_worker(id);
+            }
+        }
     }
 }
 
