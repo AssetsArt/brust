@@ -2,8 +2,9 @@ import type { RuntimeComponents } from '@brust/core'
 import { compileComponent } from '@brust/core/compile'
 import { defineRoutes } from '@brust/core/routes'
 import BuiltTree from './BuiltTree'
-import { tree } from './data'
+import { sectionsPage, tree } from './data'
 import { rcSource } from './rcSource'
+import SectionsPage from './SectionsPage'
 import SlotTree from './SlotTree'
 import Tree from './Tree'
 
@@ -21,4 +22,5 @@ export const routes = defineRoutes([
   { path: '/', Component: Tree, loader: () => ({ nodes: tree }) },
   { path: '/built', Component: BuiltTree, loader: () => ({ nodes: tree }) },
   { path: '/slot', Component: SlotTree, loader: () => ({ nodes: tree }) },
+  { path: '/sections', Component: SectionsPage, loader: () => ({ page: sectionsPage }) },
 ])

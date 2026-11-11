@@ -4387,7 +4387,7 @@ impl Walker<'_, '_> {
                     && fb.all(|d| {
                         matches!(
                             d.rule.as_str(),
-                            "linked-prop-precompute" | "nested-instance"
+                            "linked-prop-precompute" | "nested-instance" | "recursion-unsupported"
                         )
                     })
             }

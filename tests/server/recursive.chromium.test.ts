@@ -114,3 +114,20 @@ test('C8: the runtime artifact through a <Dynamic> slot paints the 3-level tree 
   expect(slot).toMatch(/data-id="c"[\s\S]*data-id="c1"[^>]*>deep</)
   expect(firstDifference(normalise(slot), normalise(built))).toBeNull()
 })
+
+// F528: a route hands loader data to non-root components (PageView → SectionView → CustomSectionView → ElementView,
+// which renders itself); fixed-props clones keep every level static instead of a React fallback.
+test('F528: a recursive element under a props-fed section chain is static and equals React\'s HTML', async () => {
+  const r = await fetch(`${base}/sections`)
+  expect(r.status).toBe(200)
+  const html = await r.text()
+  expect(html).not.toContain('<brust-island')
+  expect(html).not.toContain('x-data')
+  const brust = /<main>[\s\S]*<\/main>/.exec(html)![0]
+  for (const id of ['s-hero', 's-custom', 'e-g1', 'e-t1', 'e-g2', 'e-img', 'e-deep', 'e-t2', 's-inline', 'i-g', 'i-t'])
+    expect(brust).toContain(`data-id="${id}"`)
+  const code = `import { renderToString } from 'react-dom/server'; import { createElement } from 'react'; import SectionsPage from './SectionsPage.tsx'; import { sectionsPage } from './data.ts'; process.stdout.write(renderToString(createElement(SectionsPage, { page: sectionsPage })))`
+  const p = Bun.spawnSync([process.execPath, '-e', code], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  if (p.exitCode !== 0) throw new Error(p.stderr.toString())
+  expect(firstDifference(normalise(brust), normalise(p.stdout.toString()))).toBeNull()
+})
