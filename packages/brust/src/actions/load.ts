@@ -1,6 +1,7 @@
 // Worker side (imports elysia at runtime).
 import { type AnyElysia, Elysia } from 'elysia'
-import { brust, isBrustAdapter } from './elysia'
+import { brust, isBrustAdapter, setWebSocketCapability } from './elysia'
+import { createServerShim, startSockets, type WsHandler } from './ws'
 
 /** R3: the user's app mounted under `prefix`, so it answers A1's `url` (path+query, prefix included) as sent. */
 export function mountActions(app: unknown, prefix: string, what = 'actions entry'): AnyElysia {
@@ -15,11 +16,32 @@ export function mountActions(app: unknown, prefix: string, what = 'actions entry
       `${what}: build the app with new Elysia({ adapter: brust() }) — import { brust } from '@brust/core/elysia'`,
     )
   // L16 R16.4: the root prefix of an actions-only build is no prefix at all (`prefix: '/'` would double the slash).
-  return new Elysia({ adapter: brust(), ...(prefix === '/' ? {} : { prefix }) }).use(app)
+  const outer = new Elysia({ adapter: brust(), ...(prefix === '/' ? {} : { prefix }) }).use(app)
+  // F529 (§2d): a `.ws()` route upgrades through `app.server`; the shim records the accept for the bridge.
+  if (outer['~hasWS'])
+    (outer as { server?: unknown }).server = createServerShim(() => outer['~resolvedCapability']('ws')?.provider.declaredOptions(outer) as Record<string, unknown> | undefined)
+  return outer
 }
 
 export async function loadActionsApp(file: string, prefix: string): Promise<AnyElysia> {
+  // F529 (D3): the Bun-target worker gives `brust()` the websocket capability BEFORE the app module builds its adapter.
+  // (An Elysia without `elysia/websocket` has no `.ws()` capability to give.)
+  const ws = await import('elysia/websocket').catch(() => null)
+  setWebSocketCapability(ws ? ws.websocket : null)
   return mountActions((await import(file)).default, prefix, file)
+}
+
+/** F529: wires this worker's sockets to the app's Elysia ws handler (`registerSockets`). No-op for an app with no `.ws()`. */
+export function startActionSockets(app: AnyElysia, workerId: number): boolean {
+  if (!app['~hasWS']) return false
+  const provider = app['~resolvedCapability']('ws')?.provider
+  if (!provider) return false
+  const handler = provider.buildGlobalWSHandler() as unknown as WsHandler & { '~lifecycle'?: unknown }
+  // Bun's adapter hands the handler a lifecycle so a stopping server can settle its sockets; ours settles them in Rust.
+  const setter = Object.getOwnPropertyDescriptor(handler, '~lifecycle')?.set
+  setter?.call(handler, { closing: false, sockets: new Set(), run: (cb: (...a: unknown[]) => unknown, ...a: unknown[]) => cb(...a) })
+  startSockets(handler, workerId)
+  return true
 }
 
 /** One path segment of each side matches the other: equal, or either is a parameter (`:x`, `{x}`, `*`). */

@@ -8,7 +8,9 @@ test('brust() is the web-standard adapter named brust', () => {
   expect(a.name).toBe('brust')
   expect(a.parse).toBe(WebStandardAdapter.parse)
   expect(a.response).toBe(WebStandardAdapter.response)
-  expect(a.setup).toBeUndefined()
+  // F529: setup supplies the websocket capability on the Bun target only; with none registered it is the identity
+  const app = new Elysia()
+  expect(a.setup?.(app)).toBe(app)
 })
 
 test('app.listen() throws the brust message', () => {
