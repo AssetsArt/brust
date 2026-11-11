@@ -21,6 +21,9 @@ const app = new Elysia({ adapter: brust() })
       ws.publish('room', `peer:${String(message)}`)
     },
   })
+  // F532: publish from an HTTP action (ctx.server) and from module scope (app.server, set once the app is mounted)
+  .post('/announce', ({ server, query }) => ({ sent: server?.publish('room', `announce:${query.text}`) ?? null }))
+  .post('/trigger', () => ({ sent: fanOut('tick') }))
   // a guard: no `x-token`, no upgrade
   .guard({ beforeHandle: ({ headers, status }) => (headers['x-token'] === 'secret' ? undefined : status(401, 'unauthorized')) })
   .ws('/private', {
@@ -31,6 +34,11 @@ const app = new Elysia({ adapter: brust() })
       ws.send(`private:${String(message)}`)
     },
   })
+
+/** What a message-bus subscriber would do: publish into a topic with no socket and no request at hand. */
+function fanOut(text: string) {
+  return (app as unknown as { server?: { publish(topic: string, data: string): number } }).server?.publish('room', `module:${text}`) ?? null
+}
 
 export default app
 export type App = typeof app

@@ -117,6 +117,11 @@ export const CF_CONDITIONS = ['workerd', 'worker', 'browser']
 const CORE_SRC = join(import.meta.dir, '..')
 const BUILTINS = new Set(builtinModules.filter((m) => !m.startsWith('_')))
 
+/** Source text without block and line comments (best effort: a `//` right after `:` or a quote is kept, so a URL string survives). */
+export function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:\\'"`])\/\/.*$/gm, '$1')
+}
+
 /** Violations of the Workers host surface: `bun`/`bun:*` anywhere in the graph (R2 f). */
 function cfGuard(appRoot: string, violations: string[], wsFiles: string[]): BunPlugin {
   return {
@@ -126,7 +131,7 @@ function cfGuard(appRoot: string, violations: string[], wsFiles: string[]): BunP
       // entry refuses the app at startup either way. Reads the file and passes it on (undefined = the next loader).
       b.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (a) => {
         if (/[\\/]node_modules[\\/]/.test(a.path)) return undefined
-        if (/\.ws\s*\(/.test(await Bun.file(a.path).text())) wsFiles.push(relPosix(appRoot, a.path) || a.path)
+        if (/\.ws\s*\(/.test(stripComments(await Bun.file(a.path).text()))) wsFiles.push(relPosix(appRoot, a.path) || a.path)
         return undefined
       })
       b.onResolve({ filter: /^bun(:.*)?$/ }, (a) => {
