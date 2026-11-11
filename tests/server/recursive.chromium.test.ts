@@ -5,11 +5,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { createElement } from 'react'
-import { renderToString } from 'react-dom/server'
 import { firstDifference, normalise } from '../../scripts/battery/ssr-normalise'
-import { tree } from '../../packages/brust/test/fixtures/recursive/data'
-import Tree from '../../packages/brust/test/fixtures/recursive/Tree'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/recursive')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -68,7 +64,11 @@ test('first paint holds the whole tree, no island', async () => {
 test('the first paint equals React\'s HTML for the same tree (ssr-compare normaliser)', async () => {
   const html = await (await fetch(`${base}/`)).text()
   const brust = /<main>[\s\S]*<\/main>/.exec(html)![0]
-  const react = renderToString(createElement(Tree, { nodes: tree }))
+  // React resolves from the fixture app (packages/brust), not from the repo root.
+  const code = `import { renderToString } from 'react-dom/server'; import { createElement } from 'react'; import Tree from './Tree.tsx'; import { tree } from './data.ts'; process.stdout.write(renderToString(createElement(Tree, { nodes: tree })))`
+  const r = Bun.spawnSync([process.execPath, '-e', code], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  if (r.exitCode !== 0) throw new Error(r.stderr.toString())
+  const react = r.stdout.toString()
   expect(firstDifference(normalise(brust), normalise(react))).toBeNull()
 })
 

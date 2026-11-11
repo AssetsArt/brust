@@ -485,7 +485,7 @@ fn render(jinja: &str, nodes: serde_json::Value) -> Result<String, minijinja::Er
     let mut env = minijinja::Environment::new();
     brust_jinja::register(&mut env);
     let ctx = serde_json::json!({ "nodes": nodes, "_props": { "nodes": nodes } });
-    env.render_str(jinja, minijinja::Value::from_serialize(&ctx))
+    env.render_str(jinja, minijinja::Value::from(minijinja::value::Serde(&ctx)))
 }
 
 /// C5: the template parses and renders a 3-level tree through brust-jinja; past 32 levels the render fails naming the
