@@ -12,6 +12,7 @@ mod pipeline;
 pub mod pool;
 pub mod server;
 pub mod stream_body;
+pub mod ws;
 
 pub use brust_core::{inputs, l2, manifest, protocol, render, routing};
 
@@ -35,3 +36,4 @@ pub use dispatch::{CallKind, DispatchError, RenderDispatch};
 pub use pipeline::{PLAN_DECLINED, plan_in_call, plan_in_call_buf};
 pub use server::{Tuning, start};
 pub use stream_body::{Pull, StreamBody};
+pub use ws::{SocketId, WsData, WsEvent, WsHub, WsSink};

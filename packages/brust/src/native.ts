@@ -84,7 +84,22 @@ export interface ActionsOptions extends StreamOptions {
   maxResponseBytes?: number
   /** F87: cross-site mutating requests. Default `reject`. */
   crossSite?: 'reject' | 'allow'
+  /** F529 `[actions.ws]`; absent keys take the defaults. */
+  ws?: WsOptions
 }
+/** F529 napi `NapiWsOptions` (`[actions.ws]`); defaults true, 1048576, 120, 30, 10000, 1048576. */
+export interface WsOptions {
+  enabled?: boolean
+  maxPayloadBytes?: number
+  idleTimeoutS?: number
+  pingIntervalS?: number
+  maxConnections?: number
+  backpressureBytes?: number
+}
+/** F529 plan §2c: a socket event for the worker it is pinned to. `data`: a string (text message), a Buffer (binary
+ * message, ping, pong) or null; `code`/`reason` only on `close` (which may come without an `open`). */
+export type SocketEventName = 'open' | 'message' | 'drain' | 'close' | 'ping' | 'pong'
+export type SocketEventFn = (localId: number, ev: SocketEventName, data: string | Buffer | null, code: number, reason: string) => Promise<void> | void
 /** F475: the streamed action bodies (napi `NapiActionsOptions`): `["POST /upload"]` relative to the prefix, and the bounds
  * (defaults 268435456 bytes, 30000 ms idle, 900000 ms in all, a quarter of the worker slots at once). */
 export interface StreamOptions {
@@ -122,6 +137,23 @@ export interface NativeBinding {
   cacheClear(): number
   /** Static output (gaps round R9.4): the request reads of a cache key expression; throws when it does not parse. */
   cacheExprReads(src: string): string[]
+  // ----- F529 plan §2c: WebSockets (crates/brust-napi/src/ws.rs). Every ws* call is synchronous and never throws;
+  // an unknown or closed socket answers 0 / false / [] / "". -----
+  /** The calling worker's socket handler (`workerId` = what `registerWorker` returned); a returned Promise is awaited. */
+  registerSockets(workerId: number, fn: SocketEventFn): void
+  /** Bytes queued (> 0), -1 queued past the back-pressure limit, 0 dropped. */
+  wsSend(workerId: number, localId: number, data: string | Buffer): number
+  wsClose(workerId: number, localId: number, code: number, reason: string): void
+  wsTerminate(workerId: number, localId: number): void
+  wsSubscribe(workerId: number, localId: number, topic: string): boolean
+  wsUnsubscribe(workerId: number, localId: number, topic: string): boolean
+  wsIsSubscribed(workerId: number, localId: number, topic: string): boolean
+  wsSubscriptions(workerId: number, localId: number): string[]
+  wsPing(workerId: number, localId: number, data?: Buffer): void
+  wsPong(workerId: number, localId: number, data?: Buffer): void
+  wsRemoteAddress(workerId: number, localId: number): string
+  /** To every subscriber on any worker; a socket passes its own ids as `except` (skipped unless `publishToSelf`). */
+  wsPublish(topic: string, data: string | Buffer, exceptWorkerId?: number, exceptLocalId?: number): number
 }
 
 let binding: NativeBinding | null = null

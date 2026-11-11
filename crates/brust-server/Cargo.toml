@@ -31,6 +31,9 @@ http-body-util = "0.1"
 tokio-rustls = "0.26"
 rustls = "0.23"
 rustls-pemfile = "2"
+# F529: the WebSocket codec, run on the upgraded connection after brust's own handshake (no client/TLS features).
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [dev-dependencies]
 # The shared cache conformance suite (brust_core::cache::conformance) runs against L1Cache/JobCache.
@@ -44,6 +47,8 @@ hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 # The shared test harness lifts the open-file soft limit (every test boots its own server).
 libc.workspace = true
+# F529: the WebSocket tests drive a real client.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 
 # Render-path micro-bench on the real pokedex templates (plan m2p Task 1).
 # `cargo bench -p brust-server --bench render`

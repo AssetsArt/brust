@@ -129,10 +129,27 @@ impl Server {
 /// R1: the per-request pipeline future is spawned on the multi-thread runtime, so it must be
 /// `Send` — asserted here at compile time (auto traits leak through the host's RPITIT futures).
 #[allow(dead_code)]
-fn _pipeline_future_is_send(req: Request<Incoming>, s: &Server) {
+fn _pipeline_future_is_send(req: Request<Incoming>, s: &Server, c: &crate::ws::upgrade::ConnCtx) {
     fn is_send<T: Send>(_: &T) {}
-    let f = crate::pipeline::handle(req, s);
+    let f = crate::pipeline::handle(req, s, c);
     is_send(&f);
+}
+
+impl Server {
+    /// F529: install the worker side of WebSockets (brust-napi, once, right after [`start`]). Until it is installed
+    /// every upgrade is refused with 501. False when one was already installed.
+    pub fn set_ws_sink(&self, sink: Arc<dyn crate::ws::WsSink>) -> bool {
+        self.ws_hub().set_sink(sink)
+    }
+
+    /// F529: the server's sockets, for the worker side's `send` / `publish` / … calls.
+    pub fn ws_hub(&self) -> Arc<crate::ws::WsHub> {
+        self.core
+            .host
+            .pool
+            .ws_hub()
+            .expect("start installs the socket hub")
+    }
 }
 
 /// `Arc<Server>`/`Weak<Server>` live in napi statics.
@@ -158,8 +175,16 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             tuning.max_loader_response_bytes
         ));
     }
+    // F529: the socket hub lives beside the workers its sockets are pinned to.
+    let pool = Arc::new(WorkerPool::new());
+    pool.set_ws_hub(Arc::new(crate::ws::WsHub::new(
+        cfg.actions
+            .as_ref()
+            .map(|a| a.ws.clone())
+            .unwrap_or_default(),
+    )));
     let host = NativeHost {
-        pool: Arc::new(WorkerPool::new()),
+        pool,
         dist_dir: cfg.dist_dir.clone(),
         claim_timeout: Duration::from_millis(tuning.claim_timeout_ms),
         call_timeout: Duration::from_millis(tuning.call_timeout_ms),
@@ -311,7 +336,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                     _ = drain_started.as_mut() => None, // drain requested → stop accepting
                     res = listener.accept() => Some(res),
                 };
-                let (tcp, _peer) = match accepted {
+                let (tcp, peer) = match accepted {
                     None => break,
                     Some(Ok(pair)) => pair,
                     Some(Err(e)) => {
@@ -344,10 +369,15 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                 let conn_token = conn_token_tx.clone();
                 tokio::spawn(async move {
                     let _permit = permit; // released when the connection ends
-                    let _conn_token = conn_token; // drain barrier — held for the conn's life
+                    // Drain barrier, held for the conn's life; F529: an upgraded socket holds a clone for its own.
+                    let conn = Arc::new(crate::ws::upgrade::ConnCtx {
+                        peer,
+                        token: Some(conn_token),
+                    });
                     let svc = service_fn(move |req: Request<Incoming>| {
                         // M3-P P7: one `Arc<Server>` clone per request (the pipeline borrows it).
                         let state = Arc::clone(&state);
+                        let conn = Arc::clone(&conn);
                         async move {
                             // `Core::finish` is the single chokepoint that sees every response
                             // path (static assets, error helpers, L1 HITs, rendered pages, actions).
@@ -357,7 +387,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 .cors_enabled()
                                 .then(|| req.headers().get(http::header::ORIGIN).cloned())
                                 .flatten();
-                            let mut resp = crate::pipeline::handle(req, &state).await;
+                            let mut resp = crate::pipeline::handle(req, &state, &conn).await;
                             state.core.finish(origin.as_ref(), resp.headers_mut());
                             // F127: a refused body (413) is read out only up to a bound (`read_capped`), so the connection
                             // must not be reused: the rest of that body could still be in flight.
@@ -432,9 +462,13 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             // new keep-alive requests, then close), drop our own barrier token so
             // the only remaining `conn_token` senders are live connections, and
             // wait for them all to finish — bounded by the drain deadline.
+            let deadline = Duration::from_millis(state.drain_timeout_ms());
+            // F529 D10: open sockets close with 1001 and hold the barrier until their peer answers or the deadline.
+            state
+                .ws_hub()
+                .begin_drain(std::time::Instant::now() + deadline);
             let _ = drain_sig_tx.send(true);
             drop(conn_token_tx);
-            let deadline = Duration::from_millis(state.drain_timeout_ms());
             match tokio::time::timeout(deadline, conn_token_rx.recv()).await {
                 Ok(_) => info!("graceful drain: all in-flight connections finished"),
                 Err(_) => warn!("graceful drain: deadline elapsed; forcing remaining connections"),
