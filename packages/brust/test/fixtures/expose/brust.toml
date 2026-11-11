@@ -1,0 +1,2 @@
+[build]
+expose = ["shop/sdk.ts", "shop/wish.ts"]
