@@ -73,6 +73,26 @@ test('an import of bun:sqlite fails with cf-unsupported', () => {
   expect(r.err).toContain('lib/db.cf.ts imports bun:sqlite')
 })
 
+test('F529 D3: an app that calls .ws() fails the Cloudflare build at the startup smoke with the clear message, after a cf-websocket warning', () => {
+  const dir = join(FIX, 'cf-app-ws')
+  cleanup.push(dir)
+  cpSync(APP, dir, { recursive: true })
+  const actions = readFileSync(join(dir, 'actions.ts'), 'utf8')
+  writeFileSync(join(dir, 'actions.ts'), actions.replace("  .get('/invalidate'", "  .ws('/chat', { message(ws, m) { ws.send(m) } })\n  .get('/invalidate'"))
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', join(outDir(), 'dist')])
+  const all = r.out + r.err
+  expect(r.code).toBe(1)
+  expect(all).toContain('warning cf-websocket actions.ts calls .ws()')
+  expect(all).toContain('error cf-smoke')
+  expect(all).toContain('WebSocket (.ws()) is not supported on --target cloudflare: a Worker has no sockets; use --target bun')
+  // the warning comes first, the build then stops
+  expect(all.indexOf('cf-websocket')).toBeLessThan(all.indexOf('error cf-smoke'))
+})
+
+test('an app with no .ws() gets no cf-websocket warning', () => {
+  expect(build().r.err).not.toContain('cf-websocket')
+})
+
 test('an island whose component its module does not export builds for Cloudflare (R34.11)', () => {
   const dir = join(FIX, 'cf-app-helper')
   cleanup.push(dir)

@@ -1,4 +1,7 @@
 import { expect, test } from 'bun:test'
+import { Elysia } from 'elysia'
+import { brust } from '../src/actions/elysia'
+import { mountActions } from '../src/actions/load'
 import { type CfConfigJson, type CfEntryInput, cfEntrySource } from '../src/build/cf-entry'
 
 const config: CfConfigJson = { abi: 1, generator: 'brust/2.0.0-alpha.2', l1Capacity: 256, jobCacheCapacity: 512, stats: false, edgeCache: 'off' }
@@ -70,4 +73,21 @@ test('cfActions: no list = the old block; a list sends the routes and the ceilin
   expect(cfActions({ ...a, stream: [] })).toEqual(cfActions(a))
   const s = cfActions({ ...a, stream: ['POST /upload'], maxStreamBytes: 4096, streamIdleMs: 1, streamTotalMs: 2, maxStreams: 3 } as typeof a)
   expect(s).toEqual({ prefix: '/api', maxBodyBytes: 1024, maxResponseBytes: 8388608, crossSite: 'reject', stream: ['POST /upload'], maxStreamBytes: 4096 })
+})
+
+test('F529 D3: the entry refuses a `.ws()` app at startup, before compile, with a clear message', () => {
+  const s = cfEntrySource(base)
+  const lines = s.split('\n')
+  const mount = lines.findIndex((l) => l.startsWith('const app = mountActions('))
+  expect(lines[mount + 1]).toBe('if (app["~hasWS"]) throw new Error("WebSocket (.ws()) is not supported on --target cloudflare: a Worker has no sockets; use --target bun")')
+  expect(lines[mount + 2]).toStartWith('app.compile()')
+  // no actions: no check, nothing to refuse
+  expect(cfEntrySource({ ...base, actionsEntry: null, config })).not.toContain('~hasWS')
+})
+
+test('F529 D3: the flag the entry reads is set by `.ws()` on the mounted app even with no websocket capability (the Worker case)', () => {
+  const withWs = mountActions(new Elysia({ adapter: brust() }).ws('/chat', { message() {} }), '/api')
+  expect((withWs as unknown as Record<string, unknown>)['~hasWS']).toBe(true)
+  const plain = mountActions(new Elysia({ adapter: brust() }).get('/hi', () => 'x'), '/api')
+  expect((plain as unknown as Record<string, unknown>)['~hasWS']).toBeFalsy()
 })
