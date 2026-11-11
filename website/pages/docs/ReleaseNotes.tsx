@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-41', title: '2.0.0-alpha.41' },
       { id: 'alpha-40', title: '2.0.0-alpha.40' },
       { id: 'alpha-39', title: '2.0.0-alpha.39' },
       { id: 'alpha-38', title: '2.0.0-alpha.38' },
@@ -63,6 +64,50 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-41">2.0.0-alpha.41 · 12 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.40: #468–#474 (ledger F529, F532; plan 2026-11-11-websocket) */}
+      <p>This version adds WebSocket support to actions: write <code>app.ws()</code> in <code>actions.ts</code> and the Rust server runs the connections. See <a href="/docs/websockets">WebSockets</a>.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #468, #470, #471, #472 (F529); docs/websockets.md */}
+        <li>
+          <strong><code>app.ws()</code> in <code>actions.ts</code> serves WebSockets under the actions prefix (#468, #470–#472).</strong> The server does the handshake, the frames, the pings and the limits, and your handlers run in a worker. A socket stays on the worker that accepted the upgrade for its whole life. <code>ws.subscribe(topic)</code> and <code>ws.publish(topic, data)</code> reach sockets on every worker.
+        </li>
+        {/* source: PR #468, #471 (F529); crates/brust-core/src/config.rs (DEFAULT_WS_*); docs/websockets.md */}
+        <li>
+          <strong>The new <code>[actions.ws]</code> table sets the limits (#468, #471).</strong> The defaults are a 1 MiB message (<code>max_payload_bytes</code>), 120 s without a frame from the client (<code>idle_timeout_s</code>), a ping every 30 s (<code>ping_interval_s</code>), 10000 open sockets (<code>max_connections</code>) and 1 MiB of unsent data per socket (<code>backpressure_bytes</code>). <code>enabled = false</code> turns the feature off.
+        </li>
+        {/* source: PR #474 (F532); docs/websockets.md */}
+        <li>
+          <strong><code>server.publish(topic, data)</code> works outside socket handlers (#474).</strong> It is available in an HTTP action as <code>server</code> in the Elysia context, and from module scope as <code>app.server</code> on the app you export. It sends to every subscriber on every worker. <code>app.server</code> is set when brust mounts the app, so use <code>app.server?.publish</code> and publish later. Module scope runs once in each worker, so a subscriber there runs once per worker.
+        </li>
+        {/* source: PR #469 (F529); packages/brust/test/dev-proxy-ws.test.ts */}
+        <li>
+          <strong><code>brust dev</code> relays WebSockets (#469).</strong> A refusal such as a guard&rsquo;s 401 reaches the browser as that status. When the app restarts, the browser socket closes with 1012 &ldquo;service restart&rdquo;.
+        </li>
+      </ul>
+
+      <h3>Security</h3>
+      <ul>
+        {/* source: PR #468 (F529); crates/brust-core/tests/ws_upgrade.rs */}
+        <li>
+          <strong>A cross-site WebSocket upgrade is refused with 403 (#468).</strong> An upgrade is judged like a mutation under <code>[actions] cross_site = &quot;reject&quot;</code>: a foreign <code>Origin</code> is refused, a request without <code>Origin</code> is allowed, and the <code>[cors] origins</code> list is honoured.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #471 (F529); docs/websockets.md */}
+        <li>
+          <strong>On shutdown the server closes open sockets with 1001 &ldquo;going away&rdquo; (#471).</strong> Write the client to reconnect after 1001 and 1006, with a delay.
+        </li>
+        {/* source: PR #473 (F529); packages/brust/test/cf-build.test.ts; docs/actions.md */}
+        <li>
+          <strong><code>brust build --target cloudflare</code> refuses an app that calls <code>.ws()</code> (#473).</strong> The build warns and the app fails at startup with a message that names the target. Server-sent events are still not supported.
+        </li>
+      </ul>
 
       <h2 id="alpha-40">2.0.0-alpha.40 · 11 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.39: #466 (ledger F528) */}
