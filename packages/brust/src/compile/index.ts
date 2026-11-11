@@ -235,7 +235,7 @@ const fromNapi = (d: { class: string; rule: string; message: string; line: numbe
 type Ir = Record<string, any> // biome-ignore lint/suspicious/noExplicitAny: IR JSON, read structurally
 
 /** R3.4: what this tree needs that a runtime component cannot have. */
-function checkTree(tree: CompiledComponent[], ctx: Context, jinja: string): Diagnostic[] {
+function checkTree(tree: CompiledComponent[], ctx: Context): Diagnostic[] {
   const out: Diagnostic[] = []
   const names = new Set<string>()
   for (const c of tree) {
@@ -272,7 +272,8 @@ function checkTree(tree: CompiledComponent[], ctx: Context, jinja: string): Diag
   }
   for (const n of names)
     if (!(n in ctx.stores)) out.push(err('runtime-store', `reads the store "${n}", which no exposed module defines (runtime.stores lists ${Object.keys(ctx.stores).join(', ') || 'none'})`, 'export it from a module listed in `[build] expose` and rebuild'))
-  if (/\bbrust_dynamic\s*\(/.test(jinja)) out.push(err('runtime-dynamic', 'contains a <Dynamic> slot: a runtime component cannot place another runtime component', 'place it from a page or layout of the app'))
+  // The compiler's own flag (R4.4), not a search of the template text: markup that merely contains `brust_dynamic(` is fine.
+  if (tree.some((c) => (JSON.parse(c.ir) as Ir).dynamic === true)) out.push(err('runtime-dynamic', 'contains a <Dynamic> slot: a runtime component cannot place another runtime component', 'place it from a page or layout of the app'))
   return out
 }
 
@@ -318,7 +319,7 @@ export async function compileComponent(opts: CompileOptions): Promise<CompileRes
   // The id is the stem, 16 hex digits and 8 more: a long file name makes an id the registry refuses later.
   if (root.id.length > MAX_ID_LENGTH)
     return refuse([...diagnostics, err('runtime-filename', `the file name "${filename}" makes the component id ${root.id.length} characters long; the limit is ${MAX_ID_LENGTH}`, 'use a shorter file name')])
-  const refusals = checkTree(tree.components, ctx, root.jinja).map(rename)
+  const refusals = checkTree(tree.components, ctx).map(rename)
   if (diagnostics.some((d) => d.class === 'error') || refusals.length > 0) return refuse([...diagnostics, ...refusals])
 
   const client = await bundleClient(tree.components, ctx, { appRoot, filename })

@@ -126,6 +126,15 @@ test('R3.4 runtime-use-id and runtime-children: useId, and a child the server wo
   expect(rules(fed)).toEqual(expect.arrayContaining(['runtime-children', 'runtime-jobs']))
 })
 
+test('R3.4 runtime-dynamic reads the compiler flag: a <Dynamic> is refused, markup that merely says brust_dynamic( is not', async () => {
+  const slot = await compile("import { Dynamic } from '@brust/core'\nexport default function Promo({ r }: { r: string }) {\n  return <div><Dynamic component={r} props={{}} /></div>\n}\n")
+  expect(slot.ok).toBe(false)
+  expect(rules(slot)).toContain('runtime-dynamic')
+  // The text a regex over the template would have refused.
+  const text = ok(await compile("export default function Promo() {\n  return <code>{'{{ brust_dynamic(x, y) }}'} brust_dynamic(</code>\n}\n"))
+  expect(text.jinja).toContain('brust_dynamic(')
+})
+
 test('R3.4 runtime-size: a template over the limit is refused', async () => {
   const big = 'x'.repeat(MAX_JINJA_BYTES + 10)
   const r = await compile(`export default function Promo() {\n  return <p>${big}</p>\n}\n`)

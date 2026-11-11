@@ -1141,3 +1141,30 @@ mod hardening_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod ts_only_tests {
+    use super::*;
+
+    #[test]
+    fn a_namespace_body_and_an_enum_initializer_are_walked() {
+        let f = crate::parse::run_on_compiler_thread(|| {
+            read_source(
+                "el/Promo.tsx",
+                b"namespace N {\n  export const a = import('./ns')\n}\nenum E {\n  A = fetch('/e').length,\n}\nexport default function Promo() {\n  return <p>{N.a ? E.A : 0}</p>\n}\n".to_vec(),
+            )
+            .expect("the source parses")
+        });
+        assert!(f.globals.contains(&"fetch".to_string()), "{:?}", f.globals);
+        assert!(
+            f.risky.iter().any(|r| r.kind == "dynamic-import"),
+            "{:?}",
+            f.risky
+        );
+        assert!(
+            f.imports.iter().any(|i| i.specifier == "./ns"),
+            "{:?}",
+            f.imports
+        );
+    }
+}
