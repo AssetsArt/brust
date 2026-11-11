@@ -4354,7 +4354,28 @@ impl Walker<'_, '_> {
     fn fixed_call(&self, cir: &ComponentIR, props: &[(String, Expr)]) -> bool {
         // Only a child whose own reasons are the ones fixed props remove: the runtime for rows that can change, or
         // React for a value derived from a prop that changes / a fed child it cannot feed through a list.
-        let droppable = match &cir.tier {
+        if !self.fixed_droppable(cir, 0) || cir.specialised || !stateless(cir) || self.live_rows > 0
+        {
+            return false;
+        }
+        props.iter().all(|(k, v)| {
+            k != crate::ir::SPREAD_KEY
+                && k != REST_INPUT
+                && k != "children"
+                && !k.starts_with("__ctx_")
+                && matches!(v, Expr::Raw(_) | Expr::Server(_))
+                && !self.reads_state(v)
+                && self.changing_prop_roots(&self.deps_of(v)).is_empty()
+                && !self.reads_changing_prop(&self.deps_of(v))
+        })
+    }
+
+    /// F494: whether `cir`'s own reasons for not being static are the ones fixed props remove: the runtime for rows that
+    /// can change, or React for a value derived from a prop that changes / a fed child it cannot feed through a list.
+    /// F524: a static component qualifies when its template holds such a child (a stateless native or droppable one,
+    /// directly or through static components in between): a clone fixes that child's props in turn.
+    fn fixed_droppable(&self, cir: &ComponentIR, depth: usize) -> bool {
+        match &cir.tier {
             Tier::Native => true,
             Tier::React { .. } => {
                 let mut fb = cir
@@ -4370,30 +4391,27 @@ impl Walker<'_, '_> {
                         )
                     })
             }
+            Tier::Static => {
+                // Bounded: a chain of static wrappers deeper than this keeps the shared component (no clone).
+                depth < FIXED_SHELL_DEPTH
+                    && cir.children.iter().any(|c| {
+                        // Not its own call (F523: a recursive component is a child of itself).
+                        let Some(id) =
+                            c.id.as_deref()
+                                .filter(|id| c.path.is_some() && *id != cir.id)
+                        else {
+                            return false;
+                        };
+                        let child = self.ctx.modules.borrow().by_id(id);
+                        child.is_some_and(|child| {
+                            !child.specialised
+                                && stateless(&child)
+                                && self.fixed_droppable(&child, depth + 1)
+                        })
+                    })
+            }
             _ => false,
-        };
-        if !droppable
-            || cir.specialised
-            || !cir.provides.is_empty()
-            || !cir.state.is_empty()
-            || !cir.effects.is_empty()
-            || !cir.handlers.is_empty()
-            || !cir.refs.is_empty()
-            || !cir.stores.is_empty()
-            || self.live_rows > 0
-        {
-            return false;
         }
-        props.iter().all(|(k, v)| {
-            k != crate::ir::SPREAD_KEY
-                && k != REST_INPUT
-                && k != "children"
-                && !k.starts_with("__ctx_")
-                && matches!(v, Expr::Raw(_) | Expr::Server(_))
-                && !self.reads_state(v)
-                && self.changing_prop_roots(&self.deps_of(v)).is_empty()
-                && !self.reads_changing_prop(&self.deps_of(v))
-        })
     }
 
     /// F494: a clone of `cir` for this call site with every declared prop fixed (`fixed_call` holds), compiled as a
@@ -4450,6 +4468,17 @@ impl Walker<'_, '_> {
             };
             ctx.modules.borrow_mut().remove(&key);
             return Err(why);
+        }
+        // F524: a static component's clone is static by construction; it is worth keeping only when it fixed something
+        // below it: it holds MORE fixed-clone children than the shared copy (which may hold F494 clones of its own, given
+        // literal props). Otherwise it is the shared copy again, compiled per call site.
+        let gained = || {
+            let modules = ctx.modules.borrow();
+            fixed_clone_children(&clone, &modules) > fixed_clone_children(cir, &modules)
+        };
+        if matches!(cir.tier, Tier::Static) && !gained() {
+            ctx.modules.borrow_mut().remove(&key);
+            return Err("its clone fixes nothing below it".into());
         }
         Ok((clone, id, key))
     }
@@ -10114,4 +10143,32 @@ fn node_exprs(nodes: &[Node], out: &mut Vec<Expr>) {
             Node::Text(_) | Node::Outlet => {}
         }
     }
+}
+
+/// F524: how many static wrappers `fixed_droppable` looks through for a child a fixed-props clone would make static.
+const FIXED_SHELL_DEPTH: usize = 8;
+
+/// F524: how many of `ir`'s children are fixed-props clones (F494).
+fn fixed_clone_children(ir: &ComponentIR, modules: &crate::analyze::modules::ModuleCache) -> usize {
+    ir.children
+        .iter()
+        .filter(|c| {
+            c.id.as_deref().is_some_and(|id| {
+                modules
+                    .by_id(id)
+                    .is_some_and(|child| child.fixed_clone_of.is_some())
+            })
+        })
+        .count()
+}
+
+/// F494: a component with nothing of its own that changes on the client (no state, effects, handlers, refs, stores) and
+/// that provides no context: fixed props are all it renders from.
+fn stateless(cir: &ComponentIR) -> bool {
+    cir.provides.is_empty()
+        && cir.state.is_empty()
+        && cir.effects.is_empty()
+        && cir.handlers.is_empty()
+        && cir.refs.is_empty()
+        && cir.stores.is_empty()
 }

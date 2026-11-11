@@ -443,6 +443,8 @@ jobs:
       - run: bun test --timeout 180000 tests/server/dynamic-slot.chromium.test.ts
       # F523: a component that renders itself is one template macro; a native leaf mounts at every level.
       - run: bun test --timeout 180000 tests/server/recursive.chromium.test.ts
+      # F524: a static wrapper over a stateless wrapper over a native-on-its-own switch, all fed loader data: every level is a static fixed-props clone, == React.
+      - run: bun test --timeout 180000 tests/server/static-shell.chromium.test.ts
       # F521: end to end: the resolver compiles a source string with compileComponent, <Dynamic> renders it, its button moves the store a built component reads.
       - run: bun test --timeout 180000 tests/server/runtime-components.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/live-style.chromium.test.ts

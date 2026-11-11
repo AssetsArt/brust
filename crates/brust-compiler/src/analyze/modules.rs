@@ -34,6 +34,14 @@ impl ModuleCache {
         self.map.get(key)
     }
 
+    /// F524: the compiled component whose id is `id` (a shared one: a clone's id names its own key), if any.
+    pub fn by_id(&self, id: &str) -> Option<Rc<ComponentIR>> {
+        self.map.values().find_map(|e| match e {
+            Entry::Done(ir) if ir.id == id => Some(ir.clone()),
+            _ => None,
+        })
+    }
+
     /// Every compiled component, by key, sorted.
     pub fn done(&self) -> Vec<(String, Rc<ComponentIR>)> {
         let mut out: Vec<_> = self
