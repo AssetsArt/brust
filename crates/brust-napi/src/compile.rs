@@ -48,6 +48,9 @@ pub struct CompiledComponent {
 pub struct CompiledTree {
     pub components: Vec<CompiledComponent>,
     pub error: Option<NapiDiagnostic>,
+    /// F520: what the root FILE refers to (`facts::Facts` as JSON), set by `compileSource` when the text parses, whether or
+    /// not the compile succeeded; `compileTree` leaves it absent.
+    pub facts: Option<String>,
 }
 
 fn diag(d: &Diagnostic) -> NapiDiagnostic {
@@ -94,6 +97,7 @@ fn json_input<T: Default>(
     parse(&text).map_err(|e| {
         Box::new(CompiledTree {
             components: vec![],
+            facts: None,
             error: Some(NapiDiagnostic {
                 class: "error".into(),
                 rule: "compile-input".into(),
@@ -182,6 +186,11 @@ pub(crate) fn compile_tree_impl(
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
+        // F520: the facts come first and on their own parse: a source that parses has them even when it does not compile.
+        let facts = source.as_ref().and_then(|text| {
+            brust_compiler::analyze::facts::read_source(path, text.clone().into_bytes())
+                .map(|f| serde_json::to_string(&f).expect("Facts serialises"))
+        });
         match brust_compiler::pipeline::compile_tree(
             path,
             source.map(String::into_bytes),
@@ -190,9 +199,11 @@ pub(crate) fn compile_tree_impl(
         ) {
             Err(d) => CompiledTree {
                 components: vec![],
+                facts,
                 error: Some(diag(&d)),
             },
             Ok(tree) => CompiledTree {
+                facts,
                 error: None,
                 components: tree
                     .iter()
