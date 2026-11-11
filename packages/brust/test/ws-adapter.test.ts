@@ -42,10 +42,10 @@ afterEach(() => {
 
 const up = (path = '/ws', headers: Record<string, string> = {}) =>
   new Request(`http://l${path}`, { headers: { upgrade: 'websocket', connection: 'upgrade', ...headers } })
-const mount = (app: Elysia, prefix = '/api') => mountActions(app, prefix)
+const mount = (app: any, prefix = '/api') => mountActions(app, prefix)
 
 /** Drives the whole upgrade through the bridge's `fetchParts`, then opens the socket the way Rust would. */
-async function connect(app: Elysia, path = '/api/ws', headers?: Record<string, string>) {
+async function connect(app: any, path = '/api/ws', headers?: Record<string, string>) {
   const outer = mount(app)
   expect(startActionSockets(outer, 2)).toBe(true)
   const out = await fetchParts(outer, up(path, headers))
@@ -108,7 +108,7 @@ test('ws.data carries derive values from the upgrade request', async () => {
   let seen: unknown
   const app = new Elysia({ adapter: brust() })
     .derive(({ request }) => ({ user: request.headers.get('x-user') }))
-    .ws('/ws', { open(ws) { seen = (ws.data as { user?: unknown }).user ?? (ws as unknown as { user?: unknown }).user } })
+    .ws('/ws', { open(ws) { seen = (ws as any).data.user ?? (ws as any).user } })
   const { out } = await connect(app, '/api/ws', { 'x-user': 'ada' })
   await events!(out.ws!.id, 'open', null, 0, '')
   expect(seen).toBe('ada')
@@ -176,7 +176,7 @@ test('send returns the napi back-pressure codes (-1 queued, 0 dropped) and drain
   const codes: number[] = []
   let drained = 0
   const app = new Elysia({ adapter: brust() }).ws('/ws', {
-    open(ws) { sendCode = -1; codes.push(ws.raw.send('a')); sendCode = 0; codes.push(ws.raw.send('b')) },
+    open(ws) { sendCode = -1; codes.push((ws as any).raw.send('a')); sendCode = 0; codes.push((ws as any).raw.send('b')) },
     drain() { drained++ },
   })
   const { out } = await connect(app)
@@ -225,7 +225,7 @@ test('D11: events run in the async context of the upgrade request', async () => 
 test('binary frames: nodebuffer by default, uint8array / arraybuffer on request', async () => {
   const got: unknown[] = []
   const app = new Elysia({ adapter: brust() }).ws('/ws', {
-    open(ws) { (ws.raw as { binaryType: string }).binaryType = 'uint8array' },
+    open(ws) { ((ws as any).raw as { binaryType: string }).binaryType = 'uint8array' },
     message(_ws, m) { got.push(m) },
   })
   const { out } = await connect(app)
@@ -237,7 +237,7 @@ test('binary frames: nodebuffer by default, uint8array / arraybuffer on request'
 
 test('remoteAddress comes from the native call', async () => {
   let addr = ''
-  const app = new Elysia({ adapter: brust() }).ws('/ws', { open(ws) { addr = (ws.raw as { remoteAddress: string }).remoteAddress } })
+  const app = new Elysia({ adapter: brust() }).ws('/ws', { open(ws) { addr = ((ws as any).raw as { remoteAddress: string }).remoteAddress } })
   const { out } = await connect(app)
   await events!(out.ws!.id, 'open', null, 0, '')
   expect(addr).toBe('203.0.113.7:4455')
