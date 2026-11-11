@@ -237,6 +237,12 @@ async fn close_of(c: &mut Client) -> CloseFrame {
     }
 }
 
+/// The sockets opened so far, once there are `n` (the 101 reaches the client before the `Open` event is delivered).
+async fn opened(sink: &Sink, n: usize) -> Vec<u64> {
+    until("the open events", || sink.opened().len() >= n).await;
+    sink.opened()
+}
+
 async fn until(what: &str, f: impl Fn() -> bool) {
     for _ in 0..500 {
         if f() {
@@ -284,7 +290,7 @@ async fn a_socket_echoes_text_and_binary_and_reports_the_peers_close() {
     assert_eq!(next(&mut c).await, Message::text("hi"));
     c.send(Message::binary(vec![0u8, 1, 255])).await.unwrap();
     assert_eq!(next(&mut c).await, Message::binary(vec![0u8, 1, 255]));
-    let id = a.sink.opened()[0];
+    let id = opened(&a.sink, 1).await[0];
     assert_eq!(a.server.ws_hub().open_total(), 1);
     assert!(
         a.server
@@ -434,7 +440,7 @@ async fn an_oversized_message_closes_with_1009() {
     c.send(Message::binary(vec![7u8; 1025])).await.unwrap();
     let f = close_of(&mut c).await;
     assert_eq!(u16::from(f.code), 1009);
-    let id = a.sink.opened()[0];
+    let id = opened(&a.sink, 1).await[0];
     until("the close event", || {
         a.sink
             .of(id)
@@ -497,7 +503,7 @@ async fn the_server_pings_and_hears_the_clients_pings() {
     .await
     .unwrap();
     assert_eq!(&pong[..], b"p1");
-    let id = a.sink.opened()[0];
+    let id = opened(&a.sink, 1).await[0];
     until("the ping event", || {
         a.sink
             .of(id)
@@ -554,12 +560,14 @@ async fn fill(hub: &WsHub, id: u64) -> Vec<i64> {
 async fn back_pressure_answers_minus_one_then_zero_and_drains() {
     let a = app_with(quiet(), json!({}), 1, Sink::default(), None);
     let mut c = open(&a.server).await;
-    let id = a.sink.opened()[0];
+    let id = opened(&a.sink, 1).await[0];
     let codes = fill(&a.server.ws_hub(), id).await;
-    assert_eq!(
-        codes,
-        vec![300_000, -1, 0],
-        "accepted, accepted past the limit, dropped"
+    // accepted, then accepted past the limit, then dropped (the writer may drain some in between: more rounds)
+    assert_eq!(codes.first(), Some(&300_000), "{codes:?}");
+    assert_eq!(&codes[codes.len() - 2..], &[-1, 0], "{codes:?}");
+    assert!(
+        codes.iter().all(|c| [300_000, -1, 0].contains(c)),
+        "{codes:?}"
     );
     // the client reads everything: the queue empties and the handlers hear `drain`
     let reader = tokio::spawn(async move {
@@ -587,7 +595,7 @@ async fn back_pressure_answers_minus_one_then_zero_and_drains() {
         None,
     );
     let mut c = open(&b.server).await;
-    let id = b.sink.opened()[0];
+    let id = opened(&b.sink, 1).await[0];
     let codes = fill(&b.server.ws_hub(), id).await;
     assert_eq!(codes.last(), Some(&0));
     assert_eq!(u16::from(close_of(&mut c).await.code), 1013);
@@ -610,7 +618,7 @@ async fn a_slow_handler_holds_at_eight_unsettled_events_then_delivers_in_order()
     for i in 0..20 {
         c.send(Message::text(format!("m{i}"))).await.unwrap();
     }
-    let id = a.sink.opened()[0];
+    let id = opened(&a.sink, 1).await[0];
     until("eight messages", || a.sink.of(id).len() == 9).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(
@@ -637,9 +645,27 @@ async fn sockets_spread_over_workers_and_topics_cross_them() {
     until("four sockets", || a.server.ws_hub().open_total() == 4).await;
     let hub = a.server.ws_hub();
     // D5: fewest open sockets first, so 2 + 2
-    assert_eq!((hub.open_count(0), hub.open_count(1)), (2, 2));
+    let dump = || {
+        format!(
+            "counts {:?}, total {}, events {:?}, fetches {:?}",
+            (hub.open_count(0), hub.open_count(1)),
+            hub.open_total(),
+            a.sink.events(),
+            a.workers
+                .iter()
+                .map(|w| w.fetch_count())
+                .collect::<Vec<_>>()
+        )
+    };
+    for _ in 0..300 {
+        if (hub.open_count(0), hub.open_count(1)) == (2, 2) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!((hub.open_count(0), hub.open_count(1)), (2, 2), "{}", dump());
     assert_eq!(a.workers[0].fetch_count() + a.workers[1].fetch_count(), 4);
-    let ids = a.sink.opened();
+    let ids = opened(&a.sink, 4).await;
     let (on0, on1): (Vec<u64>, Vec<u64>) = ids.iter().partition(|&&id| socket_parts(id).0 == 0);
     assert_eq!((on0.len(), on1.len()), (2, 2));
     for &id in &ids {
@@ -690,7 +716,7 @@ async fn publish_to_self_keeps_the_publisher() {
         None,
     );
     let mut c = open(&a.server).await;
-    let id = a.sink.opened()[0];
+    let id = opened(&a.sink, 1).await[0];
     let hub = a.server.ws_hub();
     hub.subscribe(id, "t");
     assert_eq!(
@@ -704,7 +730,7 @@ async fn publish_to_self_keeps_the_publisher() {
 async fn the_app_closes_and_terminates() {
     let a = app(quiet());
     let mut c = open(&a.server).await;
-    let id = a.sink.opened()[0];
+    let id = opened(&a.sink, 1).await[0];
     a.server.ws_hub().send(id, WsData::Text("first".into()));
     a.server.ws_hub().close(id, 4000, "done");
     assert_eq!(
@@ -730,7 +756,7 @@ async fn the_app_closes_and_terminates() {
     );
 
     let mut c = open(&a.server).await;
-    let id = *a.sink.opened().last().unwrap();
+    let id = *opened(&a.sink, 2).await.last().unwrap();
     a.server.ws_hub().terminate(id);
     let end = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -788,7 +814,7 @@ async fn a_drain_closes_sockets_with_1001_and_refuses_upgrades_with_503() {
         .await
         .expect("drain done");
     assert!(t0.elapsed() < Duration::from_secs(2), "{:?}", t0.elapsed());
-    let id = a.sink.opened()[0];
+    let id = opened(&a.sink, 1).await[0];
     until("the close event", || {
         a.sink
             .of(id)
