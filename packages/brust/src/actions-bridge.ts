@@ -2,6 +2,7 @@
 // here; the app registered with `setActionsApp` (Elysia 2 via brust() — m3f-actions-elysia) answers a web Request
 // with a web Response, framed into this worker's SAB slot. No Elysia import: the app is anything with `fetch`.
 import { pullFetchBody, putFetchReply, takeFetchBody } from './native'
+import { dropAccept, dropSocket, takeAccept, type WsMeta } from './actions/ws'
 import type { LoaderReq } from './routes'
 import { runInStoreContext } from './store/server-context'
 
@@ -14,7 +15,8 @@ export interface ActionsManifest {
 }
 /** What the worker drives: an Elysia 2 app (`app.fetch`, web-standard), or anything with that shape. */
 export interface ActionsApp {
-  fetch(request: Request): Response | Promise<Response>
+  /** `undefined`: a `.ws()` route accepted the upgrade (Bun's convention); the bridge answers 101 (F529). */
+  fetch(request: Request): Response | undefined | Promise<Response | undefined>
 }
 
 /** A1 (`protocol.rs` `FetchRequest`): `url` = path + query, prefix included; `headers` as pairs (repeats kept). */
@@ -34,6 +36,8 @@ export interface FetchMeta {
   status: number
   headers: [string, string][]
   heap?: number
+  /** F529 (plan §2a): a 101 carries the worker-local socket id and its Elysia options; Rust completes the handshake. */
+  ws?: WsMeta
 }
 
 /** F82: the worker→Rust heap channel for the in-flight `fetch` call of a slot. The default is the napi addon,
@@ -110,10 +114,10 @@ export function toRequest(r: FetchRequest, heapBody?: Uint8Array | ReadableStrea
 /** A2 writer at `slot`'s sub-region `[slot*sub, slot*sub+sub)`, `sub = floor(view.byteLength / slots)`:
  * `[u32 LE meta_len][meta JSON][body]`; returns the byte length. A frame that does not fit becomes R10's 500
  * (always fits a real slot); 0 when not even that fits (Rust: BadResponse → 500). */
-export function writeFramed(view: Uint8Array, slot: number, slots: number, status: number, headers: [string, string][], body: Uint8Array, heap?: number): number {
+export function writeFramed(view: Uint8Array, slot: number, slots: number, status: number, headers: [string, string][], body: Uint8Array, heap?: number, ws?: WsMeta): number {
   const sub = Math.floor(view.byteLength / Math.max(1, slots))
   const dst = view.subarray(slot * sub, slot * sub + sub)
-  const meta = enc.encode(JSON.stringify((heap === undefined ? { status, headers } : { status, headers, heap }) satisfies FetchMeta))
+  const meta = enc.encode(JSON.stringify({ status, headers, ...(heap === undefined ? {} : { heap }), ...(ws ? { ws } : {}) } satisfies FetchMeta))
   const total = 4 + meta.length + body.length
   if (total <= sub) return put(dst, meta, body)
   console.error(`[brust] action response ${total} bytes exceeds the ${sub}-byte slot (F82) — answered 500`)
@@ -144,9 +148,16 @@ const fail = (view: Uint8Array, slot: number, slots: number, msg: string) => wri
 
 /** The store-scoped core shared by `runFetch` and `fetchInScope`: R1/E5 — one store scope around the handler AND the
  * body read (a lazy body may still touch stores); set-cookie values kept apart. */
-export async function fetchParts(a: ActionsApp, req: Request): Promise<{ status: number; pairs: [string, string][]; body: Uint8Array }> {
+export async function fetchParts(a: ActionsApp, req: Request): Promise<{ status: number; pairs: [string, string][]; body: Uint8Array; ws?: WsMeta }> {
   return runInStoreContext(async () => {
     const res = await a.fetch(req)
+    if (res === undefined) {
+      // F529: `undefined` is Bun's "the upgrade was accepted"; without a recorded accept it is a bridge/app bug.
+      const acc = takeAccept(req)
+      if (!acc) return { status: 500, pairs: TEXT_PLAIN, body: enc.encode('brust: the app returned no response and accepted no WebSocket upgrade') }
+      return { status: 101, pairs: acc.headers, body: new Uint8Array(0), ws: acc.meta }
+    }
+    dropAccept(req) // a hook answered after `upgrade()` said yes: the socket never exists
     const pairs: [string, string][] = []
     res.headers.forEach((v, k) => {
       if (k !== 'set-cookie') pairs.push([k, v])
@@ -158,7 +169,12 @@ export async function fetchParts(a: ActionsApp, req: Request): Promise<{ status:
 
 /** Host-agnostic entry (Cloudflare `action(req)`): the same scope and framing-free parts as `runFetch`, as a Response. */
 export async function fetchInScope(a: ActionsApp, req: Request): Promise<Response> {
-  const { status, pairs, body } = await fetchParts(a, req)
+  const { status, pairs, body, ws } = await fetchParts(a, req)
+  if (ws) {
+    // The host cannot upgrade (Cloudflare has no sockets): forget the socket and say so.
+    dropSocket(ws.id)
+    return new Response('brust: WebSocket upgrades are not supported on this host', { status: 500, headers: TEXT_PLAIN })
+  }
   const headers = new Headers()
   for (const [k, v] of pairs) headers.append(k, v)
   return new Response([101, 204, 205, 304].includes(status) ? null : (body as BodyInit), { status, headers })
@@ -190,6 +206,7 @@ export async function runFetch(requestJson: string, view: Uint8Array, slot: numb
     const req = toRequest(fr, heapBody)
     // R1/E5: one store scope around the handler AND the body read (a lazy body may still touch stores).
     const out = await fetchParts(a, req)
+    if (out.ws) return writeFramed(view, slot, slots, 101, out.pairs, out.body, undefined, out.ws)
     const sub = Math.floor(view.byteLength / Math.max(1, slots))
     const metaLen = (m: FetchMeta) => enc.encode(JSON.stringify(m)).length
     if (4 + metaLen({ status: out.status, headers: out.pairs }) + out.body.length <= sub) return writeFramed(view, slot, slots, out.status, out.pairs, out.body)

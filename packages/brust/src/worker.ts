@@ -207,11 +207,13 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     )
   const jobsMod = await import(join(dist, manifest.jobs_module ?? 'jobs.js'))
   const jobs = (jobsMod.default ?? jobsMod) as JobsModule
+  let actionsSockets: ((workerId: number) => boolean) | undefined
   if (manifest.actions) {
     // Lazy: elysia is an optional peer, so an app without [actions] must boot without it installed (R7).
-    const { loadActionsApp, shadowedGetActions, streamRouteCheck } = await import('./actions/load')
+    const { loadActionsApp, shadowedGetActions, streamRouteCheck, startActionSockets } = await import('./actions/load')
     const actionsApp = await loadActionsApp(join(dist, manifest.actions.entry), manifest.actions.prefix)
     setActionsApp(actionsApp)
+    actionsSockets = (id) => startActionSockets(actionsApp, id)
     // F470: a GET under the prefix that a route there matches is the route's; say which GET actions that hides (once)
     const shadowed = env.BRUST_WORKER_ID && env.BRUST_WORKER_ID !== '0' ? [] : shadowedGetActions(actionsApp, flattenRoutes(routes).leaves.map((l) => l.pattern), manifest.actions.prefix)
     if (shadowed.length) console.warn(`[brust] warning: a route under the actions prefix answers GET there, so these GET actions are never reached: ${shadowed.join(', ')}`)
@@ -240,6 +242,7 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     ...(components ? { components } : {}),
   })
   const id = registerWorker(view, slots, makeDispatch(handlers, view, slots))
+  actionsSockets?.(id) // F529: socket events for the sockets pinned to this worker (its pool id, like a claim's)
   if (l2 && env.BRUST_WORKER_ID === '0') {
     const { startSubscriber } = await import('./cache-adapter/runtime')
     await startSubscriber(l2.adapter, l2.origin, { replay: (args, seq) => void cacheReplay(args, seq), clear: () => void cacheClear(), count })
