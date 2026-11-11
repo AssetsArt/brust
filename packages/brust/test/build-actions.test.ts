@@ -94,6 +94,18 @@ test('an app with [actions] gets manifest.actions and dist/actions.js', async ()
   expect(existsSync(join(out, 'actions.js'))).toBe(true)
 }, 60_000)
 
+test('[actions.ws] is carried into manifest.actions.ws with every default filled; absent table = no key (F529)', async () => {
+  const dir = app({ 'brust.toml': '[actions]\n[actions.ws]\nmax_connections = 5\nidle_timeout_s = 0\n', 'actions.ts': HELLO })
+  const out = join(dir, 'dist')
+  await build(dir, out)
+  const m = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))
+  expect(m.actions.ws).toEqual({ enabled: true, maxPayloadBytes: 1048576, idleTimeoutS: 0, pingIntervalS: 30, maxConnections: 5, backpressureBytes: 1048576 })
+  const dir2 = app({ 'brust.toml': '[actions]\n', 'actions.ts': HELLO })
+  const out2 = join(dir2, 'dist')
+  await build(dir2, out2)
+  expect('ws' in JSON.parse(readFileSync(join(out2, 'manifest.json'), 'utf8')).actions).toBe(false)
+}, 120_000)
+
 test('an app without [actions] gets "actions": null and no actions.js', async () => {
   const dir = app({ 'actions.ts': HELLO })
   const out = join(dir, 'dist')

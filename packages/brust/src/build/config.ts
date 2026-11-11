@@ -34,6 +34,8 @@ import { posixOf } from './posix'
 // `prefix = "/"` is accepted only for an actions-only build (L16 R16.4).
 // F475: stream = ["POST /upload", "PUT /files/*"] (relative to the prefix; each a `{ parse: 'none' }` route) streams those bodies
 //   max_stream_bytes = 268435456 (<= 4294967296)  stream_idle_ms = 30000  stream_total_ms = 900000  max_streams = <workers x slots / 4>
+// F529: [actions.ws] (all optional; the table present = the manifest carries it, absent = Rust defaults) bounds WebSocket upgrades under the prefix:
+//   enabled = true  max_payload_bytes = 1048576  idle_timeout_s = 120  ping_interval_s = 30  max_connections = 10000  backpressure_bytes = 1048576
 // `ACTION_INLINE_BODY_BYTES` (Rust): the inline/heap threshold of an action body, independent of the response slot size (`slotBytes`).
 const MIN_RESPONSE_BYTES = 262_144
 
@@ -50,7 +52,31 @@ export interface ActionsBuildConfig {
   entryExplicit: boolean
   /** F475: the streamed routes and their bounds; absent = no `stream` list (or an empty one). */
   stream?: ActionsStreamConfig
+  /** F529: `[actions.ws]` with every default filled in; absent = no such table. */
+  ws?: ActionsWsConfig
 }
+
+/** F529 D8 `[actions.ws]`, as the manifest carries it (`manifest.actions.ws`). Seconds: 0 turns `idleTimeoutS` / `pingIntervalS` off. */
+export interface ActionsWsConfig {
+  enabled: boolean
+  maxPayloadBytes: number
+  idleTimeoutS: number
+  pingIntervalS: number
+  maxConnections: number
+  backpressureBytes: number
+}
+
+export const DEFAULT_WS: Readonly<ActionsWsConfig> = {
+  enabled: true,
+  maxPayloadBytes: 1_048_576,
+  idleTimeoutS: 120,
+  pingIntervalS: 30,
+  maxConnections: 10_000,
+  backpressureBytes: 1_048_576,
+}
+/** The ranges `WsConfig::validate` (brust-core config.rs) enforces on the same keys. */
+const MAX_WS_SECONDS = 86_400
+const MAX_WS_CONNECTIONS = 1_000_000
 
 /** F475 `[actions] stream` and its bounds, as the manifest carries them. */
 export interface ActionsStreamConfig {
@@ -334,7 +360,33 @@ function parseActions(file: string, raw: unknown, actionsOnly: boolean, basePath
     credentials = t.credentials as ActionCredentials
   }
   const stream = parseStream(file, t)
-  return { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite, baseUrl, credentials, entryExplicit: t.entry !== undefined, ...(stream ? { stream } : {}) }
+  const ws = parseWs(file, t.ws)
+  return { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite, baseUrl, credentials, entryExplicit: t.entry !== undefined, ...(stream ? { stream } : {}), ...(ws ? { ws } : {}) }
+}
+
+const WS_KEYS = ['enabled', 'max_payload_bytes', 'idle_timeout_s', 'ping_interval_s', 'max_connections', 'backpressure_bytes']
+
+/** F529 D8: `[actions.ws]`; an unknown key is an error (a typo would silently keep the default). */
+function parseWs(file: string, raw: unknown): ActionsWsConfig | undefined {
+  if (raw === undefined) return undefined
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new BuildError('config', `${file}: [actions.ws] must be a table`)
+  const t = raw as Record<string, unknown>
+  for (const k of Object.keys(t)) if (!WS_KEYS.includes(k)) throw new BuildError('config', `${file}: unknown key actions.ws.${k} (allowed: ${WS_KEYS.join(', ')})`)
+  const int = (key: string, min: number, max: number, dflt: number): number => {
+    const n = t[key]
+    if (n === undefined) return dflt
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < min || n > max) throw new BuildError('config', `${file}: actions.ws.${key} must be an integer in ${min}..${max} (got ${String(n)})`)
+    return n
+  }
+  if (t.enabled !== undefined && typeof t.enabled !== 'boolean') throw new BuildError('config', `${file}: actions.ws.enabled must be true or false`)
+  return {
+    enabled: t.enabled ?? DEFAULT_WS.enabled,
+    maxPayloadBytes: int('max_payload_bytes', 1, MAX_ACTION_BYTES, DEFAULT_WS.maxPayloadBytes),
+    idleTimeoutS: int('idle_timeout_s', 0, MAX_WS_SECONDS, DEFAULT_WS.idleTimeoutS),
+    pingIntervalS: int('ping_interval_s', 0, MAX_WS_SECONDS, DEFAULT_WS.pingIntervalS),
+    maxConnections: int('max_connections', 1, MAX_WS_CONNECTIONS, DEFAULT_WS.maxConnections),
+    backpressureBytes: int('backpressure_bytes', 1, MAX_ACTION_BYTES, DEFAULT_WS.backpressureBytes),
+  }
 }
 
 /** F475: `stream` + its bounds; the bounds are validated even without a list, and dropped with it. */

@@ -387,6 +387,38 @@ pub struct FetchMeta {
     /// F82: the body is `heap` bytes long and was put by `putFetchReply`, not framed.
     #[serde(default)]
     pub heap: Option<u64>,
+    /// F529: status 101 only. The app accepted a WebSocket upgrade; see [`WsAccept`].
+    #[serde(default)]
+    pub ws: Option<WsAccept>,
+}
+
+/// F529 A2 upgrade meta, `"ws"` beside `status: 101`: `{ id, maxPayload?, idleTimeout?, backpressureLimit?,
+/// closeOnBackpressureLimit?, publishToSelf?, sendPings? }`. `id` is the worker-local socket id the JS side
+/// allocated; the per-route options are Elysia's `.ws()` options, clamped later to the `[actions.ws]` maxima.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsAccept {
+    pub id: u32,
+    #[serde(default)]
+    pub max_payload: Option<u32>,
+    #[serde(default)]
+    pub idle_timeout: Option<u32>,
+    #[serde(default)]
+    pub backpressure_limit: Option<u32>,
+    #[serde(default)]
+    pub close_on_backpressure_limit: Option<bool>,
+    #[serde(default)]
+    pub publish_to_self: Option<bool>,
+    #[serde(default)]
+    pub send_pings: Option<bool>,
+}
+
+/// F529: the `http::Response` extension core puts on an accepted upgrade (status 101). Core does nothing else with it:
+/// the host that owns the socket reads it, picks the worker the upgrade ran on and takes the connection over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsAccepted {
+    pub worker_local_id: u32,
+    pub opts: WsAccept,
 }
 
 /// A decoded `fetch` answer; `body` was copied out of the slot while the claim was held.
@@ -395,6 +427,8 @@ pub struct FetchResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: bytes::Bytes,
+    /// F529: the accepted upgrade, when `status` is 101.
+    pub ws: Option<WsAccept>,
 }
 
 /// A `cache` worker call (the cache adapter's `store.get`/`store.set`), inline JSON like every
@@ -897,12 +931,51 @@ mod tests {
                     ("set-cookie".into(), "b=2".into())
                 ],
                 heap: None,
+                ws: None,
             }
         );
         let m: FetchMeta = serde_json::from_str(r#"{"status":204}"#).unwrap();
         assert!(m.headers.is_empty());
         assert_eq!(m.heap, None);
+        assert_eq!(m.ws, None);
         let m: FetchMeta = serde_json::from_str(r#"{"status":200,"heap":5}"#).unwrap();
         assert_eq!(m.heap, Some(5));
+    }
+
+    #[test]
+    fn fetch_meta_reads_the_ws_accept() {
+        let m: FetchMeta =
+            serde_json::from_str(r#"{"status":101,"headers":[],"ws":{"id":7}}"#).unwrap();
+        assert_eq!(
+            m.ws,
+            Some(WsAccept {
+                id: 7,
+                max_payload: None,
+                idle_timeout: None,
+                backpressure_limit: None,
+                close_on_backpressure_limit: None,
+                publish_to_self: None,
+                send_pings: None,
+            })
+        );
+        let m: FetchMeta = serde_json::from_str(
+            r#"{"status":101,"ws":{"id":3,"maxPayload":1024,"idleTimeout":10,"backpressureLimit":2048,"closeOnBackpressureLimit":true,"publishToSelf":false,"sendPings":true,"extra":1}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            m.ws,
+            Some(WsAccept {
+                id: 3,
+                max_payload: Some(1024),
+                idle_timeout: Some(10),
+                backpressure_limit: Some(2048),
+                close_on_backpressure_limit: Some(true),
+                publish_to_self: Some(false),
+                send_pings: Some(true),
+            })
+        );
+        // the id is required: a `ws` object without one is a malformed frame, not an accept
+        assert!(serde_json::from_str::<FetchMeta>(r#"{"status":101,"ws":{}}"#).is_err());
+        assert!(serde_json::from_str::<FetchMeta>(r#"{"status":101,"ws":{"id":-1}}"#).is_err());
     }
 }

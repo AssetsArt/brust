@@ -79,6 +79,15 @@ pub const DEFAULT_MAX_STREAM_BYTES: u64 = 268_435_456;
 pub const MAX_STREAM_BYTES: u64 = 4_294_967_296;
 pub const DEFAULT_STREAM_IDLE_MS: u64 = 30_000;
 pub const DEFAULT_STREAM_TOTAL_MS: u64 = 900_000;
+/// F529 D8 `[actions.ws]` defaults and ceilings. `max_payload_bytes` / `backpressure_bytes` share the action byte ceiling.
+pub const DEFAULT_WS_MAX_PAYLOAD_BYTES: u32 = 1_048_576;
+pub const DEFAULT_WS_IDLE_TIMEOUT_S: u32 = 120;
+pub const DEFAULT_WS_PING_INTERVAL_S: u32 = 30;
+pub const DEFAULT_WS_MAX_CONNECTIONS: u32 = 10_000;
+pub const DEFAULT_WS_BACKPRESSURE_BYTES: u32 = 1_048_576;
+/// One day: `idle_timeout_s` and `ping_interval_s` are seconds, 0 = off.
+pub const MAX_WS_SECONDS: u32 = 86_400;
+pub const MAX_WS_CONNECTIONS: u32 = 1_000_000;
 /// Paths the actions prefix may not overlap in either direction (R7).
 const RESERVED: &[&str] = &["/ping", "/public", "/_brust/client", "/_brust/cache"];
 
@@ -91,6 +100,67 @@ pub struct ActionsConfig {
     pub cross_site: CrossSite,
     /// F475: the routes whose request body streams to the app instead of being buffered.
     pub stream: StreamConfig,
+    /// F529: WebSocket upgrades under the prefix.
+    pub ws: WsConfig,
+}
+
+/// F529 D8 `[actions.ws]`. The per-route Elysia options in the upgrade meta are clamped to these maxima. `idle_timeout_s`
+/// and `ping_interval_s` of 0 switch the timer off.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WsConfig {
+    /// `false` = every upgrade is refused.
+    pub enabled: bool,
+    pub max_payload_bytes: u32,
+    pub idle_timeout_s: u32,
+    pub ping_interval_s: u32,
+    /// Open sockets per process.
+    pub max_connections: u32,
+    /// The per-socket outbound queue bound, bytes.
+    pub backpressure_bytes: u32,
+}
+
+impl Default for WsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_payload_bytes: DEFAULT_WS_MAX_PAYLOAD_BYTES,
+            idle_timeout_s: DEFAULT_WS_IDLE_TIMEOUT_S,
+            ping_interval_s: DEFAULT_WS_PING_INTERVAL_S,
+            max_connections: DEFAULT_WS_MAX_CONNECTIONS,
+            backpressure_bytes: DEFAULT_WS_BACKPRESSURE_BYTES,
+        }
+    }
+}
+
+impl WsConfig {
+    /// The same ranges `build/config.ts` enforces on the toml; the names are the toml keys.
+    pub fn validate(&self) -> Result<(), String> {
+        let bytes = 1..=MAX_ACTION_BYTES as u32;
+        if !bytes.contains(&self.max_payload_bytes) {
+            return Err(format!(
+                "ws.max_payload_bytes must be in 1..={MAX_ACTION_BYTES}"
+            ));
+        }
+        if !bytes.contains(&self.backpressure_bytes) {
+            return Err(format!(
+                "ws.backpressure_bytes must be in 1..={MAX_ACTION_BYTES}"
+            ));
+        }
+        if self.idle_timeout_s > MAX_WS_SECONDS {
+            return Err(format!("ws.idle_timeout_s must be in 0..={MAX_WS_SECONDS}"));
+        }
+        if self.ping_interval_s > MAX_WS_SECONDS {
+            return Err(format!(
+                "ws.ping_interval_s must be in 0..={MAX_WS_SECONDS}"
+            ));
+        }
+        if !(1..=MAX_WS_CONNECTIONS).contains(&self.max_connections) {
+            return Err(format!(
+                "ws.max_connections must be in 1..={MAX_WS_CONNECTIONS}"
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// F475 `[actions] stream = ["POST /upload", "PUT /files/*"]` and its bounds. A listed request's body
@@ -194,6 +264,7 @@ impl Default for ActionsConfig {
             max_response_bytes: DEFAULT_MAX_ACTION_RESPONSE_BYTES,
             cross_site: CrossSite::default(),
             stream: StreamConfig::default(),
+            ws: WsConfig::default(),
         }
     }
 }
@@ -418,6 +489,7 @@ impl ActionsConfig {
         if st.max_streams == Some(0) {
             return Err("maxStreams must be at least 1".into());
         }
+        self.ws.validate()?;
         Ok(())
     }
 }
@@ -770,6 +842,73 @@ mod tests {
             let e = resp(n).validate(&m).expect_err("resp bounds");
             assert!(e.contains("maxResponseBytes"), "{e}");
         }
+    }
+
+    #[test]
+    fn ws_config_defaults_and_bounds() {
+        let m = fixture_manifest();
+        let d = WsConfig::default();
+        assert_eq!(
+            (
+                d.enabled,
+                d.max_payload_bytes,
+                d.idle_timeout_s,
+                d.ping_interval_s,
+                d.max_connections,
+                d.backpressure_bytes
+            ),
+            (true, 1_048_576, 120, 30, 10_000, 1_048_576)
+        );
+        assert_eq!(ActionsConfig::default().ws, d);
+        assert_eq!(ActionsConfig::default().validate(&m), Ok(()));
+        let with = |f: &dyn Fn(&mut WsConfig)| {
+            let mut a = ActionsConfig::default();
+            f(&mut a.ws);
+            a.validate(&m)
+        };
+        assert_eq!(with(&|w| w.enabled = false), Ok(()));
+        assert_eq!(
+            with(&|w| {
+                w.idle_timeout_s = 0;
+                w.ping_interval_s = 0
+            }),
+            Ok(())
+        );
+        assert_eq!(with(&|w| w.max_payload_bytes = 67_108_864), Ok(()));
+        assert_eq!(with(&|w| w.max_connections = 1_000_000), Ok(()));
+        for (name, f) in [
+            (
+                "ws.max_payload_bytes",
+                &(|w: &mut WsConfig| w.max_payload_bytes = 0) as &dyn Fn(&mut WsConfig),
+            ),
+            ("ws.max_payload_bytes", &|w| {
+                w.max_payload_bytes = 67_108_865
+            }),
+            ("ws.backpressure_bytes", &|w| w.backpressure_bytes = 0),
+            ("ws.backpressure_bytes", &|w| {
+                w.backpressure_bytes = 67_108_865
+            }),
+            ("ws.idle_timeout_s", &|w| w.idle_timeout_s = 86_401),
+            ("ws.ping_interval_s", &|w| w.ping_interval_s = 86_401),
+            ("ws.max_connections", &|w| w.max_connections = 0),
+            ("ws.max_connections", &|w| w.max_connections = 1_000_001),
+        ] {
+            let e = with(f).expect_err(name);
+            assert!(e.starts_with(name), "{name}: {e}");
+        }
+        // the limits are checked for the actions-only root prefix too
+        let mut root = ActionsConfig {
+            prefix: "/".into(),
+            ..Default::default()
+        };
+        root.ws.max_connections = 0;
+        let mut m = fixture_manifest();
+        m.actions_only = true;
+        assert!(
+            root.validate(&m)
+                .unwrap_err()
+                .starts_with("ws.max_connections")
+        );
     }
 
     #[test]

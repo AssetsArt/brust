@@ -11,7 +11,7 @@ use crate::config::{ActionsConfig, CrossSite};
 use crate::core::Core;
 use crate::cors::ResolvedCors;
 use crate::host::{ActionBody, ActionCall, ActionReply, CallError, Host, ReadErr, RequestHead};
-use crate::protocol::{FetchBody, FetchResponse};
+use crate::protocol::{FetchBody, FetchResponse, WsAccepted};
 
 /// One request under the prefix → one `fetch` worker call. `body` is read only here, and never for GET/HEAD (R4); a
 /// `stream`-listed route's body is not read here at all (F475): the app pulls it during the call.
@@ -57,7 +57,11 @@ pub(crate) async fn handle<H: Host>(
             host = host.as_deref().unwrap_or(""),
             "cross-site rejected"
         );
-        return body::error_403_cross_site(method);
+        return body::error_403_cross_site(if is_ws_upgrade(method, rq.headers) {
+            "WebSocket upgrade"
+        } else {
+            method
+        });
     }
     let body = if method == "GET" || method == "HEAD" {
         ActionBody::None
@@ -154,9 +158,22 @@ fn closing(mut r: Response<Bytes>) -> Response<Bytes> {
     r
 }
 
+/// F529 D9: a GET that asks to become a WebSocket (`Upgrade: websocket`, a comma list of tokens, case-insensitive).
+/// Browsers send no preflight for it and attach the user's cookies, so it is judged like a mutation.
+pub(crate) fn is_ws_upgrade(method: &str, headers: &HeaderMap) -> bool {
+    method == "GET"
+        && headers
+            .get_all(http::header::UPGRADE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .any(|t| t.trim().eq_ignore_ascii_case("websocket"))
+}
+
 /// F87 / spec E10: may a request with these headers mutate through an action? `host` is the request authority
 /// (first `X-Forwarded-Host`, else `Host`, else the HTTP/2 `:authority`). Browser-declared only: a request with
-/// neither `Sec-Fetch-Site: cross-site` nor an `Origin` is a non-browser client and passes.
+/// neither `Sec-Fetch-Site: cross-site` nor an `Origin` is a non-browser client and passes. F529 D9: a WebSocket
+/// upgrade (a GET with `Upgrade: websocket`) is judged by the same rule; any other GET/HEAD/OPTIONS passes.
 pub(crate) fn cross_site_verdict(
     method: &str,
     headers: &HeaderMap,
@@ -164,7 +181,9 @@ pub(crate) fn cross_site_verdict(
     cors: Option<&ResolvedCors>,
     mode: CrossSite,
 ) -> Result<(), ()> {
-    if matches!(method, "GET" | "HEAD" | "OPTIONS") || mode == CrossSite::Allow {
+    if mode == CrossSite::Allow
+        || (matches!(method, "GET" | "HEAD" | "OPTIONS") && !is_ws_upgrade(method, headers))
+    {
         return Ok(());
     }
     let origin = headers.get(http::header::ORIGIN);
@@ -267,6 +286,9 @@ fn reply_to_response(r: ActionReply) -> Response<Bytes> {
 /// R9: the worker's answer as a response — status in 200..=599, framing headers dropped, every other valid pair
 /// appended in order (repeated `Set-Cookie` survive). No gzip, never L1.
 fn response_from_fetch(f: FetchResponse) -> Response<Bytes> {
+    if f.status == 101 {
+        return upgrade_from_fetch(f);
+    }
     if !(200..=599).contains(&f.status) {
         tracing::error!(status = f.status, "action answered an invalid status");
         return body::error_500();
@@ -287,6 +309,35 @@ fn response_from_fetch(f: FetchResponse) -> Response<Bytes> {
         }
     }
     body::resp_with(f.status, hm, f.body)
+}
+
+/// F529 A2: a 101 is an accepted WebSocket upgrade and must say which socket (`ws`); without it the bridge is broken
+/// (500). Rust owns the handshake, so the worker's `Upgrade` / `Sec-WebSocket-*` headers are dropped; the rest (cookies
+/// from `derive`, say) pass. The accept travels as a [`WsAccepted`] extension and nothing else here reads it.
+fn upgrade_from_fetch(f: FetchResponse) -> Response<Bytes> {
+    let Some(opts) = f.ws else {
+        tracing::error!("action answered 101 without a ws accept");
+        return body::error_500();
+    };
+    let mut r = response_from_fetch(FetchResponse {
+        status: 200,
+        headers: f
+            .headers
+            .into_iter()
+            .filter(|(k, _)| {
+                !k.eq_ignore_ascii_case("upgrade")
+                    && !k.to_ascii_lowercase().starts_with("sec-websocket-")
+            })
+            .collect(),
+        body: Bytes::new(),
+        ws: None,
+    });
+    *r.status_mut() = http::StatusCode::SWITCHING_PROTOCOLS;
+    r.extensions_mut().insert(WsAccepted {
+        worker_local_id: opts.id,
+        opts,
+    });
+    r
 }
 
 #[cfg(test)]
@@ -562,6 +613,7 @@ mod tests {
             status: 600,
             headers: vec![],
             body: Bytes::new(),
+            ws: None,
         });
         assert_eq!(r.status(), 500);
         let r = response_from_fetch(FetchResponse {
@@ -573,6 +625,7 @@ mod tests {
                 ("set-cookie".into(), "b=2".into()),
             ],
             body: Bytes::from_static(b"ok"),
+            ws: None,
         });
         assert_eq!(r.status(), 201);
         let c: Vec<_> = r.headers().get_all("set-cookie").iter().collect();
@@ -595,6 +648,7 @@ mod tests {
             status: 99,
             headers: vec![],
             body: Bytes::new(),
+            ws: None,
         }));
         assert_eq!(r.status(), 500);
     }
