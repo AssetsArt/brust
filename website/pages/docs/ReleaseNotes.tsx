@@ -64,7 +64,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-39">2.0.0-alpha.39 · 11 November 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.38: #456, #457, #459 (ledger F517, F518, F519; plan 2026-11-11-runtime-components) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.38: #456, #457, #459, #460 (ledger F517, F518, F519, F520; plan 2026-11-11-runtime-components) */}
       <p>This version can render a component whose source was stored after <code>brust build</code>: you expose some of your modules, compile a source text with <code>@brust/core/compile</code>, and place the result with <code>&lt;Dynamic&gt;</code>.</p>
 
       <h3>New</h3>
@@ -76,6 +76,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #459 (F518); packages/brust/src/compile/index.ts; packages/brust/test/compile-component.test.ts */}
         <li>
           <strong><code>compileComponent</code> in <code>@brust/core/compile</code> compiles a source string into a runtime artifact (#459).</strong> It compiles as the build would, against the real <code>dist/</code>, and refuses what cannot be one template and one client module, with a rule name and a position.
+        </li>
+        {/* source: PR #460 (F520); packages/brust/src/compile/index.ts (Facts); packages/brust/test/compile-facts.test.ts */}
+        <li>
+          <strong><code>compileComponent</code> returns <code>facts</code> for a check of your own (#460).</strong> They list the imports, globals, hooks, tags, props, handlers with their calls, and risky constructs of the whole file, on a refused result too. They feed an allowlist; they do not prove isolation, so pair them with a Content-Security-Policy.
         </li>
         {/* source: PR #457 (F519); packages/brust/src/routes.ts (Dynamic, RuntimeComponents); tests/server/dynamic-slot.chromium.test.ts; tests/server/runtime-components.chromium.test.ts */}
         <li>

@@ -11,7 +11,7 @@ import type { TocItem } from '../../lib/nav'
 
 export interface RuntimeComponentsData {
   toc: TocItem[]
-  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest', CodeBlockData>
+  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest' | 'facts', CodeBlockData>
 }
 
 const EXPOSE = `# brust.toml
@@ -71,6 +71,12 @@ const MANIFEST = `"runtime": {
   "stores":  { "cart": "shop/sdk.ts" }
 }`
 
+const FACTS = `const r = await compileComponent({ source, filename: 'el/Promo.tsx' })
+const f = r.facts            // present when the text parses, on { ok: false } too
+if (f && (f.risky.length > 0 || f.rawHtml || f.globals.some((g) => !ALLOWED_GLOBALS.has(g)))) {
+  return null                // your policy: refuse what you do not want to run
+}`
+
 export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> {
   return {
     toc: [
@@ -80,6 +86,7 @@ export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> 
       { id: 'resolver', title: 'The resolver' },
       { id: 'artifact', title: 'The artifact' },
       { id: 'refusals', title: 'What is refused' },
+      { id: 'facts', title: 'Facts for a check' },
       { id: 'limits', title: 'Limits and caching' },
       { id: 'trust', title: 'The trust model' },
     ],
@@ -90,6 +97,7 @@ export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> 
       resolver: codeBlock({ lang: 'tsx', file: 'routes.tsx', code: RESOLVER }),
       artifact: codeBlock({ lang: 'ts', file: 'RuntimeArtifact', code: ARTIFACT }),
       manifest: codeBlock({ lang: 'text', file: 'dist/manifest.json', code: MANIFEST }),
+      facts: codeBlock({ lang: 'ts', file: 'routes.tsx', code: FACTS }),
     },
   }
 }
@@ -249,6 +257,55 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
           </tr>
         </tbody>
       </table>
+
+      <h2 id="facts">Facts for a check</h2>
+      <p>
+        The result of <code>compileComponent</code> also carries <code>facts</code>: what the source file refers to, read from the same parse and symbol table the compiler uses, over the whole file (render, handlers, effects and module-level helpers).
+        They are present whenever the text parses, on an <code>ok: false</code> result too. Use them as the input of your own allowlist.
+      </p>
+      <CodeBlock code={blocks.facts.code} lang={blocks.facts.lang} file={blocks.facts.file} html={blocks.facts.html} />
+      <table>
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Holds</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>imports</code></td>
+            <td>Each runtime import as <code>{'{'} specifier, names {'}'}</code>. Type-only imports are erased by the parser and never appear.</td>
+          </tr>
+          <tr>
+            <td><code>globals</code></td>
+            <td>Every unbound identifier the file reads, writes or calls (<code>fetch</code>, <code>document</code>, <code>window</code>), sorted.</td>
+          </tr>
+          <tr>
+            <td><code>hooks</code></td>
+            <td>Calls named <code>useX</code> as <code>{'{'} name, from {'}'}</code>; <code>from</code> is the import specifier, or <code>null</code> for a local or global one.</td>
+          </tr>
+          <tr>
+            <td><code>tags</code>, <code>attrs</code></td>
+            <td>The JSX tags and every prop name written on an element, including <code>dangerouslySetInnerHTML</code>, <code>ref</code> and <code>style</code>.</td>
+          </tr>
+          <tr>
+            <td><code>spreads</code>, <code>rawHtml</code></td>
+            <td>Whether a JSX spread attribute appears, and whether <code>dangerouslySetInnerHTML</code> is written.</td>
+          </tr>
+          <tr>
+            <td><code>handlers</code></td>
+            <td>Each <code>onX</code> prop with its <code>event</code>, <code>tag</code>, position and the calls its function makes (block bodies and the local functions it calls included). A callee&rsquo;s <code>kind</code> is <code>import</code>, <code>local</code>, <code>setter</code>, <code>global</code>, <code>member</code> or <code>unknown</code>.</td>
+          </tr>
+          <tr>
+            <td><code>risky</code></td>
+            <td>Constructs that can reach a name the walk cannot see: <code>dynamic-import</code>, <code>computed-member</code>, <code>constructor-access</code> and <code>eval</code>, with positions.</td>
+          </tr>
+        </tbody>
+      </table>
+      <Note tag="Limit">
+        Facts name what the source refers to. They are an input to an allowlist, not a proof of isolation: a computed member such as <code>window[k]</code>, <code>eval</code> or a dynamic <code>import()</code> can reach a name the walk never sees (which is why they are
+        listed in <code>risky</code>), and what an imported function does is outside the file. Pair them with a Content-Security-Policy. There is no built-in allow or deny profile; the <code>runtime-import</code> refusal already stops foreign imports.
+      </Note>
 
       <h2 id="limits">Limits and caching</h2>
       <ul>
