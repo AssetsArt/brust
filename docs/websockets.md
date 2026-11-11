@@ -17,7 +17,7 @@ export default new Elysia({ adapter: brust() })
   })
 ```
 
-With `[actions] prefix = "/api"` the socket is `ws://host/api/echo`; with `[server] base_path = "/app"` it is `ws://host/app/api/echo`. Only a `GET` with `Upgrade: websocket` under the prefix is an upgrade; anywhere else the header is ignored.
+With `[actions] prefix = "/api"` the socket is `ws://host/api/echo`. With `[server] base_path = "/app"` an explicit prefix must lie under it (`prefix = "/app/api"`), and the socket is `ws://host/app/api/echo`. Only a `GET` with `Upgrade: websocket` under the prefix is an upgrade; anywhere else the header is ignored.
 
 ## The upgrade request
 

@@ -3,7 +3,7 @@
 base_path = "/app"
 
 [actions]
-prefix = "/api"
+prefix = "/app/api"
 
 [actions.ws]
 max_payload_bytes = 4096

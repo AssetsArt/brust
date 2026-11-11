@@ -111,8 +111,8 @@ export default function WebSockets({ blocks }: WebSocketsData) {
       <CodeBlock code={blocks.client.code} lang={blocks.client.lang} file={blocks.client.file} html={blocks.client.html} />
       <ul>
         <li>
-          The URL is the actions prefix plus the route path, and <code>[server] base_path</code> is part of the prefix when you set it: with <code>base_path = &quot;/app&quot;</code> and <code>prefix = &quot;/api&quot;</code> the socket is{' '}
-          <code>/app/api/echo</code>.
+          The URL is the actions prefix plus the route path. When you set <code>[server] base_path</code>, an explicit <code>prefix</code> must lie under it: with <code>base_path = &quot;/app&quot;</code> and <code>prefix = &quot;/app/api&quot;</code> the
+          socket is <code>/app/api/echo</code>.
         </li>
         <li>
           Only a <code>GET</code> with <code>Upgrade: websocket</code> under the actions prefix is a socket upgrade. Anywhere else the header is ignored and the request is the plain request it also is.
