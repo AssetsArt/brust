@@ -337,3 +337,46 @@ fn a_shell_whose_child_clone_stays_native_is_not_cloned() {
     );
     assert_no_clone(&tree);
 }
+
+/// Review ef7eba66: the shared shell already holds an F494 clone of its own (a stateless native Badge given literal
+/// props, cloned as on main), next to a stateless native Custom whose own clone keeps the runtime (a stateful Leaf in its
+/// rows). A clone of the shell would hold the same Badge clone and gain nothing: no clone of the shell.
+/// (Custom given JSX children instead is host-specialised first, so the shell is no candidate at all.)
+#[test]
+fn a_shell_that_already_holds_a_fixed_clone_gains_nothing_and_is_not_cloned() {
+    let sv = "import Badge from './Badge'\nimport Custom from './Custom'\nexport default function SectionView({ s }: any) {\n  switch (s.type) {\n    case 'custom':\n      return <div><Badge items={['a', 'b']} /><Custom id={s.id} nodes={s.nodes} /></div>\n    default:\n      return <hr data-id={s.id} />\n  }\n}\n";
+    let custom = "import Leaf from './Leaf'\nexport default function Custom({ id, nodes }: any) {\n  return <section id={id}>{nodes.map((n: any) => <Leaf key={n.id} l={n} />)}</section>\n}\n";
+    let leaf = "import { useState } from 'react'\nexport default function Leaf({ l }: any) {\n  const [c, setC] = useState(0)\n  return <button data-id={l.id} onClick={() => setC(c + 1)}>{l.label}{c}</button>\n}\n";
+    let badge = "import Tag from './Tag'\nexport default function Badge({ items }: any) {\n  return <ul>{items.map((i: any) => <Tag key={i} t={i} />)}</ul>\n}\n";
+    let tag = "export default function Tag({ t }: any) {\n  return <li>{t}</li>\n}\n";
+    let tree = compile(
+        PAGE,
+        &[
+            ("SectionView.tsx", sv),
+            ("Custom.tsx", custom),
+            ("Leaf.tsx", leaf),
+            ("Badge.tsx", badge),
+            ("Tag.tsx", tag),
+        ],
+    );
+    // The shared shell holds the Badge clone (F494, as on main) ...
+    assert!(
+        tree.iter()
+            .any(|c| c.source == "Badge.tsx" && c.ir["fixed_clone_of"].is_string()),
+        "{}",
+        table(&tree)
+    );
+    // ... and is not cloned itself.
+    assert!(
+        !tree
+            .iter()
+            .any(|c| c.source == "SectionView.tsx" && c.ir["fixed_clone_of"].is_string()),
+        "{}",
+        table(&tree)
+    );
+    assert!(
+        tree.iter().any(|c| c.id == "sectionView_267a48ba"),
+        "{}",
+        table(&tree)
+    );
+}
