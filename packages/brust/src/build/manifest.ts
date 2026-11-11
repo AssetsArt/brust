@@ -80,6 +80,15 @@ export interface ActionsRecord {
   streamIdleMs?: number
   streamTotalMs?: number
   maxStreams?: number
+  /** F529 `[actions.ws]`, every default filled in; absent without that table (Rust then takes its defaults). */
+  ws?: {
+    enabled: boolean
+    maxPayloadBytes: number
+    idleTimeoutS: number
+    pingIntervalS: number
+    maxConnections: number
+    backpressureBytes: number
+  }
 }
 
 /** The manifest format the Rust loader accepts (`MANIFEST_VERSION` in brust-core `manifest.rs`): the one place TS names it. */

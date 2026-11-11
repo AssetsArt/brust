@@ -85,3 +85,28 @@ test('invalid stream values fail with BuildError config (F475)', async () => {
   await fails('[actions]\nstream_idle_ms = 0\n', 'actions.stream_idle_ms must be an integer in 1..4294967295 (got 0)')
   await fails('[actions]\nmax_streams = 0\n', 'actions.max_streams must be an integer in 1..4294967295 (got 0)')
 })
+
+test('[actions.ws]: absent = no ws key; a table fills every default; values override (F529)', async () => {
+  expect('ws' in ((await loadBuildConfig(tmpApp('[actions]\n'))).actions ?? {})).toBe(false)
+  const d = { enabled: true, maxPayloadBytes: 1048576, idleTimeoutS: 120, pingIntervalS: 30, maxConnections: 10000, backpressureBytes: 1048576 }
+  expect((await loadBuildConfig(tmpApp('[actions]\n[actions.ws]\n'))).actions?.ws).toEqual(d)
+  const c = await loadBuildConfig(
+    tmpApp('[actions.ws]\nenabled = false\nmax_payload_bytes = 67108864\nidle_timeout_s = 0\nping_interval_s = 86400\nmax_connections = 1000000\nbackpressure_bytes = 1\n'),
+  )
+  expect(c.actions?.ws).toEqual({ enabled: false, maxPayloadBytes: 67108864, idleTimeoutS: 0, pingIntervalS: 86400, maxConnections: 1000000, backpressureBytes: 1 })
+})
+
+test('invalid [actions.ws] values fail with BuildError config (F529)', async () => {
+  await fails('[actions]\nws = 1\n', '[actions.ws] must be a table')
+  await fails('[actions]\nws = ["x"]\n', '[actions.ws] must be a table')
+  await fails('[actions.ws]\nmax_connection = 5\n', 'unknown key actions.ws.max_connection (allowed: enabled, max_payload_bytes, idle_timeout_s, ping_interval_s, max_connections, backpressure_bytes)')
+  await fails('[actions.ws]\nenabled = "yes"\n', 'actions.ws.enabled must be true or false')
+  await fails('[actions.ws]\nmax_payload_bytes = 0\n', 'actions.ws.max_payload_bytes must be an integer in 1..67108864 (got 0)')
+  await fails('[actions.ws]\nmax_payload_bytes = 67108865\n', 'actions.ws.max_payload_bytes must be an integer in 1..67108864 (got 67108865)')
+  await fails('[actions.ws]\nbackpressure_bytes = 0\n', 'actions.ws.backpressure_bytes must be an integer in 1..67108864 (got 0)')
+  await fails('[actions.ws]\nidle_timeout_s = -1\n', 'actions.ws.idle_timeout_s must be an integer in 0..86400 (got -1)')
+  await fails('[actions.ws]\nping_interval_s = 86401\n', 'actions.ws.ping_interval_s must be an integer in 0..86400 (got 86401)')
+  await fails('[actions.ws]\nmax_connections = 0\n', 'actions.ws.max_connections must be an integer in 1..1000000 (got 0)')
+  await fails('[actions.ws]\nmax_connections = 1.5\n', 'actions.ws.max_connections must be an integer in 1..1000000 (got 1.5)')
+  await fails('[actions.ws]\nmax_connections = "9"\n', 'actions.ws.max_connections must be an integer in 1..1000000 (got 9)')
+})

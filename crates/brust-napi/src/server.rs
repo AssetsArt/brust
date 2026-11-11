@@ -194,6 +194,7 @@ fn actions_config(a: NapiActionsOptions) -> Result<ActionsConfig, String> {
             _ => CrossSite::Reject,
         },
         stream,
+        ws: Default::default(),
     })
 }
 
@@ -658,6 +659,7 @@ mod tests {
                     total_ms: 6,
                     max_streams: Some(2),
                 },
+                ws: Default::default(),
             })
         );
         let bad = NapiActionsOptions {

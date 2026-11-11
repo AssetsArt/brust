@@ -333,6 +333,7 @@ pub fn decode_fetch_frame(b: &[u8]) -> Result<FetchResponse, CallError> {
         status: m.status,
         headers: m.headers,
         body: bytes::Bytes::copy_from_slice(body),
+        ws: m.ws,
     })
 }
 
@@ -348,6 +349,7 @@ pub(crate) fn decode_fetch_reply(
             status: m.status,
             headers: m.headers,
             body: bytes::Bytes::copy_from_slice(framed),
+            ws: m.ws,
         });
     };
     if !framed.is_empty() {
@@ -368,6 +370,7 @@ pub(crate) fn decode_fetch_reply(
         status: m.status,
         headers: m.headers,
         body,
+        ws: m.ws,
     })
 }
 
@@ -952,6 +955,7 @@ mod tests {
                 status: 200,
                 headers: vec![("x".into(), "1".into())],
                 body: bytes::Bytes::from(body.clone()),
+                ws: None,
             }
         );
         // Two Set-Cookie pairs survive in order; an empty body is fine.
@@ -1041,6 +1045,7 @@ mod tests {
                 status: 200,
                 headers: vec![("x".into(), "1".into())],
                 body: bytes::Bytes::from_static(b"hello"),
+                ws: None,
             }
         );
         assert!(

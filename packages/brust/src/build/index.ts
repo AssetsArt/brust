@@ -390,7 +390,7 @@ async function buildInto(
   if (o.trailingSlash !== 'strict') manifest.trailing_slash = o.trailingSlash
   manifest.actions =
     o.actions && o.actionsEntry
-      ? { entry: await buildActions(out, o.actionsEntry, css.maps, o.basePath), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite, ...o.actions.stream }
+      ? { entry: await buildActions(out, o.actionsEntry, css.maps, o.basePath), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite, ...o.actions.stream, ...(o.actions.ws ? { ws: o.actions.ws } : {}) }
       : null
   if (o.actionsRemote !== null) manifest.actions_remote = { prefix: o.actionsRemote }
   if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule, css.maps)
