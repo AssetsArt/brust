@@ -168,6 +168,13 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             Vec::new()
         },
         foreign: Default::default(),
+        own: Own {
+            id: ir.id.clone(),
+            local: ir.local_name.clone(),
+            export: ir.export.clone(),
+        },
+        holds_recursion: false,
+        recursive_sites: HashMap::new(),
     }
 }
 
@@ -462,6 +469,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.build_eval_instances.extend(w.eval_instances);
     ir.folded_instances.extend(w.folded_instances);
     ir.holds_island |= w.holds_island;
+    ir.holds_recursion |= w.holds_recursion;
     ir.dynamic |= w.dynamic || crate::analyze::component::has_dynamic(&ir.template);
     ir.children_no_text |= w.children_no_text || children_in_no_text(&ir.template, false);
     ir.children.extend(w.refs);
@@ -649,6 +657,21 @@ struct Walker<'s, 'c> {
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
     fused: Vec<crate::ir::FusedInstance>,
     fused_counts: HashMap<String, u32>,
+    /// F523: the component walked, as a `<Name/>` of its own template names it (a call to itself).
+    own: Own,
+    /// F523: a child of this template prints a recursive component's macro (`ComponentIR::holds_recursion`).
+    holds_recursion: bool,
+    /// F523: call sites of such a child by location, until `resolve_row_only` knows whether their row is the browser's.
+    recursive_sites: HashMap<u32, String>,
+}
+
+/// F523: who the walked component is, for the name-based test of a call to itself (`Walker::self_call`).
+struct Own {
+    id: String,
+    /// The function's local name (`ComponentIR::local_name`).
+    local: Option<String>,
+    /// The export it is compiled as (`ComponentIR::export`); `None` for the default export.
+    export: Option<String>,
 }
 
 /// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
@@ -2898,6 +2921,22 @@ impl SpreadSink {
 
 /// Client reads a `RowOnly` link implies, and the child's (name, loc) when it precomputes over props.
 type RowOnlyLink = (Vec<super::ClientUse>, Option<(String, u32)>);
+
+/// F523 (C4): a call site that cannot print a recursive component's macro (`recursive`: `<name>` is the component that
+/// renders itself, else it holds one).
+fn recursion_refused(name: &str, recursive: bool, why: &str, loc: u32) -> Diagnostic {
+    let what = if recursive {
+        format!("<{name}> renders itself")
+    } else {
+        format!("<{name}> holds a component that renders itself")
+    };
+    Diagnostic::fallback(
+        super::recursion::RULE,
+        format!("{what}, which the server prints once as a template macro, and {why}"),
+        loc,
+        "pass it values the server decides (props, loader data), or keep this component in React",
+    )
+}
 
 fn linked_prop_precompute(name: &str, loc: u32) -> Diagnostic {
     Diagnostic::fallback(
@@ -5199,6 +5238,165 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// F523 (C1): `<name>` is the walked component itself: its own function name in its own template, or its own export
+    /// imported from its own module. Decided by name, never by the module cache key (a default export is cached under its
+    /// path, its `<Name/>` would be looked up as `path#Name` and compiled a second time). A clone (a call site's copy)
+    /// keeps the function's name, so it sees its own calls as calls to itself too.
+    fn self_call(
+        &self,
+        name: &str,
+        source: Option<&str>,
+        imported: Option<&str>,
+        member: &[String],
+    ) -> bool {
+        if !member.is_empty() {
+            return false;
+        }
+        match source {
+            None => self.own.local.as_deref() == Some(name),
+            Some(s) if !crate::analyze::modules::is_relative_spec(s) => false,
+            Some(s) => {
+                let ctx = self.ctx;
+                let Some(path) = resolve(ctx.path, s, ctx.opts) else {
+                    return false;
+                };
+                let export = match imported {
+                    None | Some("default") => Export::Default,
+                    Some(n) => Export::Named(n.to_string()),
+                };
+                let (path, export) = declared_in(&path, &export, ctx.opts);
+                crate::analyze::modules::normalize(&path)
+                    == crate::analyze::modules::normalize(ctx.path)
+                    && match export {
+                        Export::Default => self.own.export.is_none(),
+                        Export::Named(n) => {
+                            self.own.export.as_deref() == Some(n.as_str())
+                                || self.own.local.as_deref() == Some(n.as_str())
+                        }
+                    }
+            }
+        }
+    }
+
+    /// F523: the walked component as its own child: no lookup (it is being compiled), no fed record, no island, no link.
+    /// `Static` until `recursion::check` decides, after the tier pass, what the calls are.
+    fn self_child(&self) -> Child {
+        Child {
+            id: Some(self.own.id.clone()),
+            path: Some(self.ctx.path.to_string()),
+            tier: Tier::Static,
+            fed: false,
+            stores: false,
+            prop_precompute: false,
+            recomputes: false,
+            spread: SpreadSink::None,
+            poly: None,
+            poly_runtime_spread: false,
+            onward: HandlerSink::default(),
+            job_roots: BTreeSet::new(),
+            job_all: false,
+            forwards_ref: false,
+            ref_site: false,
+            icon_spread: false,
+            reads_children_value: false,
+            rest_as_data: false,
+            use_id: false,
+            has_for: false,
+            hosts_children: false,
+            inner: None,
+            absent: Vec::new(),
+            ir: None,
+            job_eval: None,
+            job_outputs: Vec::new(),
+            job_fused: Vec::new(),
+            unwritten: Vec::new(),
+            shadowed: Vec::new(),
+            shadowed_input: Vec::new(),
+        }
+    }
+
+    /// F523: a `<Self …/>` in the component's own template, met by the children pass: recorded for `recursion::check`
+    /// with what keeps it from being a macro call (the call site's side; the component's own side is decided there).
+    fn self_call_site(&mut self, n: &mut Node) {
+        let Node::Component {
+            loc,
+            name,
+            props,
+            children,
+            link,
+            tier,
+            forwarded_ref,
+            ..
+        } = n
+        else {
+            return;
+        };
+        *tier = Tier::Static;
+        *link = None;
+        let why = if !children.is_empty() {
+            Some(
+                "passes JSX children to itself, which the macro would have to take as markup"
+                    .to_string(),
+            )
+        } else if *forwarded_ref || props.iter().any(|(k, _)| k == "ref") {
+            Some("passes a `ref` to itself".to_string())
+        } else if props
+            .iter()
+            .any(|(k, _)| k == crate::ir::SPREAD_KEY || k == REST_INPUT)
+        {
+            Some(
+                "spreads props into its call to itself, so the call cannot name each prop"
+                    .to_string(),
+            )
+        } else if let Some((k, _)) = props
+            .iter()
+            .find(|(_, v)| matches!(v, Expr::ClientOnly { .. }))
+        {
+            Some(format!(
+                "passes a function (`{k}`) to itself, which only the client has"
+            ))
+        } else if let Some((k, _)) = props.iter().find(|(_, v)| {
+            matches!(
+                v,
+                Expr::Raw(RawExpr {
+                    kind: RawKind::Jsx(_),
+                    ..
+                })
+            )
+        }) {
+            Some(format!("passes JSX as the prop `{k}` to itself"))
+        } else if let Some((k, _)) = props.iter().find(|(_, v)| self.reads_state(v)) {
+            Some(format!(
+                "passes a value that changes on the client (`{k}`) to itself"
+            ))
+        } else {
+            None
+        };
+        self.st.self_calls.push(*loc);
+        if let Some(why) = why {
+            self.st.self_refusals.push((*loc, why));
+        }
+        // The call is never linked: what it is given is printed once, at the server (F319).
+        for (_, v) in props.iter() {
+            let roots = self.changing_prop_roots(&self.deps_of(v));
+            self.frozen.extend(roots);
+        }
+        if !self.refs.iter().any(|r| r.name == *name) {
+            self.refs.push(ChildRef {
+                name: name.clone(),
+                id: Some(self.own.id.clone()),
+                path: Some(self.ctx.path.to_string()),
+                tier: Tier::Static,
+                nested: None,
+                x: Vec::new(),
+                holes: Vec::new(),
+            });
+        }
+        self.slot_depth += 1;
+        children.iter_mut().for_each(|c| self.node(c));
+        self.slot_depth -= 1;
+    }
+
     fn resolve_child(
         &mut self,
         name: &str,
@@ -5208,6 +5406,9 @@ impl Walker<'_, '_> {
         loc: u32,
     ) -> Child {
         let ctx = self.ctx;
+        if self.self_call(name, source, imported, member) {
+            return self.self_child();
+        }
         // R34.122: a call site the pass already specialised names its clone in the module cache.
         if source == Some(SPEC_SOURCE)
             && let Some(key) = imported
@@ -5596,6 +5797,29 @@ impl Walker<'_, '_> {
                         .filter(|j| crate::ir::feeds_instances(j))
                         .all(|j| matches!(j.kind, crate::ir::JobKind::Precompute));
                 ir.tier.clone()
+            }
+            // F523 (C6): a cycle inside one module is mutual recursion (`<A>` renders `<B>`, which renders `<A>`): no
+            // import is involved, so the message says what it is. Across modules it is a real import cycle.
+            Lookup::Cycle
+                if path.as_deref().is_some_and(|p| {
+                    crate::analyze::modules::normalize(p)
+                        == crate::analyze::modules::normalize(self.ctx.path)
+                }) =>
+            {
+                let own = self
+                    .own
+                    .local
+                    .clone()
+                    .unwrap_or_else(|| "this component".into());
+                self.diagnostics.push(Diagnostic::fallback(
+                    super::recursion::RULE,
+                    format!(
+                        "<{own}> renders <{name}>, which renders it: only a component that renders itself compiles to a template, not two that render each other"
+                    ),
+                    loc,
+                    "merge them into one component that renders itself, or keep them in React; the child renders as a React island",
+                ));
+                react("mutual recursion")
             }
             Lookup::Cycle => {
                 self.diagnostics.push(Diagnostic::fallback(
@@ -6583,7 +6807,19 @@ impl Walker<'_, '_> {
                     self.module_rows
                         .set(self.module_rows.get() - usize::from(module));
                 }
-                Node::Component { link, children, .. } => {
+                Node::Component {
+                    loc,
+                    link,
+                    children,
+                    ..
+                } => {
+                    // F523 (C4): a call site that prints a recursive macro in a row the client may re-create; refused by
+                    // `recursion::check` if the tier makes the rows the browser's (a static component prints them once).
+                    if let Some(name) = self.recursive_sites.remove(&*loc)
+                        && reactive
+                    {
+                        self.st.recursion_rows.push((*loc, name));
+                    }
                     if let Some(id) = *link
                         && let Some((uses, pc)) = self.row_only.remove(&id)
                     {
@@ -6633,6 +6869,11 @@ impl Walker<'_, '_> {
             self.slot_depth += 1;
             children.iter_mut().for_each(|c| self.node(c));
             self.slot_depth -= 1;
+            return;
+        }
+        // F523: a call to itself is no child to compile: recorded, decided after the tier pass (`recursion::check`).
+        if self.self_call(name, source.as_deref(), imported.as_deref(), member) {
+            self.self_call_site(n);
             return;
         }
         let child = self.resolve_child(name, source.as_deref(), imported.as_deref(), member, *loc);
@@ -6687,6 +6928,15 @@ impl Walker<'_, '_> {
             || child.ir.as_ref().is_some_and(|c| c.holds_island)
         {
             self.holds_island = true;
+        }
+        // F523: a child that prints a recursive macro prints it into this template too (React renders its own tree).
+        let holds_recursion = matches!(child.tier, Tier::Static | Tier::Native)
+            && child.ir.as_ref().is_some_and(|c| c.holds_recursion);
+        self.holds_recursion |= holds_recursion;
+        // F523 (C3): a child the server feeds per instance cannot be inlined into a macro body (its slots are numbered by
+        // the route's records); a component that calls itself and renders one is refused after the tier pass.
+        if child.fed && !matches!(child.tier, Tier::React { .. }) {
+            self.st.fed_children.push((*loc, name.clone()));
         }
         // R4.4: a child whose template (with what it inlines) prints a `<Dynamic>` slot prints it into this one too (a
         // React child holding one is refused on its own, `dynamic-in-react`).
@@ -7499,6 +7749,22 @@ impl Walker<'_, '_> {
                     })
                 {
                     need = LinkNeed::Always;
+                }
+                // F523 (C4): a recursive macro is printed by the server, once: a call site that would link a static
+                // child printing one (a value that changes on the client) is refused here; one in a row is decided by
+                // `resolve_row_only`. A native child that holds one keeps its own instance: it refused, in its own
+                // pass, any value of its that changes and reaches the macro.
+                if holds_recursion {
+                    if need == LinkNeed::Always && matches!(child.tier, Tier::Static) {
+                        self.diagnostics.push(recursion_refused(
+                            name,
+                            child.ir.as_deref().is_some_and(|c| c.recursion.is_some()),
+                            "this call passes it a value that changes on the client",
+                            *loc,
+                        ));
+                    } else {
+                        self.recursive_sites.insert(*loc, name.clone());
+                    }
                 }
                 // F319: a child this component does not link takes its props once: a prop of this component it is
                 // given would not be followed.

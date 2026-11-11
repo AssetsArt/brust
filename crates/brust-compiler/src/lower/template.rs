@@ -115,24 +115,7 @@ impl Inline {
     /// What prop `name` reads: the last named binding, or a spread after it that may carry the
     /// key (`spread_get(d, "name", earlier)`).
     pub fn get(&self, name: &str) -> Option<PropBinding> {
-        let mut cur: Option<PropBinding> = None;
-        for s in &self.segs {
-            match s {
-                Seg::Named(k, b) if k == name => cur = Some(b.clone()),
-                Seg::Named(..) => {}
-                Seg::Spread(d) => {
-                    let earlier = match &cur {
-                        Some(PropBinding::Expr(e)) => e.clone(),
-                        _ => UNDEFINED.into(),
-                    };
-                    cur = Some(PropBinding::Expr(format!(
-                        "spread_get({d}, {}, {earlier})",
-                        jinja_string(name)
-                    )));
-                }
-            }
-        }
-        cur
+        segs_get(&self.segs, name)
     }
 
     /// The call site WRITES prop `name` (a named attribute, never one a spread may carry): what a compiler-reserved prop
@@ -188,6 +171,29 @@ impl Inline {
             .collect();
         format!("spread_merge({})", segs.join(", "))
     }
+}
+
+/// What prop `name` reads among a call site's `segs`: the last named binding, or a spread after it that may carry the
+/// key (`spread_get(d, "name", earlier)`).
+fn segs_get(segs: &[Seg], name: &str) -> Option<PropBinding> {
+    let mut cur: Option<PropBinding> = None;
+    for s in segs {
+        match s {
+            Seg::Named(k, b) if k == name => cur = Some(b.clone()),
+            Seg::Named(..) => {}
+            Seg::Spread(d) => {
+                let earlier = match &cur {
+                    Some(PropBinding::Expr(e)) => e.clone(),
+                    _ => UNDEFINED.into(),
+                };
+                cur = Some(PropBinding::Expr(format!(
+                    "spread_get({d}, {}, {earlier})",
+                    jinja_string(name)
+                )));
+            }
+        }
+    }
+    cur
 }
 
 /// `d` without the keys in `omit` (a rest object), as jinja.
@@ -334,6 +340,38 @@ pub struct Printer<'a, 'c> {
     /// F515: this printer prints inside a row the client builds from its blank template (an `x-for` row of a list that
     /// can change, here or in a printer this one is inlined into): nothing in it is server-decided for good.
     in_client_row: bool,
+    /// F523: the macros of recursive components this lowering prints, shared by all its printers (like `twice`); the root
+    /// printer puts their definitions at the head of the template.
+    macros: Rc<std::cell::RefCell<Macros>>,
+    /// F523: this printer prints a recursive component's macro body: a call to itself passes the depth counter on.
+    rc_body: bool,
+}
+
+/// F523: the macros printed for one lowering: the ids begun (a body being printed is begun but not defined yet, so the
+/// call to itself inside it prints a call only, never the body again) and the definitions in the order they were
+/// finished (a macro the body of another calls is defined first: a macro body sees names as they were at definition).
+#[derive(Default)]
+struct Macros {
+    begun: Vec<String>,
+    defs: Vec<String>,
+}
+
+/// F523: the depth counter, the last parameter of every recursive component's macro.
+const RC_DEPTH: &str = "__rc_depth";
+
+/// F523: the template name of a prop's macro parameter (mangled: a prop may be named like a brust-jinja global or `caller`).
+fn rc_param(prop: &str) -> String {
+    format!("_p_{prop}")
+}
+
+/// F523: the macro of the recursive component `id` (an id is `<lowerCamel>_<hex>`; a `$` a JS name may hold is no
+/// template identifier character).
+fn rc_macro(id: &str) -> String {
+    let id: String = id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    format!("__rc_{id}")
 }
 
 /// F511: the bytes of visible + hidden copies one component may print. Each nesting level of reactive branches and
@@ -389,6 +427,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             spread_control: None,
             twice: Rc::default(),
             in_client_row: false,
+            macros: Rc::default(),
+            rc_body: false,
         })
     }
 
@@ -398,9 +438,30 @@ impl<'a, 'c> Printer<'a, 'c> {
             self.out
                 .push_str(&format!("{{# brust v2 · {} · do not edit -#}}\n", ir.id));
         }
-        self.preamble();
-        let structural = self.f.structural;
-        self.node(&ir.template, &structural.template, true);
+        let head = self.out.len();
+        match &ir.recursion {
+            // F523 (C2): a recursive component lowered on its own (a route, a runtime artifact): its macro and one call,
+            // its props read from the render's top-level variables.
+            Some(params) if self.inline.is_none() => {
+                self.define_macro(ir);
+                let mut args: Vec<String> = params.clone();
+                args.push("1".into());
+                self.out.push_str(&format!(
+                    "{{{{ {}({}) }}}}",
+                    rc_macro(&ir.id),
+                    args.join(", ")
+                ));
+            }
+            _ => {
+                self.preamble();
+                let structural = self.f.structural;
+                self.node(&ir.template, &structural.template, true);
+            }
+        }
+        if self.inline.is_none() {
+            let defs: String = self.macros.borrow().defs.concat();
+            self.out.insert_str(head, &defs);
+        }
         // F395: every finding of this printer points into this component's own module.
         let mut diagnostics = self.diagnostics;
         for d in &mut diagnostics {
@@ -2736,8 +2797,13 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
             return;
         }
-        // Native / static child: inline its template.
-        let Some(child_ir) = (self.ctx.resolve)(&id) else {
+        // Native / static child: inline its template. F523: a call to itself is the component being printed.
+        let child_ir = if id == ir.id {
+            Some(ir)
+        } else {
+            (self.ctx.resolve)(&id)
+        };
+        let Some(child_ir) = child_ir else {
             self.diagnostics.push(Diagnostic::error(
                 "lower-child",
                 format!("child <{name}> ({id}) was not compiled"),
@@ -2746,6 +2812,15 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
             return;
         };
+        // F523 (C2): a recursive component is a macro call, never inlined text (its own call would inline forever).
+        if child_ir.recursion.is_some() {
+            let extra = extra.is_some()
+                || props
+                    .iter()
+                    .any(|(k, _)| k == crate::ir::COLLECTION_ITEM_PROP);
+            self.recursive_call(name, *loc, child_ir, props, sprops, link.is_some() || extra);
+            return;
+        }
         // A static wrapper's fed child was re-based onto the component the instance records belong to (analysis,
         // `children.rs` rebase): its record is there, numbered with the shared counter.
         let rebased = {
@@ -2965,6 +3040,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         p.blank = self.blank;
         p.in_select = self.in_select;
         p.twice = self.twice.clone();
+        p.macros = self.macros.clone();
         p.in_client_row = self.in_client_row();
         // The inlined component numbers its fed children with this printer's counters (F164 re-base).
         p.inst_ir = self.inst_ir;
@@ -2997,6 +3073,121 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.diagnostics.append(&mut p.diagnostics);
         self.instances = std::mem::take(&mut p.instances);
+    }
+
+    /// F523 (C2, C4, C5): a call of the recursive component `child_ir`: `{{ <macro>(<args>, <depth>) }}`, its arguments the
+    /// call site's props in this scope, one per macro parameter, positionally. The first call defines the macro. A call
+    /// the server cannot print once (in a row the browser builds, or linked) is refused; the analysis refuses those call
+    /// sites first (`recursion-unsupported`), so this is a backstop.
+    fn recursive_call(
+        &mut self,
+        name: &str,
+        loc: u32,
+        child_ir: &'c ComponentIR,
+        props: &[(String, Expr)],
+        sprops: &[(String, Expr)],
+        bound: bool,
+    ) {
+        // The zero-row template of a list whose rows the client never re-creates (a fixed list, F515): never cloned.
+        if self.blank {
+            return;
+        }
+        if bound || self.in_client_row() {
+            self.diagnostics.push(Diagnostic::error(
+                crate::analyze::passes::recursion::RULE,
+                format!(
+                    "<{name}> renders itself (a template macro the server prints once), and here it sits in a list row the browser builds or takes props that change on the client"
+                ),
+                loc,
+                "pass it values the server decides (props, loader data), or keep this component in React",
+            ));
+            return;
+        }
+        let Some(params) = child_ir.recursion.as_ref() else {
+            return;
+        };
+        self.define_macro(child_ir);
+        let (segs, _, _) = self.call_segs(loc, name, props, sprops);
+        let mut args: Vec<String> = params
+            .iter()
+            .map(|p| match segs_get(&segs, p) {
+                Some(PropBinding::Expr(e)) => e,
+                _ => UNDEFINED.to_string(),
+            })
+            .collect();
+        args.push(if self.rc_body {
+            format!("{RC_DEPTH} + 1")
+        } else {
+            "1".to_string()
+        });
+        self.out.push_str(&format!(
+            "{{{{ {}({}) }}}}",
+            rc_macro(&child_ir.id),
+            args.join(", ")
+        ));
+    }
+
+    /// F523: defines the macro of the recursive component `ir` once per lowering: its body printed by a static printer
+    /// whose props are the macro's parameters, after the depth guard (C5). A body being printed is begun already, so the
+    /// call to itself inside it prints only a call.
+    fn define_macro(&mut self, ir: &'c ComponentIR) {
+        let Some(params) = ir.recursion.as_ref() else {
+            return;
+        };
+        if self.macros.borrow().begun.contains(&ir.id) {
+            return;
+        }
+        self.macros.borrow_mut().begun.push(ir.id.clone());
+        let inline = Inline {
+            live_keys: Vec::new(),
+            segs: params
+                .iter()
+                .map(|p| Seg::Named(p.clone(), PropBinding::Expr(rc_param(p))))
+                .collect(),
+            bind: None,
+            slots: String::new(),
+            slot_loops: Vec::new(),
+            suffix: "_r".into(),
+            as_child: None,
+            folded: None,
+            rename: Default::default(),
+            client_only: Vec::new(),
+        };
+        let Some(mut p) = Printer::new(
+            ir,
+            self.ctx,
+            Some(inline),
+            self.loop_var,
+            self.seeds.clone(),
+        ) else {
+            return;
+        };
+        // Printed once for every call: nothing of the first call's place (a row, a hidden copy, a select) is in it.
+        p.twice = self.twice.clone();
+        p.macros = self.macros.clone();
+        p.rc_body = true;
+        p.native = false;
+        p.inline_host = Some((ir.id.clone(), None));
+        p.preamble();
+        p.node(&ir.template, &p.f.structural.template, true);
+        let source = &ir.source;
+        for d in &mut p.diagnostics {
+            d.file.get_or_insert_with(|| source.clone());
+        }
+        self.diagnostics.append(&mut p.diagnostics);
+        let mut list: Vec<String> = params.iter().map(|q| rc_param(q)).collect();
+        list.push(RC_DEPTH.to_string());
+        let cap = crate::analyze::passes::recursion::RECURSION_CAP;
+        let display = crate::analyze::passes::recursion::display_name(ir);
+        // No whitespace of its own: a macro definition prints nothing, and its body starts and ends with the component's.
+        let def = format!(
+            "{{%- macro {}({}) %}}{{% if {RC_DEPTH} > {cap} %}}{{{{ recursion_limit({}, {cap}) }}}}{{% endif %}}{}{{% endmacro %}}",
+            rc_macro(&ir.id),
+            list.join(", "),
+            jinja_string(&display),
+            p.out
+        );
+        self.macros.borrow_mut().defs.push(def);
     }
 
     /// The child element of a call with a literal `asChild` (R34.29 b), printed in this scope. The
@@ -3235,6 +3426,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         p.blank = self.blank;
         p.in_select = self.in_select;
         p.twice = self.twice.clone();
+        p.macros = self.macros.clone();
         p.in_client_row = self.in_client_row();
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);

@@ -255,7 +255,23 @@ fn compile_uncached(
         is_root: modules.borrow().is_root(&cache_key(path, export)),
         specialised: false,
     };
+    // F523 (C6): while a default export compiles, its function's own name is in progress too: a local component that
+    // renders `<Name/>` back (mutual recursion) meets the cycle and says so, instead of compiling a second copy of it.
+    let alias = match export {
+        Export::Default => ir
+            .local_name
+            .as_ref()
+            .map(|n| cache_key(path, &Export::Named(n.clone())))
+            .filter(|k| modules.borrow().get(k).is_none()),
+        Export::Named(_) => None,
+    };
+    if let Some(k) = &alias {
+        modules.borrow_mut().insert(k.clone(), Entry::InProgress);
+    }
     run_passes(&mut ir, &ctx);
+    if let Some(k) = &alias {
+        modules.borrow_mut().remove(k);
+    }
     finish_diagnostics(&mut ir, parsed.text());
     ir.alias_imports = parsed.alias_imports();
     Ok(ir)
