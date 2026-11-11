@@ -47,6 +47,8 @@ pub struct CoreConfig {
     pub dev_token: Option<String>,
     /// F507: who may read `/_brust/cache/stats`; the default is nobody (the path answers 404).
     pub stats: crate::config::StatsAccess,
+    /// F519 (R5.4): warm runtime components kept (`[components] cache_entries`); `None` = 2048.
+    pub components_cache_entries: Option<usize>,
 }
 
 /// The shared core state, one per server.
@@ -109,6 +111,9 @@ pub struct Core<H: Host> {
     /// The invalidation floor raised by replayed broadcasts (spec §4.2.3, ruling L7c).
     #[doc(hidden)]
     pub l2_floor: SharedFloor,
+    /// F519: the runtime-component registry; `None` when no component holds a `<Dynamic>` slot.
+    #[doc(hidden)]
+    pub components: Option<Arc<crate::components::Registry>>,
 }
 
 impl<H: Host> Core<H> {
@@ -158,6 +163,11 @@ impl<H: Host> Core<H> {
         .map(String::into_boxed_str);
         // One invalidation clock for both caches: `page()` stamps it once per request (F89).
         let clock = Arc::new(InvalClock::default());
+        let components = crate::components::Registry::for_manifest(
+            &loaded.manifest,
+            cfg.components_cache_entries,
+        )
+        .map(Arc::new);
         Ok(Core {
             host,
             routes,
@@ -195,6 +205,7 @@ impl<H: Host> Core<H> {
             l2: cfg.l2,
             l2_counters: Arc::default(),
             l2_floor: SharedFloor::default(),
+            components,
         })
     }
 

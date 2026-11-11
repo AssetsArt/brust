@@ -20,6 +20,7 @@ use crate::body::{self, head_only};
 use crate::cache::key_expr::EvalCtx;
 use crate::cache::stamp::ReadStamp;
 use crate::cache::{CacheKey, JobKey, RenderedBody, build_cache_key};
+use crate::components::{NEGATIVE_TTL_SECS, RenderSlots};
 use crate::core::Core;
 use crate::host::{CallError, Host, JobStore, PageCache, RequestHead, StaticRoot};
 use crate::inputs::{self, Path};
@@ -30,12 +31,13 @@ use crate::manifest::{
     ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteCache, RouteRecord, Tier,
 };
 use crate::plan::{Lookup, PlanRow, PlanSeed, PlanSrc, PlannedCall};
+use crate::protocol::ComponentRequest;
 use crate::protocol::{
     Headers, JobCall, JobResult, JobsRequest, LoaderRequest, LoaderResponse, Verdict,
 };
 use crate::render::{
     Overlay, RenderError, Renderer, ensure_doctype, hoist_head_into, inject_css_into,
-    inject_document_assets_with_root_into, inject_generator_into, use_ids,
+    inject_document_assets_full_into, inject_generator_into, use_ids,
 };
 use crate::routing::routes::{Search, decode_search};
 use crate::static_rules::{IMMUTABLE, asset_lookup_key, is_hashed, safe_rel};
@@ -158,6 +160,19 @@ pub async fn handle<H: Host>(
             &[("cache-control".into(), "no-store".into())],
             json,
         );
+    }
+    // F519 (R5.9 amended): a runtime component's chunk, served from the registry, before the static root.
+    if let Some(reg) = &s.components
+        && let Some(rest) = fw.strip_prefix("/_brust/rc/")
+    {
+        let resp = crate::components::chunk(s, reg, rest, headers).await;
+        tracing::debug!(
+            target: "brust::request",
+            path = path_only,
+            status = resp.status().as_u16(),
+            "runtime component chunk"
+        );
+        return if head { head_only(resp) } else { resp };
     }
     let static_root = if let Some(rel) = fw.strip_prefix("/_brust/") {
         Some((StaticRoot::Brust, rel))
@@ -381,7 +396,9 @@ async fn page<H: Host>(
     let mut planned: Option<(PlannedCall, Vec<JobResult>)> = None;
     // M3-F S7b: a loader-less route still calls the worker when its chain reads a store, so the
     // snapshot (defaults included) is seeded and tagged. No loaders and no stores: zero calls.
-    if !route.loaders.is_empty() || s.plans.chain_has_stores(&route.chain) {
+    // F519 (R5.8): a route with a `<Dynamic>` slot calls it too: the worker seeds every exposed store.
+    let has_slots = s.components.is_some() && s.plans.chain_has_dynamic(&route.chain);
+    if !route.loaders.is_empty() || s.plans.chain_has_stores(&route.chain) || has_slots {
         let req = LoaderRequest {
             route_id: &route.id,
             params,
@@ -587,7 +604,33 @@ async fn page<H: Host>(
         _ => None,
     };
     let t_render = meta.trace.is_some().then(|| s.host.now_ns());
-    let rendered = render_document(s, route, ri, &ctx);
+    // F519 (R5.5): the page's own view of the runtime-component registry; a slot whose ref is cold
+    // prints nothing in this pass, then ONE `component` call and one more pass over the page's map.
+    let slots = match (&s.components, has_slots) {
+        (Some(reg), true) => Some(Arc::new(RenderSlots::new(
+            Arc::clone(reg),
+            s.host.now_ns(),
+            ctx.get(STORE_KEY)
+                .map_or(minijinja::Value::UNDEFINED, Node::to_value),
+        ))),
+        _ => None,
+    };
+    let mut rendered = render_document(s, route, ri, &ctx, slots.as_ref());
+    if let Some(sl) = &slots
+        && rendered.is_ok()
+    {
+        let cold = sl.cold();
+        if !cold.is_empty() {
+            let r = s.host.component(&ComponentRequest { refs: &cold }).await;
+            if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
+                s.worker_calls.incr();
+                meta.bun_calls += 1;
+            }
+            sl.resolved(&cold, r);
+            rendered = render_document(s, route, ri, &ctx, slots.as_ref());
+        }
+        sl.finish();
+    }
     if let (Some(t0), Some(t)) = (t_render, &mut meta.trace) {
         t.render_ms = Some(s.host.now_ns().saturating_sub(t0) as f64 / 1e6);
         if let Err(e) = &rendered {
@@ -598,9 +641,21 @@ async fn page<H: Host>(
         Ok(h) => h,
         Err(e) => return render_failed(route, &e),
     };
+    // F519 (R5.7 amended): a slot that failed by error keeps the page out of both caches; a missing
+    // ref caps its life at the negative memory's.
+    let slot_failed = slots.as_ref().is_some_and(|sl| sl.saw_failure());
+    let slot_missing = slots.as_ref().is_some_and(|sl| sl.saw_missing());
+    let store =
+        cache_key.is_some() && status == 200 && cacheable && !slot_failed && route.cache.is_some();
+    let ttl_of = |c: &RouteCache| {
+        if slot_missing {
+            c.ttl_seconds.min(NEGATIVE_TTL_SECS)
+        } else {
+            c.ttl_seconds
+        }
+    };
     // One header map per request. Only a render that is stored needs a second
     // copy (the L1 entry's); a BYPASS or an uncached route sends the only one.
-    let store = cache_key.is_some() && status == 200 && cacheable && route.cache.is_some();
     let response_headers = body::header_map(HTML, &extra);
     let body = Arc::new(RenderedBody {
         status,
@@ -630,10 +685,11 @@ async fn page<H: Host>(
         {
             let b = Arc::clone(&body);
             let prefix = k.prefix.clone();
+            let ttl = ttl_of(c);
             if s.l1
-                .insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags, since)
+                .insert(k, body, Duration::from_secs(ttl), &c.tags, since)
             {
-                l2_write_back(s, w, &b, c, full, &prefix);
+                l2_write_back(s, w, &b, c, ttl, full, &prefix);
             } else {
                 tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
             }
@@ -643,7 +699,7 @@ async fn page<H: Host>(
         && let Some(c) = &route.cache
         && !s
             .l1
-            .insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags, since)
+            .insert(k, body, Duration::from_secs(ttl_of(c)), &c.tags, since)
     {
         tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
     }
@@ -751,6 +807,7 @@ fn l2_write_back<H: Host>(
     (key, stamp): (L2Key, Option<u64>),
     b: &RenderedBody,
     c: &RouteCache,
+    ttl_seconds: u64,
     full: &str,
     prefix: &str,
 ) {
@@ -765,7 +822,7 @@ fn l2_write_back<H: Host>(
         body: b.html.clone(),
     };
     let meta = L2SetMeta {
-        ttl_ms: c.ttl_seconds.saturating_mul(1000),
+        ttl_ms: ttl_seconds.saturating_mul(1000),
         tags: c.tags.clone(),
         method: "GET".into(),
         path: full.split('?').next().unwrap_or(full).to_owned(),
@@ -893,15 +950,20 @@ fn render_document<H: Host>(
     route: &RouteRecord,
     ri: usize,
     ctx: &Node,
+    slots: Option<&Arc<RenderSlots>>,
 ) -> Result<Bytes, RenderError> {
     let mut out = String::with_capacity(s.render_hints[ri].load(Ordering::Relaxed));
-    let root = render_chain_root_into(
+    let slot_value = slots.map(|sl| {
+        brust_jinja::slot::SlotHost::value(Arc::clone(sl) as Arc<dyn brust_jinja::slot::SlotRender>)
+    });
+    let root = render_chain_root_with(
         &s.manifest,
         &s.renderer,
         &route.id,
         &route.chain,
         ctx,
         &mut out,
+        slot_value.as_ref(),
     )?;
     ensure_doctype(&mut out);
     hoist_head_into(&mut out);
@@ -909,13 +971,15 @@ fn render_document<H: Host>(
         inject_generator_into(&mut out, tag);
     }
     inject_css_into(&mut out, &route.css, &s.manifest.base_path);
-    inject_document_assets_with_root_into(
+    let extra = slots.map(|sl| sl.assets());
+    inject_document_assets_full_into(
         &mut out,
         &route.chain,
         &s.manifest,
         ctx.get(STORE_KEY),
         s.action_prefix_tag.as_deref(),
         root.as_deref(),
+        extra.as_ref(),
     );
     // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
     let hint = next_hint(out.len());
@@ -1057,6 +1121,20 @@ pub fn render_chain_root_into(
     ctx: &Node,
     out: &mut String,
 ) -> Result<Option<String>, RenderError> {
+    render_chain_root_with(manifest, renderer, route_id, chain, ctx, out, None)
+}
+
+/// [`render_chain_root_into`] with the page's runtime-component slot renderer (F519) in every level's scope under
+/// `brust_jinja::slot::SLOT_KEY` (an overlay pair, so loader data of that name never reaches `brust_dynamic`).
+pub(crate) fn render_chain_root_with(
+    manifest: &Manifest,
+    renderer: &Renderer,
+    route_id: &str,
+    chain: &[String],
+    ctx: &Node,
+    out: &mut String,
+    slots: Option<&minijinja::Value>,
+) -> Result<Option<String>, RenderError> {
     let children = ctx.get(CHILDREN_KEY);
     let own_all = ctx.get(OWN_KEY);
     // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -1068,18 +1146,22 @@ pub fn render_chain_root_into(
     // Per component: Arc views of its child-slot and own-job maps (no copy),
     // looked up own first, then children, then its `_idN`, then the base.
     let overlay = |id: &str| {
-        let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
+        let use_id_slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
         let mut maps = Vec::with_capacity(2);
         for all in [children, own_all] {
             if let Some(m @ Node::Map(_)) = all.and_then(|c| c.get(id)) {
                 maps.push(m.to_value());
             }
         }
+        let mut pairs: Vec<(String, minijinja::Value)> = use_ids(route_id, id, use_id_slots)
+            .into_iter()
+            .map(|(k, v)| (k, minijinja::Value::from(v)))
+            .collect();
+        if let Some(v) = slots {
+            pairs.push((brust_jinja::slot::SLOT_KEY.to_string(), v.clone()));
+        }
         Overlay {
-            pairs: use_ids(route_id, id, slots)
-                .into_iter()
-                .map(|(k, v)| (k, minijinja::Value::from(v)))
-                .collect(),
+            pairs,
             maps,
             props: Some(props.clone()),
         }
@@ -1529,6 +1611,8 @@ struct CompTpl {
     deep_jobs: bool,
     /// M3-F: this component, a child or an ssr job target reads a store module (transitive).
     deep_stores: bool,
+    /// F519: this component or a child holds a `<Dynamic>` slot (transitive).
+    deep_dynamic: bool,
 }
 
 #[derive(Debug)]
@@ -1638,6 +1722,7 @@ impl PlanIndex {
                 use_id_slots: c.use_id_slots,
                 deep_jobs: false,
                 deep_stores: false,
+                deep_dynamic: false,
             });
         }
         for i in 0..comps.len() {
@@ -1653,6 +1738,8 @@ impl PlanIndex {
             let deep = reads_store(m, id, &mut seen);
             let i = by_id[id];
             comps[i].deep_stores = deep;
+            let mut seen = std::collections::HashSet::new();
+            comps[i].deep_dynamic = holds_slot(m, id, &mut seen);
         }
         Ok(PlanIndex { comps, by_id })
     }
@@ -1674,6 +1761,15 @@ impl PlanIndex {
             self.by_id
                 .get(id)
                 .is_some_and(|&i| self.comps[i].deep_stores)
+        })
+    }
+
+    /// F519: some chain component (or a child below it) holds a `<Dynamic>` slot (R5.8).
+    pub(crate) fn chain_has_dynamic(&self, chain: &[String]) -> bool {
+        chain.iter().any(|id| {
+            self.by_id
+                .get(id)
+                .is_some_and(|&i| self.comps[i].deep_dynamic)
         })
     }
 
@@ -1702,6 +1798,21 @@ fn reads_store<'a>(
             .iter()
             .filter_map(|j| j.target.as_deref())
             .any(|t| reads_store(m, t, seen))
+}
+
+/// F519: `id` or a child below it (transitive, cycle-safe) holds a `<Dynamic>` slot.
+fn holds_slot<'a>(
+    m: &'a Manifest,
+    id: &'a str,
+    seen: &mut std::collections::HashSet<&'a str>,
+) -> bool {
+    if !seen.insert(id) {
+        return false;
+    }
+    let Some(c) = m.components.get(id) else {
+        return false;
+    };
+    c.dynamic || c.children.iter().any(|ch| holds_slot(m, &ch.id, seen))
 }
 
 fn job_tpl(j: &JobRecord) -> Result<JobTpl, String> {

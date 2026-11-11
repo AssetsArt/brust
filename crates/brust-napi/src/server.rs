@@ -256,6 +256,8 @@ pub struct StartOptions {
     /// F507: the secret `stats = "token"` compares `Authorization: Bearer` with (resolved from its env reference by the
     /// JS side); never logged. Boot error `stats: …` for a mode and token that do not go together.
     pub stats_token: Option<String>,
+    /// F519 (R5.4): runtime components kept warm (`[components] cache_entries`); absent = 2048.
+    pub components_cache_entries: Option<u32>,
 }
 
 /// Boot the server (manifest, routes, templates, bind). Throws on any boot
@@ -303,6 +305,7 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
             opts.stats_token,
         )
         .map_err(|e| napi::Error::from_reason(format!("stats: {e}")))?,
+        components_cache_entries: opts.components_cache_entries.map(|n| n.max(1) as usize),
         ..Config::default()
     };
     let s = start(cfg).map_err(napi::Error::from_reason)?;

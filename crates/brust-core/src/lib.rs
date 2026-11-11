@@ -23,6 +23,7 @@ pub mod actions;
 #[doc(hidden)]
 pub mod body;
 pub mod cache;
+pub mod components;
 pub mod compress;
 pub mod config;
 #[doc(hidden)]

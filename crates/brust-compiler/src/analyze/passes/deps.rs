@@ -582,6 +582,12 @@ impl Walker<'_> {
             }
             Node::Text(_) | Node::Outlet => {}
             Node::Slot(e) => self.expr(e, out),
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                self.expr(component, out);
+                self.expr(props, out);
+            }
             Node::If {
                 cond, then, else_, ..
             } => {

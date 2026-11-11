@@ -156,6 +156,12 @@ fn body_reads(n: &Node, st: &PassState, item: &str, out: &mut ItemRead) {
             children.iter().for_each(|c| body_reads(c, st, item, out));
         }
         Node::Fragment(cs) => cs.iter().for_each(|c| body_reads(c, st, item, out)),
+        Node::Dynamic {
+            component, props, ..
+        } => {
+            raw_reads(component, st, item, out);
+            raw_reads(props, st, item, out);
+        }
         Node::Text(_) | Node::Outlet => {}
     }
 }
@@ -180,7 +186,7 @@ fn list_items<'a>(n: &'a Node, root: &str, st: &PassState, out: &mut Vec<(String
             .iter()
             .chain(else_)
             .for_each(|c| list_items(c, root, st, out)),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
     }
 }
 

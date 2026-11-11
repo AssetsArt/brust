@@ -312,6 +312,44 @@ pub struct JobResult {
     pub error: Option<String>,
 }
 
+/// F519 `component` call request (R5.2): every cold ref of one render, in one call.
+#[derive(Debug, Serialize)]
+pub struct ComponentRequest<'a> {
+    pub refs: &'a [String],
+}
+
+/// F519 `component` call response: `{ results: [{ ref, artifact } | { ref, missing: true } | { ref, error }] }`.
+/// The artifact stays JSON here: each one is checked on its own (a bad one refuses that ref only).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ComponentResponse {
+    #[serde(default)]
+    pub results: Vec<ComponentResult>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComponentResult {
+    #[serde(rename = "ref")]
+    pub reference: String,
+    #[serde(default)]
+    pub artifact: Option<serde_json::Value>,
+    #[serde(default)]
+    pub missing: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl ComponentResult {
+    /// `{ ref, missing: true }`.
+    pub fn missing(reference: &str) -> Self {
+        ComponentResult {
+            reference: reference.to_string(),
+            artifact: None,
+            missing: true,
+            error: None,
+        }
+    }
+}
+
 /// A1 `fetch` request: `{ method, url, headers: [[k,v]…], body: {text}|{b64}|{heap}|{stream}|null, req }`. `headers`
 /// are PAIRS (repeated names survive; `req.headers` is an object and collapses them — F5). `url` =
 /// path + query as received.

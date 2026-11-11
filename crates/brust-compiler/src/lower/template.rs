@@ -34,8 +34,9 @@ use std::rc::Rc;
 pub enum PropBinding {
     /// A jinja expression in the parent's scope.
     Expr(String),
-    /// JSX children: markup printed in the parent's scope.
-    Markup(String),
+    /// JSX children: markup printed in the parent's scope, and the location of a `<Dynamic>` slot it holds (F519: the
+    /// child refuses to paste it into a row the browser builds).
+    Markup(String, Option<u32>),
     /// An event handler the parent hoisted (shadcn S1.3): the `x-on-*` directive value naming the
     /// parent's member. Bound where a spread lands it on an element; never a value.
     Handler(String),
@@ -318,6 +319,9 @@ pub struct Printer<'a, 'c> {
     /// F432: printing the children a component call hands down as markup. The component may place them inside a
     /// controlled `<select>` (the shadcn wrapper `<select {...props}/>`), whose value the options then read as `__select`.
     component_children: u32,
+    /// F519: a `<Dynamic>` slot printed (or pasted from a caller's children) since the last reset: the location carried
+    /// with the children markup a component call hands down.
+    markup_dynamic: Option<u32>,
     /// F420 / F421: the element being opened is a `<select>` / `<textarea>` whose `value` becomes `selected` options /
     /// text content, so its own `value` attribute is not printed.
     skip_value_print: bool,
@@ -380,6 +384,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             fwd_ref: None,
             in_select: false,
             component_children: 0,
+            markup_dynamic: None,
             skip_value_print: false,
             spread_control: None,
             twice: Rc::default(),
@@ -899,6 +904,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             (Node::Text(t), _) if self.raw_text => self.out.push_str(&raw_text(t)),
             (Node::Text(t), _) => self.out.push_str(&text(t)),
             (Node::Outlet, Node::Outlet) => self.out.push_str("{{ __outlet | safe }}"),
+            (Node::Dynamic { .. }, Node::Dynamic { .. }) => self.dynamic_slot(n, s),
             (Node::Slot(e), Node::Slot(_)) => {
                 self.slot(e, Some(s), false);
             }
@@ -918,6 +924,128 @@ impl<'a, 'c> Printer<'a, 'c> {
     fn nodes(&mut self, cs: &[Node], ss: &[Node]) {
         for (c, s) in cs.iter().zip(ss) {
             self.node(c, s, false);
+        }
+    }
+
+    /// R4.2 (F519): `<Dynamic>` prints one server call, `{{ brust_dynamic(<component>, <props>) }}`: no wrapper element
+    /// and no `| e` (the server function returns the runtime component's markup, already safe). Placement made both
+    /// values `Server`; their jinja resolves an inlined child's prop bindings like any value. Refused here, where the
+    /// printer knows the rows and the instance: a client-built `x-for` row (`dynamic-in-client-row`: the browser cannot
+    /// render the slot for a row it creates) and an inlined instance whose props it reads change on the client
+    /// (`dynamic-reactive`).
+    fn dynamic_slot(&mut self, n: &Node, s: &Node) {
+        let (
+            Node::Dynamic {
+                loc,
+                component,
+                props,
+            },
+            Node::Dynamic {
+                component: sc,
+                props: sp,
+                ..
+            },
+        ) = (n, s)
+        else {
+            return;
+        };
+        // The blank row template of an `x-for` list: its visible copy reports the refusal (and nothing is evaluated).
+        if self.blank {
+            return;
+        }
+        if self.in_client_row() {
+            self.dynamic_refusal(
+                "dynamic-in-client-row",
+                "<Dynamic> sits in a list row the client builds (an `x-for` list: its source or its rows change on the client); the browser cannot render a runtime component for a row it creates".into(),
+                *loc,
+                "render the list from server data in a component with no state, handlers or effects of its own, or move the interactive part into a child of the row",
+            );
+            return;
+        }
+        if let Some(why) =
+            self.dynamic_live_prop([raw_of(component, Some(sc)), raw_of(props, Some(sp))])
+        {
+            self.dynamic_refusal(
+                "dynamic-reactive",
+                format!("the component or props of <Dynamic> must be decided on the server: {why}"),
+                *loc,
+                "pass the ref and the props from server data (the loader, the page props) through callers that do not change them on the client",
+            );
+            return;
+        }
+        self.markup_dynamic.get_or_insert(*loc);
+        let (c, p) = (self.value(component), self.value(props));
+        self.out
+            .push_str(&format!("{{{{ brust_dynamic({c}, {p}) }}}}"));
+    }
+
+    /// The prop of this inlined instance that a `<Dynamic>` value reads and the caller changes on the client, said for a
+    /// finding. Conservative: a linked instance (`x-props-bind`: every prop may change), a key the element binds live
+    /// (`live_keys`), or a binding that is not a server value (a handler, markup, a ref) counts as changing; the whole
+    /// props object (or the rest) counts when any named binding would.
+    fn dynamic_live_prop(&self, raws: [Option<&RawExpr>; 2]) -> Option<String> {
+        let i = self.inline.as_ref()?;
+        let scope = self.scope();
+        let roots: BTreeSet<String> = raws
+            .into_iter()
+            .flatten()
+            .flat_map(|r| self.f.deps(r, &scope).prop_roots())
+            .collect();
+        if roots.is_empty() {
+            return None;
+        }
+        if i.bind.is_some() {
+            return Some(format!(
+                "it reads `{}`, and the caller of `{}` links its props (they change on the client)",
+                roots.first().map_or("", String::as_str),
+                self.f.ir.id
+            ));
+        }
+        let live = |k: &str| {
+            i.live_keys.iter().any(|l| l == k)
+                || !matches!(i.get(k), None | Some(PropBinding::Expr(_)))
+        };
+        roots
+            .iter()
+            .find(|root| {
+                if root.as_str() == "*" || root.as_str() == crate::ir::REST_PROPS {
+                    i.segs
+                        .iter()
+                        .any(|s| matches!(s, Seg::Named(k, _) if live(k.as_str())))
+                } else {
+                    live(root.as_str())
+                }
+            })
+            .map(|root| format!("it reads the prop `{root}`, which its caller binds to a value that changes on the client"))
+    }
+
+    /// The ONE way a caller's children markup is pasted (a `{children}` slot, or the children a spread lands on an
+    /// element): R4.3 — a `<Dynamic>` it holds, pasted into a row the browser builds, is a slot in a client row; and the
+    /// slot's location travels on with markup this printer hands down in turn.
+    fn paste_markup(&mut self, m: String, dynamic: Option<u32>) -> String {
+        if let Some(at) = dynamic {
+            if self.in_client_row() && !self.blank {
+                self.dynamic_refusal(
+                    "dynamic-in-client-row",
+                    "<Dynamic>, passed as children, lands in a list row the client builds (an `x-for` list in the component that prints its children); the browser cannot render a runtime component for a row it creates".into(),
+                    at,
+                    "render the slot outside that list, or keep the list's rows server-built (no state, handlers or effects in the component that lists them)",
+                );
+            }
+            self.markup_dynamic.get_or_insert(at);
+        }
+        m
+    }
+
+    /// A `<Dynamic>` refusal, once per rule and place (an `x-if` prints its branches twice).
+    fn dynamic_refusal(&mut self, rule: &str, message: String, loc: u32, fix: &str) {
+        if !self
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == rule && d.loc == loc)
+        {
+            self.diagnostics
+                .push(Diagnostic::error(rule, message, loc, fix));
         }
     }
 
@@ -946,8 +1074,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                 ..
             }),
         ) = (&self.inline, raw)
-            && let Some(PropBinding::Markup(m)) = i.get(name)
+            && let Some(PropBinding::Markup(m, dynamic)) = i.get(name)
         {
+            let m = self.paste_markup(m, dynamic);
             self.out.push_str(&m);
             return None;
         }
@@ -1614,7 +1743,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 client_only: Vec::new(),
             };
             match probe.get("children") {
-                Some(PropBinding::Markup(m)) => Some(m),
+                Some(PropBinding::Markup(m, dynamic)) => Some(self.paste_markup(m, dynamic)),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
                 Some(
                     PropBinding::Handler(_)
@@ -2382,7 +2511,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             | Node::Fragment(children) => children.iter().any(|c| self.has_fed(c)),
             Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| self.has_fed(c)),
             Node::For { body, .. } => body.iter().any(|c| self.has_fed(c)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
         }
     }
 
@@ -2710,11 +2839,17 @@ impl<'a, 'c> Printer<'a, 'c> {
         if as_child.is_none() && !children.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
+            let outer = self.markup_dynamic.take();
             self.component_children += 1;
             self.nodes(children, schildren);
             self.component_children -= 1;
             std::mem::swap(&mut saved, &mut self.out);
-            segs.push(Seg::Named("children".into(), PropBinding::Markup(saved)));
+            let dynamic = self.markup_dynamic.take();
+            self.markup_dynamic = outer.or(dynamic);
+            segs.push(Seg::Named(
+                "children".into(),
+                PropBinding::Markup(saved, dynamic),
+            ));
         }
         let bind = link
             .and_then(|l| ir.child_links.iter().find(|c| c.id == l))
@@ -2982,11 +3117,17 @@ impl<'a, 'c> Printer<'a, 'c> {
         if !kids.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
+            let outer = self.markup_dynamic.take();
             self.component_children += 1;
             self.nodes(kids, skids);
             self.component_children -= 1;
             std::mem::swap(&mut saved, &mut self.out);
-            segs.push(Seg::Named("children".into(), PropBinding::Markup(saved)));
+            let dynamic = self.markup_dynamic.take();
+            self.markup_dynamic = outer.or(dynamic);
+            segs.push(Seg::Named(
+                "children".into(),
+                PropBinding::Markup(saved, dynamic),
+            ));
         }
         Some(AsChild {
             tag: String::new(),
@@ -3461,7 +3602,8 @@ fn needs_directives(n: &Node, f: &Facts<'_>, props: bool) -> bool {
                 || children.iter().any(|c| needs_directives(c, f, props))
         }
         Node::Fragment(cs) => cs.iter().any(|c| needs_directives(c, f, props)),
-        Node::Text(_) | Node::Outlet => false,
+        // R4: a `<Dynamic>` is server output only: it binds nothing on the client.
+        Node::Text(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -3518,7 +3660,7 @@ fn contains_node(n: &Node, f: &dyn Fn(&Node) -> bool) -> bool {
         | Node::Fragment(children) => children.iter().any(|c| contains_node(c, f)),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| contains_node(c, f)),
         Node::For { body, .. } => body.iter().any(|c| contains_node(c, f)),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 

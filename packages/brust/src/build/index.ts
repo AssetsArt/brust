@@ -200,7 +200,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -218,6 +218,8 @@ export async function runBuild(opts: {
 async function buildInto(
   out: string,
   o: {
+    /** F519 (R4.5): `static` and `cloudflare` refuse a `<Dynamic>` slot. */
+    target?: string
     /** Write `dev.json` (L14). */
     dev: boolean
     appRoot: string
@@ -344,6 +346,17 @@ async function buildInto(
     if (!hasIcons) firstLog.forEach((l) => o.log(l))
     ;({ compiled, routeComponent } = compileApp({ ...compileOpts, packages, iconSvgs, iconsFinal: hasIcons, slotValues, log: hasIcons ? o.log : () => {} }))
   } else firstLog.forEach((l) => o.log(l))
+
+  // F519 (R4.5, amended): a runtime component is resolved by the native server per request; a static file (`--target
+  // static`, ssg) would freeze the slot and the Cloudflare target has no resolver. v1 serves slots on the native server only.
+  if (o.target === 'static' || o.target === 'cloudflare') {
+    const slots = [...compiled.values()].filter((c) => c.ir.dynamic === true).map((c) => c.id)
+    if (slots.length > 0)
+      throw new BuildError(
+        'dynamic-target',
+        `--target ${o.target} cannot serve a <Dynamic> slot (in ${slots.sort().join(', ')}): runtime components are resolved per request by the brust server; build without --target`,
+      )
+  }
 
   // F158 (R34.69/70): the compiler makes a caller of a route component fall back to React, so none is a revive host;
   // if one is, the compiler missed it, and the build stops rather than let request data near the revive.

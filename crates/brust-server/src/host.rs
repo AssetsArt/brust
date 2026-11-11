@@ -14,7 +14,8 @@ use brust_core::host::{
 };
 use brust_core::plan::{PlanCell, PlanSeed, PlannedCall};
 use brust_core::protocol::{
-    FetchBody, FetchRequest, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse,
+    ComponentRequest, ComponentResponse, FetchBody, FetchRequest, JobsRequest, JobsResponse,
+    LoaderRequest, LoaderResponse,
 };
 use brust_core::static_rules::content_type_for;
 use bytes::Bytes;
@@ -112,6 +113,19 @@ impl Host for NativeHost {
             self.claim_timeout,
             self.call_timeout,
             CallKind::Jobs,
+            req,
+        )
+        .await
+    }
+
+    /// F519 (R5.2): one `component` call; a reply too large for the slot crosses by heap under the
+    /// loader response cap (L10), over it the call fails.
+    async fn component(&self, req: &ComponentRequest<'_>) -> Result<ComponentResponse, CallError> {
+        call_worker::<_, ComponentResponse>(
+            &self.pool,
+            self.claim_timeout,
+            self.call_timeout,
+            CallKind::Component,
             req,
         )
         .await

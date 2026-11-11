@@ -60,6 +60,7 @@ pub fn kind_str(k: CallKind) -> &'static str {
         CallKind::Jobs => "jobs",
         CallKind::Fetch => "fetch",
         CallKind::Cache => "cache",
+        CallKind::Component => "component",
     }
 }
 
@@ -143,6 +144,7 @@ mod tests {
     fn kind_names_match_the_wire() {
         assert_eq!(kind_str(CallKind::Loader), "loader");
         assert_eq!(kind_str(CallKind::Jobs), "jobs");
+        assert_eq!(kind_str(CallKind::Component), "component");
         assert_eq!(kind_str(CallKind::Fetch), "fetch");
         // The same spelling `CallKind` serialises to (protocol + logs).
         assert_eq!(

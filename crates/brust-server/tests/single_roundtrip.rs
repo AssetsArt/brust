@@ -333,6 +333,7 @@ impl ThreadWorker {
                     CallKind::Jobs => serde_json::to_vec(&stress_jobs(&req)).unwrap(),
                     CallKind::Fetch => unreachable!("no fetch in this test"),
                     CallKind::Cache => unreachable!("no cache in this test"),
+                    CallKind::Component => unreachable!("no runtime component in this test"),
                     CallKind::Loader => {
                         std::thread::sleep(loader_delay);
                         let first = serde_json::to_vec(&stress_loader(&req)).unwrap();
