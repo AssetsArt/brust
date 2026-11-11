@@ -284,7 +284,7 @@ fn replace_clones(n: &mut Node, elems: &HashMap<String, Node>, failed: &mut Opti
         Node::For { body, .. } => body
             .iter_mut()
             .for_each(|c| replace_clones(c, elems, failed)),
-        Node::Slot(_) | Node::Text(_) | Node::Outlet => {}
+        Node::Slot(_) | Node::Text(_) | Node::Outlet | Node::Dynamic { .. } => {}
     }
 }
 
@@ -539,6 +539,12 @@ fn each_expr(ir: &mut ComponentIR, f: &mut dyn FnMut(&mut RawExpr)) {
                 ex(source, f);
                 ex(key, f);
                 body.iter_mut().for_each(|c| node(c, f));
+            }
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                ex(component, f);
+                ex(props, f);
             }
             Node::Text(_) | Node::Outlet => {}
         }

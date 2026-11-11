@@ -475,6 +475,10 @@ pub struct ComponentIR {
     /// The template contains an `<Outlet />` (S8); the build lane checks the route tree.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uses_outlet: bool,
+    /// R4.4 (F519): this component's own template, with the children it inlines, holds a `<Dynamic>` slot (transitive:
+    /// a child that holds one makes its caller hold one). The manifest's `components[id].dynamic`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dynamic: bool,
     pub jobs: Vec<JobDecl>,
     /// lucide icons the build should render to inline SVG (L23); empty when none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -652,6 +656,7 @@ impl ComponentIR {
             use_id_slots: 0,
             template: Node::Fragment(vec![]),
             uses_outlet: false,
+            dynamic: false,
             jobs: vec![],
             icon_requests: vec![],
             package_requests: vec![],

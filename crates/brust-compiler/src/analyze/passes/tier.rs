@@ -102,6 +102,28 @@ pub fn react_jobs(ir: &mut ComponentIR) {
             "keep layouts native: remove the construct that forces the React tier",
         ));
     }
+    // R4.3 (F519): React SSR cannot render a `<Dynamic>` slot (the JS `Dynamic` throws when called), so a component that
+    // renders as a React island must not hold one, in its own template or in a child it renders. An error, never a
+    // fallback: falling back to React is what cannot render it. Reported once (this tail can run again).
+    if matches!(ir.tier, Tier::React { .. })
+        && ir.dynamic
+        && !ir.diagnostics.iter().any(|d| d.rule == "dynamic-in-react")
+    {
+        let (why, loc) = ir
+            .diagnostics
+            .iter()
+            .find(|d| d.class == DiagClass::Fallback && !CHILD_ONLY.contains(&d.rule.as_str()))
+            .map(|d| (format!(" ({}: {})", d.rule, d.message), d.loc))
+            .unwrap_or_else(|| (String::new(), dynamic_loc(&ir.template).unwrap_or(0)));
+        ir.diagnostics.push(Diagnostic::error(
+            "dynamic-in-react",
+            format!(
+                "<Dynamic> is rendered by a component that renders as a React island{why}; React cannot render a runtime component"
+            ),
+            loc,
+            "keep the component that renders <Dynamic> (and its callers) native or static: remove the construct that forces the React tier",
+        ));
+    }
     if let Tier::React { client_only, .. } = &ir.tier {
         // A React island renders its own tree: no precompute slot is used, nothing to evaluate.
         ir.build_eval.clear();
@@ -124,6 +146,19 @@ pub fn react_jobs(ir: &mut ComponentIR) {
         ir.fused.clear();
     }
     ir.needs_worker = !ir.jobs.is_empty();
+}
+
+/// Where the template holds a `<Dynamic>` (or the component that renders one), for a finding with no better place.
+fn dynamic_loc(n: &Node) -> Option<u32> {
+    match n {
+        Node::Dynamic { loc, .. } => Some(*loc),
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().find_map(dynamic_loc),
+        Node::If { then, else_, .. } => then.iter().chain(else_).find_map(dynamic_loc),
+        Node::For { body, .. } => body.iter().find_map(dynamic_loc),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+    }
 }
 
 fn has_state_dependent(ir: &ComponentIR) -> bool {
@@ -179,6 +214,12 @@ fn visit_exprs(n: &Node, f: &mut impl FnMut(&Expr)) {
             children.iter().for_each(|c| visit_exprs(c, f));
         }
         Node::Fragment(cs) => cs.iter().for_each(|c| visit_exprs(c, f)),
+        Node::Dynamic {
+            component, props, ..
+        } => {
+            f(component);
+            f(props);
+        }
         Node::Text(_) | Node::Outlet => {}
     }
 }
@@ -211,7 +252,7 @@ fn check_refs(ir: &mut ComponentIR) {
             Node::Component { children, .. } | Node::Fragment(children) => {
                 children.iter().for_each(|c| walk(c, refs, bad))
             }
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
     walk(&ir.template, &refs, &mut bad);

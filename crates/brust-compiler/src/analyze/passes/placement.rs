@@ -476,6 +476,12 @@ pub(super) fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String]
                 children.iter().for_each(|c| node(c, f));
             }
             Node::Fragment(cs) => cs.iter().for_each(|c| node(c, f)),
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                expr(component, f);
+                expr(props, f);
+            }
             Node::Text(_) | Node::Outlet => {}
         }
     }
@@ -527,6 +533,12 @@ pub(super) fn template_server_raws(ir: &ComponentIR, f: &mut dyn FnMut(&RawExpr)
                 children.iter().for_each(|c| node(c, f));
             }
             Node::Fragment(cs) => cs.iter().for_each(|c| node(c, f)),
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                expr(component, f);
+                expr(props, f);
+            }
             Node::Text(_) | Node::Outlet => {}
         }
     }
@@ -1907,6 +1919,51 @@ impl Placer<'_> {
         }
     }
 
+    /// R4.3 (F519): a `<Dynamic>` value (`what`: `component` or `props`) is decided on the server: it reads no state
+    /// or store (`dynamic-reactive`) and is in the server template grammar (`dynamic-expr`); it then prints as a
+    /// `Server` expression. Never a precomputed slot or a job input, and never client code (it bumps no `reactive`).
+    fn dynamic_value(&mut self, e: &mut Expr, what: &str) {
+        let Expr::Raw(r) = e else { return };
+        let r = r.clone();
+        let deps = self.st.cx.deps(&r, &self.loop_scope);
+        let folds_module = !deps.module_locals.is_empty()
+            && self
+                .st
+                .cx
+                .deps(&self.fold_consts(&r), &self.loop_scope)
+                .module_locals
+                .is_empty();
+        self.st.painted.push(Painted {
+            loc: r.loc,
+            deps: deps.clone(),
+            folds_module,
+        });
+        if deps.reactive() {
+            self.diagnostics.push(Diagnostic::error(
+                "dynamic-reactive",
+                format!(
+                    "the `{what}` of <Dynamic> must be decided on the server: it reads state or a store, which changes on the client"
+                ),
+                r.loc,
+                "compute the ref and the props from the loader data or the props of the page",
+            ));
+            return;
+        }
+        let folded = self.fold_consts(&r);
+        if try_server(&folded).is_ok() && self.locals_placed(&folded) {
+            *e = Expr::Server(crate::ir::ServerExpr(folded));
+            return;
+        }
+        self.diagnostics.push(Diagnostic::error(
+            "dynamic-expr",
+            format!(
+                "the `{what}` of <Dynamic> is not in the server template grammar (a call, a function or a value only a job can compute)"
+            ),
+            r.loc,
+            "pass a prop, a loop item field or a literal (an object of those for `props`); compute anything else in the loader",
+        ));
+    }
+
     fn node(&mut self, n: &mut Node) {
         match n {
             Node::Element {
@@ -1949,6 +2006,12 @@ impl Placer<'_> {
                         "render <Outlet/> unconditionally in the layout",
                     ));
                 }
+            }
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                self.dynamic_value(component, "component");
+                self.dynamic_value(props, "props");
             }
             Node::Text(_) => {}
             Node::Slot(e) => {
@@ -2107,6 +2170,12 @@ fn collect_raw(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
             children.iter().for_each(|c| collect_raw(c, f));
         }
         Node::Fragment(cs) => cs.iter().for_each(|c| collect_raw(c, f)),
+        Node::Dynamic {
+            component, props, ..
+        } => {
+            expr(component, f);
+            expr(props, f);
+        }
         Node::Text(_) | Node::Outlet => {}
     }
 }

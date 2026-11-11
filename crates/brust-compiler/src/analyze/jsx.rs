@@ -40,6 +40,8 @@ enum Tag {
     Member(&'static str),
     /// `Outlet` imported from `@brust/core/routes` (S8).
     Outlet,
+    /// `Dynamic` imported from `@brust/core` (or `@brust/core/routes`): a runtime component slot (R4, F519).
+    Dynamic,
     /// A context Provider (`<XProvider>` of Radix's `createContextScope`, or React's `<C.Provider>`): transparent, it
     /// hands its value fields to the consumers under it (S2, R34.102).
     Provider {
@@ -129,6 +131,12 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
             }
             if r.names.import_of(*ref_) == Some(("@brust/core/routes", "Outlet")) {
                 return Tag::Outlet;
+            }
+            if matches!(
+                r.names.import_of(*ref_),
+                Some(("@brust/core" | "@brust/core/routes", "Dynamic"))
+            ) {
+                return Tag::Dynamic;
             }
             if r.names.react_context(*ref_).is_none()
                 && let Some(ctx) = r.names.context_of_provider(*ref_)
@@ -277,6 +285,9 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     }
     if matches!(tag, Tag::Outlet) {
         return Node::Outlet;
+    }
+    if matches!(tag, Tag::Dynamic) {
+        return read_dynamic(r, props, loc);
     }
     if let Tag::Member(why) = &tag {
         r.diagnostics.push(Diagnostic::fallback(
@@ -639,6 +650,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         },
         Tag::Fragment => Node::Fragment(children),
         Tag::Outlet => Node::Outlet,
+        Tag::Dynamic => unreachable!("read by read_dynamic above"),
         Tag::Provider { ctx, react } => {
             read_provider(r, &ctx, react, props_out, loc);
             // Transparent: a Provider around one element is that element (a Fragment of one would make an interactive
@@ -690,6 +702,73 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             tier: crate::ir::Tier::Pending,
             forwarded_ref,
         },
+    }
+}
+
+/// R4 (F519): `<Dynamic component={ref} props={props} />`. `component` is required, `props` optional (`{}` when
+/// omitted), `key` is allowed and ignored (React's own); anything else (another prop, a spread, children) is refused
+/// with `dynamic-props`. Placement decides whether both values are server values.
+fn read_dynamic(r: &mut Reader<'_, '_>, props: &js_ast::Expr, loc: u32) -> Node {
+    const FIX: &str = "write `<Dynamic component={ref} props={{ ... }} />`: pass the component's props in `props`";
+    let E::EObject(obj) = &props.data else {
+        r.diagnostics.push(Diagnostic::error(
+            "dynamic-props",
+            "<Dynamic> takes the props `component` and `props` written as attributes",
+            loc,
+            FIX,
+        ));
+        return Node::Fragment(vec![]);
+    };
+    let mut component = None;
+    let mut values = None;
+    for p in obj.properties.iter() {
+        let Some(value) = &p.value else { continue };
+        if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
+            r.diagnostics.push(Diagnostic::error(
+                "dynamic-props",
+                "a spread on <Dynamic> is not supported: its keys are not known",
+                loc_of(value),
+                FIX,
+            ));
+            continue;
+        }
+        let Some(key) = &p.key else { continue };
+        let E::EString(k) = &key.data else { continue };
+        match estring(k).as_str() {
+            "component" => component = Some(r.expr(value)),
+            "props" => values = Some(r.expr(value)),
+            "key" => {}
+            "children" => r.diagnostics.push(Diagnostic::error(
+                "dynamic-props",
+                "<Dynamic> takes no children: the runtime component renders its own content",
+                loc_of(value),
+                FIX,
+            )),
+            other => r.diagnostics.push(Diagnostic::error(
+                "dynamic-props",
+                format!("<Dynamic> takes `component` and `props` only, not `{other}`"),
+                loc_of(key),
+                FIX,
+            )),
+        }
+    }
+    let Some(component) = component else {
+        r.diagnostics.push(Diagnostic::error(
+            "dynamic-props",
+            "<Dynamic> needs a `component` prop (the ref of the runtime component to render)",
+            loc,
+            FIX,
+        ));
+        return Node::Fragment(vec![]);
+    };
+    let props = values.unwrap_or(RawExpr {
+        loc,
+        kind: RawKind::Object(Vec::new()),
+    });
+    Node::Dynamic {
+        loc,
+        component: Expr::Raw(component),
+        props: Expr::Raw(props),
     }
 }
 

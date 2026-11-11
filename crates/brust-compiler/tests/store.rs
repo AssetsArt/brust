@@ -985,7 +985,7 @@ fn template_slots(n: &Node, out: &mut Vec<Expr>) {
             children.iter().for_each(|c| template_slots(c, out));
         }
         Node::Fragment(cs) => cs.iter().for_each(|c| template_slots(c, out)),
-        Node::Text(_) | Node::Outlet => {}
+        Node::Text(_) | Node::Outlet | Node::Dynamic { .. } => {}
     }
 }
 

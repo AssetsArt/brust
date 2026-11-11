@@ -93,6 +93,12 @@ impl Cx<'_> {
                 }
                 children.iter_mut().for_each(|c| self.node(c));
             }
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                self.expr(component);
+                self.expr(props);
+            }
             Node::Text(_) | Node::Outlet => {}
         }
     }

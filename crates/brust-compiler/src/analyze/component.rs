@@ -784,7 +784,7 @@ fn falsy_walk(ir: &ComponentIR, n: &mut Node, no_text: bool, refused: &mut Vec<u
         Node::For { body, .. } => body
             .iter_mut()
             .for_each(|c| falsy_walk(ir, c, no_text, refused)),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
     }
 }
 
@@ -1032,7 +1032,7 @@ pub(crate) fn callback_refs(ir: &mut ComponentIR) {
             Node::Fragment(children) => children
                 .iter_mut()
                 .for_each(|c| walk(c, cx, in_list, in_branch)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
     let mut cx = Cx {
@@ -1122,6 +1122,19 @@ fn check_printer_panic(ir: &mut ComponentIR) {
     }
 }
 
+/// R4.4 (F519): the template holds a `<Dynamic>` slot (anywhere, children given to a component included).
+pub(crate) fn has_dynamic(n: &Node) -> bool {
+    match n {
+        Node::Dynamic { .. } => true,
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(has_dynamic),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(has_dynamic),
+        Node::For { body, .. } => body.iter().any(has_dynamic),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
 fn has_outlet(n: &Node) -> bool {
     match n {
         Node::Outlet => true,
@@ -1130,7 +1143,7 @@ fn has_outlet(n: &Node) -> bool {
         | Node::Fragment(children) => children.iter().any(has_outlet),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(has_outlet),
         Node::For { body, .. } => body.iter().any(has_outlet),
-        Node::Text(_) | Node::Slot(_) => false,
+        Node::Text(_) | Node::Slot(_) | Node::Dynamic { .. } => false,
     }
 }
 

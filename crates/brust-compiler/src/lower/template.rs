@@ -899,6 +899,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             (Node::Text(t), _) if self.raw_text => self.out.push_str(&raw_text(t)),
             (Node::Text(t), _) => self.out.push_str(&text(t)),
             (Node::Outlet, Node::Outlet) => self.out.push_str("{{ __outlet | safe }}"),
+            (Node::Dynamic { .. }, Node::Dynamic { .. }) => self.dynamic_slot(n, s),
             (Node::Slot(e), Node::Slot(_)) => {
                 self.slot(e, Some(s), false);
             }
@@ -918,6 +919,109 @@ impl<'a, 'c> Printer<'a, 'c> {
     fn nodes(&mut self, cs: &[Node], ss: &[Node]) {
         for (c, s) in cs.iter().zip(ss) {
             self.node(c, s, false);
+        }
+    }
+
+    /// R4.2 (F519): `<Dynamic>` prints one server call, `{{ brust_dynamic(<component>, <props>) }}`: no wrapper element
+    /// and no `| e` (the server function returns the runtime component's markup, already safe). Placement made both
+    /// values `Server`; their jinja resolves an inlined child's prop bindings like any value. Refused here, where the
+    /// printer knows the rows and the instance: a client-built `x-for` row (`dynamic-in-client-row`: the browser cannot
+    /// render the slot for a row it creates) and an inlined instance whose props it reads change on the client
+    /// (`dynamic-reactive`).
+    fn dynamic_slot(&mut self, n: &Node, s: &Node) {
+        let (
+            Node::Dynamic {
+                loc,
+                component,
+                props,
+            },
+            Node::Dynamic {
+                component: sc,
+                props: sp,
+                ..
+            },
+        ) = (n, s)
+        else {
+            return;
+        };
+        // The blank row template of an `x-for` list: its visible copy reports the refusal (and nothing is evaluated).
+        if self.blank {
+            return;
+        }
+        if self.in_client_row() {
+            self.dynamic_refusal(
+                "dynamic-in-client-row",
+                "<Dynamic> sits in a list row the client builds (an `x-for` list: its source or its rows change on the client); the browser cannot render a runtime component for a row it creates".into(),
+                *loc,
+                "render the list from server data in a component with no state, handlers or effects of its own, or move the interactive part into a child of the row",
+            );
+            return;
+        }
+        if let Some(why) =
+            self.dynamic_live_prop([raw_of(component, Some(sc)), raw_of(props, Some(sp))])
+        {
+            self.dynamic_refusal(
+                "dynamic-reactive",
+                format!("the component or props of <Dynamic> must be decided on the server: {why}"),
+                *loc,
+                "pass the ref and the props from server data (the loader, the page props) through callers that do not change them on the client",
+            );
+            return;
+        }
+        let (c, p) = (self.value(component), self.value(props));
+        self.out
+            .push_str(&format!("{{{{ brust_dynamic({c}, {p}) }}}}"));
+    }
+
+    /// The prop of this inlined instance that a `<Dynamic>` value reads and the caller changes on the client, said for a
+    /// finding. Conservative: a linked instance (`x-props-bind`: every prop may change), a key the element binds live
+    /// (`live_keys`), or a binding that is not a server value (a handler, markup, a ref) counts as changing; the whole
+    /// props object (or the rest) counts when any named binding would.
+    fn dynamic_live_prop(&self, raws: [Option<&RawExpr>; 2]) -> Option<String> {
+        let i = self.inline.as_ref()?;
+        let scope = self.scope();
+        let roots: BTreeSet<String> = raws
+            .into_iter()
+            .flatten()
+            .flat_map(|r| self.f.deps(r, &scope).prop_roots())
+            .collect();
+        if roots.is_empty() {
+            return None;
+        }
+        if i.bind.is_some() {
+            return Some(format!(
+                "it reads `{}`, and the caller of `{}` links its props (they change on the client)",
+                roots.first().map_or("", String::as_str),
+                self.f.ir.id
+            ));
+        }
+        let live = |k: &str| {
+            i.live_keys.iter().any(|l| l == k)
+                || !matches!(i.get(k), None | Some(PropBinding::Expr(_)))
+        };
+        roots
+            .iter()
+            .find(|root| {
+                if root.as_str() == "*" || root.as_str() == crate::ir::REST_PROPS {
+                    i.segs
+                        .iter()
+                        .any(|s| matches!(s, Seg::Named(k, _) if live(k.as_str())))
+                } else {
+                    live(root.as_str())
+                }
+            })
+            .map(|root| format!("it reads the prop `{root}`, which its caller binds to a value that changes on the client"))
+    }
+
+    /// A `<Dynamic>` refusal, once per rule and place (an `x-if` prints its branches twice).
+    fn dynamic_refusal(&mut self, rule: &str, message: String, loc: u32, fix: &str) {
+        if !self
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == rule && d.loc == loc)
+        {
+            self.diagnostics
+                .push(Diagnostic::error(rule, message, loc, fix));
         }
     }
 
@@ -2382,7 +2486,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             | Node::Fragment(children) => children.iter().any(|c| self.has_fed(c)),
             Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| self.has_fed(c)),
             Node::For { body, .. } => body.iter().any(|c| self.has_fed(c)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
         }
     }
 
@@ -3461,7 +3565,8 @@ fn needs_directives(n: &Node, f: &Facts<'_>, props: bool) -> bool {
                 || children.iter().any(|c| needs_directives(c, f, props))
         }
         Node::Fragment(cs) => cs.iter().any(|c| needs_directives(c, f, props)),
-        Node::Text(_) | Node::Outlet => false,
+        // R4: a `<Dynamic>` is server output only: it binds nothing on the client.
+        Node::Text(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -3518,7 +3623,7 @@ fn contains_node(n: &Node, f: &dyn Fn(&Node) -> bool) -> bool {
         | Node::Fragment(children) => children.iter().any(|c| contains_node(c, f)),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| contains_node(c, f)),
         Node::For { body, .. } => body.iter().any(|c| contains_node(c, f)),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
