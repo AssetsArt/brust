@@ -17,10 +17,14 @@ use js_ast::stmt::Data as S;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-/// The import specifiers the parser adds for JSX (`react/jsx-runtime`): not something the source wrote.
-fn generated_import(spec: &str) -> bool {
+/// The import specifiers the parser adds for JSX (`react/jsx-runtime`). Whether one was GENERATED is a question of the
+/// text: a source that spells the specifier itself (`import { jsx } from 'react/jsx-runtime'`) wrote it, and it is listed.
+fn jsx_runtime_spec(spec: &str) -> bool {
     spec.starts_with("react/jsx-")
 }
+
+/// Objects that are the global scope: a member of one named `eval` or `Function` is the global one.
+const GLOBAL_OBJECTS: &[&str] = &["window", "globalThis", "self", "top", "parent", "frames"];
 
 /// What a source file refers to (see the module docs). Serialises camelCase, as the JS side reads it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -94,7 +98,8 @@ pub struct Callee {
 #[serde(rename_all = "camelCase")]
 pub struct Risky {
     /// `dynamic-import` (`import(x)`), `computed-member` (`a[b]` with a key that is not a literal), `constructor-access`
-    /// (`.constructor` or `['constructor']`), `eval` (`eval(x)`, `Function(…)` and `new Function(…)`).
+    /// (`.constructor` or `['constructor']`), `eval` (`eval(x)`, `Function(…)`, `new Function(…)`, those reached through a
+    /// global object (`window.eval`) or a sequence (`(0, eval)(x)`), and a timer given a string: `setTimeout('code')`).
     pub kind: &'static str,
     pub line: u32,
     pub col: u32,
@@ -397,12 +402,78 @@ impl<'a> Reader<'a> {
             .map(|r| String::from_utf8_lossy(r.path.text).into_owned())
     }
 
+    /// `spec` is a JSX runtime import the parser added (the source never spells it).
+    fn generated(&self, spec: &str) -> bool {
+        jsx_runtime_spec(spec) && !self.text.windows(spec.len()).any(|w| w == spec.as_bytes())
+    }
+
+    /// The unbound identifier at the root of a pure dot chain (`window` of `window.top.eval`).
+    fn global_root(&self, e: &js_ast::Expr) -> Option<String> {
+        let mut cur = e;
+        while let E::EDot(d) = &cur.data {
+            cur = &d.target;
+        }
+        let r = ident_ref(cur)?;
+        self.symbol(r)
+            .is_some_and(|s| s.kind == js_ast::symbol::Kind::Unbound)
+            .then(|| self.name_of(r))
+    }
+
+    /// `e` evaluates to the global `eval` or `Function`: the bare name, the member of a global object (`window.eval`,
+    /// `globalThis['Function']`), and either arm of a comma or a conditional (`(0, eval)`, `x ? eval : y`).
+    fn evalish(&self, e: &js_ast::Expr) -> bool {
+        const NAMES: &[&str] = &["eval", "Function"];
+        match &e.data {
+            E::EBinary(b) if matches!(b.op, js_ast::OpCode::BinComma) => self.evalish(&b.right),
+            E::EIf(i) => self.evalish(&i.yes) || self.evalish(&i.no),
+            E::EDot(d) => {
+                NAMES.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+                    && self
+                        .global_root(&d.target)
+                        .is_some_and(|g| GLOBAL_OBJECTS.contains(&g.as_str()))
+            }
+            E::EIndex(i) => {
+                str_of(&i.index).is_some_and(|k| NAMES.contains(&k.as_str()))
+                    && self
+                        .global_root(&i.target)
+                        .is_some_and(|g| GLOBAL_OBJECTS.contains(&g.as_str()))
+            }
+            _ => self.is_global_named(e, NAMES),
+        }
+    }
+
+    /// `setTimeout('code')`, `setInterval(`code`)`, `execScript(…)`: a timer whose first argument is a string-ish value
+    /// is `eval` in disguise. A function, an identifier and a member are not judged.
+    fn string_timer(&self, c: &js_ast::E::Call) -> bool {
+        let callee_is_timer = match &c.target.data {
+            E::EDot(d) => {
+                ["setTimeout", "setInterval", "execScript"]
+                    .contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+                    && self
+                        .global_root(&d.target)
+                        .is_some_and(|g| GLOBAL_OBJECTS.contains(&g.as_str()))
+            }
+            _ => self.is_global_named(&c.target, &["setTimeout", "setInterval", "execScript"]),
+        };
+        callee_is_timer
+            && c.args.first().is_some_and(|a| {
+                !matches!(
+                    a.data,
+                    E::EArrow(_)
+                        | E::EFunction(_)
+                        | E::EIdentifier(_)
+                        | E::EImportIdentifier(_)
+                        | E::EDot(_)
+                )
+            })
+    }
+
     fn pos(&self, e: &js_ast::Expr) -> (u32, u32) {
         line_col(self.text, e.loc.start.max(0) as u32)
     }
 
     fn add_import(&mut self, spec: String, names: Vec<String>) {
-        if generated_import(&spec) {
+        if self.generated(&spec) {
             return;
         }
         match self.facts.imports.iter_mut().find(|i| i.specifier == spec) {
@@ -554,8 +625,17 @@ impl<'a> Reader<'a> {
                     self.jsx(c);
                     return;
                 }
-                if c.is_direct_eval || self.is_global_named(&c.target, &["eval", "Function"]) {
+                if c.is_direct_eval || self.evalish(&c.target) || self.string_timer(c) {
                     self.risky("eval", e);
+                }
+                // A direct `jsx(tag, props)` / `createElement(tag, props)` is an element written without JSX: its props count.
+                if let Some(h) = hook_name(self.ast, &c.target)
+                    && ["jsx", "jsxs", "jsxDEV", "createElement", "cloneElement"]
+                        .contains(&h.as_str())
+                    && (matches!(c.target.data, E::EDot(_))
+                        || self.root_import(&c.target).is_some())
+                {
+                    self.jsx(c);
                 }
                 if let Some(h) = hook_name(self.ast, &c.target)
                     && (is_hook_name(&h) || (h == "use" && self.root_import(&c.target).is_some()))
@@ -565,7 +645,7 @@ impl<'a> Reader<'a> {
                 }
             }
             E::ENew(n) => {
-                if self.is_global_named(&n.target, &["Function"]) {
+                if self.evalish(&n.target) {
                     self.risky("eval", e);
                 }
             }
@@ -626,7 +706,7 @@ impl<'a> Reader<'a> {
                 if self
                     .imported
                     .get(&r.inner_index())
-                    .is_some_and(|(s, _)| generated_import(s))
+                    .is_some_and(|(s, _)| self.generated(s))
                 {
                     return None;
                 }
@@ -1005,6 +1085,59 @@ mod tests {
                 b"export default function (".to_vec()
             ))
             .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+
+    fn facts(src: &str) -> Facts {
+        crate::parse::run_on_compiler_thread(|| {
+            read_source("el/Promo.tsx", src.as_bytes().to_vec()).expect("the source parses")
+        })
+    }
+
+    #[test]
+    fn eval_reached_through_a_global_object_a_sequence_or_a_string_timer_is_found() {
+        let f = facts(
+            "export default function Promo() {\n  window.eval('1')\n  globalThis['Function']('return 1')()\n  ;(0, eval)('2')\n  new self.Function('3')\n  setTimeout('4', 1)\n  window.setInterval(`5`, 1)\n  setTimeout(() => 1, 1)\n  setTimeout(go, 1)\n  return <i>x</i>\n}\nconst go = () => 1\n",
+        );
+        let lines: Vec<_> = f
+            .risky
+            .iter()
+            .filter(|r| r.kind == "eval")
+            .map(|r| r.line)
+            .collect();
+        assert_eq!(lines, vec![2, 3, 4, 5, 6, 7], "{:?}", f.risky);
+    }
+
+    #[test]
+    fn an_element_written_as_a_direct_runtime_call_counts_like_jsx() {
+        let f = facts(
+            "import { createElement } from 'react'\nimport { jsx } from 'react/jsx-runtime'\nimport * as R from 'react'\nexport default function Promo({ html }: { html: string }) {\n  return [createElement('div', { dangerouslySetInnerHTML: { __html: html }, onClick: () => fetch('/x') }), jsx('a', { ...{} }), R.createElement('b', { ref: null })]\n}\n",
+        );
+        assert!(f.raw_html && f.spreads);
+        assert!(
+            f.imports.iter().any(|i| i.specifier == "react/jsx-runtime"),
+            "{:?}",
+            f.imports
+        );
+        assert!(f.tags.contains(&"div".to_string()) && f.tags.contains(&"b".to_string()));
+        assert!(f.attrs.contains(&"ref".to_string()));
+        assert!(
+            f.handlers
+                .iter()
+                .any(|h| h.callees.iter().any(|c| c.name == "fetch")),
+            "{:?}",
+            f.handlers
+        );
+        // Written JSX alone does not list the runtime import the parser adds.
+        assert!(
+            facts("export default function Promo() {\n  return <p>x</p>\n}\n")
+                .imports
+                .is_empty()
         );
     }
 }
