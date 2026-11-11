@@ -50,6 +50,8 @@ export interface StartOptions {
   stats?: 'off' | 'public' | 'token'
   /** F507: the secret `stats: 'token'` compares `Authorization: Bearer` with, resolved from its env reference; never logged. */
   statsToken?: string
+  /** F519 `[components] cache_entries`: runtime components kept warm; absent = 2048. */
+  componentsCacheEntries?: number
 }
 /** napi `NapiL2Options`; defaults 50 ms, 1048576 bytes. */
 export interface L2Options {
