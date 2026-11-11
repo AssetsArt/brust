@@ -2,6 +2,7 @@ import { defineRoutes, type RuntimeArtifact, type RuntimeComponents } from '@bru
 import { compileComponent } from '@brust/core/compile'
 import List from './List'
 import Other from './Other'
+import Root from './Root'
 
 // The component sources an app would keep in a database: TEXT, created after `brust build`. The resolver compiles one with
 // `compileComponent` the first time a page names its ref, and returns exactly what it produced.
@@ -49,7 +50,11 @@ export const components: RuntimeComponents = {
   },
 }
 
+// A root layout makes every page a full document, so the client's SPA navigation script is on it (a page without <body> is loaded whole).
 export const routes = defineRoutes([
+  {
+    Component: Root,
+    children: [
   {
     path: '/',
     Component: List,
@@ -63,4 +68,6 @@ export const routes = defineRoutes([
     }),
   },
   { path: '/other', Component: Other, loader: () => ({ calls: compiles, refusals: JSON.stringify(refusals) }) },
+    ],
+  },
 ])
