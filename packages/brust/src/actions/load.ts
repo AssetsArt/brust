@@ -18,8 +18,14 @@ export function mountActions(app: unknown, prefix: string, what = 'actions entry
   // L16 R16.4: the root prefix of an actions-only build is no prefix at all (`prefix: '/'` would double the slash).
   const outer = new Elysia({ adapter: brust(), ...(prefix === '/' ? {} : { prefix }) }).use(app)
   // F529 (§2d): a `.ws()` route upgrades through `app.server`; the shim records the accept for the bridge.
-  if (outer['~hasWS'])
-    (outer as { server?: unknown }).server = createServerShim(() => outer['~resolvedCapability']('ws')?.provider.declaredOptions(outer) as Record<string, unknown> | undefined)
+  // F532: the same shim is the `server` of the user's exported app too (Elysia sets `server` per instance and `use()` does
+  // not copy it), so `app.server.publish(...)` works from module scope once the app is mounted, and the bridge hands it to
+  // `fetch` so an HTTP action sees it as `ctx.server`.
+  if (outer['~hasWS']) {
+    const shim = createServerShim(() => outer['~resolvedCapability']('ws')?.provider.declaredOptions(outer) as Record<string, unknown> | undefined)
+    ;(outer as { server?: unknown }).server = shim
+    ;(app as { server?: unknown }).server = shim
+  }
   return outer
 }
 

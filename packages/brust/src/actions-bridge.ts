@@ -16,7 +16,9 @@ export interface ActionsManifest {
 /** What the worker drives: an Elysia 2 app (`app.fetch`, web-standard), or anything with that shape. */
 export interface ActionsApp {
   /** `undefined`: a `.ws()` route accepted the upgrade (Bun's convention); the bridge answers 101 (F529). */
-  fetch(request: Request): Response | undefined | Promise<Response | undefined>
+  fetch(request: Request, server?: unknown): Response | undefined | Promise<Response | undefined>
+  /** F532: set on an app with `.ws()` routes (the shim of `actions/ws.ts`); handed to `fetch` as the action's `ctx.server`. */
+  server?: unknown
 }
 
 /** A1 (`protocol.rs` `FetchRequest`): `url` = path + query, prefix included; `headers` as pairs (repeats kept). */
@@ -150,7 +152,7 @@ const fail = (view: Uint8Array, slot: number, slots: number, msg: string) => wri
  * body read (a lazy body may still touch stores); set-cookie values kept apart. */
 export async function fetchParts(a: ActionsApp, req: Request): Promise<{ status: number; pairs: [string, string][]; body: Uint8Array; ws?: WsMeta }> {
   return runInStoreContext(async () => {
-    const res = await a.fetch(req)
+    const res = await a.fetch(req, a.server)
     if (res === undefined) {
       // F529: `undefined` is Bun's "the upgrade was accepted"; without a recorded accept it is a bridge/app bug.
       const acc = takeAccept(req)

@@ -36,7 +36,18 @@ Events of one socket reach your handlers in order, at most 8 in flight: a slow `
 
 ## Topics
 
-`ws.subscribe(topic)` joins a topic. `ws.publish(topic, data)` sends to every subscriber **on any worker**, except the publisher unless the route sets `publishToSelf: true`. Publish only with `ws.publish` inside a socket handler. `server.publish` does not reach the sockets in this release, both in an HTTP action (`server` is null) and from module scope (`app.server` is not set on your app, so a message-bus subscriber cannot publish into a topic). A message is queued once and shared by every subscriber's queue. A socket leaves its topics when it closes.
+`ws.subscribe(topic)` joins a topic. `ws.publish(topic, data)` sends to every subscriber **on any worker**, except the publisher unless the route sets `publishToSelf: true`. `server.publish(topic, data)` publishes with no sender to leave out: every subscriber on every worker gets it. It works in an HTTP action (`server` in the Elysia context) and from module scope (`app.server` on the app you export); it returns the bytes queued, or 0 when nobody is subscribed. `app.server` is set when brust mounts the app, so code that runs while the module is being imported finds it unset: use `app.server?.publish` and publish later (a timer, a subscriber callback). Your module is evaluated in **every worker**, so a subscriber at module scope runs once per worker and a message it publishes reaches the sockets once per worker: give it a queue group (NATS) or consumer group (Redis streams) so one worker receives each message.
+
+```ts
+const app = new Elysia({ adapter: brust() })
+  .ws('/room', { open(ws) { ws.subscribe('room') } })
+  .post('/announce', ({ server, query }) => server?.publish('room', query.text)) // HTTP action
+
+bus.subscribe('room', (text) => app.server?.publish('room', text)) // module scope
+export default app
+```
+
+A message is queued once and shared by every subscriber's queue. A socket leaves its topics when it closes.
 
 ## Limits
 
@@ -65,7 +76,7 @@ These are maxima. The Elysia options of your `.ws()` routes (`maxPayloadLength`,
 
 Your handlers are closures in the memory of the worker that ran the upgrade, so a socket stays on that worker for its whole life. An upgrade goes to the worker with the fewest open sockets among those that can take it. Module-level state is per worker: reach sockets of another worker through a topic, and share data through a database or cache. Socket events do not use the render slots pages and actions share.
 
-Topics live inside one process. To fan out across instances, carry messages between them with a message bus (NATS, Redis pub/sub) and deliver what arrives to the sockets each instance holds (a bus subscriber cannot publish into a topic yet, so keep those sockets in your handlers' own state).
+Topics live inside one process. To fan out across instances, carry messages between them with a message bus (NATS, Redis pub/sub) and deliver what arrives to the sockets each instance holds (publish what a bus subscriber receives with `app.server.publish`, see Topics).
 
 ## Close codes, drain and restart
 
@@ -88,6 +99,5 @@ On `SIGTERM` or `SIGINT` the server stops accepting, sends every open socket clo
 - Per-message deflate and subprotocols (`Sec-WebSocket-Protocol` is not answered; the dev proxy does not forward it).
 - HTTP/2: browsers open WebSockets over HTTP/1.1; an upgrade on an HTTP/2 connection (RFC 8441) is 400.
 - Sockets in page routes and loaders.
-- Publishing into a topic from outside a socket handler: from an HTTP action or from module scope (a message-bus subscriber, a timer). See Topics.
 - Server-sent events and endless streamed responses: a response body is read in full before it is sent (`max_response_bytes`, 30 s deadline), so a stream that never ends is a 504.
 - `.ws()` relies on parts of Elysia 2 release candidates that are not public API; a test fails when an update changes them.

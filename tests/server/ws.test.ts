@@ -64,6 +64,30 @@ test('a socket pinned to one of two workers: peers on different workers hear eac
   await b.closed
 })
 
+test('F532: a POST action and a module-scope publisher reach sockets on both workers', async () => {
+  const a = connect(url('/room'))
+  await a.opened
+  await a.next()
+  const b = connect(url('/room'))
+  await b.opened
+  await b.next()
+  // an HTTP action publishes through ctx.server: nobody is skipped, and the answer is the bytes queued
+  const r = await fetch(`http://${host}/app/api/announce?text=hi`, { method: 'POST' })
+  expect(r.status).toBe(200)
+  expect(((await r.json()) as { sent: number }).sent).toBeGreaterThan(0)
+  expect(await a.next()).toBe('announce:hi')
+  expect(await b.next()).toBe('announce:hi')
+  // module scope: the action only triggers a function that publishes through app.server
+  const t = await fetch(`http://${host}/app/api/trigger`, { method: 'POST' })
+  expect(t.status).toBe(200)
+  expect(((await t.json()) as { sent: number }).sent).toBeGreaterThan(0)
+  expect(await a.next()).toBe('module:tick')
+  expect(await b.next()).toBe('module:tick')
+  a.ws.close(1000, 'done')
+  b.ws.close(1000, 'done')
+  await Promise.all([a.closed, b.closed])
+})
+
 test('echo under the base path and the actions prefix: text and binary, with and without a same-origin Origin', async () => {
   for (const headers of [{}, sameOrigin()]) {
     const c = connect(url('/echo'), headers)

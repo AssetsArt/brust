@@ -150,6 +150,49 @@ test('app.server.publish is a server-level wsPublish', async () => {
   expect(calls[0]).toEqual({ fn: 'publish', args: ['t', 'd'] })
 })
 
+// F532: publish from outside a socket handler.
+type Shim = { publish(t: string, d: string): number }
+test('F532 S1: the exported app and the mounted app share one server shim; publish skips nobody', () => {
+  const app = new Elysia({ adapter: brust() }).ws('/ws', { message() {} })
+  const outer = mount(app)
+  const s = (app as unknown as { server: Shim }).server
+  expect(s).toBeDefined()
+  expect(s).toBe((outer as unknown as { server: Shim }).server)
+  expect(s.publish('t', 'd')).toBe(3)
+  expect(calls).toEqual([{ fn: 'publish', args: ['t', 'd'] }])
+})
+
+test('F532 S4: an app with no .ws() gets no server', () => {
+  const app = new Elysia({ adapter: brust() }).get('/hi', () => 'x')
+  const outer = mount(app)
+  expect((app as unknown as { server?: unknown }).server).toBeUndefined()
+  expect((outer as unknown as { server?: unknown }).server).toBeUndefined()
+})
+
+test('F532 S2/S3: an HTTP action reads ctx.server and its publish reaches wsPublish', async () => {
+  const app = new Elysia({ adapter: brust() })
+    .ws('/ws', { message() {} })
+    .post('/announce', ({ server }) => ({ n: server?.publish('room', 'hi') ?? null }))
+  const outer = mount(app)
+  const out = await fetchParts(outer, new Request('http://l/api/announce', { method: 'POST' }))
+  expect(out.status).toBe(200)
+  expect(JSON.parse(new TextDecoder().decode(out.body))).toEqual({ n: 3 })
+  expect(calls).toEqual([{ fn: 'publish', args: ['room', 'hi'] }])
+})
+
+test('F532 S4: without .ws() an action sees ctx.server null', async () => {
+  const app = new Elysia({ adapter: brust() }).post('/who', ({ server }) => ({ s: server === null }))
+  const out = await fetchParts(mount(app), new Request('http://l/api/who', { method: 'POST' }))
+  expect(JSON.parse(new TextDecoder().decode(out.body))).toEqual({ s: true })
+})
+
+test('F532 S3: a binary publish from module scope is passed as a Buffer', () => {
+  const app = new Elysia({ adapter: brust() }).ws('/ws', { message() {} })
+  mount(app)
+  ;(app as unknown as { server: { publish(t: string, d: Uint8Array): number } }).server.publish('t', new Uint8Array([1, 2]))
+  expect(Buffer.isBuffer(calls[0]!.args[1])).toBe(true)
+})
+
 test('readyState: 0 until open, 1 in handlers, 2 after close(), 3 in the close handler', async () => {
   const states: number[] = []
   const app = new Elysia({ adapter: brust() }).ws('/ws', {

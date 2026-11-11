@@ -45,7 +45,7 @@ const GUARD = `new Elysia({ adapter: brust() })
     },
   })`
 
-const TOPICS = `new Elysia({ adapter: brust() })
+const TOPICS = `const app = new Elysia({ adapter: brust() })
   .ws('/room', {
     open(ws) {
       ws.subscribe('room')
@@ -53,10 +53,14 @@ const TOPICS = `new Elysia({ adapter: brust() })
     message(ws, message) {
       ws.publish('room', String(message))   // to every other subscriber, on any worker
     },
-    close(ws) {
-      ws.publish('room', 'someone left')
-    },
-  })`
+  })
+  // from an HTTP action: ctx.server
+  .post('/announce', ({ server, query }) => server?.publish('room', query.text))
+
+// from module scope, for example a message-bus subscriber: app.server (set once the app is mounted)
+bus.subscribe('room', (text) => app.server?.publish('room', text))
+
+export default app`
 
 const CONFIG = `# brust.toml (every key optional; these are the defaults)
 [actions]
@@ -165,8 +169,13 @@ export default function WebSockets({ blocks }: WebSocketsData) {
           A topic is a name. <code>ws.subscribe(topic)</code> joins it; <code>ws.publish(topic, data)</code> sends to every subscriber <strong>on any worker</strong>, except the publisher unless the route sets <code>publishToSelf: true</code>.
         </li>
         <li>
-          Publish only with <code>ws.publish</code> inside a socket handler. <code>server.publish</code> does not reach the sockets in this release, both in an HTTP action (<code>server</code> is null) and from module scope (<code>app.server</code> is not set
-          on your app, so a message-bus subscriber cannot publish into a topic).
+          <code>server.publish(topic, data)</code> publishes with no sender to leave out: every subscriber on every worker gets it. It works in an HTTP action (<code>server</code> in the Elysia context) and from module scope (<code>app.server</code> on the app you
+          export). It returns the bytes queued, or 0 when nobody is subscribed. <code>app.server</code> is set when brust mounts the app, so code that runs while the module is being imported finds it unset: use <code>app.server?.publish</code> and publish
+          later (a timer, a subscriber callback).
+        </li>
+        <li>
+          Your module is evaluated in <strong>every worker</strong>. A subscriber at module scope therefore runs once per worker, and a message it publishes reaches the sockets once per worker. Give the subscriber a queue group (NATS) or consumer group
+          (Redis streams) so one worker receives each message.
         </li>
         <li>A message is queued once and shared by every subscriber&rsquo;s queue. A socket leaves its topics when it closes.</li>
       </ul>
@@ -258,7 +267,7 @@ export default function WebSockets({ blocks }: WebSocketsData) {
       <h2 id="instances">More than one instance</h2>
       <Note tag="Scope">
         Topics live inside one server process, and brust does not forward them to another process or machine. If you run several instances, carry messages between them yourself with a message bus (NATS, Redis pub/sub or the like), and have each
-        instance deliver what it receives to the sockets it holds (a bus subscriber cannot publish into a topic yet, see <a href="#topics">Topics</a>, so keep those sockets in your handlers&rsquo; own state). A client that reconnects lands on whichever instance the load balancer picks.
+        instance publish what it receives into a topic with <code>app.server.publish</code> (see <a href="#topics">Topics</a>). A client that reconnects lands on whichever instance the load balancer picks.
       </Note>
 
       <h2 id="close">Close codes, drain and restart</h2>
@@ -335,9 +344,6 @@ export default function WebSockets({ blocks }: WebSocketsData) {
         </li>
         <li>
           <strong>Sockets in page routes and loaders.</strong> Only the actions app has <code>.ws()</code>; an upgrade anywhere else is an ordinary request.
-        </li>
-        <li>
-          <strong>Publishing into a topic from outside a socket handler.</strong> From an HTTP action or from module scope (a message-bus subscriber, a timer) there is no way to reach the sockets yet; see <a href="#topics">Topics</a>.
         </li>
         <li>
           <strong>Server-sent events and endless streamed responses.</strong> A response body is read in full before it is sent (limited by <code>max_response_bytes</code> and a 30 second deadline), so a stream that never ends is a 504. Use a WebSocket for

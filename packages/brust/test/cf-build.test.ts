@@ -2,6 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { stripComments } from '../src/build/cloudflare'
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts')
 const FIX = join(import.meta.dir, 'fixtures')
@@ -87,6 +88,12 @@ test('F529 D3: an app that calls .ws() fails the Cloudflare build at the startup
   expect(all).toContain('WebSocket (.ws()) is not supported on --target cloudflare: a Worker has no sockets; use --target bun')
   // the warning comes first, the build then stops
   expect(all.indexOf('cf-websocket')).toBeLessThan(all.indexOf('error cf-smoke'))
+})
+
+test('F532 A5: .ws( in a comment is not a cf-websocket source', () => {
+  expect(/\.ws\s*\(/.test(stripComments('// app.ws(\n/* x.ws( */ const a = 1'))).toBe(false)
+  expect(/\.ws\s*\(/.test(stripComments('const u = "http://x"; app.ws("/a", {})'))).toBe(true)
+  expect(/\.ws\s*\(/.test(stripComments('app\n  .ws("/a", {}) // trailing'))).toBe(true)
 })
 
 test('an app with no .ws() gets no cf-websocket warning', () => {
