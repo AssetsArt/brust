@@ -64,8 +64,8 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-39">2.0.0-alpha.39 · 11 November 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.38: #456, #457, #459, #460 (ledger F517, F518, F519, F520; plan 2026-11-11-runtime-components) */}
-      <p>This version can render a component whose source was stored after <code>brust build</code>: you expose some of your modules, compile a source text with <code>@brust/core/compile</code>, and place the result with <code>&lt;Dynamic&gt;</code>.</p>
+      {/* source: the pull requests merged after v2.0.0-alpha.38: #456, #457, #459, #460, #461, #462, #463, #464 (ledger F517, F518, F519, F520, F521, F523, F524, F525; plan 2026-11-11-runtime-components) */}
+      <p>This version can render a component whose source was stored after <code>brust build</code>: you expose some of your modules, compile a source text with <code>@brust/core/compile</code>, and place the result with <code>&lt;Dynamic&gt;</code>. A component that renders itself is now one server template, and a list wrapper that only looked interactive stays static.</p>
 
       <h3>New</h3>
       <ul>
@@ -84,6 +84,26 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #457 (F519); packages/brust/src/routes.ts (Dynamic, RuntimeComponents); tests/server/dynamic-slot.chromium.test.ts; tests/server/runtime-components.chromium.test.ts */}
         <li>
           <strong><code>&lt;Dynamic component={'{'}ref{'}'} props={'{'}…{'}'} /&gt;</code> renders a runtime component on the server (#457).</strong> The routes entry exports <code>components</code> with a <code>resolve(ref, {'{'} build {'}'})</code>. A missing, refused or failing component prints nothing and the page still answers 200. <code>brust build --target static</code>, the Cloudflare target and <code>--ssg</code> refuse an app that has a slot. New option: <code>[components] cache_entries</code>. See <a href="/docs/runtime-components">Runtime components</a>.
+        </li>
+        {/* source: PR #462 (F523); crates/brust-compiler/src/analyze/passes/recursion.rs (RULE, RECURSION_CAP); crates/brust-compiler/src/analyze/passes/children.rs (mutual recursion); crates/brust-jinja/src/lib.rs (recursion_limit); crates/brust-compiler/tests/recursive_static.rs */}
+        <li>
+          <strong>A component that renders itself compiles to one template macro, with no React island per node (#462).</strong> A tree, a menu or a comment thread that calls its own component prints on the server as a single macro, so the page carries no client code for it. It works for a component compiled with <code>compileComponent</code> and placed with <code>&lt;Dynamic&gt;</code> too. A tree nested deeper than 32 levels fails the whole render (the error names the component and the cap); it does not fall back to React. A component that cannot be one macro (it holds state, a handler, an effect, a ref or a store read, or its call to itself passes JSX children, a function, a <code>ref</code> or a spread of props) renders with React and reports the rule <code>recursion-unsupported</code> with the reason. Two components in one module that render each other are now reported as mutual recursion, not as an import cycle.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #463 (F524); crates/brust-compiler/tests/fixed_clone_static_shell.rs; tests/server/static-shell.chromium.test.ts */}
+        <li>
+          <strong>A static wrapper over a child that only the loader makes interactive stays static (#463).</strong> A wrapper such as a section <code>switch</code> that renders a component fed from its own props, which renders a list of switch components, is now specialised per call site, so the whole chain prints static with no client code. A repro of this shape went from a 30.6&nbsp;KB template to 5.4&nbsp;KB. The specialised copy is kept only when it makes something below it static.
+        </li>
+        {/* source: PR #464 (F525); packages/brust/package.json; packages/create-app/templates/blank/package.json.tmpl */}
+        <li>
+          <strong>brust is now tested with Elysia <code>2.0.0-rc.4</code> and <code>@elysia/eden</code> <code>2.0.0-rc.1</code> (#464).</strong> The peer range is unchanged (<code>^2.0.0-rc.0</code>), and apps from <code>create-app</code> pin the new pair.
+        </li>
+        {/* source: PR #461 (F521); tests/server/runtime-components.chromium.test.ts */}
+        <li>
+          <strong>The <a href="/docs/runtime-components">Runtime components</a> page describes the whole flow, and a served test covers it (#461).</strong> The test compiles source strings, renders them through <code>&lt;Dynamic&gt;</code>, and checks that a built component and a runtime one share one store across a client navigation.
         </li>
       </ul>
 
