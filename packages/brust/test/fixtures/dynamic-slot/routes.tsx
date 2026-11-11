@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { defineRoutes, type RuntimeArtifact, type RuntimeComponents } from '@brust/core'
 import List from './List'
 import Other from './Other'
+import Root from './Root'
 
 // Hand-written artifacts per the R2 contract (no compile API needed): a static one, a native one that reads and writes
 // the exposed `cart` store and reads a prop passed through <Dynamic props>, a missing ref and a throwing resolver.
@@ -49,7 +50,11 @@ export const components: RuntimeComponents = {
   },
 }
 
+// A root layout makes every page a full document, so the client's SPA navigation script is on it (a page without <body> is loaded whole).
 export const routes = defineRoutes([
+  {
+    Component: Root,
+    children: [
   {
     path: '/',
     Component: List,
@@ -63,4 +68,6 @@ export const routes = defineRoutes([
     }),
   },
   { path: '/other', Component: Other, loader: () => ({ calls }) },
+    ],
+  },
 ])

@@ -96,6 +96,7 @@ test('the native artifact mounts, reads its prop and writes the store a built co
   })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   await page.goto(`${base}/`, { waitUntil: 'networkidle' })
+  await page.evaluate(() => ((globalThis as unknown as { __marker?: number }).__marker = 1)) // survives an SPA navigation, not a document load
   await page.click('[data-testid="rc-counter"]')
   await page.waitForFunction(() => document.querySelector('[data-testid="badge"]')!.textContent === '1')
   expect(await page.textContent('[data-testid="rc-counter"]')).toBe('Add 1')
@@ -105,9 +106,13 @@ test('the native artifact mounts, reads its prop and writes the store a built co
   await page.waitForSelector('[data-testid="calls"]')
   await page.click('[data-testid="to-list"]')
   await page.waitForSelector('[data-testid="rc-counter"]')
+  // A real SPA navigation (the window marker survived) and a live store never re-reads its seed: the count is still 1.
+  expect(await page.evaluate(() => (globalThis as unknown as { __marker?: number }).__marker)).toBe(1)
+  expect(await page.textContent('[data-testid="badge"]')).toBe('1')
+  expect(await page.textContent('[data-testid="rc-counter"]')).toBe('Add 1')
   await page.click('[data-testid="rc-counter"]')
-  await page.waitForFunction(() => document.querySelector('[data-testid="rc-counter"] span')!.textContent !== '0')
-  expect(Number(await page.textContent('[data-testid="badge"]'))).toBeGreaterThanOrEqual(1)
+  await page.waitForFunction(() => document.querySelector('[data-testid="badge"]')!.textContent === '2')
+  expect(await page.textContent('[data-testid="rc-counter"]')).toBe('Add 2')
   expect(errors).toEqual([])
   await page.close()
 })

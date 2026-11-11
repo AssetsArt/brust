@@ -22,6 +22,7 @@ import ReactCoverage, { reactCoverageLoader } from '../pages/docs/ReactCoverage'
 import ReleaseNotes, { releaseNotesLoader } from '../pages/docs/ReleaseNotes'
 import RenderingTiers, { renderingTiersLoader } from '../pages/docs/RenderingTiers'
 import Routing, { routingLoader } from '../pages/docs/Routing'
+import RuntimeComponents, { runtimeComponentsLoader } from '../pages/docs/RuntimeComponents'
 import Shadcn, { shadcnLoader } from '../pages/docs/Shadcn'
 import ShadcnSetup, { shadcnSetupLoader } from '../pages/docs/guides/ShadcnSetup'
 import Store, { storeLoader } from '../pages/docs/Store'
@@ -69,6 +70,7 @@ export const NAV: NavGroup[] = [
       { slug: 'actions', title: 'Actions', file: 'pages/docs/Actions.tsx', Component: Actions, loader: actionsLoader },
       { slug: 'store', title: 'Store', file: 'pages/docs/Store.tsx', Component: Store, loader: storeLoader },
       { slug: 'navigation', title: 'Navigation', file: 'pages/docs/Navigation.tsx', Component: Navigation, loader: navigationLoader },
+      { slug: 'runtime-components', title: 'Runtime components', file: 'pages/docs/RuntimeComponents.tsx', Component: RuntimeComponents, loader: runtimeComponentsLoader },
       { slug: 'css', title: 'CSS', file: 'pages/docs/Css.tsx', Component: Css, loader: cssLoader },
       { slug: 'configuration', title: 'Configuration', file: 'pages/docs/Configuration.tsx', Component: Configuration, loader: configurationLoader },
       { slug: 'cli', title: 'CLI', file: 'pages/docs/Cli.tsx', Component: Cli, loader: cliLoader },
