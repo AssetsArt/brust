@@ -305,12 +305,11 @@ impl WsHub {
         self.drop_topics(s);
     }
 
+    /// Lock order `topics` then `subs`, as in `subscribe`: a subscribe that passed its `closed` check under the
+    /// `topics` lock has put its topic into `subs` before this takes them, so no dead id stays in `topics`.
     fn drop_topics(&self, s: &Sock) {
-        let subs = std::mem::take(&mut *s.subs.lock());
-        if subs.is_empty() {
-            return;
-        }
         let mut topics = self.topics.write();
+        let subs = std::mem::take(&mut *s.subs.lock());
         for t in subs {
             if let Some(set) = topics.get_mut(&t) {
                 set.remove(&s.id);
@@ -366,10 +365,11 @@ impl WsHub {
     /// True when the socket is open (and now subscribed to `topic`).
     pub fn subscribe(&self, id: SocketId, topic: &str) -> bool {
         let Some(s) = self.get(id) else { return false };
+        // `closed` is checked under the `topics` lock: `unregister` marks it, then takes this lock to drop the topics.
+        let mut topics = self.topics.write();
         if s.closed.load(Ordering::Acquire) {
             return false;
         }
-        let mut topics = self.topics.write();
         s.subs.lock().insert(topic.into());
         topics.entry(topic.into()).or_default().insert(id);
         true

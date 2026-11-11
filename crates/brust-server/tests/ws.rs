@@ -50,6 +50,13 @@ fn ws_worker(opts: Value) -> Arc<FakeBun> {
         if denied {
             return frame(401, &[("content-type", "text/plain")], b"no");
         }
+        // a slow guard: the upgrade is still in the worker for a while (the call is counted before this runs)
+        if req["headers"]
+            .as_array()
+            .is_some_and(|h| h.iter().any(|p| p[0] == "x-slow"))
+        {
+            std::thread::sleep(Duration::from_millis(800));
+        }
         accept_frame(next.fetch_add(1, Ordering::SeqCst), &opts)
     })
 }
@@ -569,7 +576,10 @@ async fn back_pressure_answers_minus_one_then_zero_and_drains() {
         codes.iter().all(|c| [300_000, -1, 0].contains(c)),
         "{codes:?}"
     );
-    // the client reads everything: the queue empties and the handlers hear `drain`
+    // the client reads everything: the queue empties and the handlers hear `drain` (a drain between earlier rounds
+    // may already be logged: wait for one more)
+    let drains = |s: &Sink| s.of(id).iter().filter(|e| **e == WsEvent::Drain).count();
+    let before = drains(&a.sink);
     let reader = tokio::spawn(async move {
         while let Some(Ok(m)) = c.next().await {
             if m.is_close() {
@@ -577,10 +587,7 @@ async fn back_pressure_answers_minus_one_then_zero_and_drains() {
             }
         }
     });
-    until("the drain event", || {
-        a.sink.of(id).contains(&WsEvent::Drain)
-    })
-    .await;
+    until("the drain event", || drains(&a.sink) > before).await;
     assert!(
         a.server.ws_hub().send(id, WsData::Text("after".into())) > 0,
         "accepts again"
@@ -884,4 +891,73 @@ async fn max_connections_and_the_off_switches_answer_503_and_501() {
     s.register_worker(Box::new(FakeBunHandle(Arc::clone(&f))));
     assert_eq!(refused(connect(&s, PATH, &[]).await), 501);
     assert_eq!(f.fetch_count(), 0);
+}
+
+/// D10: an upgrade still in the worker when the drain starts switches, then goes away at once with 1001; the drain
+/// does not wait out its deadline for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_socket_that_switches_after_the_drain_began_goes_away_at_once() {
+    let a = app(quiet());
+    let s = Arc::clone(&a.server);
+    let pending = tokio::spawn(async move { connect(&s, PATH, &[("x-slow", "1")]).await });
+    until("the upgrade in the worker", || {
+        a.workers[0].fetch_count() == 1
+    })
+    .await;
+    let t0 = std::time::Instant::now();
+    a.server.request_drain(5000);
+    let mut c = pending
+        .await
+        .unwrap()
+        .expect("101: the upgrade was already in the worker");
+    let f = close_of(&mut c).await;
+    assert_eq!((u16::from(f.code), f.reason.as_str()), (1001, "going away"));
+    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        while c.next().await.is_some() {}
+    })
+    .await;
+    tokio::time::timeout(Duration::from_secs(6), a.server.wait_drain_done())
+        .await
+        .expect("drain done");
+    assert!(
+        t0.elapsed() < Duration::from_secs(3),
+        "waited out the deadline: {:?}",
+        t0.elapsed()
+    );
+    let id = opened(&a.sink, 1).await[0];
+    until("the close event", || {
+        a.sink
+            .of(id)
+            .last()
+            .is_some_and(|e| matches!(e, WsEvent::Close { .. }))
+    })
+    .await;
+}
+
+/// N1: a subscribe racing the socket's end never leaves the id in the topic.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subscribe_racing_the_close_leaves_no_dead_id() {
+    let a = app(quiet());
+    let hub = a.server.ws_hub();
+    for k in 0..20 {
+        let c = open(&a.server).await;
+        let id = opened(&a.sink, k + 1).await[k];
+        let h = Arc::clone(&hub);
+        let sub = tokio::spawn(async move {
+            for i in 0..200 {
+                h.subscribe(id, &format!("t{}", i % 4));
+                tokio::task::yield_now().await;
+            }
+        });
+        drop(c);
+        let _ = sub.await;
+        until("closed", || hub.remote_addr(id).is_none()).await;
+        for t in 0..4 {
+            assert_eq!(
+                hub.publish(&format!("t{t}"), WsData::Text("x".into()), None),
+                0
+            );
+        }
+    }
+    assert_eq!(hub.open_total(), 0);
 }

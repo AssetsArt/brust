@@ -175,6 +175,13 @@ async fn read(
     let mut drain_seen = false;
     // Set once the server started closing: the peer's close is waited for until then.
     let mut close_by: Option<tokio::time::Instant> = None;
+    // `subscribe` marks the current value seen: a socket that switched after the drain began (its upgrade was in
+    // the worker when it started) would never hear `changed`. It goes away at once instead (D10).
+    if drain.borrow_and_update().is_some() {
+        drain_seen = true;
+        sock.close(1001, "going away");
+        close_by = Some(close_deadline(&drain));
+    }
     let far = || tokio::time::Instant::now() + Duration::from_secs(86_400 * 365);
     loop {
         let reading = held.is_some();
