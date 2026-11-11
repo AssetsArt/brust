@@ -34,6 +34,7 @@
     "./navigation": "./src/navigation.ts",
     "./elysia": "./src/actions/elysia.ts",
     "./client": "./src/actions/client.ts",
+    "./compile": "./src/compile/index.ts",
     "./native": "./native/index.js"
   },
   "scripts": {
