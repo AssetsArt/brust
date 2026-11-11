@@ -297,3 +297,31 @@ fn a_slot_passed_as_children_into_fixed_rows_compiles() {
         tree[0].jinja
     );
 }
+
+/// Round 3 (R4.3): children that reach the row element through a props spread (`<li {...rest} />`) are pasted by the
+/// spread path — the same refusal in a client row, none in fixed rows.
+#[test]
+fn a_slot_spread_as_children_into_a_client_row_is_refused() {
+    let rows = "import { useState } from 'react'\nexport default function Rows({ items, ...rest }: any) { const [n, setN] = useState(0); return <ul>{items.map((i: any) => <li key={i.id} onClick={() => setN(n + 1)} {...rest} />)}</ul> }";
+    let src = format!(
+        "{IMPORT}import Rows from './el/Rows'\nexport default function P({{ items, slot }}: any) {{ return <main><Rows items={{items}}><Dynamic component={{slot}} /></Rows></main> }}"
+    );
+    assert_eq!(
+        refused_with(&src, &[("el/Rows.tsx", rows)]),
+        "dynamic-in-client-row"
+    );
+}
+
+#[test]
+fn a_slot_spread_as_children_into_fixed_rows_compiles() {
+    let rows = "import { useState } from 'react'\nconst ROWS = [{ id: 'a' }, { id: 'b' }]\nexport default function Rows(rest: any) { const [n, setN] = useState(0); return <ul>{ROWS.map((r) => <li key={r.id} onClick={() => setN(n + 1)} {...rest} />)}</ul> }";
+    let src = format!(
+        "{IMPORT}import Rows from './el/Rows'\nexport default function P({{ slot }}: any) {{ return <main><Rows><Dynamic component={{slot}} /></Rows></main> }}"
+    );
+    let tree = ok(&src, &[("el/Rows.tsx", rows)]);
+    assert!(
+        tree[0].jinja.contains("brust_dynamic("),
+        "{}",
+        tree[0].jinja
+    );
+}

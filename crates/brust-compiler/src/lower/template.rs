@@ -1019,6 +1019,24 @@ impl<'a, 'c> Printer<'a, 'c> {
             .map(|root| format!("it reads the prop `{root}`, which its caller binds to a value that changes on the client"))
     }
 
+    /// The ONE way a caller's children markup is pasted (a `{children}` slot, or the children a spread lands on an
+    /// element): R4.3 — a `<Dynamic>` it holds, pasted into a row the browser builds, is a slot in a client row; and the
+    /// slot's location travels on with markup this printer hands down in turn.
+    fn paste_markup(&mut self, m: String, dynamic: Option<u32>) -> String {
+        if let Some(at) = dynamic {
+            if self.in_client_row() && !self.blank {
+                self.dynamic_refusal(
+                    "dynamic-in-client-row",
+                    "<Dynamic>, passed as children, lands in a list row the client builds (an `x-for` list in the component that prints its children); the browser cannot render a runtime component for a row it creates".into(),
+                    at,
+                    "render the slot outside that list, or keep the list's rows server-built (no state, handlers or effects in the component that lists them)",
+                );
+            }
+            self.markup_dynamic.get_or_insert(at);
+        }
+        m
+    }
+
     /// A `<Dynamic>` refusal, once per rule and place (an `x-if` prints its branches twice).
     fn dynamic_refusal(&mut self, rule: &str, message: String, loc: u32, fix: &str) {
         if !self
@@ -1058,18 +1076,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         ) = (&self.inline, raw)
             && let Some(PropBinding::Markup(m, dynamic)) = i.get(name)
         {
-            // R4.3: a caller's `<Dynamic>` pasted into a row the browser builds is still a slot in a client row.
-            if let Some(at) = dynamic {
-                if self.in_client_row() && !self.blank {
-                    self.dynamic_refusal(
-                        "dynamic-in-client-row",
-                        "<Dynamic>, passed as children, lands in a list row the client builds (an `x-for` list in the component that prints its children); the browser cannot render a runtime component for a row it creates".into(),
-                        at,
-                        "render the slot outside that list, or keep the list's rows server-built (no state, handlers or effects in the component that lists them)",
-                    );
-                }
-                self.markup_dynamic.get_or_insert(at);
-            }
+            let m = self.paste_markup(m, dynamic);
             self.out.push_str(&m);
             return None;
         }
@@ -1736,7 +1743,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 client_only: Vec::new(),
             };
             match probe.get("children") {
-                Some(PropBinding::Markup(m, _)) => Some(m),
+                Some(PropBinding::Markup(m, dynamic)) => Some(self.paste_markup(m, dynamic)),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
                 Some(
                     PropBinding::Handler(_)
