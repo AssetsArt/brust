@@ -548,3 +548,78 @@ fn the_macro_renders_a_tree_and_stops_past_the_cap() {
         "{e:#}"
     );
 }
+
+/// F515 (review 98770491): the rows of a fixed list (a module const nothing writes) are the server's for good, so a
+/// recursive call as the single node of such a row, in a native page, prints the macro per row: never a build Error.
+const FIXED_PAGE: &str = "import { useState } from 'react'\nimport { NodeView } from './NodeView'\nconst NODES = [{ id: 'a', kind: 'group', label: 'A', children: [{ id: 'b', kind: 'group', label: 'B', children: [{ id: 'c', kind: 'text', label: 'deep' }] }] }, { id: 'z', kind: 'text', label: 'z' }]\nexport default function P() { const [k, setK] = useState(0); return <main><button onClick={() => setK(k + 1)}>{k}</button>{NODES.map((n: any) => ROW)}</main> }";
+
+fn fixed_tree(row: &str) -> Vec<Compiled> {
+    let page = FIXED_PAGE.replace("ROW", row);
+    let tree =
+        compile(&page, &[("NodeView.tsx", NODE_VIEW)]).unwrap_or_else(|d| panic!("{d:?}\n{page}"));
+    for c in &tree {
+        assert!(
+            !c.diagnostics.iter().any(|d| d.class == DiagClass::Error),
+            "a build Error, not a fallback: {}: {:?}",
+            c.source,
+            c.diagnostics
+        );
+    }
+    tree
+}
+
+#[test]
+fn a_recursive_row_of_a_fixed_list_prints_the_macro_per_row() {
+    let tree = fixed_tree("<NodeView key={n.id} n={n} />");
+    let p = &tree[0];
+    assert_eq!(p.ir["tier"], "Native", "{}", p.ir);
+    let nv = one(&tree, "NodeView.tsx");
+    assert_eq!(nv.ir["tier"], "Static", "{}", nv.ir);
+    assert_eq!(nv.ir["recursion"], serde_json::json!(["n"]), "{}", nv.ir);
+    assert_eq!(macros(&p.jinja), 1, "{}", p.jinja);
+    assert!(!p.jinja.contains("x-for"), "server rows: {}", p.jinja);
+    let html =
+        render(&p.jinja, serde_json::json!([])).unwrap_or_else(|e| panic!("{e:#}\n{}", p.jinja));
+    for id in ["a", "b", "c", "z"] {
+        assert!(html.contains(&format!("data-id=\"{id}\"")), "{html}");
+    }
+    assert!(html.contains(">deep</p>"), "{html}");
+}
+
+/// The same fixed row passing a value that changes on the client: a fallback with the reason, never a build Error.
+#[test]
+fn a_recursive_row_of_a_fixed_list_with_a_reactive_prop_falls_back() {
+    let tree = fixed_tree("<NodeView key={n.id} n={n} k={k} />");
+    let p = &tree[0];
+    assert!(p.is_react(), "{}", p.ir);
+    let d = p
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "recursion-unsupported")
+        .unwrap_or_else(|| panic!("{:?}", p.diagnostics));
+    assert_eq!(d.class, DiagClass::Fallback);
+}
+
+/// A fixed list whose rows carry `x-for` for a handler that reads the row, with the recursive call inside: the client
+/// adopts the server's rows and never re-creates them (F515), so the macro prints in each server row and the blank
+/// zero-row template holds no call. A correct render, never a build Error.
+#[test]
+fn a_recursive_call_in_an_x_for_row_of_a_fixed_list_prints_in_the_server_rows() {
+    let tree =
+        fixed_tree("<li key={n.id} onClick={() => setK(n.label.length)}><NodeView n={n} /></li>");
+    let p = &tree[0];
+    assert_eq!(p.ir["tier"], "Native", "{}", p.ir);
+    assert!(p.jinja.contains("x-for=\"n in "), "{}", p.jinja);
+    let blank = &p.jinja[p.jinja.find("{% else %}<!--x-for-->").unwrap()..];
+    assert!(
+        !blank[..blank.find("{% endfor %}").unwrap()].contains("__rc_"),
+        "{}",
+        p.jinja
+    );
+    assert_eq!(macros(&p.jinja), 1, "{}", p.jinja);
+    let html =
+        render(&p.jinja, serde_json::json!([])).unwrap_or_else(|e| panic!("{e:#}\n{}", p.jinja));
+    for id in ["a", "b", "c", "z"] {
+        assert!(html.contains(&format!("data-id=\"{id}\"")), "{html}");
+    }
+}

@@ -1,11 +1,15 @@
 // F523 in real Chromium: a component that renders itself (NodeView, three group levels) is ONE template macro on the
 // server (no React island per node), prints the whole tree on first paint, and a native leaf mounts at every level.
+// C8: the same kind of tree compiled at runtime from source text (`compileComponent`) paints through a <Dynamic> slot exactly
+// as the built route does.
 // Run alone: `bun test --timeout 180000 tests/server/recursive.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
 import { firstDifference, normalise } from '../../scripts/battery/ssr-normalise'
+import { compileComponent } from '../../packages/brust/src/compile'
+import { rcSource } from '../../packages/brust/test/fixtures/recursive/rcSource'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/recursive')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -86,4 +90,27 @@ test('a native leaf mounts at every level', async () => {
   }
   expect(errors).toEqual([])
   await page.close()
+})
+
+test('C8: compileComponent turns a self-rendering source into one static artifact with one macro and the depth guard', async () => {
+  expect(rcSource).toBe(readFileSync(join(app, 'StaticNode.tsx'), 'utf8'))
+  const r = await compileComponent({ source: rcSource, filename: 'el/StaticNode.tsx', appRoot: app, dist: join(app, 'dist') })
+  if (!r.ok) throw new Error(JSON.stringify(r.diagnostics))
+  expect(r.artifact).toMatchObject({ tier: 'static', client: null, features: [] })
+  expect(r.artifact.jinja.match(/\{%-? ?macro /g)?.length).toBe(1)
+  expect(r.artifact.jinja).toContain('{{ recursion_limit("StaticNode", 32) }}')
+})
+
+test('C8: the runtime artifact through a <Dynamic> slot paints the 3-level tree exactly as the built route', async () => {
+  const main = async (path: string) => {
+    const r = await fetch(`${base}${path}`)
+    expect(r.status).toBe(200)
+    return /<main>[\s\S]*<\/main>/.exec(await r.text())![0]
+  }
+  const built = await main('/built')
+  const slot = await main('/slot')
+  expect(slot).not.toContain('<brust-island')
+  for (const id of ['a', 'a1', 'b', 'c', 'c1', 'z']) expect(slot).toContain(`data-id="${id}"`)
+  expect(slot).toMatch(/data-id="c"[\s\S]*data-id="c1"[^>]*>deep</)
+  expect(firstDifference(normalise(slot), normalise(built))).toBeNull()
 })
