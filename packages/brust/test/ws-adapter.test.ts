@@ -259,6 +259,20 @@ test('an event for an unknown socket is dropped; an unknown open terminates it',
   void out
 })
 
+test('a Close without an Open runs no handler, frees the id, and a later open for it terminates', async () => {
+  const log: string[] = []
+  const app = new Elysia({ adapter: brust() }).ws('/ws', { open() { log.push('open') }, close() { log.push('close') } })
+  const held = socketCount()
+  const { out } = await connect(app)
+  expect(socketCount()).toBe(held + 1)
+  await events!(out.ws!.id, 'close', null, 1006, '')
+  expect(log).toEqual([])
+  expect(socketCount()).toBe(held)
+  await events!(out.ws!.id, 'open', null, 0, '')
+  expect(log).toEqual([])
+  expect(calls).toEqual([{ fn: 'terminate', args: [] }])
+})
+
 test('typed message bodies still validate (t.Object) through the shim', async () => {
   const got: unknown[] = []
   const app = new Elysia({ adapter: brust() }).ws('/ws', { body: t.Object({ n: t.Number() }), message(_ws, b) { got.push(b) } })

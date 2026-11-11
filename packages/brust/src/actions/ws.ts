@@ -282,6 +282,12 @@ export async function deliver(handler: WsHandler, localId: number, ev: SocketEve
     if (ev === 'open') native().wsTerminate(currentWorker, localId)
     return
   }
+  // A Close with no Open (the switch to a socket failed after the 101, ws-server N4): the app never saw this socket, so its
+  // close handler must not run (Bun never calls close without open). Free the id; a later open for it terminates.
+  if (ev === 'close' && sock.readyState === 0) {
+    sockets.delete(localId)
+    return
+  }
   try {
     sock.pending = undefined
     if (ev === 'message') {
