@@ -165,3 +165,19 @@ test('stats: a bad mode, a literal token and a mode/token mismatch are config er
   process.env.BRUST_STATS = 'maybe'
   await fails('', /BRUST_STATS must be one of off, public, token \(got "maybe"\)/)
 })
+
+test('F519 [components] cache_entries: absent by default, 1..1_000_000 from brust.toml or run({ config }), passed to startServer', async () => {
+  for (const k of ENV) delete process.env[k]
+  expect((await loadConfig(tmpApp())).componentsCacheEntries).toBeUndefined()
+  expect((await loadConfig(tmpApp('[components]\ncache_entries = 500\n'))).componentsCacheEntries).toBe(500)
+  await expect(loadConfig(tmpApp('[components]\ncache_entries = 0\n'))).rejects.toThrow('components.cache_entries must be an integer in 1..1000000 (got 0)')
+  await expect(loadConfig(tmpApp('[components]\ncache_entries = "big"\n'))).rejects.toMatchObject({ name: 'BrustConfigError' })
+  expect((await loadConfig(tmpApp('[components]\ncache_entries = 500\n'), { componentsCacheEntries: 9 })).componentsCacheEntries).toBe(9)
+  await expect(loadConfig(tmpApp(), { componentsCacheEntries: 0 })).rejects.toThrow('componentsCacheEntries must be an integer in 1..1000000 (got 0)')
+  const { startOptions } = await import('../src/run')
+  const cfg = await loadConfig(tmpApp('[components]\ncache_entries = 7\n'))
+  // biome-ignore lint/suspicious/noExplicitAny: the run manifest fields startOptions reads
+  expect(startOptions(cfg, '/dist', { routes: [] } as any, '0.0.0').componentsCacheEntries).toBe(7)
+  // biome-ignore lint/suspicious/noExplicitAny: as above
+  expect('componentsCacheEntries' in startOptions(await loadConfig(tmpApp()), '/dist', { routes: [] } as any, '0.0.0')).toBe(false)
+})

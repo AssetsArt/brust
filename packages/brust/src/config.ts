@@ -2,7 +2,7 @@
 //   env (BRUST_ADDR / BRUST_PORT / BRUST_WORKERS / BRUST_RENDER_SLOTS / BRUST_DRAIN_TIMEOUT_MS /
 //        BRUST_BOOT_TIMEOUT_MS / BRUST_CALL_TIMEOUT_MS / BRUST_SLOT_BYTES / BRUST_MAX_LOADER_RESPONSE_BYTES / BRUST_STATS)
 //   > CLI flags (`brust start --port/--workers`) and `run({ config })`
-//   > brust.toml ([server] address / port / base_path / stats / stats_token / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [actions] base_url / credentials)
+//   > brust.toml ([server] address / port / base_path / stats / stats_token / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [actions] base_url / credentials, [components] cache_entries)
 //   > defaults (localhost, 1337, availableParallelism(), 1, 10000, 30000, 30000, 262144, 8388608).
 // L16 R16.1: `actionsBaseUrl` follows env (BRUST_ACTIONS_BASE_URL) > run({ config }) > toml `[actions] base_url`.
 // `cors` has no env layer; `run({ config: { cors } })` replaces a toml `[cors]` as a whole (never merged), and
@@ -55,6 +55,8 @@ export interface BrustConfig {
   /** The biggest loader/jobs reply that crosses by heap when it does not fit the slot (`max_loader_response_bytes`,
    * env BRUST_MAX_LOADER_RESPONSE_BYTES); 256 KiB..64 MiB. */
   maxLoaderResponseBytes: number
+  /** F519 `[components] cache_entries`: runtime components kept warm per server (`<Dynamic>`); absent = 2048. */
+  componentsCacheEntries?: number
   /** `run({ config: { cors } })` over brust.toml `[cors]` (a whole-object replace); absent = CORS off. No env layer. */
   cors?: CorsConfig
   /** F495 `[server] base_path` / `run({ config: { basePath } })`: the path the app is mounted under on a shared origin (`/portal`; `''` = the
@@ -167,6 +169,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
     maxLoaderResponseBytes: env.maxLoaderResponseBytes ?? cli.maxLoaderResponseBytes ?? fromToml.maxLoaderResponseBytes ?? DEFAULTS.maxLoaderResponseBytes,
     ioThreads: env.ioThreads ?? cli.ioThreads,
     ...(cors ? { cors } : {}),
+    ...pick('componentsCacheEntries', cli.componentsCacheEntries ?? fromToml.componentsCacheEntries),
     ...pick('basePath', cli.basePath ?? fromToml.basePath),
     ...pick('trailingSlash', cli.trailingSlash ?? fromToml.trailingSlash),
     ...pick('stats', stats),
@@ -209,6 +212,7 @@ function checkCli(cli: ConfigOverrides): void {
   check('ioThreads', cli.ioThreads, 1, MAX_IO_THREADS)
   check('slotBytes', cli.slotBytes, MIN_SLOT_BYTES, MAX_SLOT_BYTES)
   check('maxLoaderResponseBytes', cli.maxLoaderResponseBytes, MIN_LOADER_RESPONSE_BYTES, MAX_LOADER_RESPONSE_BYTES)
+  check('componentsCacheEntries', cli.componentsCacheEntries, 1, MAX_COMPONENTS_CACHE_ENTRIES)
   if (cli.basePath !== undefined) {
     const r = normalizeBasePath(cli.basePath)
     if (!r.ok) throw new BrustConfigError(`config.basePath ${r.why}`, null)
@@ -233,6 +237,9 @@ function table(v: unknown, what: string, file: string): Record<string, unknown> 
   return v as Record<string, unknown>
 }
 
+/** F519 `[components] cache_entries`: 1..1_000_000 (each entry holds up to 512 KiB of artifact). */
+export const MAX_COMPONENTS_CACHE_ENTRIES = 1_000_000
+
 function tomlInt(v: unknown, name: string, min: number, max: number, file: string): number | undefined {
   if (v === undefined) return undefined
   if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max)
@@ -243,6 +250,11 @@ function tomlInt(v: unknown, name: string, min: number, max: number, file: strin
 function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
   const root = table(parsed, 'top level', file)
   const out: Partial<BrustConfig> = {}
+  if ('components' in root) {
+    const components = table(root.components, '[components]', file)
+    const n = tomlInt(components.cache_entries, 'components.cache_entries', 1, MAX_COMPONENTS_CACHE_ENTRIES, file)
+    if (n !== undefined) out.componentsCacheEntries = n
+  }
   if ('server' in root) {
     const server = table(root.server, '[server]', file)
     const { port, address } = server
