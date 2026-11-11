@@ -71,6 +71,14 @@ pub enum Node {
     Fragment(Vec<Node>),
     /// `<Outlet />` from `@brust/core/routes` (S8): the server's child slot, printed as `{{ __outlet | safe }}`.
     Outlet,
+    /// `<Dynamic component={ref} props={props} />` from `@brust/core` (R4, F519): a server slot that renders a runtime
+    /// component, printed as `{{ brust_dynamic(<component>, <props>) }}` (no wrapper element). Both values are decided on
+    /// the server (placement makes them `Server` or refuses them); `props` omitted at the call site is `{}`.
+    Dynamic {
+        loc: u32,
+        component: Expr,
+        props: Expr,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

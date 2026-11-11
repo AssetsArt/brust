@@ -456,6 +456,12 @@ impl<'a, 'f> Render<'a, 'f> {
                 children.iter().for_each(|c| self.node(c));
             }
             Node::Fragment(cs) => cs.iter().for_each(|c| self.node(c)),
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                self.expr(component);
+                self.expr(props);
+            }
             Node::Text(_) | Node::Outlet => {}
         }
     }

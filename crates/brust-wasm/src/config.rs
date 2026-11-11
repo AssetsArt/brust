@@ -184,6 +184,8 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
         https: true,
         l2,
         dev_token: None,
+        // F519: no runtime components on Workers (a build with a slot is refused for this target).
+        components_cache_entries: None,
         // The Workers gate is `CONFIG.stats` (a bool, off by default): on is public, as it always was.
         stats: if c.stats {
             brust_core::config::StatsAccess::Public

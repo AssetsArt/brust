@@ -59,6 +59,9 @@ pub struct FakeBun {
     pub l2: Option<Arc<FakeL2>>,
     pub cache_calls: AtomicU32,
     pub last_cache: Mutex<Option<Value>>,
+    /// F519: `component` calls (every ref answers missing).
+    pub component_calls: AtomicU32,
+    pub last_component: Mutex<Option<Value>>,
     ptr: *mut u8,
     len: usize,
 }
@@ -107,6 +110,8 @@ impl FakeBun {
             l2: None,
             cache_calls: AtomicU32::new(0),
             last_cache: Mutex::new(None),
+            component_calls: AtomicU32::new(0),
+            last_component: Mutex::new(None),
             ptr,
             len,
         })
@@ -390,6 +395,15 @@ impl FakeBun {
             CallKind::Jobs => &self.jobs,
             CallKind::Fetch => return self.reply_fetch(req, slot),
             CallKind::Cache => return self.reply_cache(req, slot),
+            CallKind::Component => {
+                let results: Vec<Value> = req["refs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|r| serde_json::json!({ "ref": r, "missing": true }))
+                    .collect();
+                return serde_json::to_vec(&serde_json::json!({ "results": results })).unwrap();
+            }
         };
         let resp = respond(req.clone());
         if kind == CallKind::Loader
@@ -471,6 +485,7 @@ impl RenderDispatch for FakeBunHandle {
             CallKind::Jobs => (&f.job_calls, &f.last_jobs),
             CallKind::Fetch => (&f.fetch_calls, &f.last_fetch),
             CallKind::Cache => (&f.cache_calls, &f.last_cache),
+            CallKind::Component => (&f.component_calls, &f.last_component),
         };
         counter.fetch_add(1, Ordering::SeqCst);
         *last.lock().unwrap() = Some(req.clone());

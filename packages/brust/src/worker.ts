@@ -8,10 +8,10 @@ import { type HeapIo, runFetch, setActionsApp, setActionsLimits } from './action
 import { DEFAULT_MAX_RESPONSE_BYTES } from './actions/prefix'
 import { type CacheBridgeDeps, runCache } from './cache-adapter/bridge'
 import type { CacheManifest } from './cache-adapter/load'
-import { type Handlers, type JobsModule, type ManifestLike, makeHandlers, type SsgRecord, toJson } from './handlers'
+import { type Handlers, type JobsModule, type ManifestLike, makeHandlers, type SsgRecord, slotComponents, toJson } from './handlers'
 import { cacheClear, cacheL2Count, cacheReplay, planJobs, planJobsBuf, putFetchReply, registerWorker, takeFetchBody } from './native'
 import { installProductionJsxDev, installServerOnlyRuntime } from './build/server-only'
-import { flattenRoutes, type Route } from './routes'
+import { flattenRoutes, type Route, type RuntimeComponents } from './routes'
 
 export * from './handlers'
 
@@ -113,6 +113,8 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan:
           out = misses === '' ? PLANNED : { planned: true, results: (await h.jobs(JSON.parse(misses))).results }
         }
       } else if (kind === 'jobs') out = await h.jobs(req)
+      // F519 (R5.2): the reply may hold artifacts of 2 × 256 KiB each: it crosses by heap like a loader reply (L10).
+      else if (kind === 'component') out = h.component ? await h.component(req) : { results: (req.refs ?? []).map((ref: string) => ({ ref, missing: true })) }
       else out = { error: `unknown call kind ${kind}` }
     } catch (e) {
       out = { error: String(e) }
@@ -188,13 +190,21 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
   if (!entry) throw new Error('BRUST_APP_ENTRY is not set')
   const manifest = (await Bun.file(manifestFile).json()) as ManifestLike & { cache?: CacheManifest | null; actions_only?: boolean }
   let routes: Route[] | undefined = []
+  let components: RuntimeComponents | undefined
   if (!manifest.actions_only) {
     installServerOnlyRuntime()
     installProductionJsxDev(dirname(resolve(entry)))
     const app = await import(resolve(entry))
     routes = (app.routes ?? app.default) as Route[] | undefined
+    components = app.components as RuntimeComponents | undefined
   }
   if (!Array.isArray(routes)) throw new Error(`${entry} exports no routes (export const routes or default)`)
+  // F519 (R5.1): a <Dynamic> slot needs a resolver.
+  const slotIds = slotComponents(manifest)
+  if (slotIds.length > 0 && typeof components?.resolve !== 'function')
+    throw new Error(
+      `${entry} must export \`components = { resolve(ref, { build }) }\`: the build has a <Dynamic> slot (in ${slotIds.join(', ')}), and the routes entry exports no components.resolve`,
+    )
   const jobsMod = await import(join(dist, manifest.jobs_module ?? 'jobs.js'))
   const jobs = (jobsMod.default ?? jobsMod) as JobsModule
   if (manifest.actions) {
@@ -227,6 +237,7 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     stores: (jobsMod.stores ?? {}) as Record<string, object>,
     ...(env.BRUST_SSG === '1' && env.BRUST_SSG_LOG ? { ssg: ssgLog(env.BRUST_SSG_LOG) } : {}),
     dev: env.NODE_ENV === 'development',
+    ...(components ? { components } : {}),
   })
   const id = registerWorker(view, slots, makeDispatch(handlers, view, slots))
   if (l2 && env.BRUST_WORKER_ID === '0') {

@@ -51,6 +51,8 @@ pub enum CallKind {
     Fetch,
     /// The cache adapter's `store.get` / `store.set` (cache-adapter lane A, R2).
     Cache,
+    /// F519 (R5.2): resolve runtime components by ref; the reply may cross by heap (L10).
+    Component,
 }
 
 /// Failure layers from a worker dispatch, mirroring the old

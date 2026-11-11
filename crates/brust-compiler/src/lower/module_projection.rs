@@ -175,7 +175,7 @@ fn row_bindings(n: &Node, name: &str, out: &mut BTreeSet<String>) -> bool {
         | Node::Component { children, .. }
         | Node::Fragment(children) => all(children, out),
         Node::If { then, else_, .. } => all(then, out) && all(else_, out),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => true,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => true,
     }
 }
 

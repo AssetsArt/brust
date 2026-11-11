@@ -133,6 +133,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         fused: Vec::new(),
         fused_counts: HashMap::new(),
         holds_island: false,
+        dynamic: false,
         children_no_text: false,
         provider_locs: Default::default(),
         next_owner: 0,
@@ -461,6 +462,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.build_eval_instances.extend(w.eval_instances);
     ir.folded_instances.extend(w.folded_instances);
     ir.holds_island |= w.holds_island;
+    ir.dynamic |= w.dynamic || crate::analyze::component::has_dynamic(&ir.template);
     ir.children_no_text |= w.children_no_text || children_in_no_text(&ir.template, false);
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
@@ -537,6 +539,8 @@ struct Walker<'s, 'c> {
     absent: BTreeSet<String>,
     /// S2 F3: a child of this template is a React island, or holds one.
     holds_island: bool,
+    /// R4.4 (F519): a child of this template holds a `<Dynamic>` slot (`ComponentIR::dynamic`).
+    dynamic: bool,
     /// F388 (Mellow N1): a `{children}` of this component reaches a child that prints its children where no text can sit.
     children_no_text: bool,
     /// S2: component instances that push a Provider frame.
@@ -756,7 +760,7 @@ fn forward_ref_sites(n: &Node, always: bool) -> Option<usize> {
         Node::Component { children, .. } => children
             .iter()
             .try_fold(0, |t, c| forward_ref_sites(c, false).map(|x| t + x)),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => Some(0),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => Some(0),
     }
 }
 
@@ -821,7 +825,7 @@ fn poly_has_runtime_spread(n: &Node) -> bool {
         Node::If { then, else_, .. } => then.iter().chain(else_).any(poly_has_runtime_spread),
         Node::For { body, .. } => body.iter().any(poly_has_runtime_spread),
         Node::Component { children, .. } => children.iter().any(poly_has_runtime_spread),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -936,6 +940,9 @@ fn rest_consumers(n: &Node, flag: &str) -> usize {
             expr_reads(source) + body.iter().map(|c| rest_consumers(c, flag)).sum::<usize>()
         }
         Node::Fragment(cs) => cs.iter().map(|c| rest_consumers(c, flag)).sum(),
+        Node::Dynamic {
+            component, props, ..
+        } => expr_reads(component) + expr_reads(props),
         Node::Text(_) | Node::Outlet => 0,
     }
 }
@@ -984,7 +991,9 @@ fn whole_rest_site(n: &Node) -> Option<Option<CallRef>> {
         }
         Node::Fragment(cs) => cs.iter().find_map(whole_rest_site),
         Node::If { then, else_, .. } => then.iter().chain(else_).find_map(whole_rest_site),
-        Node::For { .. } | Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+        Node::For { .. } | Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {
+            None
+        }
     }
 }
 
@@ -1029,7 +1038,7 @@ fn carrier_call(n: &Node) -> Option<CallRef> {
         Node::Element { children, .. }
         | Node::Component { children, .. }
         | Node::Fragment(children) => children.iter().find_map(carrier_call),
-        Node::If { .. } | Node::For { .. } | Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+        Node::If { .. } | Node::For { .. } | Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => None,
     }
 }
 
@@ -1045,7 +1054,7 @@ fn poly_element_attrs(n: &Node) -> Option<&[Attr]> {
         Node::Fragment(cs) => cs.iter().find_map(poly_element_attrs),
         Node::If { then, else_, .. } => then.iter().chain(else_).find_map(poly_element_attrs),
         Node::For { body, .. } => body.iter().find_map(poly_element_attrs),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => None,
     }
 }
 
@@ -1118,7 +1127,7 @@ fn shared_component_locs(template: &Node) -> BTreeSet<u32> {
                 then.iter().chain(else_).for_each(|c| walk(c, seen, shared))
             }
             Node::For { body, .. } => body.iter().for_each(|c| walk(c, seen, shared)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
     let (mut seen, mut shared) = (BTreeSet::new(), BTreeSet::new());
@@ -1147,7 +1156,7 @@ fn fed_under_condition(ir: &ComponentIR) -> bool {
                 then.iter().chain(else_).any(|c| walk(c, true, fed, ids))
             }
             Node::For { body, .. } => body.iter().any(|c| walk(c, true, fed, ids)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
         }
     }
     walk(&ir.template, false, &fed, &ids)
@@ -1165,7 +1174,7 @@ fn template_has_for(n: &Node) -> bool {
         | Node::Component { children, .. }
         | Node::Fragment(children) => children.iter().any(template_has_for),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(template_has_for),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -1303,7 +1312,7 @@ fn rebase_sources(
                 rebase_sources(else_, from, to, opts, modules)?;
             }
             Node::For { body, .. } => rebase_sources(body, from, to, opts, modules)?,
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
     Ok(())
@@ -1372,7 +1381,7 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
             | Node::Fragment(children) => children.iter().map(count).sum(),
             Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
             Node::For { body, .. } => body.iter().map(count).sum(),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => 0,
         }
     }
     fn put(n: &mut Node, content: &mut Option<Vec<Node>>) {
@@ -1396,7 +1405,7 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
                 .chain(else_.iter_mut())
                 .for_each(|c| put(c, content)),
             Node::For { body, .. } => body.iter_mut().for_each(|c| put(c, content)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
     // `{open && children}`, a condition on it, an attribute from it: only the markup of the children can be answered.
@@ -1462,7 +1471,7 @@ fn splice_poly(ir: &mut ComponentIR, child: Node) -> Result<(), String> {
             }
             Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
             Node::For { body, .. } => body.iter().map(count).sum(),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => 0,
         }
     }
     fn is_children_slot(n: &Node) -> bool {
@@ -1656,7 +1665,7 @@ fn splice_poly(ir: &mut ComponentIR, child: Node) -> Result<(), String> {
             Node::For { body, .. } => body
                 .iter_mut()
                 .try_for_each(|c| put(c, child, handlers, used)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => Ok(()),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => Ok(()),
         }
     }
     /// Whether a prop key is an `on*` handler prop.
@@ -1704,7 +1713,7 @@ fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
             Node::Fragment(children) => children.iter().map(count).sum(),
             Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
             Node::For { body, .. } => body.iter().map(count).sum(),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => 0,
         }
     }
     fn put(n: &mut Node, content: &mut Option<Vec<Node>>) {
@@ -1737,7 +1746,7 @@ fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
                 .chain(else_.iter_mut())
                 .for_each(|c| put(c, content)),
             Node::For { body, .. } => body.iter_mut().for_each(|c| put(c, content)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
     let total = count(n);
@@ -1773,7 +1782,7 @@ fn children_slot_is_lone(n: &Node) -> bool {
         | Node::Fragment(children) => children.iter().any(children_slot_is_lone),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(children_slot_is_lone),
         Node::For { body, .. } => body.iter().any(children_slot_is_lone),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -1798,7 +1807,7 @@ fn prints_children_slot(ir: &ComponentIR) -> bool {
             | Node::Fragment(children) => children.iter().any(any),
             Node::If { then, else_, .. } => then.iter().chain(else_).any(any),
             Node::For { body, .. } => body.iter().any(any),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
         }
     }
     any(&ir.template)
@@ -1822,7 +1831,7 @@ fn spreads_whole_props(n: &Node) -> bool {
         Node::Fragment(cs) => cs.iter().any(spreads_whole_props),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(spreads_whole_props),
         Node::For { body, .. } => body.iter().any(spreads_whole_props),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -1864,7 +1873,7 @@ fn splice_rest_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), 
                 .chain(else_.iter_mut())
                 .for_each(|c| sites(c, out)),
             Node::For { body, .. } => body.iter_mut().for_each(|c| sites(c, out)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
     if ir.props.iter().any(|p| p.name == "children") || reads_children_as_value(ir) {
@@ -2301,6 +2310,12 @@ impl<'a> Carry<'a> {
                 self.nodes(children, bound)
             }
             Node::Fragment(cs) => self.nodes(cs, bound),
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                self.expr(component, bound, "the component of <Dynamic>")?;
+                self.expr(props, bound, "the props of <Dynamic>")
+            }
             Node::Text(_) | Node::Outlet => Ok(()),
         }
     }
@@ -2366,7 +2381,7 @@ fn splice_render(ir: &mut ComponentIR, rp: crate::ir::RenderProp) -> Result<(), 
                 .chain(else_.iter_mut())
                 .for_each(|c| find(c, hit, found)),
             Node::For { body, .. } => body.iter_mut().for_each(|c| find(c, hit, found)),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
     let mut found: Vec<(Vec<RawExpr>, *mut Node)> = Vec::new();
@@ -2522,6 +2537,9 @@ fn ir_reads_prop(ir: &ComponentIR, key: &str) -> bool {
                 ..
             } => ex(source) || ex(k) || body.iter().any(|c| node(c, key)),
             Node::Slot(e) => ex(e),
+            Node::Dynamic {
+                component, props, ..
+            } => ex(component) || ex(props),
             Node::Text(_) | Node::Outlet => false,
         }
     }
@@ -2622,6 +2640,12 @@ pub(super) fn subst_params(
             body.iter_mut().try_for_each(|c| subst_params(c, map))
         }
         Node::Slot(e) => ex(e, map),
+        Node::Dynamic {
+            component, props, ..
+        } => {
+            ex(component, map)?;
+            ex(props, map)
+        }
         Node::Text(_) | Node::Outlet => Ok(()),
     }
 }
@@ -2690,7 +2714,7 @@ fn template_passes_rest_as_data(n: &Node) -> bool {
         }
         Node::If { then, else_, .. } => then.iter().chain(else_).any(template_passes_rest_as_data),
         Node::For { body, .. } => body.iter().any(template_passes_rest_as_data),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -2705,7 +2729,7 @@ fn template_reads_children(n: &Node) -> bool {
         | Node::Fragment(children) => children.iter().any(template_reads_children),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(template_reads_children),
         Node::For { body, .. } => body.iter().any(template_reads_children),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -2738,7 +2762,7 @@ fn count_prop_spreads(n: &Node) -> usize {
         Node::Fragment(cs) => cs.iter().map(count_prop_spreads).sum(),
         Node::If { then, else_, .. } => then.iter().chain(else_).map(count_prop_spreads).sum(),
         Node::For { body, .. } => body.iter().map(count_prop_spreads).sum(),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => 0,
     }
 }
 
@@ -2760,7 +2784,7 @@ fn strip_spreads(n: &mut Node) {
         Node::Fragment(cs) => cs.iter_mut().for_each(strip_spreads),
         Node::If { then, else_, .. } => then.iter_mut().chain(else_).for_each(strip_spreads),
         Node::For { body, .. } => body.iter_mut().for_each(strip_spreads),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
     }
 }
 
@@ -2862,7 +2886,7 @@ impl SpreadSink {
                     .chain(else_)
                     .for_each(|c| walk(c, elements, add)),
                 Node::For { body, .. } => body.iter().for_each(|c| walk(c, elements, add)),
-                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+                Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
             }
         }
         if !matches!(ir.tier, Tier::React { .. }) {
@@ -3316,7 +3340,7 @@ impl Walker<'_, '_> {
                 self.loop_scope.truncate(n);
             }
             Node::Component { .. } => self.component(n),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
 
@@ -3358,7 +3382,7 @@ impl Walker<'_, '_> {
                 self.reads_context_in(then) || self.reads_context_in(else_)
             }
             Node::For { body, .. } => self.reads_context_in(body),
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
         })
     }
 
@@ -3414,7 +3438,7 @@ impl Walker<'_, '_> {
                         return Some(w);
                     }
                 }
-                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+                Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
             }
         }
         None
@@ -4018,7 +4042,7 @@ impl Walker<'_, '_> {
                     }
                 }
             }
-            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
         }
     }
 
@@ -4644,7 +4668,7 @@ impl Walker<'_, '_> {
                     then.iter().chain(else_).for_each(|c| rest_sites(c, out))
                 }
                 Node::For { body, .. } => body.iter().for_each(|c| rest_sites(c, out)),
-                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+                Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
             }
         }
         let mut names = Vec::new();
@@ -4746,7 +4770,7 @@ impl Walker<'_, '_> {
                     then.iter().chain(else_).find_map(|c| walk(c, below))
                 }
                 Node::For { body, .. } => body.iter().find_map(|c| walk(c, below)),
-                Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+                Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => None,
             }
         }
         match content.iter().find_map(|n| walk(n, &below)) {
@@ -4789,7 +4813,7 @@ impl Walker<'_, '_> {
                     .chain(else_)
                     .try_for_each(|c| walk(c, owner, native)),
                 Node::For { body, .. } => body.iter().try_for_each(|c| walk(c, owner, native)),
-                Node::Text(_) | Node::Slot(_) | Node::Outlet => Ok(()),
+                Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => Ok(()),
             }
         }
         content
@@ -6445,7 +6469,8 @@ impl Walker<'_, '_> {
                     || children.iter().any(|c| self.body_directive(c))
             }
             Node::Fragment(cs) => cs.iter().any(|c| self.body_directive(c)),
-            Node::Text(_) | Node::Outlet => false,
+            // R4: a `<Dynamic>` is printed by the server only; it binds nothing on the client.
+            Node::Text(_) | Node::Outlet | Node::Dynamic { .. } => false,
         }
     }
 
@@ -6473,7 +6498,7 @@ impl Walker<'_, '_> {
             // The caller's own `{children}` passed on is that caller's content, judged where it is given.
             Node::Slot(_) if template_reads_children(n) => None,
             Node::Slot(e) if self.source_reactive(e) => Some("text that changes on the client"),
-            Node::Slot(_) | Node::Text(_) | Node::Outlet => None,
+            Node::Slot(_) | Node::Text(_) | Node::Outlet | Node::Dynamic { .. } => None,
             Node::If {
                 cond, then, else_, ..
             } => {
@@ -6583,7 +6608,7 @@ impl Walker<'_, '_> {
                     self.resolve_row_only(then, reactive);
                     self.resolve_row_only(else_, reactive);
                 }
-                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+                Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
             }
         }
     }
@@ -6662,6 +6687,11 @@ impl Walker<'_, '_> {
             || child.ir.as_ref().is_some_and(|c| c.holds_island)
         {
             self.holds_island = true;
+        }
+        // R4.4: a child whose template (with what it inlines) prints a `<Dynamic>` slot prints it into this one too (a
+        // React child holding one is refused on its own, `dynamic-in-react`).
+        if child.ir.as_ref().is_some_and(|c| c.dynamic) {
+            self.dynamic = true;
         }
         // R34.64: a `ref` at the call site of a `forwardRef` component reaches an element React attaches it to; a
         // static or native render has none to give it.
@@ -8592,6 +8622,7 @@ impl Walker<'_, '_> {
                     }
                 }
                 Node::Outlet => return Err("<Outlet/>".into()),
+                Node::Dynamic { .. } => return Err("<Dynamic/>".into()),
             }
         }
         Ok(out)
@@ -9032,7 +9063,7 @@ impl Walker<'_, '_> {
                 }
                 Node::If { then, else_, .. } => then.iter().chain(else_).any(|c| binds(c, event)),
                 Node::For { body, .. } => body.iter().any(|c| binds(c, event)),
-                Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+                Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
             }
         }
         // a handler hoisted from a prop of a static child (`<Prim onClick>`) is bound on that child's element
@@ -9808,6 +9839,12 @@ fn node_exprs(nodes: &[Node], out: &mut Vec<Expr>) {
                 node_exprs(body, out);
             }
             Node::Fragment(cs) => node_exprs(cs, out),
+            Node::Dynamic {
+                component, props, ..
+            } => {
+                out.push(component.clone());
+                out.push(props.clone());
+            }
             Node::Text(_) | Node::Outlet => {}
         }
     }

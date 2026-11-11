@@ -17,6 +17,7 @@ export {
   ALLOWED_ROUTE_FIELDS,
   BrustRouteError,
   defineRoutes,
+  Dynamic,
   flattenRoutes,
   httpError,
   isHttpErrorTrigger,
@@ -25,4 +26,4 @@ export {
   Outlet,
   redirect,
 } from './routes'
-export type { ComponentType, FlatRoute, HttpErrorOpts, HttpErrorTrigger, LoaderCtx, LoaderReq, Route, RouteCacheConfig, RouteSsgConfig, Verdict } from './routes'
+export type { ComponentType, DynamicProps, FlatRoute, HttpErrorOpts, HttpErrorTrigger, LoaderCtx, LoaderReq, Route, RouteCacheConfig, RouteSsgConfig, RuntimeArtifact, RuntimeComponents, Verdict } from './routes'

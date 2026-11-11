@@ -134,7 +134,7 @@ fn has_slot_content(n: &crate::ir::Node) -> bool {
         }
         Node::If { then, else_, .. } => then.iter().chain(else_).any(has_slot_content),
         Node::For { body, .. } => body.iter().any(has_slot_content),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 

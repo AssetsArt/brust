@@ -439,6 +439,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/event-aria.chromium.test.ts
       # F517: an app module listed in `[build] expose` is one module instance for a built component and the exposed entry URL.
       - run: bun test --timeout 120000 tests/server/expose.chromium.test.ts
+      # F519: a <Dynamic> slot renders runtime components the routes entry resolves lazily (hand-written R2 artifacts).
+      - run: bun test --timeout 180000 tests/server/dynamic-slot.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/live-style.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/props-order.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/loader-style.chromium.test.ts

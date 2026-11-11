@@ -317,7 +317,7 @@ fn props_spread_into_component(n: &crate::ir::Node) -> Option<u32> {
             .chain(else_)
             .find_map(props_spread_into_component),
         Node::For { body, .. } => body.iter().find_map(props_spread_into_component),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => None,
     }
 }
 
@@ -380,6 +380,6 @@ fn import_list_sources(
             all(then, out);
             all(else_, out)
         }
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
     }
 }

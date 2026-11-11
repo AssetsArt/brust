@@ -87,7 +87,7 @@ fn visit(n: &mut Node, cx: &mut Cx<'_>) {
             ..
         } if is_lucide(source) => icon(n, cx),
         Node::Component { children, .. } => visit_all(children, cx),
-        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
     }
 }
 
