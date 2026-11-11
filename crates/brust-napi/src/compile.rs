@@ -76,6 +76,9 @@ pub(crate) struct CompileInputs {
     pub source_roots: Vec<String>,
     /// F230: `scanLoadWrites`'s result (`[[module, export, why], …]`).
     pub load_writes: Option<String>,
+    /// F518: the text of the root file, when the caller has it and the file does not exist on disk (`compileSource`).
+    /// `path` still names the file: it decides the id and how relative imports resolve.
+    pub source: Option<String>,
 }
 
 /// An optional JSON argument; one that does not parse is an error, not an empty value: `path_aliases` and `packages`
@@ -123,6 +126,7 @@ pub(crate) fn compile_tree_impl(
         packages,
         source_roots,
         load_writes,
+        source,
     } = inputs;
     // F230: the exports another app module writes, scanned once per build (`scan_load_writes`).
     let load_writes = match json_input("loadWrites", load_writes, |s| {
@@ -178,7 +182,12 @@ pub(crate) fn compile_tree_impl(
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
-        match brust_compiler::pipeline::compile_tree(path, None, &opts, runtime_import) {
+        match brust_compiler::pipeline::compile_tree(
+            path,
+            source.map(String::into_bytes),
+            &opts,
+            runtime_import,
+        ) {
             Err(d) => CompiledTree {
                 components: vec![],
                 error: Some(diag(&d)),
@@ -258,6 +267,47 @@ pub fn compile_tree(
             packages,
             source_roots: source_roots.unwrap_or_default(),
             load_writes,
+            source: None,
+        },
+    )
+}
+
+/// F518 `compileSource`'s options: the root file as TEXT (a runtime component is stored outside the app, so no file
+/// exists), `path` the virtual app-root-relative name it is compiled under. One object, so `compile_tree`'s positional
+/// list does not grow.
+#[napi(object)]
+pub struct CompileSourceOptions {
+    /// Virtual path relative to `root` (`el/Promo-<hash>.tsx`): it decides the component id and how relative imports
+    /// resolve; nothing is read from or written to it.
+    pub path: String,
+    /// The text of the root file.
+    pub source: String,
+    pub root: String,
+    pub runtime_import: String,
+    pub server_only: Option<Vec<String>>,
+    /// `tsconfig` `paths`, JSON (an array), as for `compileTree`.
+    pub path_aliases: Option<String>,
+    pub source_roots: Option<Vec<String>>,
+    /// L23 icons the caller rendered, JSON, as for `compileTree`; `{"final":true,"svgs":{}}` judges every icon an island.
+    pub icon_svgs: Option<String>,
+}
+
+/// `compile_tree` for a root file given as text. Everything else is as `compile_tree`: the same analysis and lowering,
+/// imports read from disk under `root` and `source_roots`.
+#[napi]
+pub fn compile_source(opts: CompileSourceOptions) -> CompiledTree {
+    crate::init_tracing();
+    compile_tree_impl(
+        &opts.path,
+        &opts.root,
+        &opts.runtime_import,
+        CompileInputs {
+            server_only: opts.server_only.unwrap_or_default(),
+            icon_svgs: opts.icon_svgs,
+            path_aliases: opts.path_aliases,
+            source_roots: opts.source_roots.unwrap_or_default(),
+            source: Some(opts.source),
+            ..Default::default()
         },
     )
 }
@@ -364,6 +414,45 @@ mod tests {
         assert_eq!(
             t.error.as_ref().map(|d| d.rule.as_str()),
             Some("compile-input")
+        );
+    }
+
+    #[test]
+    fn compile_source_compiles_text_that_is_not_on_disk() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        let src = "import { useState } from 'react'\nexport default function Promo() {\n  const [n, setN] = useState(0)\n  return <button onClick={() => setN(n + 1)}>{n}</button>\n}\n";
+        let compile = |path: &str, source: &str| {
+            super::compile_source(super::CompileSourceOptions {
+                path: path.into(),
+                source: source.into(),
+                root: root.into(),
+                runtime_import: "/_brust/client/runtime-x.js".into(),
+                server_only: None,
+                path_aliases: None,
+                source_roots: None,
+                icon_svgs: None,
+            })
+        };
+        let t = compile("el/Promo-0123456789abcdef.tsx", src);
+        assert!(t.error.is_none(), "{:?}", t.error);
+        let c = &t.components[0];
+        // The path decides the id: a stem word carrying the content hash, then the path hash.
+        assert!(c.id.starts_with("promo0123456789abcdef_"), "{}", c.id);
+        assert!(c.client_js.as_deref().is_some_and(|j| j.contains(&c.id)));
+        assert!(c.jinja.contains(&c.id));
+        assert!(
+            !std::path::Path::new(root)
+                .join("el/Promo-0123456789abcdef.tsx")
+                .exists()
+        );
+        // Same path and text: the same artifact; another text hash in the name: another id.
+        assert_eq!(
+            compile("el/Promo-0123456789abcdef.tsx", src).components[0].id,
+            c.id
+        );
+        assert_ne!(
+            compile("el/Promo-fedcba9876543210.tsx", src).components[0].id,
+            c.id
         );
     }
 

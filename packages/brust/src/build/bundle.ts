@@ -181,7 +181,7 @@ function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean 
   const from = dirname(ctx.sourceOf.get(importer) ?? importer)
   const bare = spec.split('/')[0]!
   if ((BUILTINS.has(spec) || BUILTINS.has(bare)) && !(BROWSER_POLYFILLS.has(bare) && installed(bare, from, ctx.appRoot))) return true
-  if (/^@brust\/core\/(server|native|elysia)(\/|$)/.test(spec)) return true
+  if (/^@brust\/core\/(server|native|compile|elysia)(\/|$)/.test(spec)) return true
   if (spec === 'elysia' || spec.startsWith('elysia/')) return true
   if (/\.server(\.[^/]*)?$/.test(spec)) return true
   const isPath = spec.startsWith('./') || spec.startsWith('../') || isAbsolute(spec)
