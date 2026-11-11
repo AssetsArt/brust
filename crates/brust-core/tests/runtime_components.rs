@@ -297,7 +297,7 @@ fn a_slot_sees_its_props_at_top_level_and_as_props_and_nothing_of_the_page() {
         }),
     );
     let body = text(&get(&f.core, "/u"));
-    assert!(body.contains("<li>[T|T|false|false]</li>"), "{body}");
+    assert!(body.contains("<li>[T|T|False|False]</li>"), "{body}");
 }
 
 #[test]

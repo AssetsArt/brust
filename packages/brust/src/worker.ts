@@ -200,10 +200,10 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
   }
   if (!Array.isArray(routes)) throw new Error(`${entry} exports no routes (export const routes or default)`)
   // F519 (R5.1): a <Dynamic> slot needs a resolver.
-  const slots = slotComponents(manifest)
-  if (slots.length > 0 && typeof components?.resolve !== 'function')
+  const slotIds = slotComponents(manifest)
+  if (slotIds.length > 0 && typeof components?.resolve !== 'function')
     throw new Error(
-      `${entry} must export \`components = { resolve(ref, { build }) }\`: the build has a <Dynamic> slot (in ${slots.join(', ')}), and the routes entry exports no components.resolve`,
+      `${entry} must export \`components = { resolve(ref, { build }) }\`: the build has a <Dynamic> slot (in ${slotIds.join(', ')}), and the routes entry exports no components.resolve`,
     )
   const jobsMod = await import(join(dist, manifest.jobs_module ?? 'jobs.js'))
   const jobs = (jobsMod.default ?? jobsMod) as JobsModule
