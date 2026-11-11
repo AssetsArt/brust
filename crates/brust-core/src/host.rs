@@ -20,7 +20,10 @@ use crate::cache::stamp::{InvalClock, ReadStamp};
 use crate::cache::{CacheKey, CacheStats, JobKey, RenderedBody};
 use crate::l2::{L2Counters, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta};
 use crate::plan::{PlanSeed, PlannedCall};
-use crate::protocol::{FetchResponse, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse};
+use crate::protocol::{
+    ComponentRequest, ComponentResponse, ComponentResult, FetchResponse, JobsRequest, JobsResponse,
+    LoaderRequest, LoaderResponse,
+};
 
 /// What the pipeline reads of a request's head.
 pub struct RequestHead<'a> {
@@ -249,6 +252,19 @@ pub trait Host: Clock {
     ) -> impl Future<Output = Result<(LoaderResponse, Option<PlannedCall>), CallError>>;
     /// The one batched jobs call for a page's misses.
     fn jobs(&self, req: &JobsRequest<'_>) -> impl Future<Output = Result<JobsResponse, CallError>>;
+    /// F519 (R5.2): resolve the runtime components `req.refs` names, in one call. Default: no
+    /// resolver, every ref is missing.
+    fn component(
+        &self,
+        req: &ComponentRequest<'_>,
+    ) -> impl Future<Output = Result<ComponentResponse, CallError>> {
+        let results = req
+            .refs
+            .iter()
+            .map(|r| ComponentResult::missing(r))
+            .collect();
+        async move { Ok(ComponentResponse { results }) }
+    }
     /// The whole body, at most `cap` bytes.
     fn read_body(
         &self,

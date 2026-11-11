@@ -28,6 +28,20 @@ pub struct Manifest {
     /// F506: `[server] trailing_slash` baked at build; absent = `strict` (the path is matched as written).
     #[serde(default)]
     pub trailing_slash: crate::config::TrailingSlash,
+    /// F517/F519: the runtime-component block (`[build] expose`). Absent = the feature is off.
+    #[serde(default)]
+    pub runtime: Option<RuntimeBlock>,
+}
+
+/// F517 (R1.3): what a runtime component may use of this build.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RuntimeBlock {
+    /// Exposed module (app-root-relative source) → its client entry (`client/x-<stem>-<hex>.js`).
+    #[serde(default)]
+    pub exposed: BTreeMap<String, String>,
+    /// Store name → the exposed module that defines it.
+    #[serde(default)]
+    pub stores: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -90,6 +104,9 @@ pub struct ComponentRecord {
     /// `assets.features`, in load order). A page links the core plus the union over its components.
     #[serde(default)]
     pub features: Vec<String>,
+    /// F519 (R4.4): this component's own template (after inlining) holds a `<Dynamic>` slot.
+    #[serde(default)]
+    pub dynamic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

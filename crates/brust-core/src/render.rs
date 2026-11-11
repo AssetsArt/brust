@@ -40,7 +40,7 @@ fn render_err(name: &str, e: &minijinja::Error) -> RenderError {
 /// the argument taken as a `String`), except that an already-safe string
 /// (`__outlet`) is returned as-is instead of copied twice — the value is the
 /// same. With `AutoEscape::None` the safe mark never changes a painted byte.
-fn safe_filter(
+pub(crate) fn safe_filter(
     state: &minijinja::State,
     v: minijinja::Value,
 ) -> Result<minijinja::Value, minijinja::Error> {
@@ -894,6 +894,21 @@ pub fn inject_document_assets_with_root_into(
     prefix_tag: Option<&str>,
     root: Option<&str>,
 ) {
+    inject_document_assets_full_into(html, chain, m, store, prefix_tag, root, None);
+}
+
+/// [`inject_document_assets_with_root_into`] plus the runtime components that rendered on the page (F519, R5.9):
+/// their features join the route's, their chunks follow the route's own, and a native one makes an all-static route
+/// load the runtime (with its store tags) too.
+pub fn inject_document_assets_full_into(
+    html: &mut String,
+    chain: &[String],
+    m: &Manifest,
+    store: Option<&Node>,
+    prefix_tag: Option<&str>,
+    root: Option<&str>,
+    extra: Option<&crate::components::SlotAssets>,
+) {
     let mut chunks: Vec<&str> = Vec::new();
     let mut react: Vec<&str> = Vec::new();
     let mut features: BTreeSet<&str> = BTreeSet::new();
@@ -934,6 +949,10 @@ pub fn inject_document_assets_with_root_into(
                 }
             }
         }
+    }
+    if let Some(x) = extra {
+        any_dynamic |= x.native;
+        features.extend(x.features.iter().map(String::as_str));
     }
     let mut tags = String::new();
     if let Some(nav) = &m.assets.nav
@@ -992,6 +1011,12 @@ pub fn inject_document_assets_with_root_into(
         .collect();
     for c in &chunks {
         tags.push_str(&tag(c));
+    }
+    // F519: an artifact's chunk URL is whole (base path and `/_brust/rc/…` included).
+    for url in extra.iter().flat_map(|x| x.chunks.iter()) {
+        tags.push_str("<script type=\"module\" src=\"");
+        tags.push_str(url);
+        tags.push_str("\"></script>");
     }
     if !react.is_empty() {
         if let Some(r) = &m.assets.react {

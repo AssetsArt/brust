@@ -186,6 +186,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             l2: cfg.l2,
             dev_token: cfg.dev_token,
             stats: cfg.stats,
+            components_cache_entries: cfg.components_cache_entries,
         },
     )?;
     let state = Arc::new(Server {

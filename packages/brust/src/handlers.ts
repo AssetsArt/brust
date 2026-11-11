@@ -4,7 +4,7 @@
 import { installServerResolver, type StoreSnapshot } from './store/core-adapter'
 import { collectSnapshot, getServerInstance, runInStoreContext, touchStores } from './store/server-context'
 import { NAVIGATION_MODULE } from './store/builtin'
-import { type FlatRoute, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type Verdict } from './routes'
+import { type FlatRoute, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type RuntimeComponents, type Verdict } from './routes'
 
 installServerResolver(getServerInstance)
 
@@ -55,6 +55,18 @@ export interface JobsResponse {
   results: JobResult[]
 }
 
+/** F519 (R5.2): every cold `<Dynamic>` ref of one render, in one call. */
+export interface ComponentRequest {
+  refs: string[]
+}
+
+/** One answer per ref: the artifact, `missing` (the resolver returned null), or what the resolver threw. */
+export type ComponentResult = { ref: string; artifact: unknown } | { ref: string; missing: true } | { ref: string; error: string }
+
+export interface ComponentResponse {
+  results: ComponentResult[]
+}
+
 /** The default export of `<dist>/<manifest.jobs_module>` (built by Task 6): component id → job fns. */
 // biome-ignore lint/suspicious/noExplicitAny: props are whatever the component takes
 export type JobsModule = Record<string, { precompute?: (props: any) => unknown; ssr?: (props: any) => string | Promise<string> }>
@@ -68,8 +80,14 @@ export interface ManifestLike {
       jobs: { id: string; kind?: string; target?: string; literals?: Record<string, unknown> }[]
       children?: { id: string }[]
       stores?: string[]
+      /** F519 (R4.4): the component's own template holds a `<Dynamic>` slot. */
+      dynamic?: boolean
     }
   >
+  /** F517 (R1.3): exposed modules and the stores they define (name -> module). Absent = no runtime components. */
+  runtime?: { exposed?: Record<string, string>; stores?: Record<string, string> } | null
+  /** The build id an artifact must be compiled for (`assets.build`). */
+  assets?: { build?: string }
   jobs_module?: string
   /** `brust build` (M3-F A3): the actions entry, relative to dist. Absent/null = no actions. */
   actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; stream?: string[] } | null
@@ -104,10 +122,13 @@ export function jobIdOf(call: Pick<JobCall, 'id' | 'componentId'>): string | und
 // ---- touched stores (M3-F D4) ----
 
 /** route id -> sorted unique union of `stores` over the route's chain, walking each component's
- * `children[].id` and `jobs[].target` transitively. Routes with an empty union are absent. */
+ * `children[].id` and `jobs[].target` transitively. Routes with an empty union are absent. F519 (R5.8): a route whose
+ * chain holds a `<Dynamic>` slot also touches every exposed store module (`runtime.stores`), so whatever a runtime
+ * component reads is in the page's snapshot. */
 export function routeStoresIndex(manifest: ManifestLike | undefined): Map<string, string[]> {
   const out = new Map<string, string[]>()
   const comps = manifest?.components ?? {}
+  const exposed = Object.values(manifest?.runtime?.stores ?? {})
   for (const r of manifest?.routes ?? []) {
     const acc = new Set<string>()
     const seen = new Set<string>()
@@ -117,6 +138,7 @@ export function routeStoresIndex(manifest: ManifestLike | undefined): Map<string
       const c = comps[id]
       if (!c) return
       for (const p of c.stores ?? []) acc.add(p)
+      if (c.dynamic) for (const p of exposed) acc.add(p)
       for (const k of c.children ?? []) walk(k.id)
       for (const j of c.jobs ?? []) if (j.target) walk(j.target)
     }
@@ -225,6 +247,34 @@ export function ssgRequest(req: LoaderReq, routeId: string, path: string, record
 export interface Handlers {
   loader(req: LoaderRequest): Promise<LoaderResponse>
   jobs(req: JobsRequest): Promise<JobsResponse>
+  /** F519: the `component` call. Absent = no resolver (every ref is missing). */
+  component?(req: ComponentRequest): Promise<ComponentResponse>
+}
+
+/** F519 (R5.1): a build with a `<Dynamic>` slot needs the routes entry's `components` export. The component ids that
+ * hold a slot, for the boot error; empty = no slot. */
+export function slotComponents(manifest: ManifestLike | undefined): string[] {
+  return Object.entries(manifest?.components ?? {})
+    .filter(([, c]) => c.dynamic === true)
+    .map(([id]) => id)
+}
+
+/** F519 (R5.2): ask `components.resolve` for each ref (in parallel); a throw is that ref's `error`, never the call's. */
+export async function resolveComponents(components: RuntimeComponents | undefined, build: string, req: ComponentRequest): Promise<ComponentResponse> {
+  const refs = Array.isArray(req?.refs) ? req.refs.filter((r): r is string => typeof r === 'string') : []
+  const resolve = components?.resolve
+  const results = await Promise.all(
+    refs.map(async (ref): Promise<ComponentResult> => {
+      if (typeof resolve !== 'function') return { ref, missing: true }
+      try {
+        const artifact = await resolve.call(components, ref, { build })
+        return artifact == null ? { ref, missing: true } : { ref, artifact }
+      } catch (e) {
+        return { ref, error: String(e) }
+      }
+    }),
+  )
+  return { results }
 }
 
 /** `leaves` from `flattenRoutes` (ids must match the manifest's route ids); `jobs` the jobs
@@ -239,6 +289,8 @@ export function makeHandlers(opts: {
   ssg?: (r: SsgRecord) => void
   /** `brust dev`: a refused `res.headers` name throws instead of being dropped with a warning (F464). */
   dev?: boolean
+  /** F519: the routes entry's `components` export (its `resolve` answers the `component` call). */
+  components?: RuntimeComponents
 }): Handlers {
   const byId = new Map(opts.leaves.map((l) => [l.id, l]))
   const literals = literalsIndex(opts.manifest)
@@ -332,6 +384,9 @@ export function makeHandlers(opts: {
     // One request carries every job of the page; a per-job failure keeps the other results.
     async jobs(req) {
       return { results: await Promise.all((req.jobs ?? []).map(runJob)) }
+    },
+    async component(req) {
+      return resolveComponents(opts.components, opts.manifest?.assets?.build ?? '', req)
     },
   }
 }

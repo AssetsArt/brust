@@ -51,6 +51,8 @@ pub struct Config {
     pub dev_token: Option<String>,
     /// F507: who may read `/_brust/cache/stats`; the default is nobody (404).
     pub stats: brust_core::config::StatsAccess,
+    /// F519 (R5.4): `[components] cache_entries`; `None` = 2048.
+    pub components_cache_entries: Option<usize>,
 }
 
 impl Default for Config {
@@ -70,6 +72,7 @@ impl Default for Config {
             l2: None,
             dev_token: None,
             stats: brust_core::config::StatsAccess::default(),
+            components_cache_entries: None,
         }
     }
 }

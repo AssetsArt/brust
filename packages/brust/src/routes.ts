@@ -185,6 +185,44 @@ export function Outlet(): null {
   return null
 }
 
+/** F519 (R2): a component compiled after the app was built (`compileComponent` of `@brust/core/compile`). Valid for
+ * ONE build: store it keyed by (ref, build). JSON-serialisable; treat it as opaque. */
+export interface RuntimeArtifact {
+  v: 1
+  /** The `assets.build` of the build it was compiled for. */
+  build: string
+  /** The `x-data` / `defineBehavior` id; a function of (filename, source bytes). */
+  id: string
+  tier: 'static' | 'native'
+  jinja: string
+  /** One self-contained ES module; `null` for a static component. */
+  client: string | null
+  features: string[]
+  /** Store names it reads; each is defined by an exposed module (`[build] expose`). */
+  stores: string[]
+}
+
+/** F519 (R5.1): the routes entry's `export const components`. `resolve` returns the artifact a `<Dynamic component={ref}>`
+ * renders, or `null` when there is none. Change the ref when the source changes: a ref's chunk URL is cached for good. */
+export interface RuntimeComponents {
+  resolve(ref: string, ctx: { build: string }): RuntimeArtifact | null | undefined | Promise<RuntimeArtifact | null | undefined>
+}
+
+/** Props of {@link Dynamic}. */
+export interface DynamicProps {
+  /** The ref the routes entry's `components.resolve` answers: `[A-Za-z0-9_-]{1,128}`. */
+  component: string
+  /** The props the runtime component renders with (JSON values). */
+  props?: Record<string, unknown>
+}
+
+/** F519 (R4): a slot for a component compiled after the build, decided on the server per render. The compiler lowers
+ * `<Dynamic component={ref} props={…} />` to a server call; it cannot run in React (an island) or in a list the browser
+ * builds. Calling it directly throws. */
+export function Dynamic(_props: DynamicProps): never {
+  throw new Error('<Dynamic> renders on the brust server only: it cannot run inside a React island (compiler rule dynamic-in-react)')
+}
+
 export interface FlatRoute {
   /** Leaf id (`r<n>`, DFS pre-order over every node). */
   id: string

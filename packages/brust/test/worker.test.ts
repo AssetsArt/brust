@@ -12,7 +12,9 @@ import {
   makeHandlers,
   PLAN_DECLINED,
   type HeapReply,
+  routeStoresIndex,
   SLOT_BYTES,
+  slotComponents,
   startWorker,
   writeSlot,
 } from '../src/worker'
@@ -650,4 +652,88 @@ test('res.headers on a static render: the build is told every name, on a verdict
   })
   await h.loader(ctx('r2'))
   expect(recs).toEqual([{ kind: 'headers', routeId: 'r2', path: '/items/7', names: ['set-cookie'] }])
+})
+
+// ---- F519: the `component` call (runtime components) ----
+
+const artifactOf = (ref: string, jinjaBytes = 10, clientBytes = 10) => ({
+  v: 1,
+  build: 'b1',
+  id: `id_${ref}`,
+  tier: 'native',
+  jinja: 'j'.repeat(jinjaBytes),
+  client: 'c'.repeat(clientBytes),
+  features: [],
+  stores: [],
+})
+
+test('dispatch: component answers each ref — artifact, missing (null) or the error it threw — in one call', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  const asked: [string, { build: string }][] = []
+  const h = makeHandlers({
+    leaves: [],
+    jobs: {},
+    manifest: { components: {}, assets: { build: 'b1' } },
+    components: {
+      resolve(ref, ctx) {
+        asked.push([ref, ctx])
+        if (ref === 'gone') return null
+        if (ref === 'boom') throw new Error('db down')
+        return Promise.resolve(artifactOf(ref) as never)
+      },
+    },
+  })
+  const n = await makeDispatch(h, view, 1)('component', JSON.stringify({ refs: ['a', 'gone', 'boom'] }), 0)
+  expect(dec(view, n)).toEqual({
+    results: [{ ref: 'a', artifact: artifactOf('a') }, { ref: 'gone', missing: true }, { ref: 'boom', error: 'Error: db down' }],
+  })
+  expect(asked).toEqual([
+    ['a', { build: 'b1' }],
+    ['gone', { build: 'b1' }],
+    ['boom', { build: 'b1' }],
+  ])
+})
+
+test('dispatch: component without a resolver answers every ref missing', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  const n = await makeDispatch(makeHandlers({ leaves: [], jobs: {} }), view, 1)('component', '{"refs":["a"]}', 0)
+  expect(dec(view, n)).toEqual({ results: [{ ref: 'a', missing: true }] })
+})
+
+test('dispatch: an artifact at both R2 limits (2 × 256 KiB) crosses by heap', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(SLOT))
+  const { heap, put } = fakeHeap()
+  const a = artifactOf('big', 256 * 1024, 256 * 1024)
+  const h = makeHandlers({ leaves: [], jobs: {}, components: { resolve: () => a as never } })
+  const n = await makeDispatch(h, view, 1, undefined, heap)('component', '{"refs":["big"]}', 0)
+  expect(marker(view, n)).toBe(put[0]?.bytes.length ?? -1)
+  expect(JSON.parse(new TextDecoder().decode(put[0]?.bytes))).toEqual({ results: [{ ref: 'big', artifact: a }] })
+})
+
+test('routeStoresIndex: a route whose chain holds a <Dynamic> slot touches every exposed store module', () => {
+  const idx = routeStoresIndex({
+    routes: [
+      { id: 'r1', chain: ['layout', 'page'] },
+      { id: 'r2', chain: ['other'] },
+    ],
+    components: {
+      layout: { jobs: [], stores: ['app/theme.ts'] },
+      page: { jobs: [], children: [{ id: 'card' }] },
+      card: { jobs: [], dynamic: true },
+      other: { jobs: [] },
+    },
+    runtime: { exposed: { 'shop/sdk.ts': 'client/x-sdk-1.js' }, stores: { cart: 'shop/sdk.ts', wish: 'shop/sdk.ts' } },
+  })
+  expect(idx.get('r1')).toEqual(['app/theme.ts', 'shop/sdk.ts'])
+  expect(idx.has('r2')).toBe(false)
+})
+
+test('slotComponents names the components that hold a slot (the boot error lists them)', () => {
+  expect(slotComponents({ components: { a: { jobs: [], dynamic: true }, b: { jobs: [] } } })).toEqual(['a'])
+  expect(slotComponents({ components: {} })).toEqual([])
+})
+
+test('Dynamic throws when React calls it', async () => {
+  const { Dynamic } = await import('../src/routes')
+  expect(() => Dynamic({ component: 'a' })).toThrow('dynamic-in-react')
 })

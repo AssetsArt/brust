@@ -15,6 +15,7 @@ pub mod ctx;
 
 #[path = "filters/project.rs"]
 mod project;
+pub mod slot;
 #[path = "filters/spread.rs"]
 pub mod spread;
 
@@ -114,6 +115,8 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_function("obj_assign", spread::obj_assign);
     env.add_function("obj_lit", spread::obj_lit);
     env.add_function("class_join", spread::class_join);
+    // F519: a runtime component slot; the server's renderer is in the context, or the slot prints nothing.
+    env.add_function("brust_dynamic", slot::brust_dynamic);
     env.add_filter("omit", spread::omit);
     env.add_filter("omit_attrs", spread::omit_attrs);
     env.add_filter("css_val", |v: Value, prop: String| css_value(&prop, &v));
