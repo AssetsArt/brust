@@ -25,6 +25,30 @@ export interface DevView {
  * `max_stream_bytes`), as in production. */
 export const PROXY_MAX_BODY_BYTES = 2 ** 32
 
+/** F529: is this a WebSocket handshake? A GET whose `Upgrade` header lists the `websocket` token. */
+export function isWsUpgrade(req: Request): boolean {
+  return req.method === 'GET' && (req.headers.get('upgrade') ?? '').split(',').some((t) => t.trim().toLowerCase() === 'websocket')
+}
+
+/** The close code a relayed socket's peer is told. A child that is going away (1001 from its drain, 1006 when it died, or its
+ * own 1012) is a restart as far as the browser is concerned; a code a close frame may not carry becomes 1011, "no status" 1000. */
+export function relayCloseCode(code: number, fromChild: boolean): number {
+  if (fromChild && (code === 1001 || code === 1006 || code === 1012)) return 1012
+  if (code === 1005) return 1000
+  const valid = (code >= 1000 && code <= 1003) || (code >= 1007 && code <= 1014) || (code >= 3000 && code <= 4999)
+  return valid ? code : fromChild ? 1011 : 1000
+}
+
+/** The status the child answered a refused upgrade with, read from the client's error text ("Expected 101 status code: 401"); 502 when it never answered. */
+export function refusedStatus(message: string): number {
+  const m = /Expected 101 status code: (\d{3})/.exec(message)
+  const n = m ? Number(m[1]) : 0
+  return n >= 400 && n <= 599 ? n : 502
+}
+
+/** Headers of the handshake that belong to a single hop; everything else (cookies, `Origin`, `Host`, auth) goes to the child as the browser sent it. */
+const WS_HOP_HEADERS = new Set(['connection', 'upgrade', 'sec-websocket-key', 'sec-websocket-version', 'sec-websocket-extensions', 'sec-websocket-protocol', 'sec-websocket-accept', 'content-length', 'transfer-encoding', 'accept-encoding'])
+
 /** Is `pathname` the actions prefix or under it? (`/` = everything.) */
 export function underPrefix(pathname: string, prefix: string): boolean {
   if (prefix === '/') return true
@@ -45,8 +69,19 @@ export interface TraceEntry {
 }
 export const MAX_TRACES = 50
 
+/** What a proxy socket carries: nothing for the dev-channel clients, the upstream leg for a relayed app socket (F529 D12). */
+export type SocketData = undefined | Relay
+
+/** One relayed app WebSocket: the browser's socket (`ws`, set at `open`) and the child's (`up`). Frames the child sends before
+ * the browser socket is open wait in `pending`. */
+interface Relay {
+  up: WebSocket
+  ws: ServerWebSocket<SocketData> | null
+  pending: (string | ArrayBuffer | { close: number; reason: string })[]
+}
+
 export interface DevProxy {
-  server: Server<undefined>
+  server: Server<SocketData>
   port: number
   /** The last [`MAX_TRACES`] traced requests, oldest first. */
   traces(): TraceEntry[]
@@ -144,8 +179,8 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
   const traces: TraceEntry[] = []
   let seq = 0
   const allowed = allowedHosts(o.hostname, o.allowedHosts ?? process.env.BRUST_DEV_ALLOWED_HOSTS)
-  const sockets = new Set<ServerWebSocket<undefined>>()
-  const send = (ws: ServerWebSocket<undefined>, msg: unknown) => {
+  const sockets = new Set<ServerWebSocket<SocketData>>()
+  const send = (ws: ServerWebSocket<SocketData>, msg: unknown) => {
     try {
       ws.send(JSON.stringify(msg))
     } catch {}
@@ -205,7 +240,51 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
     return tag(new Response(res.body, { status: res.status, headers: out }))
   }
 
-  const server = Bun.serve<undefined>({
+  /** F529 D12: relay a WebSocket upgrade under the actions prefix to the child. The child's handshake runs first, so its refusal (a
+   * guard's 401, the cross-site 403) reaches the browser as the HTTP status it is, not as a socket that opens and closes. */
+  async function relay(req: Request, srv: Server<SocketData>, port: number): Promise<Response | undefined> {
+    const url = new URL(req.url)
+    const headers: Record<string, string> = {}
+    req.headers.forEach((v, k) => {
+      if (!WS_HOP_HEADERS.has(k.toLowerCase())) headers[k] = v
+    })
+    headers['x-brust-dev-token'] = o.token
+    const r: Relay = { up: undefined as unknown as WebSocket, ws: null, pending: [] }
+    let up: WebSocket
+    try {
+      // biome-ignore lint/suspicious/noExplicitAny: Bun's WebSocket accepts request headers (Host, Origin, Cookie)
+      up = new WebSocket(`ws://127.0.0.1:${port}${url.pathname}${url.search}`, { headers } as any)
+    } catch (e) {
+      return new Response(`brust dev: ${String((e as Error).message ?? e)}`, { status: 502 })
+    }
+    up.binaryType = 'arraybuffer'
+    r.up = up
+    const opened = await new Promise<string | null>((resolve) => {
+      up.onopen = () => resolve(null)
+      up.onerror = (e) => resolve((e as ErrorEvent).message || 'upstream connection failed')
+      up.onclose = () => resolve('upstream closed during the handshake')
+    })
+    if (opened !== null) return new Response(`brust dev: the server refused the WebSocket upgrade (${opened})`, { status: refusedStatus(opened) })
+    const toBrowser = (m: Relay['pending'][number]) => {
+      if (r.ws === null) return void r.pending.push(m)
+      try {
+        if (typeof m === 'object' && 'close' in m) r.ws.close(m.close, m.reason)
+        else r.ws.send(m)
+      } catch {}
+    }
+    up.onmessage = (e) => toBrowser(e.data as string | ArrayBuffer)
+    up.onclose = (e) => {
+      toBrowser({ close: relayCloseCode(e.code, true), reason: relayCloseCode(e.code, true) === 1012 ? 'service restart' : e.reason })
+    }
+    up.onerror = () => {}
+    if (!srv.upgrade(req, { data: r })) {
+      up.close()
+      return new Response('websocket expected', { status: 426 })
+    }
+    return undefined
+  }
+
+  const server = Bun.serve<SocketData>({
     hostname: o.hostname,
     port: o.port,
     maxRequestBodySize: PROXY_MAX_BODY_BYTES,
@@ -222,6 +301,18 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
       if (!allowed.has(hostName(req.headers.get('host') ?? ''))) return new Response('brust dev: unexpected Host header (set BRUST_DEV_ALLOWED_HOSTS to allow it)', { status: 421 })
       if (url.pathname === P.ws && !sameOriginOrNone(req.headers.get('origin'), req.headers.get('host'))) return new Response('brust dev: cross-origin WebSocket refused', { status: 403 })
       if (url.pathname === P.ws) return srv.upgrade(req, { data: undefined }) ? undefined : new Response('websocket expected', { status: 426 })
+      // F529 D12: an app WebSocket (actions prefix) is relayed to the child; the Origin rule is the dev channel's own.
+      if (isWsUpgrade(req)) {
+        const prefix = view.actionsPrefix()
+        if (prefix !== null && underPrefix(url.pathname, prefix)) {
+          if (!sameOriginOrNone(req.headers.get('origin'), req.headers.get('host'))) return new Response('brust dev: cross-origin WebSocket refused', { status: 403 })
+          const port = view.upstream()
+          if (port === null) return new Response('brust dev: building…', { status: 503 })
+          return relay(req, srv, port)
+        }
+        // Not an actions path: the child has no WebSocket there either (and a proxied 101 would open a socket nothing serves).
+        return new Response('brust dev: WebSocket upgrades are only supported under the actions prefix', { status: 426 })
+      }
       if (url.pathname === P.traces) return Response.json({ traces }, { headers: { 'cache-control': 'no-store' } })
       if (url.pathname === P.meta) return Response.json(view.meta() ?? {}, { headers: { 'cache-control': 'no-store' } })
       if (url.pathname === P.devtools) {
@@ -238,13 +329,30 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
     },
     websocket: {
       open(ws) {
+        const r = ws.data
+        if (r) {
+          r.ws = ws
+          for (const m of r.pending.splice(0)) {
+            if (typeof m === 'object' && 'close' in m) ws.close(m.close, m.reason)
+            else ws.send(m)
+          }
+          return
+        }
         sockets.add(ws)
         send(ws, hello())
       },
-      close(ws) {
+      close(ws, code, reason) {
+        const r = ws.data
+        if (r) {
+          if (r.up.readyState === WebSocket.OPEN || r.up.readyState === WebSocket.CONNECTING) r.up.close(relayCloseCode(code, false), reason)
+          return
+        }
         sockets.delete(ws)
       },
-      message() {},
+      message(ws, msg) {
+        const r = ws.data
+        if (r && r.up.readyState === WebSocket.OPEN) r.up.send(msg)
+      },
     },
   })
   return {
