@@ -1,0 +1,286 @@
+// Runtime components — render a component whose source text was stored after `brust build`: [build] expose, compileComponent,
+// <Dynamic>, the resolver, the artifact and its limits, the trust model.
+// Source of truth: the behaviour of packages/brust/src/compile/index.ts (the compile API and its refusals), packages/brust/src/routes.ts
+// (RuntimeComponents, RuntimeArtifact, Dynamic) and the served test tests/server/runtime-components.chromium.test.ts, whose fixture is
+// the code below. This page is static.
+import CodeBlock from '../../components/CodeBlock'
+import Lead from '../../components/docs/Lead'
+import Note from '../../components/docs/Note'
+import { type CodeBlockData, codeBlock } from '../../lib/highlight'
+import type { TocItem } from '../../lib/nav'
+
+export interface RuntimeComponentsData {
+  toc: TocItem[]
+  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest', CodeBlockData>
+}
+
+const EXPOSE = `# brust.toml
+[build]
+expose = ["shop/sdk.ts"]`
+
+const SOURCE = `// shop/sdk.ts: an app module, built with the app and exposed to runtime components
+import { defineStore, signal } from '@brust/core/store'
+
+export const cart = defineStore('cart', () => ({ count: signal(0) }))`
+
+const LIST = `// List.tsx: a built component with one slot per row
+import { Dynamic } from '@brust/core'
+
+export default function List({ items }: { items: { ref: string; label: string }[] }) {
+  return (
+    <ul>
+      {items.map((i) => (
+        <li key={i.ref}>
+          <Dynamic component={i.ref} props={{ label: i.label }} />
+        </li>
+      ))}
+    </ul>
+  )
+}`
+
+const RESOLVER = `// routes.tsx
+import { type RuntimeComponents } from '@brust/core'
+import { compileComponent } from '@brust/core/compile'
+
+export const components: RuntimeComponents = {
+  async resolve(ref, { build }) {
+    const source = await db.componentSource(ref)       // text, stored after the build
+    if (source === null) return null                   // no such ref: the slot prints nothing
+    const cached = await db.artifact(ref, build)       // keyed by (ref, build)
+    if (cached) return cached
+    const r = await compileComponent({ source, filename: 'el/Promo.tsx' })
+    if (!r.ok) return null                             // r.diagnostics says why
+    await db.saveArtifact(ref, build, r.artifact)
+    return r.artifact
+  },
+}`
+
+const ARTIFACT = `interface RuntimeArtifact {
+  v: 1
+  build: string          // assets.build of the build it was compiled for
+  id: string             // the x-data / defineBehavior id: a function of (filename, source text)
+  tier: 'static' | 'native'
+  jinja: string          // the server template
+  client: string | null  // one self-contained ES module; null for a static component
+  features: string[]     // the client runtime modules it needs
+  stores: string[]       // the store names it reads
+}`
+
+const MANIFEST = `"runtime": {
+  "exposed": { "shop/sdk.ts": "client/x-sdk-<hex>.js" },
+  "stores":  { "cart": "shop/sdk.ts" }
+}`
+
+export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> {
+  return {
+    toc: [
+      { id: 'expose', title: 'Expose your modules' },
+      { id: 'compile', title: 'Compile a source' },
+      { id: 'slot', title: 'Place it with Dynamic' },
+      { id: 'resolver', title: 'The resolver' },
+      { id: 'artifact', title: 'The artifact' },
+      { id: 'refusals', title: 'What is refused' },
+      { id: 'limits', title: 'Limits and caching' },
+      { id: 'trust', title: 'The trust model' },
+    ],
+    blocks: {
+      expose: codeBlock({ lang: 'text', file: 'brust.toml', code: EXPOSE }),
+      source: codeBlock({ lang: 'ts', file: 'shop/sdk.ts', code: SOURCE }),
+      list: codeBlock({ lang: 'tsx', file: 'List.tsx', code: LIST }),
+      resolver: codeBlock({ lang: 'tsx', file: 'routes.tsx', code: RESOLVER }),
+      artifact: codeBlock({ lang: 'ts', file: 'RuntimeArtifact', code: ARTIFACT }),
+      manifest: codeBlock({ lang: 'text', file: 'dist/manifest.json', code: MANIFEST }),
+    },
+  }
+}
+
+export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
+  return (
+    <>
+      <h1>Runtime components</h1>
+      <Lead>
+        A runtime component is a TSX source your app stores outside its route tree, for example in a database, and creates or changes long after <code>brust build</code>. One running build compiles it and renders it as a real brust component, static or
+        native, inside your pages. No deploy, and every replica serves the same result.
+      </Lead>
+      <p>Three parts fit together: you expose some of your own modules, you compile a source into an artifact, and a page places the artifact with a slot.</p>
+
+      <h2 id="expose">Expose your modules</h2>
+      <p>
+        A runtime component may share code with the app only through modules you list in <code>[build] expose</code>. Each one is built once, as a client file with a stable URL, so a built component and a runtime component that import it get the{' '}
+        <strong>same module instance</strong> in the browser. That is how both read and write one store.
+      </p>
+      <CodeBlock code={blocks.expose.code} lang={blocks.expose.lang} file={blocks.expose.file} html={blocks.expose.html} />
+      <CodeBlock code={blocks.source.code} lang={blocks.source.lang} file={blocks.source.file} html={blocks.source.html} />
+      <ul>
+        <li>The paths are app-root-relative and inside the root or a <code>source_roots</code> entry. A missing file or a path outside the roots is a build error.</li>
+        <li>
+          Every <code>defineStore(&apos;name&apos;, …)</code> an exposed module exports is listed in the manifest, so a runtime component may read it. The store forms recognised are a direct export, a default export, a renamed export,{' '}
+          <code>export … from</code>, <code>export *</code> and import-then-export, all with <strong>relative</strong> specifiers and a literal store name. A store re-exported through an alias or a package specifier is not listed, and a runtime component that
+          reads it is refused (<code>runtime-store</code>).
+        </li>
+        <li>
+          Changing <code>expose</code> changes the build id, so artifacts compiled for the old build are no longer valid (see <a href="#limits">Limits and caching</a>).
+        </li>
+      </ul>
+      <CodeBlock code={blocks.manifest.code} lang={blocks.manifest.lang} file={blocks.manifest.file} html={blocks.manifest.html} />
+
+      <h2 id="compile">Compile a source</h2>
+      <p>
+        <code>compileComponent</code> from <code>@brust/core/compile</code> compiles source text exactly as the build would. It reads <code>dist/manifest.json</code> and <code>brust.toml</code> (source roots, server-only modules, tsconfig aliases) and
+        writes nothing under the app root. It runs in Bun and is refused in a browser bundle.
+      </p>
+      <ul>
+        <li>
+          <code>compileComponent({'{'} source, filename, appRoot?, dist? {'}'})</code>. <code>filename</code> is a virtual app-root-relative path such as <code>el/Promo.tsx</code>; it decides how the source&rsquo;s relative imports resolve.{' '}
+          <code>appRoot</code> defaults to the working directory and <code>dist</code> to <code>&lt;appRoot&gt;/dist</code>.
+        </li>
+        <li>
+          The result is <code>{'{'} ok: true, artifact, diagnostics {'}'}</code> or <code>{'{'} ok: false, diagnostics {'}'}</code>. A diagnostic carries <code>class</code>, <code>rule</code>, <code>message</code>, <code>line</code>, <code>col</code> and{' '}
+          <code>remediation</code>.
+        </li>
+        <li>
+          The artifact id is content-addressed: it changes when the source text changes and is equal on every machine for an equal (filename, source). Two filenames with the same text give different ids, because the filename decides how imports resolve.
+        </li>
+        <li>
+          The source may import <code>react</code>, <code>@brust/core/store/react</code> and your exposed modules. Type-only imports are erased by the parser and are not checked.
+        </li>
+      </ul>
+
+      <h2 id="slot">Place it with Dynamic</h2>
+      <p>
+        <code>&lt;Dynamic component={'{'}ref{'}'} props={'{'}…{'}'} /&gt;</code> from <code>@brust/core</code> is a slot. The server decides on every render which ref goes there; the artifact&rsquo;s root is the output, with no wrapper element. It works inside a
+        server list row.
+      </p>
+      <CodeBlock code={blocks.list.code} lang={blocks.list.lang} file={blocks.list.file} html={blocks.list.html} />
+      <ul>
+        <li>
+          <code>component</code> and <code>props</code> must be server expressions that do not depend on state, a store or live props (<code>dynamic-expr</code>, <code>dynamic-reactive</code>). Only <code>component</code>, <code>props</code> and <code>key</code>{' '}
+          are accepted (<code>dynamic-props</code>).
+        </li>
+        <li>
+          A slot cannot sit in a row the browser builds, such as the list of a stateful component (<code>dynamic-in-client-row</code>), or in a React island (<code>dynamic-in-react</code>). Calling <code>Dynamic</code> as a function throws.
+        </li>
+        <li>
+          The component receives <code>props</code> as its props (JSON values). A <code>ref</code> must match <code>[A-Za-z0-9_-]{'{'}1,128{'}'}</code>; anything else renders nothing.
+        </li>
+        <li>
+          <code>brust build --target static</code>, the Cloudflare target and <code>--ssg</code> refuse an app that has a slot (<code>dynamic-target</code>): a slot is filled by the running native server, and a prerendered page would freeze it.
+        </li>
+      </ul>
+
+      <h2 id="resolver">The resolver</h2>
+      <p>
+        The routes entry exports <code>components</code>. Its <code>resolve(ref, {'{'} build {'}'})</code> returns the artifact for a ref, <code>null</code> when there is none, or a promise of either. A build that has a slot and no <code>components</code> export
+        does not start.
+      </p>
+      <CodeBlock code={blocks.resolver.code} lang={blocks.resolver.lang} file={blocks.resolver.file} html={blocks.resolver.html} />
+      <ul>
+        <li>
+          A page renders once when every ref in it is warm. A cold ref is resolved (all cold refs of one render in one call to a worker), then the page renders a second time. Nothing else runs twice: the loader is not run again.
+        </li>
+        <li>
+          <strong>Missing:</strong> <code>resolve</code> returned <code>null</code>. The slot prints nothing, the answer is remembered for 10 seconds, and the page is cached for at most that long, so a row that names a ref before its artifact exists heals.
+        </li>
+        <li>
+          <strong>Refused or failed:</strong> the artifact failed a registration check, or <code>resolve</code> threw. The slot prints nothing and one line is logged (<code>[brust] runtime component &lt;ref&gt;: &lt;why&gt;</code>). The page is still answered with 200, but it
+          is not stored in the page cache.
+        </li>
+        <li>An error while the artifact&rsquo;s template renders also prints nothing for that slot, and never turns the page into a 500.</li>
+        <li>
+          The scripts of every native artifact that rendered are linked once per page at <code>/_brust/rc/&lt;build&gt;/&lt;ref&gt;/&lt;id&gt;.js</code>, served with an immutable cache header only when the id matches the registered artifact. A page that is otherwise all
+          static gets the client runtime when a native artifact rendered.
+        </li>
+        <li>
+          Warm artifacts are kept per server, up to <code>[components] cache_entries</code> (default 2048). Each entry holds up to 512 KiB.
+        </li>
+      </ul>
+
+      <h2 id="artifact">The artifact</h2>
+      <p>The artifact is JSON. Your app stores it and returns it as it is; do not edit it.</p>
+      <CodeBlock code={blocks.artifact.code} lang={blocks.artifact.lang} file={blocks.artifact.file} html={blocks.artifact.html} />
+      <p>
+        It is valid for one build only, because the client chunk imports the build&rsquo;s hashed runtime and exposed-module URLs. Key your store by (ref, build). After a deploy, <code>resolve</code> gets the new build id and compiles again; an artifact for another
+        build is refused.
+      </p>
+
+      <h2 id="refusals">What is refused</h2>
+      <p>
+        These are errors with <code>ok: false</code>. Each names a position and a fix.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Rule</th>
+            <th>When</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>runtime-tier</code></td>
+            <td>The component needs React (an island). The message carries the compiler&rsquo;s reason.</td>
+          </tr>
+          <tr>
+            <td><code>runtime-jobs</code></td>
+            <td>Some expression is left to run on the server per render (a runtime job). Only a pure component fits one template.</td>
+          </tr>
+          <tr>
+            <td><code>runtime-import</code></td>
+            <td>An import that is not an exposed module, <code>react</code> or <code>@brust/core/store/react</code>. A private copy of an app module would split its state.</td>
+          </tr>
+          <tr>
+            <td><code>runtime-store</code></td>
+            <td>It reads a store no exposed module defines.</td>
+          </tr>
+          <tr>
+            <td><code>runtime-use-id</code></td>
+            <td>It calls <code>useId</code>.</td>
+          </tr>
+          <tr>
+            <td><code>runtime-children</code></td>
+            <td>It takes children fed per instance.</td>
+          </tr>
+          <tr>
+            <td><code>runtime-dynamic</code></td>
+            <td>It holds a <code>&lt;Dynamic&gt;</code>: slots do not nest.</td>
+          </tr>
+          <tr>
+            <td><code>runtime-size</code></td>
+            <td>The template or the client module is over 256 KiB.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 id="limits">Limits and caching</h2>
+      <ul>
+        <li>
+          <code>jinja</code> and <code>client</code> are each at most 256 KiB. The server also checks at registration that the artifact is for this build, that every feature and store it names exists, and that its template parses. An artifact whose id belongs to a built
+          component is refused.
+        </li>
+        <li>
+          The chunk URL carries the artifact id, which changes with the source. Browsers cache it for good, so <strong>give a changed source a new ref</strong> (or a ref that includes a version); the server keeps the artifact warm per ref.
+        </li>
+        <li>An artifact&rsquo;s template renders in its own sandboxed template environment with a fuel limit: it cannot include or import an app template, and a runaway loop ends as a render error for that slot.</li>
+        <li>
+          SPA navigation works as on any page: the slot is part of the page HTML, and its scripts load with the page. A native artifact that reads a store seeds it like a built component does.
+        </li>
+      </ul>
+
+      <h2 id="trust">The trust model</h2>
+      <Note tag="Trust">
+        An artifact is code: its template runs on your server and its client module runs in your visitors&rsquo; browsers, with the page&rsquo;s own privileges. Return only what <code>compileComponent</code> produced from a source you accept.
+      </Note>
+      <ul>
+        <li>
+          Never accept an artifact from a client or an untrusted store. Compile on your side, from the source text, and store the result next to the ref and the build.
+        </li>
+        <li>
+          Decide who may write a source before you compile it. The compile API enforces the shape of a runtime component (no foreign imports, no React tier, no jobs); it is not a sandbox for what the source&rsquo;s own handlers do in the browser. Pair untrusted
+          authors with a Content-Security-Policy and a review step.
+        </li>
+        <li>
+          The ref must change when the source changes, and artifacts are keyed per build. That keeps a stale artifact from rendering against a build whose runtime URLs it does not match.
+        </li>
+      </ul>
+    </>
+  )
+}

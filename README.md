@@ -40,6 +40,29 @@ Start a brust app on Cloudflare Workers in one click (the blank starter, live at
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/AssetsArt/templates/tree/brust-template/brust-template)
 
+## Runtime components
+
+An app can store component sources (TSX text) outside its route tree and render them after `brust build`, without a deploy. List the app modules they may share in `brust.toml`, compile a source with `@brust/core/compile`, and place it with `<Dynamic>`:
+
+```toml
+[build]
+expose = ["shop/sdk.ts"]   # built once; manifest `runtime.exposed` maps each path to its client file, `runtime.stores` each exported store name to its module
+```
+
+```tsx
+// routes.tsx
+import { compileComponent } from '@brust/core/compile'
+export const components = {
+  async resolve(ref, { build }) {
+    const r = await compileComponent({ source: await db.source(ref), filename: 'el/Promo.tsx' })
+    return r.ok ? r.artifact : null   // an artifact is code: return only what compileComponent produced
+  },
+}
+// a page: <Dynamic component={ref} props={{ label }} />
+```
+
+An artifact is valid for one build, so key stored artifacts by `(ref, build)` and change the ref when the source changes. See [Runtime components](https://brust.dev/docs/runtime-components).
+
 ## Built with brust
 
 - [assetsart.com](https://assetsart.com): Assets Art, the serverless cloud platform from the team behind brust
