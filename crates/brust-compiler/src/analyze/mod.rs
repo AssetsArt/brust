@@ -6,6 +6,7 @@ pub mod context;
 pub mod element_value;
 pub mod exports;
 pub mod expr;
+pub mod facts;
 pub mod hir;
 pub mod hooks;
 pub mod inline_fn;
