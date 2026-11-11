@@ -1578,6 +1578,7 @@ pub const JINJA_RESERVED_LOCALS: &[&str] = &[
     "css_attr",
     // R4 (F519): the runtime component slot `<Dynamic>` prints
     "brust_dynamic",
+    "recursion_limit",
 ];
 
 /// Why a prop named `name` cannot be a plain template variable, as `(code, what)`; `None` = it can. A key that is not

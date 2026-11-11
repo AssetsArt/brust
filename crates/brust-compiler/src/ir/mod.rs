@@ -479,6 +479,19 @@ pub struct ComponentIR {
     /// a child that holds one makes its caller hold one). The manifest's `components[id].dynamic`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dynamic: bool,
+    /// F523: this component renders itself (direct recursion) and lowers to ONE template macro: the macro's parameters
+    /// in order, one per prop it reads (printed `_p_<prop>`; the depth counter follows them). `None`: not a recursive component,
+    /// or one the check after the tier pass refused (`recursion-unsupported`, it is React then).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recursion: Option<Vec<String>>,
+    /// F523: this component's template, with the children it inlines, prints a recursive component's macro (itself, or
+    /// a child that does, transitively): a call site that links it or puts it in a row the browser builds falls back.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub holds_recursion: bool,
+    /// F523: the local name of the function this component is read from (`NodeView` of `export default function
+    /// NodeView`): a `<NodeView/>` in its own body is a call to itself, whatever key the module cache knows it by.
+    #[serde(skip)]
+    pub local_name: Option<String>,
     pub jobs: Vec<JobDecl>,
     /// lucide icons the build should render to inline SVG (L23); empty when none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -657,6 +670,9 @@ impl ComponentIR {
             template: Node::Fragment(vec![]),
             uses_outlet: false,
             dynamic: false,
+            recursion: None,
+            holds_recursion: false,
+            local_name: None,
             jobs: vec![],
             icon_requests: vec![],
             package_requests: vec![],

@@ -80,6 +80,10 @@ pub fn analyze_component_in(
         read_function(parsed, ast, opts, func, &mut ir);
         Ok(())
     })?;
+    // F523: a `<Name/>` in the body is a call to itself (the module cache keys a default export by its path alone).
+    ir.local_name = parsed
+        .default_export_function_name()
+        .filter(|n| !n.is_empty());
     let text = parsed.text();
     for d in &mut ir.diagnostics {
         (d.line, d.col) = line_col(text, d.loc);
@@ -1343,6 +1347,7 @@ pub fn analyze_named_component_in(
         Some(())
     });
     ir.export = Some(name.to_string());
+    ir.local_name = Some(name.to_string());
     found.map(|_| ir)
 }
 

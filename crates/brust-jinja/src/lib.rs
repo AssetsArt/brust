@@ -115,6 +115,17 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_function("obj_assign", spread::obj_assign);
     env.add_function("obj_lit", spread::obj_lit);
     env.add_function("class_join", spread::class_join);
+    // F523 (C5): a recursive component nested past the depth cap: the render fails, naming the component and the cap
+    // (minijinja's own `recursion limit exceeded` names neither).
+    env.add_function(
+        "recursion_limit",
+        |component: String, cap: u32| -> Result<Value, minijinja::Error> {
+            Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("<{component}> nested more than {cap} levels"),
+            ))
+        },
+    );
     // F519: a runtime component slot; the server's renderer is in the context, or the slot prints nothing.
     env.add_function("brust_dynamic", slot::brust_dynamic);
     env.add_filter("omit", spread::omit);

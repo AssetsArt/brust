@@ -12,6 +12,7 @@ pub mod helpers;
 pub mod icons;
 pub mod placement;
 pub mod projection;
+pub mod recursion;
 pub mod ref_writes;
 pub mod server_expr;
 pub mod state_children;
@@ -57,6 +58,16 @@ pub struct PassState {
     pub host_spec: BTreeSet<u32>,
     /// F307: the call sites the children pass refused with `slot-owner` whose child could take the content as a clone.
     pub host_wanted: BTreeSet<u32>,
+    /// F523: where the component calls itself (`<Self/>` in its own template), in document order. The children pass
+    /// records them with no fallback, island, job or link; `recursion::check` decides after the tier pass.
+    pub self_calls: Vec<u32>,
+    /// F523: what the children pass found that keeps a call to itself from being a template macro (with where).
+    pub self_refusals: Vec<(u32, String)>,
+    /// F523: children of this component the server feeds per instance (a job or `useId`), by name and location.
+    pub fed_children: Vec<(u32, String)>,
+    /// F523: call sites of a component that holds a recursive macro (`ComponentIR::holds_recursion`) in a list row the
+    /// client may re-create (`resolve_row_only`): refused once the tier says the rows are the browser's.
+    pub recursion_rows: Vec<(u32, String)>,
 }
 
 /// Something the client chunk runs, with what it reads.
@@ -202,6 +213,9 @@ fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<
     crate::analyze::load_writes::check(ir, &st, ctx);
     projection::projection(ir, &st);
     tier::tier(ir, &mut st, ctx);
+    // F523: a component that calls itself is a template macro only if the final tier is static and nothing per instance
+    // remains; otherwise it falls back here (and a caller that would put a macro in a client row does too).
+    recursion::check(ir, &st, ctx);
     // Backstop: the final precompute job never imports a store handle (D8).
     stores::check_jobs(ir, ctx);
     // Job cache keys are computed from the inputs by a path evaluator that cannot read `.length`
