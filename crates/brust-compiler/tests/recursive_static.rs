@@ -365,12 +365,42 @@ fn a_children_prop_refuses_the_recursion() {
     assert!(refusal(&nv, &[]).starts_with("takes `children`"));
 }
 
+/// A loop item spread into the self-call is refused by the generic spread rule first (F31): NodeView is React for
+/// that reason, and the recursion check (eligible = final tier Static, C3) stays silent.
 #[test]
-fn a_spread_into_its_own_call_refuses_the_recursion() {
+fn a_loop_item_spread_is_the_spread_rules_refusal() {
     let nv = NODE_VIEW.replace(
         "<NodeView key={c.id} n={c} />",
         "<NodeView key={c.id} {...c} />",
     );
+    let tree = ok(PAGE, &[("NodeView.tsx", nv.as_str())]);
+    let c = one(&tree, "NodeView.tsx");
+    assert!(c.is_react(), "{}", c.ir);
+    assert!(c.ir.get("recursion").is_none(), "{}", c.ir);
+    assert!(
+        c.diagnostics.iter().any(|d| d.rule == "spread-props"),
+        "{:?}",
+        c.diagnostics
+    );
+    assert!(
+        !c.diagnostics
+            .iter()
+            .any(|d| d.rule == "recursion-unsupported"),
+        "{:?}",
+        c.diagnostics
+    );
+}
+
+/// A spread the generic rule accepts (the component's own `...rest`) into the self-call is the recursion check's
+/// refusal: the macro call cannot name each prop.
+#[test]
+fn a_rest_spread_into_its_own_call_refuses_the_recursion() {
+    let nv = NODE_VIEW
+        .replace("NodeView({ n }: any)", "NodeView({ n, ...rest }: any)")
+        .replace(
+            "<NodeView key={c.id} n={c} />",
+            "<NodeView key={c.id} n={c} {...rest} />",
+        );
     let why = refusal(&nv, &[]);
     assert!(
         why.starts_with("spreads props into its call to itself"),
