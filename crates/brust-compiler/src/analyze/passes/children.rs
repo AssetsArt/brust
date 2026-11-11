@@ -4374,6 +4374,10 @@ impl Walker<'_, '_> {
     /// can change, or React for a value derived from a prop that changes / a fed child it cannot feed through a list.
     /// F524: a static component qualifies when its template holds such a child (a stateless native or droppable one,
     /// directly or through static components in between): a clone fixes that child's props in turn.
+    /// F528: also a list row printing a component that renders itself (`recursion-unsupported`: a non-root component's
+    /// rows are ones the browser re-creates, fixed props make them the server's) and a prop expression the shared copy
+    /// cannot hand to such a React child (`island-prop`). A clone is kept only when it ends static, so any other cause
+    /// of either rule still falls back.
     fn fixed_droppable(&self, cir: &ComponentIR, depth: usize) -> bool {
         match &cir.tier {
             Tier::Native => true,
@@ -4387,7 +4391,10 @@ impl Walker<'_, '_> {
                     && fb.all(|d| {
                         matches!(
                             d.rule.as_str(),
-                            "linked-prop-precompute" | "nested-instance" | "recursion-unsupported"
+                            "linked-prop-precompute"
+                                | "nested-instance"
+                                | "recursion-unsupported"
+                                | "island-prop"
                         )
                     })
             }

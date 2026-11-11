@@ -657,9 +657,13 @@ fn a_props_fed_wrapper_of_a_recursive_list_is_static_through_a_fixed_clone() {
     let mut env = minijinja::Environment::new();
     brust_jinja::register(&mut env);
     let nodes = serde_json::json!([chain(2), { "id": "z", "kind": "text", "label": "z" }]);
-    let ctx = serde_json::json!({ "page": { "nodes": nodes }, "_props": { "page": { "nodes": nodes } } });
+    let ctx =
+        serde_json::json!({ "page": { "nodes": nodes }, "_props": { "page": { "nodes": nodes } } });
     let html = env
-        .render_str(&tree[0].jinja, minijinja::Value::from(minijinja::value::Serde(&ctx)))
+        .render_str(
+            &tree[0].jinja,
+            minijinja::Value::from(minijinja::value::Serde(&ctx)),
+        )
         .unwrap_or_else(|e| panic!("{e:#}\n{}", tree[0].jinja));
     for id in ["g0", "g1", "leaf", "z"] {
         assert!(html.contains(&format!("data-id=\"{id}\"")), "{id}: {html}");
@@ -689,7 +693,11 @@ fn a_state_fed_wrapper_of_a_recursive_list_still_falls_back() {
         "{:?}",
         body.diagnostics
     );
-    assert!(!body.id.contains("_f"), "no fixed clone: {:?}", tiers(&tree));
+    assert!(
+        !body.id.contains("_f"),
+        "no fixed clone: {:?}",
+        tiers(&tree)
+    );
 }
 
 /// A4: two call sites, one fixed (the page's loader data) and one state-fed (inside a stateful `Panel`; state handed to
@@ -701,7 +709,11 @@ fn only_the_fixed_call_site_of_a_recursive_list_wrapper_is_cloned() {
     let page = "import { Body } from './Body'\nimport { Panel } from './Panel'\nexport default function P({ page }: any) { return <div><Body nodes={page.nodes} /><Panel start={page.nodes} /></div> }";
     let tree = ok(
         page,
-        &[("NodeView.tsx", NODE_VIEW), ("Body.tsx", BODY), ("Panel.tsx", panel)],
+        &[
+            ("NodeView.tsx", NODE_VIEW),
+            ("Body.tsx", BODY),
+            ("Panel.tsx", panel),
+        ],
     );
     assert!(!tree[0].is_react(), "{:?}", tiers(&tree));
     assert!(one(&tree, "Panel.tsx").is_react(), "{:?}", tiers(&tree));
@@ -753,7 +765,7 @@ export function SectionView({ s }: any) {
     case 'hero':
       return <header data-id={s.id}><h1>{s.title}</h1></header>
     case 'custom':
-      return <section data-id={s.id}><CustomSectionView nodes={s.nodes} /></section>
+      return <section data-id={s.id}><CustomSectionView nodes={s.nodes ?? []} /></section>
     default:
       return null
   }
@@ -785,7 +797,7 @@ export function SectionView({ s }: any) {
     case 'hero':
       return <header data-id={s.id}><h1>{s.title}</h1></header>
     case 'custom':
-      return <section data-id={s.id}>{s.nodes.map((n: any) => <ElementView key={n.id} n={n} />)}</section>
+      return <section data-id={s.id}>{(s.nodes ?? []).map((n: any) => <ElementView key={n.id} n={n} />)}</section>
     default:
       return null
   }
@@ -800,4 +812,45 @@ export function SectionView({ s }: any) {
         ],
     );
     assert_all_static(&tree);
+}
+
+/// A5 with a plain member prop: `nodes={s.nodes}` (the main chain hands `s.nodes ?? []`, an expression over props the
+/// shared copy cannot hand to the React `CustomSectionView`: `island-prop`, cleared by the clone as well).
+#[test]
+fn a_section_chain_with_a_plain_member_prop_is_static() {
+    let tree = ok(
+        CHAIN_PAGE,
+        &[
+            ("ElementView.tsx", ELEMENT_VIEW),
+            ("CustomSectionView.tsx", CUSTOM_SECTION_VIEW),
+            (
+                "SectionView.tsx",
+                &SECTION_VIEW.replace("s.nodes ?? []", "s.nodes"),
+            ),
+            ("PageView.tsx", PAGE_VIEW),
+        ],
+    );
+    assert_all_static(&tree);
+}
+
+/// Negative for `island-prop`: an expression over props handed to a child with its own state keeps that child React,
+/// so the section's clone is not static and the shared React copy stays.
+#[test]
+fn an_expression_prop_to_a_stateful_child_still_falls_back() {
+    // useTransition keeps Counter a React island (a stateful native child takes the expression as a plain prop)
+    let counter = "import { useReducer, useTransition } from 'react'\nexport function Counter({ nodes }: any) { useTransition(); const [c, hit] = useReducer((x: number) => x + 1, 0); return <button onClick={() => hit()}>{nodes.length + c}</button> }";
+    let section = "import { Counter } from './Counter'\nexport function SectionView({ s }: any) { return <section data-id={s.id}><Counter nodes={s.nodes ?? []} /></section> }";
+    let page = "import { SectionView } from './SectionView'\nexport default function P({ page }: any) { return <SectionView s={page.s} /> }";
+    let tree = ok(
+        page,
+        &[("Counter.tsx", counter), ("SectionView.tsx", section)],
+    );
+    let sv = one(&tree, "SectionView.tsx");
+    assert!(sv.is_react(), "{:?}", tiers(&tree));
+    assert!(!sv.id.contains("_f"), "no static clone: {:?}", tiers(&tree));
+    assert!(
+        sv.diagnostics.iter().any(|d| d.rule == "island-prop"),
+        "{:?}",
+        sv.diagnostics
+    );
 }
