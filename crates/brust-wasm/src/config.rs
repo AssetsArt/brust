@@ -164,6 +164,7 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
                     CfCrossSite::Allow => CrossSite::Allow,
                 },
                 stream,
+                ws: Default::default(),
             })
         })
         .transpose()?;
