@@ -10,9 +10,21 @@ use hyper::body::Incoming;
 use crate::config::Server;
 use crate::server::body::{ResponseBody, bytes_body};
 
-/// The hyper adapter: the request head as the core reads it, the core's answer with its body
-/// boxed once.
-pub(crate) async fn handle(req: Request<Incoming>, server: &Server) -> Response<ResponseBody> {
+/// The hyper adapter. A WebSocket upgrade under the actions prefix (F529) takes [`crate::ws::upgrade`]; every other
+/// request goes to [`handle_core`].
+pub(crate) async fn handle(
+    req: Request<Incoming>,
+    server: &Server,
+    conn: &crate::ws::upgrade::ConnCtx,
+) -> Response<ResponseBody> {
+    if crate::ws::upgrade::wants(&req, server) {
+        return crate::ws::upgrade::handle(req, server, conn).await;
+    }
+    handle_core(req, server).await
+}
+
+/// The request head as the core reads it, the core's answer with its body boxed once.
+pub(crate) async fn handle_core(req: Request<Incoming>, server: &Server) -> Response<ResponseBody> {
     let (parts, incoming) = req.into_parts();
     let rq = RequestHead {
         method: parts.method.as_str(),
