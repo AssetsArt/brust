@@ -623,3 +623,234 @@ fn a_recursive_call_in_an_x_for_row_of_a_fixed_list_prints_in_the_server_rows() 
         assert!(html.contains(&format!("data-id=\"{id}\"")), "{html}");
     }
 }
+
+/// F528: a non-root component that maps its props to a recursive component. Its props could change on the client (it
+/// is not the route), so its rows are ones the browser re-creates and the shared copy falls back; a call site whose
+/// props are fixed (loader data, a literal) gets a fixed-props clone where those rows are the server's: static.
+const BODY: &str = "import { NodeView } from './NodeView'\nexport function Body({ nodes }: any) { return <main>{nodes.map((n: any) => <NodeView key={n.id} n={n} />)}</main> }";
+
+fn tiers(tree: &[Compiled]) -> Vec<(String, String, serde_json::Value)> {
+    tree.iter()
+        .map(|c| (c.source.clone(), c.id.clone(), c.ir["tier"].clone()))
+        .collect()
+}
+
+/// Every lowered component is static, the page prints one macro and no island, and no fallback is left.
+fn assert_all_static(tree: &[Compiled]) {
+    assert_clean(tree);
+    for c in tree {
+        assert_eq!(c.ir["tier"], "Static", "{}: {:?}", c.source, tiers(tree));
+    }
+    let page = &tree[0];
+    assert_eq!(macros(&page.jinja), 1, "{}", page.jinja);
+    assert!(!page.jinja.contains("<brust-island"), "{}", page.jinja);
+    assert!(!page.jinja.contains("x-data"), "{}", page.jinja);
+}
+
+/// A1: the page hands loader data to `Body`, which maps it to the recursive `NodeView`.
+#[test]
+fn a_props_fed_wrapper_of_a_recursive_list_is_static_through_a_fixed_clone() {
+    let page = "import { Body } from './Body'\nexport default function P({ page }: any) { return <Body nodes={page.nodes} /> }";
+    let tree = ok(page, &[("NodeView.tsx", NODE_VIEW), ("Body.tsx", BODY)]);
+    assert_all_static(&tree);
+    // the page renders the tree through brust-jinja
+    let mut env = minijinja::Environment::new();
+    brust_jinja::register(&mut env);
+    let nodes = serde_json::json!([chain(2), { "id": "z", "kind": "text", "label": "z" }]);
+    let ctx =
+        serde_json::json!({ "page": { "nodes": nodes }, "_props": { "page": { "nodes": nodes } } });
+    let html = env
+        .render_str(
+            &tree[0].jinja,
+            minijinja::Value::from(minijinja::value::Serde(&ctx)),
+        )
+        .unwrap_or_else(|e| panic!("{e:#}\n{}", tree[0].jinja));
+    for id in ["g0", "g1", "leaf", "z"] {
+        assert!(html.contains(&format!("data-id=\"{id}\"")), "{id}: {html}");
+    }
+    assert!(html.starts_with("<main>"), "{html}");
+}
+
+/// A2: the same wrapper fed a literal array.
+#[test]
+fn a_literal_fed_wrapper_of_a_recursive_list_is_static() {
+    let page = "import { Body } from './Body'\nexport default function P() { return <Body nodes={[{ id: 'a', kind: 'text', label: 'A' }]} /> }";
+    let tree = ok(page, &[("NodeView.tsx", NODE_VIEW), ("Body.tsx", BODY)]);
+    assert_all_static(&tree);
+}
+
+/// A3: fed a value that changes on the client the wrapper's rows are the browser's: it falls back as before.
+#[test]
+fn a_state_fed_wrapper_of_a_recursive_list_still_falls_back() {
+    let page = "import { useState } from 'react'\nimport { Body } from './Body'\nexport default function P({ page }: any) { const [k, setK] = useState(page.nodes); return <div><button onClick={() => setK([])}>x</button><Body nodes={k} /></div> }";
+    let tree = ok(page, &[("NodeView.tsx", NODE_VIEW), ("Body.tsx", BODY)]);
+    let body = one(&tree, "Body.tsx");
+    assert!(body.is_react(), "{:?}", tiers(&tree));
+    assert!(
+        body.diagnostics
+            .iter()
+            .any(|d| d.rule == "recursion-unsupported" && d.class == DiagClass::Fallback),
+        "{:?}",
+        body.diagnostics
+    );
+    assert!(
+        !body.id.contains("_f"),
+        "no fixed clone: {:?}",
+        tiers(&tree)
+    );
+}
+
+/// A4: two call sites, one fixed (the page's loader data) and one state-fed (inside a stateful `Panel`; state handed to
+/// it straight from the page would make the page itself React): the fixed one is a static clone, the other keeps the
+/// shared React copy.
+#[test]
+fn only_the_fixed_call_site_of_a_recursive_list_wrapper_is_cloned() {
+    let panel = "import { useState } from 'react'\nimport { Body } from './Body'\nexport function Panel({ start }: any) { const [k, setK] = useState(start); return <div><button onClick={() => setK([])}>x</button><Body nodes={k} /></div> }";
+    let page = "import { Body } from './Body'\nimport { Panel } from './Panel'\nexport default function P({ page }: any) { return <div><Body nodes={page.nodes} /><Panel start={page.nodes} /></div> }";
+    let tree = ok(
+        page,
+        &[
+            ("NodeView.tsx", NODE_VIEW),
+            ("Body.tsx", BODY),
+            ("Panel.tsx", panel),
+        ],
+    );
+    assert!(!tree[0].is_react(), "{:?}", tiers(&tree));
+    assert!(one(&tree, "Panel.tsx").is_react(), "{:?}", tiers(&tree));
+    let bodies: Vec<&Compiled> = tree.iter().filter(|c| c.source == "Body.tsx").collect();
+    assert_eq!(bodies.len(), 2, "{:?}", tiers(&tree));
+    let clone = bodies
+        .iter()
+        .find(|c| c.id.contains("_f"))
+        .unwrap_or_else(|| panic!("{:?}", tiers(&tree)));
+    assert_eq!(clone.ir["tier"], "Static", "{:?}", tiers(&tree));
+    let shared = bodies
+        .iter()
+        .find(|c| !c.id.contains("_f"))
+        .unwrap_or_else(|| panic!("{:?}", tiers(&tree)));
+    assert!(shared.is_react(), "{:?}", tiers(&tree));
+    assert!(
+        shared
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == "recursion-unsupported"),
+        "{:?}",
+        shared.diagnostics
+    );
+}
+
+/// A5: a page → sections → section by type → custom section mapping nodes → element by kind (a group arm renders
+/// itself). Every level is a non-root component fed the route's loader data.
+const ELEMENT_VIEW: &str = r#"export function ElementView({ n }: any) {
+  switch (n.kind) {
+    case 'group':
+      return (
+        <div data-id={n.id} class="group">
+          {(n.children ?? []).map((c: any) => (
+            <ElementView key={c.id} n={c} />
+          ))}
+        </div>
+      )
+    case 'image':
+      return <img data-id={n.id} src={n.src} alt={n.alt ?? ''} />
+    default:
+      return <p data-id={n.id}>{n.text}</p>
+  }
+}
+"#;
+const CUSTOM_SECTION_VIEW: &str = "import { ElementView } from './ElementView'\nexport function CustomSectionView({ nodes }: any) { return <div class=\"custom\">{nodes.map((n: any) => <ElementView key={n.id} n={n} />)}</div> }";
+const SECTION_VIEW: &str = r#"import { CustomSectionView } from './CustomSectionView'
+export function SectionView({ s }: any) {
+  switch (s.type) {
+    case 'hero':
+      return <header data-id={s.id}><h1>{s.title}</h1></header>
+    case 'custom':
+      return <section data-id={s.id}><CustomSectionView nodes={s.nodes ?? []} /></section>
+    default:
+      return null
+  }
+}
+"#;
+const PAGE_VIEW: &str = "import { SectionView } from './SectionView'\nexport function PageView({ sections }: any) { return <article>{sections.map((s: any) => <SectionView key={s.id} s={s} />)}</article> }";
+const CHAIN_PAGE: &str = "import { PageView } from './PageView'\nexport default function P({ page }: any) { return <PageView sections={page.sections} /> }";
+
+#[test]
+fn a_page_section_element_chain_with_a_recursive_element_is_static() {
+    let tree = ok(
+        CHAIN_PAGE,
+        &[
+            ("ElementView.tsx", ELEMENT_VIEW),
+            ("CustomSectionView.tsx", CUSTOM_SECTION_VIEW),
+            ("SectionView.tsx", SECTION_VIEW),
+            ("PageView.tsx", PAGE_VIEW),
+        ],
+    );
+    assert_all_static(&tree);
+}
+
+/// A5 variant: the custom arm holds the list inline instead of through `CustomSectionView`.
+#[test]
+fn a_section_arm_with_an_inline_recursive_list_is_static() {
+    let section = r#"import { ElementView } from './ElementView'
+export function SectionView({ s }: any) {
+  switch (s.type) {
+    case 'hero':
+      return <header data-id={s.id}><h1>{s.title}</h1></header>
+    case 'custom':
+      return <section data-id={s.id}>{(s.nodes ?? []).map((n: any) => <ElementView key={n.id} n={n} />)}</section>
+    default:
+      return null
+  }
+}
+"#;
+    let tree = ok(
+        CHAIN_PAGE,
+        &[
+            ("ElementView.tsx", ELEMENT_VIEW),
+            ("SectionView.tsx", section),
+            ("PageView.tsx", PAGE_VIEW),
+        ],
+    );
+    assert_all_static(&tree);
+}
+
+/// A5 with a plain member prop: `nodes={s.nodes}` (the main chain hands `s.nodes ?? []`, an expression over props the
+/// shared copy cannot hand to the React `CustomSectionView`: `island-prop`, cleared by the clone as well).
+#[test]
+fn a_section_chain_with_a_plain_member_prop_is_static() {
+    let tree = ok(
+        CHAIN_PAGE,
+        &[
+            ("ElementView.tsx", ELEMENT_VIEW),
+            ("CustomSectionView.tsx", CUSTOM_SECTION_VIEW),
+            (
+                "SectionView.tsx",
+                &SECTION_VIEW.replace("s.nodes ?? []", "s.nodes"),
+            ),
+            ("PageView.tsx", PAGE_VIEW),
+        ],
+    );
+    assert_all_static(&tree);
+}
+
+/// Negative for `island-prop`: an expression over props handed to a child with its own state keeps that child React,
+/// so the section's clone is not static and the shared React copy stays.
+#[test]
+fn an_expression_prop_to_a_stateful_child_still_falls_back() {
+    // useTransition keeps Counter a React island (a stateful native child takes the expression as a plain prop)
+    let counter = "import { useReducer, useTransition } from 'react'\nexport function Counter({ nodes }: any) { useTransition(); const [c, hit] = useReducer((x: number) => x + 1, 0); return <button onClick={() => hit()}>{nodes.length + c}</button> }";
+    let section = "import { Counter } from './Counter'\nexport function SectionView({ s }: any) { return <section data-id={s.id}><Counter nodes={s.nodes ?? []} /></section> }";
+    let page = "import { SectionView } from './SectionView'\nexport default function P({ page }: any) { return <SectionView s={page.s} /> }";
+    let tree = ok(
+        page,
+        &[("Counter.tsx", counter), ("SectionView.tsx", section)],
+    );
+    let sv = one(&tree, "SectionView.tsx");
+    assert!(sv.is_react(), "{:?}", tiers(&tree));
+    assert!(!sv.id.contains("_f"), "no static clone: {:?}", tiers(&tree));
+    assert!(
+        sv.diagnostics.iter().any(|d| d.rule == "island-prop"),
+        "{:?}",
+        sv.diagnostics
+    );
+}
