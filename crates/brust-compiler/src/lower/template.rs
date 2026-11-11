@@ -34,8 +34,9 @@ use std::rc::Rc;
 pub enum PropBinding {
     /// A jinja expression in the parent's scope.
     Expr(String),
-    /// JSX children: markup printed in the parent's scope.
-    Markup(String),
+    /// JSX children: markup printed in the parent's scope, and the location of a `<Dynamic>` slot it holds (F519: the
+    /// child refuses to paste it into a row the browser builds).
+    Markup(String, Option<u32>),
     /// An event handler the parent hoisted (shadcn S1.3): the `x-on-*` directive value naming the
     /// parent's member. Bound where a spread lands it on an element; never a value.
     Handler(String),
@@ -318,6 +319,9 @@ pub struct Printer<'a, 'c> {
     /// F432: printing the children a component call hands down as markup. The component may place them inside a
     /// controlled `<select>` (the shadcn wrapper `<select {...props}/>`), whose value the options then read as `__select`.
     component_children: u32,
+    /// F519: a `<Dynamic>` slot printed (or pasted from a caller's children) since the last reset: the location carried
+    /// with the children markup a component call hands down.
+    markup_dynamic: Option<u32>,
     /// F420 / F421: the element being opened is a `<select>` / `<textarea>` whose `value` becomes `selected` options /
     /// text content, so its own `value` attribute is not printed.
     skip_value_print: bool,
@@ -380,6 +384,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             fwd_ref: None,
             in_select: false,
             component_children: 0,
+            markup_dynamic: None,
             skip_value_print: false,
             spread_control: None,
             twice: Rc::default(),
@@ -968,6 +973,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             );
             return;
         }
+        self.markup_dynamic.get_or_insert(*loc);
         let (c, p) = (self.value(component), self.value(props));
         self.out
             .push_str(&format!("{{{{ brust_dynamic({c}, {p}) }}}}"));
@@ -1050,8 +1056,20 @@ impl<'a, 'c> Printer<'a, 'c> {
                 ..
             }),
         ) = (&self.inline, raw)
-            && let Some(PropBinding::Markup(m)) = i.get(name)
+            && let Some(PropBinding::Markup(m, dynamic)) = i.get(name)
         {
+            // R4.3: a caller's `<Dynamic>` pasted into a row the browser builds is still a slot in a client row.
+            if let Some(at) = dynamic {
+                if self.in_client_row() && !self.blank {
+                    self.dynamic_refusal(
+                        "dynamic-in-client-row",
+                        "<Dynamic>, passed as children, lands in a list row the client builds (an `x-for` list in the component that prints its children); the browser cannot render a runtime component for a row it creates".into(),
+                        at,
+                        "render the slot outside that list, or keep the list's rows server-built (no state, handlers or effects in the component that lists them)",
+                    );
+                }
+                self.markup_dynamic.get_or_insert(at);
+            }
             self.out.push_str(&m);
             return None;
         }
@@ -1718,7 +1736,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 client_only: Vec::new(),
             };
             match probe.get("children") {
-                Some(PropBinding::Markup(m)) => Some(m),
+                Some(PropBinding::Markup(m, _)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
                 Some(
                     PropBinding::Handler(_)
@@ -2814,11 +2832,17 @@ impl<'a, 'c> Printer<'a, 'c> {
         if as_child.is_none() && !children.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
+            let outer = self.markup_dynamic.take();
             self.component_children += 1;
             self.nodes(children, schildren);
             self.component_children -= 1;
             std::mem::swap(&mut saved, &mut self.out);
-            segs.push(Seg::Named("children".into(), PropBinding::Markup(saved)));
+            let dynamic = self.markup_dynamic.take();
+            self.markup_dynamic = outer.or(dynamic);
+            segs.push(Seg::Named(
+                "children".into(),
+                PropBinding::Markup(saved, dynamic),
+            ));
         }
         let bind = link
             .and_then(|l| ir.child_links.iter().find(|c| c.id == l))
@@ -3086,11 +3110,17 @@ impl<'a, 'c> Printer<'a, 'c> {
         if !kids.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
+            let outer = self.markup_dynamic.take();
             self.component_children += 1;
             self.nodes(kids, skids);
             self.component_children -= 1;
             std::mem::swap(&mut saved, &mut self.out);
-            segs.push(Seg::Named("children".into(), PropBinding::Markup(saved)));
+            let dynamic = self.markup_dynamic.take();
+            self.markup_dynamic = outer.or(dynamic);
+            segs.push(Seg::Named(
+                "children".into(),
+                PropBinding::Markup(saved, dynamic),
+            ));
         }
         Some(AsChild {
             tag: String::new(),

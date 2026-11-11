@@ -257,3 +257,43 @@ fn a_slot_under_a_reactive_condition_is_printed_in_both_copies() {
     );
     assert!(c.dynamic);
 }
+
+fn refused_with(src: &str, files: &[(&str, &str)]) -> String {
+    match compile(src, files) {
+        Err(d) => {
+            assert_eq!(d.class, DiagClass::Error, "{d:?}");
+            d.rule
+        }
+        Ok(tree) => panic!("compiled: {}\n{src}", tree[0].jinja),
+    }
+}
+
+/// Review fix (R4.3): a `<Dynamic>` handed down as `{children}` and printed by the child inside a row the client builds
+/// is a slot in a client row too — refused where the child pastes the markup.
+#[test]
+fn a_slot_passed_as_children_into_a_client_row_is_refused() {
+    let rows = "import { useState } from 'react'\nexport default function Rows({ items, children }: any) { const [n, setN] = useState(0); return <ul>{items.map((i: any) => <li key={i.id} onClick={() => setN(n + 1)}>{children}</li>)}</ul> }";
+    let src = format!(
+        "{IMPORT}import Rows from './el/Rows'\nexport default function P({{ items, slot }}: any) {{ return <main><Rows items={{items}}><Dynamic component={{slot}} /></Rows></main> }}"
+    );
+    assert_eq!(
+        refused_with(&src, &[("el/Rows.tsx", rows)]),
+        "dynamic-in-client-row"
+    );
+}
+
+/// The same child over a fixed list (F515: a module constant, rows the server owns for good) pastes the slot in server
+/// rows: no refusal.
+#[test]
+fn a_slot_passed_as_children_into_fixed_rows_compiles() {
+    let rows = "import { useState } from 'react'\nconst ROWS = [{ id: 'a' }, { id: 'b' }]\nexport default function Rows({ children }: any) { const [n, setN] = useState(0); return <ul>{ROWS.map((r) => <li key={r.id} onClick={() => setN(n + 1)}>{children}</li>)}</ul> }";
+    let src = format!(
+        "{IMPORT}import Rows from './el/Rows'\nexport default function P({{ slot }}: any) {{ return <main><Rows><Dynamic component={{slot}} /></Rows></main> }}"
+    );
+    let tree = ok(&src, &[("el/Rows.tsx", rows)]);
+    assert!(
+        tree[0].jinja.contains("brust_dynamic("),
+        "{}",
+        tree[0].jinja
+    );
+}
