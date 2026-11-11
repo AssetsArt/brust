@@ -118,10 +118,17 @@ const CORE_SRC = join(import.meta.dir, '..')
 const BUILTINS = new Set(builtinModules.filter((m) => !m.startsWith('_')))
 
 /** Violations of the Workers host surface: `bun`/`bun:*` anywhere in the graph (R2 f). */
-function cfGuard(appRoot: string, violations: string[]): BunPlugin {
+function cfGuard(appRoot: string, violations: string[], wsFiles: string[]): BunPlugin {
   return {
     name: 'brust-cf-guard',
     setup(b) {
+      // F529 (D3), best effort: a Worker has no sockets, so an app source that calls `.ws(` is flagged here; the generated
+      // entry refuses the app at startup either way. Reads the file and passes it on (undefined = the next loader).
+      b.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (a) => {
+        if (/[\\/]node_modules[\\/]/.test(a.path)) return undefined
+        if (/\.ws\s*\(/.test(await Bun.file(a.path).text())) wsFiles.push(relPosix(appRoot, a.path) || a.path)
+        return undefined
+      })
       b.onResolve({ filter: /^bun(:.*)?$/ }, (a) => {
         violations.push(`${relPosix(appRoot, a.importer) || a.importer} imports ${a.path}`)
         return { path: a.path, external: true }
@@ -303,6 +310,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   const glueRel = relative(appDir, join(cfDir, 'worker', glue)).split('\\').join('/')
   const glueSpec = glueRel.startsWith('.') ? glueRel : `./${glueRel}`
   const violations: string[] = []
+  const wsFiles: string[] = []
   const res = await Bun.build({
     entrypoints: [entryPath],
     target: 'browser',
@@ -311,9 +319,11 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     define: workerDefine(ctx.manifest.base_path),
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
-    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map(), join(out, 'client'), ctx.manifest.base_path ?? ''), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'], 'browser', CF_CONDITIONS), exposePlugin(ctx.compiled)],
+    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map(), join(out, 'client'), ctx.manifest.base_path ?? ''), cfGuard(ctx.appRoot, violations, wsFiles), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'], 'browser', CF_CONDITIONS), exposePlugin(ctx.compiled)],
   })
   if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
+  // Logged now, not returned: the startup smoke below fails the build for such an app, and its warning must still be seen.
+  for (const f of new Set(wsFiles)) ctx.log(`[brust] warning cf-websocket ${f} calls .ws(): WebSocket is not supported on --target cloudflare (a Worker has no sockets), so the Worker refuses to start. Use --target bun`)
   if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)
   const js = res.outputs.filter((o) => o.kind === 'entry-point')
   if (js.length !== 1) throw new BuildError('bundle', `cloudflare: expected one entry-point output, got ${js.length}`)

@@ -26,6 +26,7 @@ import RuntimeComponents, { runtimeComponentsLoader } from '../pages/docs/Runtim
 import Shadcn, { shadcnLoader } from '../pages/docs/Shadcn'
 import ShadcnSetup, { shadcnSetupLoader } from '../pages/docs/guides/ShadcnSetup'
 import Store, { storeLoader } from '../pages/docs/Store'
+import WebSockets, { webSocketsLoader } from '../pages/docs/WebSockets'
 import CloudflareAdapter, { cloudflareAdapterLoader } from '../pages/docs/cache-adapters/Cloudflare'
 import CacheAdaptersOverview, { overviewLoader } from '../pages/docs/cache-adapters/Overview'
 import RedisAdapter, { redisLoader } from '../pages/docs/cache-adapters/Redis'
@@ -68,6 +69,7 @@ export const NAV: NavGroup[] = [
       { slug: 'rendering-tiers', title: 'Rendering tiers', file: 'pages/docs/RenderingTiers.tsx', Component: RenderingTiers, loader: renderingTiersLoader },
       { slug: 'caching', title: 'Caching', file: 'pages/docs/Caching.tsx', Component: Caching, loader: cachingLoader },
       { slug: 'actions', title: 'Actions', file: 'pages/docs/Actions.tsx', Component: Actions, loader: actionsLoader },
+      { slug: 'websockets', title: 'WebSockets', file: 'pages/docs/WebSockets.tsx', Component: WebSockets, loader: webSocketsLoader },
       { slug: 'store', title: 'Store', file: 'pages/docs/Store.tsx', Component: Store, loader: storeLoader },
       { slug: 'navigation', title: 'Navigation', file: 'pages/docs/Navigation.tsx', Component: Navigation, loader: navigationLoader },
       { slug: 'runtime-components', title: 'Runtime components', file: 'pages/docs/RuntimeComponents.tsx', Component: RuntimeComponents, loader: runtimeComponentsLoader },

@@ -596,6 +596,10 @@ jobs:
       - run: bun test --timeout 300000 tests/server/loader-headers.chromium.test.ts
       # F470: a loader route under the actions prefix answers GET (cookie + redirect); POST and unrouted GET stay actions.
       - run: bun test --timeout 300000 tests/server/actions-prefix-routes.test.ts
+      # F529: WebSockets in an actions app under a base path, 2 workers: echo, guard 401, foreign Origin 403, a topic across workers, max payload 1009, SIGTERM drain 1001.
+      - run: bun test --timeout 300000 tests/server/ws.test.ts
+      # F529 D12: the same sockets through the `brust dev` proxy relay.
+      - run: bun test --timeout 300000 tests/server/ws-dev.test.ts
       # F442 W3b: Radix's own useId (react-id) is an id slot with the radix- prefix; served ids share as React's do.
       - run: bun test --timeout 120000 tests/server/radix-id.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.

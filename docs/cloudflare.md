@@ -227,6 +227,7 @@ Build once first so `dist/cf/wrangler.jsonc` exists. A D1 query counts as a subr
 | Plan offer (loader and jobs in one call) | on | off: the loader and jobs are two direct in-isolate calls, which cost microseconds |
 | `[server]`, `[workers]` | used | ignored, with a warning |
 | Server-only modules (`bun:*`) | allowed | build error `cf-unsupported`; swap with `[cloudflare.alias]` |
+| WebSockets (`.ws()` in actions) | supported ([websockets.md](websockets.md)) | not supported: the build prints `warning cf-websocket` and stops at its startup check; the Worker refuses to start |
 | Static site generation (`--ssg`) | not in v2 | not targeted |
 
 ## 10. Limits

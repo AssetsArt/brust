@@ -7,7 +7,9 @@ import T from "../dist/cf/templates.json"
 import { fetchInScope, flattenRoutes, jsonCall, makeHandlers, noActions } from "@brust/core/server-handlers"
 import { mountActions } from "@brust/core/server-handlers/actions"
 const h = makeHandlers({ leaves: flattenRoutes(R.routes ?? R.default).leaves, jobs: J, manifest: M, stores: JM.stores ?? {} })
-const app = mountActions(A, "/_brust/action").compile() // startup-phase compile (R9)
+const app = mountActions(A, "/_brust/action")
+if (app["~hasWS"]) throw new Error("WebSocket (.ws()) is not supported on --target cloudflare: a Worker has no sockets; use --target bun")
+app.compile() // startup-phase compile (R9)
 export const loader = jsonCall(h.loader)
 export const jobs = jsonCall(h.jobs)
 export const action = (req) => fetchInScope(app, req)

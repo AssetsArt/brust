@@ -56,7 +56,14 @@ export function cfEntrySource(i: CfEntryInput): string {
     pages
       ? 'const h = makeHandlers({ leaves: flattenRoutes(R.routes ?? R.default).leaves, jobs: J, manifest: M, stores: JM.stores ?? {} })'
       : 'const h = makeHandlers({ leaves: [], jobs: {}, manifest: M, stores: {} })',
-    ...(actions ? [`const app = mountActions(A, ${q(i.prefix)}).compile() // startup-phase compile (R9)`] : []),
+    // F529 (D3): a Worker has no sockets; `.ws()` fails here, at startup, with this message rather than at the first request.
+    ...(actions
+      ? [
+          `const app = mountActions(A, ${q(i.prefix)})`,
+          'if (app["~hasWS"]) throw new Error("WebSocket (.ws()) is not supported on --target cloudflare: a Worker has no sockets; use --target bun")',
+          'app.compile() // startup-phase compile (R9)',
+        ]
+      : []),
     'export const loader = jsonCall(h.loader)',
     'export const jobs = jsonCall(h.jobs)',
     actions ? 'export const action = (req) => fetchInScope(app, req)' : 'export const action = noActions',

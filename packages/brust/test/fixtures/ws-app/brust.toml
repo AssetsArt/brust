@@ -1,0 +1,9 @@
+# F529: WebSockets in an actions app served under a base path.
+[server]
+base_path = "/app"
+
+[actions]
+prefix = "/app/api"
+
+[actions.ws]
+max_payload_bytes = 4096

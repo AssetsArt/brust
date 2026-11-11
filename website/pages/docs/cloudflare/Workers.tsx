@@ -399,6 +399,17 @@ export default function Workers({ blocks }: WorkersData) {
             </tr>
             <tr>
               <td>
+                WebSockets (<code>.ws()</code> in actions)
+              </td>
+              <td>
+                supported, see <a href="/docs/websockets">WebSockets</a>
+              </td>
+              <td>
+                not supported: the build prints <code>warning cf-websocket</code> and stops, and the Worker refuses to start
+              </td>
+            </tr>
+            <tr>
+              <td>
                 Static site generation (<code>--ssg</code>)
               </td>
               <td>not in v2</td>
