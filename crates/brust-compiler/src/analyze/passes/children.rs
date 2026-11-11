@@ -4469,6 +4469,12 @@ impl Walker<'_, '_> {
             ctx.modules.borrow_mut().remove(&key);
             return Err(why);
         }
+        // F524: a static component's clone is static by construction; it is worth keeping only when it fixed something
+        // below it (one of its children is a fixed clone now). Otherwise it is the shared copy again, compiled per call site.
+        if matches!(cir.tier, Tier::Static) && !holds_fixed_clone(&clone, &ctx.modules.borrow()) {
+            ctx.modules.borrow_mut().remove(&key);
+            return Err("its clone fixes nothing below it".into());
+        }
         Ok((clone, id, key))
     }
 
@@ -10136,6 +10142,17 @@ fn node_exprs(nodes: &[Node], out: &mut Vec<Expr>) {
 
 /// F524: how many static wrappers `fixed_droppable` looks through for a child a fixed-props clone would make static.
 const FIXED_SHELL_DEPTH: usize = 8;
+
+/// F524: one of `ir`'s children is a fixed-props clone (F494).
+fn holds_fixed_clone(ir: &ComponentIR, modules: &crate::analyze::modules::ModuleCache) -> bool {
+    ir.children.iter().any(|c| {
+        c.id.as_deref().is_some_and(|id| {
+            modules
+                .by_id(id)
+                .is_some_and(|child| child.fixed_clone_of.is_some())
+        })
+    })
+}
 
 /// F494: a component with nothing of its own that changes on the client (no state, effects, handlers, refs, stores) and
 /// that provides no context: fixed props are all it renders from.

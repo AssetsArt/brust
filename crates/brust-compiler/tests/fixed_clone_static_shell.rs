@@ -202,3 +202,138 @@ fn a_shell_over_a_stateful_child_is_not_a_candidate() {
     assert_eq!(by("SectionView.tsx"), "Static", "{}", table(&tree));
     assert_eq!(by("Custom.tsx"), "Native", "{}", table(&tree));
 }
+
+/// No clone in `tree`, and the shell is the shared component.
+fn assert_no_clone(tree: &[Compiled]) {
+    assert!(
+        !tree.iter().any(|c| c.ir["fixed_clone_of"].is_string()),
+        "{}",
+        table(tree)
+    );
+    assert!(
+        tree.iter().any(|c| c.id == "sectionView_267a48ba"),
+        "{}",
+        table(tree)
+    );
+}
+
+/// Review 8bd4d7d6: a shell over a stateless native child given JSX children: the child call is never fixed (children
+/// are not a fixed prop), so a clone of the shell would change nothing below it. No clone (keep shared, as on main).
+#[test]
+fn a_shell_whose_native_child_takes_jsx_children_is_not_cloned() {
+    let sv = "import Card from './Card'\nexport default function SectionView({ s }: any) {\n  switch (s.type) {\n    case 'custom':\n      return <Card n={s.node}><p>{s.title}</p></Card>\n    default:\n      return <hr data-id={s.id} />\n  }\n}\n";
+    // Native on its own (a switch on a prop prints every arm), stateless, and it prints the call site's children.
+    let card = "import Leaf from './Leaf'\nexport default function Card({ n, children }: any) {\n  return <div data-id={n.id}>{children}{n.items.map((i: any) => <Leaf key={i.id} l={i} />)}</div>\n}\n";
+    let tree = compile(
+        PAGE,
+        &[
+            ("SectionView.tsx", sv),
+            ("Card.tsx", card),
+            ("Leaf.tsx", LEAF),
+        ],
+    );
+    assert_no_clone(&tree);
+}
+
+/// Review 8bd4d7d6: a shell over a child that reads a context the client changes (a context value is never a fixed
+/// prop): no clone of the shell. (Such a reader compiles React on its own, so it is no candidate; the no-gain guard in
+/// `specialise_fixed` would refuse the clone either way.)
+#[test]
+fn a_shell_whose_native_child_reads_a_changing_context_is_not_cloned() {
+    // A Provider component whose value is its own state (the native Provider shape): its readers' value changes.
+    let ctx = "import { createContext, useState } from 'react'\nexport const Mode = createContext('a')\nexport function ModeProvider({ children }: any) {\n  const [m, setM] = useState('a')\n  return <Mode.Provider value={m}><button type=\"button\" onClick={() => setM('b')}>b</button>{children}</Mode.Provider>\n}\n";
+    let page = "import { ModeProvider } from './ctx'\nimport SectionView from './SectionView'\nexport default function P({ sections }: any) { return <ModeProvider><main>{sections.map((s: any) => <SectionView key={s.id} s={s} />)}</main></ModeProvider> }";
+    let sv = "import Card from './Card'\nexport default function SectionView({ s }: any) {\n  switch (s.type) {\n    case 'custom':\n      return <Card n={s.node} />\n    default:\n      return <hr data-id={s.id} />\n  }\n}\n";
+    let card = "import { useContext } from 'react'\nimport Leaf from './Leaf'\nimport { Mode } from './ctx'\nexport default function Card({ n }: any) {\n  const m = useContext(Mode)\n  return <div data-id={n.id} data-mode={m}>{n.items.map((i: any) => <Leaf key={i.id} l={i} />)}</div>\n}\n";
+    let tree = compile(
+        page,
+        &[
+            ("SectionView.tsx", sv),
+            ("Card.tsx", card),
+            ("ctx.tsx", ctx),
+            ("Leaf.tsx", LEAF),
+        ],
+    );
+    assert!(
+        !tree
+            .iter()
+            .any(|c| c.ir["fixed_clone_of"].is_string() && c.source == "SectionView.tsx"),
+        "{}",
+        table(&tree)
+    );
+}
+
+/// `levels` static wrappers W1 -> ... -> W<levels> above Custom (a stateless native wrapper of rows of Node).
+fn chain_files(levels: usize) -> (String, Vec<(String, String)>) {
+    let mut fs = vec![
+        ("Custom.tsx".to_string(), CUSTOM.to_string()),
+        ("Node.tsx".to_string(), NODE.to_string()),
+        ("Leaf.tsx".to_string(), LEAF.to_string()),
+    ];
+    for i in 1..=levels {
+        let (imp, call) = if i == levels {
+            (
+                "import Custom from './Custom'".to_string(),
+                "<Custom id={s.id} cls={s.cls} nodes={s.nodes} />".to_string(),
+            )
+        } else {
+            (
+                format!("import W{n} from './W{n}'", n = i + 1),
+                format!("<W{n} s={{s}} />", n = i + 1),
+            )
+        };
+        fs.push((format!("W{i}.tsx"), format!("{imp}\nexport default function W{i}({{ s }}: any) {{\n  return <div data-w=\"{i}\">{call}</div>\n}}\n")));
+    }
+    let page = "import W1 from './W1'\nexport default function P({ sections }: any) { return <main>{sections.map((s: any) => <W1 key={s.id} s={s} />)}</main> }".to_string();
+    (page, fs)
+}
+
+fn compile_chain(levels: usize) -> Vec<Compiled> {
+    let (page, fs) = chain_files(levels);
+    let refs: Vec<(&str, &str)> = fs.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    compile(&page, &refs)
+}
+
+/// Review 8bd4d7d6 (depth): 8 static wrappers above the native one are looked through (the chain is cloned, all
+/// static); 9 are past FIXED_SHELL_DEPTH, so the top wrapper keeps the shared component and nothing is cloned.
+#[test]
+fn the_static_chain_depth_is_bounded() {
+    let eight = compile_chain(8);
+    for c in &eight {
+        assert_eq!(tier(c), "Static", "{}\n{}", c.source, table(&eight));
+    }
+    assert_eq!(
+        eight
+            .iter()
+            .filter(|c| c.ir["fixed_clone_of"].is_string())
+            .count(),
+        10,
+        "{}",
+        table(&eight)
+    );
+    let nine = compile_chain(9);
+    assert!(
+        !nine.iter().any(|c| c.ir["fixed_clone_of"].is_string()),
+        "{}",
+        table(&nine)
+    );
+}
+
+/// Review 8bd4d7d6: a shell over a stateless native child that is native only because of a stateful grandchild: the
+/// child's clone keeps the runtime (dropped), so a clone of the shell would change nothing below it. No clone.
+#[test]
+fn a_shell_whose_child_clone_stays_native_is_not_cloned() {
+    let leaf = "import { useState } from 'react'\nexport default function Leaf({ l }: any) {\n  const [c, setC] = useState(0)\n  return <button data-id={l.id} onClick={() => setC(c + 1)}>{l.label}{c}</button>\n}\n";
+    let tree = compile(
+        PAGE,
+        &[
+            ("SectionView.tsx", SECTION_VIEW),
+            (
+                "Custom.tsx",
+                "import Leaf from './Leaf'\nexport default function Custom({ id, nodes }: any) {\n  return <section id={id}>{nodes.map((n: any) => <Leaf key={n.id} l={n} />)}</section>\n}\n",
+            ),
+            ("Leaf.tsx", leaf),
+        ],
+    );
+    assert_no_clone(&tree);
+}
