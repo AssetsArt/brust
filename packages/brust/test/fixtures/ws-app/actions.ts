@@ -36,7 +36,7 @@ const app = new Elysia({ adapter: brust() })
   })
 
 /** What a message-bus subscriber would do: publish into a topic with no socket and no request at hand. */
-function fanOut(text: string) {
+function fanOut(text: string): number | null {
   return (app as unknown as { server?: { publish(topic: string, data: string): number } }).server?.publish('room', `module:${text}`) ?? null
 }
 
