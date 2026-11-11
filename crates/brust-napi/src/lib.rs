@@ -5,6 +5,7 @@ mod compile;
 mod dispatch;
 mod server;
 mod stubs;
+mod ws;
 
 /// M3-P P0: mimalloc for every Rust allocation in the addon (render path, JSON
 /// parse, response bodies) and, through `brust-compiler/real-mimalloc`, for the
@@ -14,6 +15,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 pub use compile::*;
 pub use server::*;
+pub use ws::*;
 
 use std::sync::Once;
 use tracing_subscriber::EnvFilter;
