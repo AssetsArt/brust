@@ -2,7 +2,7 @@
 
 Actions are the server endpoints your pages call: add a Pokemon to a team, save a form, read a count. In brust v2 they are **one Elysia 2 app**, served behind the Rust server. There is no `Bun.serve`, no second port, and no second router to keep in step with the first.
 
-This page covers `@brust/core/elysia`, `@brust/core/client`, and the `[actions]` and `[cors]` sections of `brust.toml`. It targets Elysia 2 release candidates: brust supports `elysia@^2.0.0-rc.0` and `@elysia/eden@^2.0.0-rc.0` (tested with `2.0.0-rc.0`).
+This page covers `@brust/core/elysia`, `@brust/core/client`, and the `[actions]` and `[cors]` sections of `brust.toml`. It targets Elysia 2 release candidates: brust supports `elysia@^2.0.0-rc.0` and `@elysia/eden@^2.0.0-rc.0` (tested with `elysia@2.0.0-rc.4` and `@elysia/eden@2.0.0-rc.1`).
 
 ## 1. What actions are
 
@@ -198,7 +198,7 @@ The `errors` list, the `detail` text and the `found` and `expected` values exist
 
 ## 5. Errors
 
-Elysia 2 rc.0 has no `.error()` method. There are three ways to produce an error, and the client sees them differently:
+Elysia 2 rc.4 has no `.error()` method. There are three ways to produce an error, and the client sees them differently:
 
 | How | Wire | Typed on the client |
 |---|---|---|
@@ -600,7 +600,7 @@ Defaults: `max_stream_bytes` 256 MiB (at most 4 GiB), `stream_idle_ms` 30 s, `st
 - **Stores are per-request** inside an action (see Routes).
 - **Browser bundles refuse actions code.** Any browser build fails with `server-only-in-client` if it imports `@brust/core/elysia`, `elysia` or `elysia/*`, or the actions entry file. An `import type` is erased and allowed; that is why the client example imports `type { App }`.
 - **Running without Rust** is not built in. If you want the app on another server, `export default app.fetch` from your own entry; the `brust()` adapter's `listen` will still throw.
-- **Release candidate.** Elysia 2 is a release candidate. brust's peer range is `^2.0.0-rc.0` for both packages and its tests run on `2.0.0-rc.0`; use one copy of each (two copies of `elysia` break the `instanceof` check in `mountActions`), and re-test before moving to a later rc.
+- **Release candidate.** Elysia 2 is a release candidate. brust's peer range is `^2.0.0-rc.0` for both packages and its tests run on `elysia@2.0.0-rc.4` and `@elysia/eden@2.0.0-rc.1`; use one copy of each (two copies of `elysia` break the `instanceof` check in `mountActions`), and re-test before moving to a later rc.
 
 ## 11. Deploy actions separately
 
