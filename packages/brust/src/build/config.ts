@@ -2,6 +2,7 @@
 //   [build]
 //   server_only = ["lib/server", "@acme/db"]   # import prefixes / app-root-relative paths
 //   source_roots = ["../shared"]                # F256: directories besides the app a relative import may reach (monorepo)
+//   expose = ["shop/sdk.ts"]                    # F517: modules a runtime component imports; each gets its own browser file
 // `server_only` is the app config `serverOnly` of the compiler spec (§8.2): the compiler refuses
 // such an import in client code, and every browser bundle refuses to include it.
 import { statSync } from 'node:fs'
@@ -109,6 +110,8 @@ export interface BuildConfig {
   cssGlobal: string[]
   /** `[build] source_roots` (F256): directories outside the app a relative import may reach, normalised and relative to the app root (`../shared`). Empty = the app only. */
   sourceRoots: string[]
+  /** `[build] expose` (F517): app modules a runtime component shares with the built app, as `/`-separated paths relative to the app root (`shop/sdk.ts`, or `../shared/sdk.ts` under a source root), sorted. Empty = none. */
+  expose: string[]
   /** `[server] base_path` (F495), normalised (`/portal`); `''` = the app is mounted at the root. Baked into every URL brust emits. */
   basePath: string
   /** `[server] trailing_slash` (F506), baked into the manifest; `strict` (the default) = the path is matched as written. */
@@ -406,6 +409,37 @@ export function parseSourceRoots(file: string, appRoot: string, raw: unknown): s
   return [...out].sort()
 }
 
+const EXPOSE_EXT = /\.(?:[cm]?[jt]s|[jt]sx)$/
+
+/**
+ * F517 `[build] expose`: app modules a runtime component (compiled after the build) imports. Each entry is a file inside
+ * the app root or a `source_roots` directory; it becomes one browser entry of the native-chunk build, so a built
+ * component that imports it and a runtime component share ONE module instance. A missing file, a path outside those
+ * roots or a file that is not a JS/TS module is a `BuildError`. Returns the normalised paths relative to the app root,
+ * `/`-separated and sorted.
+ */
+export function parseExpose(file: string, appRoot: string, sourceRoots: string[], raw: unknown): string[] {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw) || raw.some((p) => typeof p !== 'string' || p.trim() === '' || p.includes('\0')))
+    throw new BuildError('config', `${file}: build.expose must be an array of non-empty strings (module paths relative to the app root)`)
+  const roots = [appRoot, ...sourceRoots.map((r) => resolve(appRoot, r))]
+  const out = new Set<string>()
+  for (const p of raw as string[]) {
+    if (isAbsolute(p.trim())) throw new BuildError('config', `${file}: build.expose entry ${JSON.stringify(p)} must be relative to the app root`)
+    const abs = resolve(appRoot, p.trim())
+    let isFile = false
+    try {
+      isFile = statSync(abs).isFile()
+    } catch {}
+    if (!isFile) throw new BuildError('config', `${file}: build.expose entry ${JSON.stringify(p)} (${abs}) is not an existing file`)
+    if (!roots.some((r) => abs.startsWith(r.endsWith(sep) ? r : r + sep)))
+      throw new BuildError('config', `${file}: build.expose entry ${JSON.stringify(p)} is outside the app root and every build.source_roots directory`)
+    if (!EXPOSE_EXT.test(abs)) throw new BuildError('config', `${file}: build.expose entry ${JSON.stringify(p)} is not a JavaScript or TypeScript module`)
+    out.add(relative(appRoot, abs).split(sep).join('/'))
+  }
+  return [...out].sort()
+}
+
 /** `[server] base_path` (F495): the one validator is config.ts's; a bad value is a build error here too. */
 function parseBasePath(file: string, server: unknown): string {
   if (server === undefined) return ''
@@ -427,7 +461,7 @@ function parseTrailingSlash(file: string, server: unknown): TrailingSlash {
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], basePath: '', trailingSlash: 'strict' }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], basePath: '', trailingSlash: 'strict' }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -442,12 +476,13 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   const cache = await parseCache(file, appRoot, root.cache)
   const cssGlobal = parseCss(file, root.css)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], basePath, trailingSlash }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], basePath, trailingSlash }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
+  const expose = parseExpose(file, appRoot, sourceRoots, (build as Record<string, unknown>).expose)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, basePath, trailingSlash }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, basePath, trailingSlash }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, basePath, trailingSlash }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, basePath, trailingSlash }
 }

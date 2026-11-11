@@ -100,6 +100,8 @@ export interface ManifestJson {
   actions: ActionsRecord | null
   /** L16 R16.3: an actions-only build (no routes, no templates); everything but the prefix is a 404 problem+json. */
   actions_only?: true
+  /** F517 `[build] expose`: set only when the app exposes modules. `exposed`: module path (app-root relative) → its browser file `client/x-<stem>-<hex>.js`; `stores`: the name of every store an exposed module exports → that module. A runtime component compiled after the build reads this; the Rust loader ignores it. */
+  runtime?: { exposed: Record<string, string>; stores: Record<string, string> }
   /** F495 `[server] base_path`: set only for an app mounted under a path. The server answers under it alone and every URL brust owns lies below it. */
   base_path?: string
   /** F506 `[server] trailing_slash`: set only when it is not `strict` (`redirect` | `ignore`). */
