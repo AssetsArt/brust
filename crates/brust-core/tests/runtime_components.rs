@@ -449,6 +449,25 @@ fn a_runaway_loop_runs_out_of_fuel_isolated() {
 }
 
 #[test]
+fn a_slot_that_prints_past_the_output_cap_fails_isolated() {
+    // 100_000 iterations stay under the fuel cap; 64 bytes each is 6.4 MB of output, over the 4 MiB slot cap.
+    let line = "x".repeat(64);
+    let jinja = format!("{{% for i in range(100000) %}}{line}{{% endfor %}}done");
+    let f = fixture(
+        json!([{ "ref": "a", "title": "x" }]),
+        Box::new(move |r| found(r, artifact("id_a", "static", &jinja))),
+    );
+    let r = get(&f.core, "/u");
+    assert_eq!(r.status(), 200);
+    let body = text(&r);
+    assert!(
+        body.contains("<ul><li></li></ul>"),
+        "{}",
+        &body[..body.len().min(200)]
+    );
+}
+
+#[test]
 fn the_app_environment_has_no_fuel_cap() {
     // A page loop past the artifact cap (1e6 iterations, several instructions each) still renders: the cap is set on
     // artifact environments only.

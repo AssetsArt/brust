@@ -34,6 +34,9 @@ pub const NEGATIVE_TTL_SECS: u64 = 10;
 const NEGATIVE_TTL_NS: u64 = NEGATIVE_TTL_SECS * 1_000_000_000;
 /// R5.6 (amended): the fuel an artifact's sub-render may burn (the app's environment has none).
 pub const ARTIFACT_FUEL: u64 = 2_000_000;
+/// The most one slot may print: fuel bounds the instructions, not what each one writes, so the output is capped too;
+/// past it the sub-render fails (R5.7 d).
+pub const MAX_SLOT_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 /// R5.9 (amended): cold resolves through the chunk path in flight at once.
 pub const MAX_COLD_ASSET_RESOLVES: usize = 4;
 /// The one template in an artifact's own environment.
@@ -110,7 +113,44 @@ impl Artifact {
         } else {
             ctx.remove("__store");
         }
-        self.env.get_template(TEMPLATE)?.render(Value::from(ctx))
+        let mut buf = Vec::new();
+        self.env.get_template(TEMPLATE)?.render_captured_to(
+            Value::from(ctx),
+            Capped {
+                out: &mut buf,
+                cap: MAX_SLOT_OUTPUT_BYTES,
+            },
+        )?;
+        // minijinja writes whole `&str`s, so the bytes are UTF-8.
+        String::from_utf8(buf).map_err(|_| {
+            minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "the slot's output is not UTF-8",
+            )
+        })
+    }
+}
+
+/// A writer that refuses past `cap` bytes ([`MAX_SLOT_OUTPUT_BYTES`]).
+struct Capped<'a> {
+    out: &'a mut Vec<u8>,
+    cap: usize,
+}
+
+impl std::io::Write for Capped<'_> {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        if self.out.len() + b.len() > self.cap {
+            return Err(std::io::Error::other(format!(
+                "the slot printed more than {} bytes",
+                self.cap
+            )));
+        }
+        self.out.extend_from_slice(b);
+        Ok(b.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
