@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-44', title: '2.0.0-alpha.44' },
       { id: 'alpha-43', title: '2.0.0-alpha.43' },
       { id: 'alpha-42', title: '2.0.0-alpha.42' },
       { id: 'alpha-41', title: '2.0.0-alpha.41' },
@@ -66,6 +67,18 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-44">2.0.0-alpha.44 · 12 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.43: #482 (ledger F537) */}
+      <p>This version fixes <code>slice</code> on a list in a server-rendered expression, which used to slice the list&rsquo;s printed text.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #482 (F537); crates/brust-jinja/src/lib.rs; crates/brust-compiler/tests/array_slice.rs */}
+        <li>
+          <strong><code>items.slice(a, b)</code> in a server-rendered expression now slices the list (#482).</strong> Before, the list was printed and the characters of that text were sliced, so <code>items.slice(0, 1).map(...)</code> rendered empty items and <code>items.slice(1).length</code> printed the length of the text instead of the number of items, with no error. Now it behaves like <code>Array.prototype.slice</code>: a negative index counts from the end, an omitted end means the end of the list, an index past the end is clamped, and a start at or after the end gives an empty list. The result works with <code>.length</code> and <code>.map</code>. String <code>.slice</code> is unchanged. The generated templates are the same, so there is nothing to rebuild beyond upgrading.
+        </li>
+      </ul>
 
       <h2 id="alpha-43">2.0.0-alpha.43 · 12 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.42: #479–#480 (ledger F535, F536) */}
