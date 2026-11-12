@@ -85,7 +85,9 @@ strategy in M2 (spec S12).
 tree has committed (the React shim calls it from a layout effect of a wrapper that renders only its child, so
 markup and `useId` ids are unchanged). The runtime then sets `data-committed="1"` on the host and dispatches a
 bubbling `brust:island` event, `detail: { id, phase: 'committed' }` (type `IslandEventDetail`). It acts once per
-host, and not after the host left the document. A 2-arg hydrate fn stays valid and never signals. A listener that
+host, never before `data-hydrated` (a `committed()` called while the hydrate fn runs waits for it), and not after
+the host left the document. It covers the root's commit only: React may hydrate the content of an inner `<Suspense>`
+boundary later, with no event. A 2-arg hydrate fn stays valid and never signals. A listener that
 may attach late checks `data-committed` first:
 
     if (host.getAttribute('data-committed') === '1') run()

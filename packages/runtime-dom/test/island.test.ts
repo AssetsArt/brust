@@ -259,3 +259,21 @@ test('a 2-arg hydrate fn still hydrates and never signals committed', () => {
   document.removeEventListener('brust:island', on)
   unmount()
 })
+
+test('committed() called before hydrate returns is deferred until data-hydrated is set; a hydrate that throws never signals', () => {
+  reset(); const flush = makeIdle()
+  const order: string[] = []
+  const on = (e: Event) => order.push(`event hydrated=${(e.target as HTMLElement).getAttribute('data-hydrated')}`)
+  document.addEventListener('brust:island', on)
+  def('commit_j', (h, _p, committed) => { committed(); order.push(`sync committed=${h.getAttribute('data-committed')}`) })
+  def('commit_k', (_h, _p, committed) => { committed(); throw new Error('nope') })
+  const e = console.error; console.error = () => {}
+  html(`<brust-island id="j" data-id="commit_j" x-props='{}'>s</brust-island><brust-island id="k" data-id="commit_k" x-props='{}'>s</brust-island>`)
+  mount(); flush()
+  console.error = e
+  expect(order).toEqual(['sync committed=null', 'event hydrated=1'])
+  expect(document.getElementById('j')!.getAttribute('data-committed')).toBe('1')
+  expect(document.getElementById('k')!.hasAttribute('data-committed')).toBe(false)
+  document.removeEventListener('brust:island', on)
+  unmount()
+})

@@ -68,8 +68,11 @@ function readIslandProps(host: HTMLElement, id: string): Record<string, unknown>
 function hydrateHost(host: HTMLElement, id: string, hydrate: IslandHydrate): void {
   pending.delete(host)
   if (!host.isConnected || host.hasAttribute('data-hydrated')) return
+  // A committed() called before hydrate returned waits for data-hydrated: data-committed always implies data-hydrated.
+  let early = false
   const committed = () => {
     if (turn.get(host) !== committed || !host.isConnected) return
+    if (!host.hasAttribute('data-hydrated')) { early = true; return }
     turn.delete(host)   // once
     host.setAttribute('data-committed', '1')
     host.dispatchEvent(new CustomEvent<IslandEventDetail>('brust:island', { bubbles: true, detail: { id, phase: 'committed' } }))
@@ -79,8 +82,9 @@ function hydrateHost(host: HTMLElement, id: string, hydrate: IslandHydrate): voi
     const dispose = hydrate(host, readIslandProps(host, id), committed)
     if (typeof dispose === 'function') live.set(host, dispose)
     host.setAttribute('data-hydrated', '1')
+    if (early) committed()
   }
-  catch (e) { console.error(`[brust] hydrate threw: ${id}`, e) }
+  catch (e) { turn.delete(host); console.error(`[brust] hydrate threw: ${id}`, e) }
 }
 
 function scheduleHost(host: HTMLElement): void {

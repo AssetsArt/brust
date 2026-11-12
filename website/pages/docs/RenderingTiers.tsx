@@ -198,7 +198,10 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       {/* source: packages/runtime-dom/src/island.ts (hydrateHost, committed), packages/brust/src/build/bundle.ts (islandShim, __Commit), tests/server/island-committed.chromium.test.ts (F545) */}
       <h2 id="committed">When an island is ready</h2>
       <p>
-        <code>data-hydrated=&quot;1&quot;</code> on a <code>&lt;brust-island&gt;</code> means its hydrate call has run, not that React has finished: <code>hydrateRoot</code> and <code>createRoot().render()</code> only schedule the render. Once the island&apos;s tree has committed (its layout effects have run, its event handlers work), the host gets <code>data-committed=&quot;1&quot;</code> and dispatches a <code>brust:island</code> event that bubbles, with <code>detail: {'{'} id, phase: &apos;committed&apos; {'}'}</code>. <code>id</code> is the host&apos;s <code>data-id</code>. It fires once per host, for hydrated islands and <code>client_only</code> ones alike, and never for a host that left the page first.
+        <code>data-hydrated=&quot;1&quot;</code> on a <code>&lt;brust-island&gt;</code> means its hydrate call has run, not that React has finished: <code>hydrateRoot</code> and <code>createRoot().render()</code> only schedule the render. Once the island&apos;s root has committed (its layout effects have run, its event handlers work), the host gets <code>data-committed=&quot;1&quot;</code> and dispatches a <code>brust:island</code> event that bubbles, with <code>detail: {'{'} id, phase: &apos;committed&apos; {'}'}</code>. <code>id</code> is the host&apos;s <code>data-id</code>. It fires once per host, for hydrated islands and <code>client_only</code> ones alike, after <code>data-hydrated</code>, and never for a host that left the page first.
+      </p>
+      <p>
+        The signal covers the island&apos;s root, not every <code>&lt;Suspense&gt;</code> boundary inside it: React may hydrate the content of an inner boundary after the root commits, and that later hydration sends no event.
       </p>
       <p>Code that may run after the event checks the attribute first:</p>
       <CodeBlock code={blocks.committed.code} lang={blocks.committed.lang} html={blocks.committed.html} />
