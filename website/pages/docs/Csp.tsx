@@ -140,6 +140,10 @@ export default function Csp({ blocks }: CspData) {
         <code>&apos;unsafe-inline&apos;</code> (next to brust&rsquo;s hashes browsers ignore it anyway), <code>&apos;unsafe-eval&apos;</code>, <code>&apos;unsafe-hashes&apos;</code>, <code>*</code>, and a bare scheme such as <code>https:</code>,{' '}
         <code>data:</code>, <code>blob:</code> or <code>filesystem:</code>. <code>&apos;wasm-unsafe-eval&apos;</code> is allowed. The other lists take all of these freely.
       </p>
+      <p>
+        <code>&apos;strict-dynamic&apos;</code> is refused in <code>script_src</code> always, even with <code>script_src_unsafe</code>: under it browsers ignore <code>&apos;self&apos;</code> and host sources, so every <code>&lt;script src&gt;</code> brust adds (the
+        runtime, islands, navigation) would be blocked. It works only with nonces, which brust does not add yet.
+      </p>
 
       <h2 id="report-only">Report-only</h2>
       <p>

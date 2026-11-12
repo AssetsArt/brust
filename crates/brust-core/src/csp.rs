@@ -51,6 +51,18 @@ impl CspConfig {
         if let Some(u) = &self.report_uri {
             source(u).map_err(|e| format!("report_uri: {e}"))?;
         }
+        // Not unlocked by script_src_unsafe: it does not weaken the policy, it breaks every page.
+        if let Some(s) = self
+            .script_src
+            .iter()
+            .find(|s| s.trim().eq_ignore_ascii_case("'strict-dynamic'"))
+        {
+            return Err(format!(
+                "script_src: {s} is not supported: under it browsers ignore 'self' and host sources, so every brust \
+                 <script src> (runtime, islands, navigation) would be blocked; it works only with nonces, which brust \
+                 does not add yet"
+            ));
+        }
         if !self.script_src_unsafe
             && let Some(s) = self.script_src.iter().find(|s| voids_hashes(s))
         {
@@ -414,7 +426,6 @@ mod tests {
             "'wasm-unsafe-eval'",
             "'sha256-AbC='",
             "'nonce-x'",
-            "'strict-dynamic'",
         ] {
             let c = CspConfig {
                 script_src: vec![s.into()],
@@ -429,6 +440,34 @@ mod tests {
             ..cfg()
         };
         assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn strict_dynamic_is_refused_even_with_the_second_flag() {
+        for s in ["'strict-dynamic'", " 'STRICT-DYNAMIC' "] {
+            for unsafe_ok in [false, true] {
+                let e = CspConfig {
+                    script_src: vec!["https://cdn.example".into(), s.into()],
+                    script_src_unsafe: unsafe_ok,
+                    ..cfg()
+                }
+                .validate()
+                .unwrap_err();
+                assert!(
+                    e.contains("ignore 'self' and host sources") && e.contains("nonces"),
+                    "{e}"
+                );
+            }
+        }
+        // only script-src means it
+        assert!(
+            CspConfig {
+                style_src: vec!["'strict-dynamic'".into()],
+                ..cfg()
+            }
+            .validate()
+            .is_ok()
+        );
     }
 
     #[test]

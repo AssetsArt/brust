@@ -461,6 +461,12 @@ function checkCsp(c: unknown, where: string, file: string | null, snake: boolean
     if (why) throw fail(`${where}.${name('reportUri')}: ${why}`)
     out.reportUri = t.reportUri
   }
+  // Not unlocked by scriptSrcUnsafe: it does not weaken the policy, it breaks every page.
+  const dynamic = out.scriptSrc?.find((s) => s.trim().toLowerCase() === "'strict-dynamic'")
+  if (dynamic !== undefined)
+    throw fail(
+      `${where}.${name('scriptSrc')}: ${dynamic} is not supported: under it browsers ignore 'self' and host sources, so every brust <script src> (runtime, islands, navigation) would be blocked; it works only with nonces, which brust does not add yet`,
+    )
   if (t.scriptSrcUnsafe === true) out.scriptSrcUnsafe = true
   else {
     const unsafe = out.scriptSrc?.find(voidsHashes)

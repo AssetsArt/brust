@@ -88,12 +88,22 @@ test('script_src refuses every source that voids the hashes; hosts and the other
     expect(await err(`[csp]\nenabled = true\nscript_src = ["${k}"]\n`)).toContain('script_src_unsafe = true')
     expect((await loadConfig(tmpApp(`[csp]\nenabled = true\nscript_src = ["${k}"]\nscript_src_unsafe = true\n`))).csp?.scriptSrc).toEqual([k])
   }
-  for (const k of ['https://cdn.example.com', '*.example.com', 'https://*.example.com', "'self'", "'wasm-unsafe-eval'", "'sha256-AbC='", "'nonce-x'", "'strict-dynamic'"]) {
+  for (const k of ['https://cdn.example.com', '*.example.com', 'https://*.example.com', "'self'", "'wasm-unsafe-eval'", "'sha256-AbC='", "'nonce-x'"]) {
     expect(voidsHashes(k)).toBe(false)
     expect((await loadConfig(tmpApp(`[csp]\nenabled = true\nscript_src = ["${k}"]\n`))).csp?.scriptSrc).toEqual([k])
   }
   const free = await loadConfig(tmpApp(`[csp]\nenabled = true\nimg_src = ["data:", "blob:", "https:"]\nstyle_src = ["*"]\n`))
   expect(free.csp).toEqual({ mode: 'enforce', imgSrc: ['data:', 'blob:', 'https:'], styleSrc: ['*'] })
+})
+
+test("'strict-dynamic' in script_src is refused, even with script_src_unsafe = true", async () => {
+  for (const flag of ['', 'script_src_unsafe = true\n']) {
+    const m = await err(`[csp]\nenabled = true\nscript_src = ["'strict-dynamic'"]\n${flag}`)
+    expect(m).toContain("ignore 'self' and host sources")
+    expect(m).toContain('nonces')
+  }
+  await expect(loadConfig(tmpApp(), { csp: { scriptSrc: [" 'STRICT-DYNAMIC' "], scriptSrcUnsafe: true } })).rejects.toThrow('config.csp.scriptSrc')
+  expect((await loadConfig(tmpApp(`[csp]\nenabled = true\nstyle_src = ["'strict-dynamic'"]\n`))).csp?.styleSrc).toEqual(["'strict-dynamic'"])
 })
 
 test('run({ config: { csp } }) replaces the toml table as a whole; null turns it off; unknown keys refused', async () => {
