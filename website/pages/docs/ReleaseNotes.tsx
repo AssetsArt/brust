@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-46', title: '2.0.0-alpha.46' },
       { id: 'alpha-45', title: '2.0.0-alpha.45' },
       { id: 'alpha-44', title: '2.0.0-alpha.44' },
       { id: 'alpha-43', title: '2.0.0-alpha.43' },
@@ -68,6 +69,42 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-46">2.0.0-alpha.46 · 12 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.45: #487, #489 (ledger F541, F543) */}
+      <p>This version makes <code>[csp]</code> work for static builds and stops two servers that share an L2 cache from serving each other&rsquo;s pages when their runtime configuration differs.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #489 (F541); packages/brust/src/build/static.ts; crates/brust-core/src/csp.rs; packages/brust/test/static-csp.test.ts */}
+        <li>
+          <strong>With <code>[csp]</code> on, <code>brust build --target static</code> pages now carry the same policy as <code>brust start</code> (#489).</strong> Every page, the default 404 page included, opens its <code>&lt;head&gt;</code> with <code>&lt;meta http-equiv=&quot;Content-Security-Policy&quot;&gt;</code> (right after a <code>&lt;meta charset&gt;</code> that starts the head, otherwise first), with the same hashes for brust&rsquo;s own inline scripts. Browsers ignore <code>frame-ancestors</code>, <code>report-uri</code>, <code>report-to</code> and <code>sandbox</code> in a meta tag, so those go into the one <code>/*</code> rule of <code>dist/static/_headers</code> as a <code>Content-Security-Policy</code> header, which Cloudflare Pages and Workers Static Assets send for every path; on another host, send that header from its own configuration. A page without a <code>&lt;head&gt;</code> stops the build, so no page is left without a policy. See <a href="/docs/csp">Content Security Policy</a>.
+        </li>
+        {/* source: PR #489 (F541); packages/brust/src/build/cloudflare.ts; packages/brust/src/build/cf-assets.ts; packages/brust/test/cf-build.test.ts */}
+        <li>
+          <strong>With <code>--target cloudflare</code>, HTML files you put in <code>public/</code> get the policy too (#489).</strong> The Worker already sent the header for the pages it renders, but the platform serves <code>public/</code> HTML itself. When there is at least one such file, the build adds the same policy to the <code>/*</code> rule of <code>dist/cf/assets/_headers</code>; with no <code>.html</code> there, nothing is added.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #487 (F543); crates/brust-core/src/l2.rs; crates/brust-core/src/core.rs; crates/brust-server/tests/l2.rs */}
+        <li>
+          <strong>Two servers that share one L2 cache and run the same build with different runtime settings no longer serve each other&rsquo;s pages (#487).</strong> The shared key held only the build id, but each process writes its own values into a page: the actions prefix and client settings, the base path, and the <code>generator</code> meta (and, under <code>[csp]</code>, the hashes of those scripts). A config-only deploy, or staging and production on one Redis, could therefore read a body with the other&rsquo;s tags, and under <code>[csp]</code> a script whose hash was not in the serving process&rsquo;s header. The key now also carries an 8-character fingerprint of those values. Servers with the same settings still share entries.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #487 (F543); crates/brust-core/src/l2.rs */}
+        <li>
+          <strong>The first start after upgrading reads none of the old shared-cache entries (#487).</strong> The key format changed, so existing L2 entries are no longer read and are left to expire by their own TTL; pages are rendered once and cached again under the new key. Invalidation by tag, path or prefix still reaches the entries of the current fingerprint. Nothing to rebuild beyond upgrading.
+        </li>
+        {/* source: PR #489 (F541); packages/brust/src/build/static.ts; packages/brust/test/static-csp.test.ts */}
+        <li>
+          <strong>Limits of the static policy (#489).</strong> A meta tag cannot name a report URI, so violations of the meta policy are not reported anywhere; a report sent through the <code>_headers</code> header covers only the directives in it. <code>mode = &quot;report-only&quot;</code> cannot be a meta tag either: in that mode the pages get no meta and the whole policy goes into the <code>/*</code> rule as <code>Content-Security-Policy-Report-Only</code>. A policy that only one page sets (a loader&rsquo;s own header) is dropped from <code>_headers</code> with a build warning, and that page still gets its own meta. <code>brust dev</code> still sends no policy.
+        </li>
+      </ul>
 
       <h2 id="alpha-45">2.0.0-alpha.45 · 12 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.44: #484–#486 (ledger F538, F539, F542) */}
