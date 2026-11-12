@@ -678,7 +678,7 @@ export function exposePlugin(compiled: Map<string, Compiled>): BunPlugin {
   }
 }
 
-/** The island entry of a react-tier component: registers `(host, props) => …` under its id; the hydrate fn returns the root's unmount, which the runtime calls when the host leaves the document (SPA navigation). A
+/** The island entry of a react-tier component: registers `(host, props, committed) => …` under its id; the hydrate fn returns the root's unmount, which the runtime calls when the host leaves the document (SPA navigation). A
  * `client_only` component was never server-rendered (its host is empty), so it mounts with
  * `createRoot`; hydrating it would fail (React #418). Everything else hydrates the SSR markup. */
 /** `writers` (F230): app modules that write another module's exports when they load; imported first, so the island
@@ -687,9 +687,12 @@ export function islandShim(c: Compiled, compiled?: Map<string, Compiled>, routeR
   const clientOnly = c.ir.tier?.React?.client_only === true
   const nested = compiled && nestedOf(compiled, c.id, routeRoots)
   const element = nested ? `__mk(Comp, props, ${JSON.stringify(xOf(compiled!, c.id))}, ${JSON.stringify(holesOf(compiled!, c.id))})` : 'createElement(Comp, props)'
+  // F545: the root renders inside `__Commit`, whose layout effect tells the runtime the tree has committed. A component
+  // that returns its one child adds no DOM and no useId fork, so server and client markup stay equal.
+  const tree = `createElement(__Commit, { done: committed }, ${element})`
   const [api, mount] = clientOnly
-    ? ['createRoot', `const root = createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }); root.render(${element}); return () => root.unmount()`]
-    : ['hydrateRoot', `const root = hydrateRoot(host, ${element}, { identifierPrefix: ${JSON.stringify(c.id)} }); return () => root.unmount()`]
+    ? ['createRoot', `const root = createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }); root.render(${tree}); return () => root.unmount()`]
+    : ['hydrateRoot', `const root = hydrateRoot(host, ${tree}, { identifierPrefix: ${JSON.stringify(c.id)} }); return () => root.unmount()`]
   let head = ''
   if (nested && compiled) {
     const comps = nested.map((id) => compiled.get(id)).filter((n): n is Compiled => n !== undefined)
@@ -700,8 +703,9 @@ export function islandShim(c: Compiled, compiled?: Map<string, Compiled>, routeR
   }
   return (
     writerImports(writers) +
-    `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\n${componentImport(c, 'Comp')}\n${head}` +
-    `;((globalThis as any).__brustIslands ||= []).push([${JSON.stringify(c.id)}, (host: Element, props: any) => { ${mount} }])\n` +
+    `import { ${api} } from 'react-dom/client'\nimport { createElement, useLayoutEffect } from 'react'\n${componentImport(c, 'Comp')}\n${head}` +
+    `const __Commit = ({ done, children }: any) => { useLayoutEffect(() => { done?.() }, []); return children }\n` +
+    `;((globalThis as any).__brustIslands ||= []).push([${JSON.stringify(c.id)}, (host: Element, props: any, committed?: () => void) => { ${mount} }])\n` +
     `;(globalThis as any).__brustIslandReady?.()\n`
   )
 }

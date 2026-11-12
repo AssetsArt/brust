@@ -71,7 +71,7 @@ The server paints a react-tier component as
 `<brust-island data-id="<componentId>" x-props='<json>'>…server HTML…</brust-island>`.
 The island's chunk registers its hydrate function without importing the runtime:
 
-    ;(globalThis.__brustIslands ||= []).push(['<componentId>', (host, props) => hydrateRoot(host, <Comp {...props}/>)])
+    ;(globalThis.__brustIslands ||= []).push(['<componentId>', (host, props, committed) => hydrateRoot(host, <Commit done={committed}><Comp {...props}/></Commit>)])
     globalThis.__brustIslandReady?.()
 
 The runtime hydrates every host once, when the browser is idle (`requestIdleCallback`, else
@@ -79,6 +79,17 @@ The runtime hydrates every host once, when the browser is idle (`requestIdleCall
 script and island chunks does not matter. Bad `x-props` JSON hydrates with `{}` and warns once;
 a hydrate that throws is reported on `console.error` and the server HTML stays. This is the only
 strategy in M2 (spec S12).
+
+`data-hydrated` means the hydrate fn has returned, not that React has rendered: `hydrateRoot` and
+`createRoot().render()` only schedule the render. The hydrate fn's third argument, `committed()`, reports that the
+tree has committed (the React shim calls it from a layout effect of a wrapper that renders only its child, so
+markup and `useId` ids are unchanged). The runtime then sets `data-committed="1"` on the host and dispatches a
+bubbling `brust:island` event, `detail: { id, phase: 'committed' }` (type `IslandEventDetail`). It acts once per
+host, and not after the host left the document. A 2-arg hydrate fn stays valid and never signals. A listener that
+may attach late checks `data-committed` first:
+
+    if (host.getAttribute('data-committed') === '1') run()
+    else host.addEventListener('brust:island', run, { once: true })
 
 ## Store
 The 0.1.x `brustjs/store` API on the same reactive core the directives use (one graph, even across module copies:

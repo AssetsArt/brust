@@ -4,8 +4,14 @@
 import { warnOnce, insideRaw } from './core-api'
 
 /** Hydrates `host`. It may return a dispose function (the React shim returns `() => root.unmount()`): the runtime
- *  calls it once, when the host leaves the document, so effects clean up like a React route change. */
-export type IslandHydrate = (host: HTMLElement, props: Record<string, unknown>) => void | (() => void)
+ *  calls it once, when the host leaves the document, so effects clean up like a React route change.
+ *  `committed` (F545) is called by the hydrate fn once its tree has committed (the React shim: from a layout effect of
+ *  the root): the runtime then sets `data-committed="1"` and dispatches a bubbling `brust:island` event,
+ *  `detail: { id, phase: 'committed' }`. A 2-arg hydrate fn stays valid; it never signals. */
+export type IslandHydrate = (host: HTMLElement, props: Record<string, unknown>, committed: () => void) => void | (() => void)
+
+/** `detail` of the `brust:island` event a host dispatches (bubbling) when its tree has committed. */
+export type IslandEventDetail = { id: string; phase: 'committed' }
 type QueueEntry = [string, IslandHydrate]
 declare global { var __brustIslands: QueueEntry[] | undefined; var __brustIslandReady: (() => void) | undefined }
 
@@ -49,6 +55,8 @@ export function _setIdle(fn: Idle | null): void { idle = fn ?? defaultIdle }
 const pending = new Set<HTMLElement>()
 /** Dispose functions of hydrated hosts, until the host leaves the document. */
 const live = new Map<HTMLElement, () => void>()
+/** The `committed` of the hydration a host is on, until it fired: one from any other (a disposed one) is ignored. */
+const turn = new WeakMap<HTMLElement, () => void>()
 
 function readIslandProps(host: HTMLElement, id: string): Record<string, unknown> {
   const raw = host.getAttribute('x-props')
@@ -60,8 +68,15 @@ function readIslandProps(host: HTMLElement, id: string): Record<string, unknown>
 function hydrateHost(host: HTMLElement, id: string, hydrate: IslandHydrate): void {
   pending.delete(host)
   if (!host.isConnected || host.hasAttribute('data-hydrated')) return
+  const committed = () => {
+    if (turn.get(host) !== committed || !host.isConnected) return
+    turn.delete(host)   // once
+    host.setAttribute('data-committed', '1')
+    host.dispatchEvent(new CustomEvent<IslandEventDetail>('brust:island', { bubbles: true, detail: { id, phase: 'committed' } }))
+  }
+  turn.set(host, committed)
   try {
-    const dispose = hydrate(host, readIslandProps(host, id))
+    const dispose = hydrate(host, readIslandProps(host, id), committed)
     if (typeof dispose === 'function') live.set(host, dispose)
     host.setAttribute('data-hydrated', '1')
   }
@@ -88,6 +103,7 @@ export function cancelIslands(root: Node): void {
   const hosts = root.querySelectorAll<HTMLElement>('brust-island[data-id]')
   const forget = (h: HTMLElement) => {
     pending.delete(h)
+    turn.delete(h)
     const dispose = live.get(h)
     if (!dispose) return
     live.delete(h)

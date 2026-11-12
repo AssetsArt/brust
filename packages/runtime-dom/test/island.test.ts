@@ -193,3 +193,69 @@ test('a hydrate that returns nothing, or whose dispose throws, does not break th
     expect(order).toEqual(['t', 'k'])
   } finally { console.error = err; unmount() }
 })
+
+// F545: committed() — data-committed + one bubbling brust:island event per host.
+test('committed() sets data-committed and dispatches one bubbling brust:island event; repeated calls do nothing', () => {
+  reset(); const flush = makeIdle()
+  let done: (() => void) | undefined
+  def('commit_g', (_h, _p, committed) => { done = committed })
+  html(`<brust-island id="c" data-id="commit_g" x-props='{}'>server</brust-island>`)
+  const events: Array<{ detail: unknown; target: EventTarget | null }> = []
+  const on = (e: Event) => events.push({ detail: (e as CustomEvent).detail, target: e.target })
+  document.addEventListener('brust:island', on)
+  mount(); flush()
+  const host = document.getElementById('c')!
+  expect(host.getAttribute('data-hydrated')).toBe('1')
+  expect(host.hasAttribute('data-committed')).toBe(false)   // hydrated is not committed: nothing signalled yet
+  expect(events).toEqual([])
+  done!()
+  expect(host.getAttribute('data-committed')).toBe('1')
+  expect(events).toEqual([{ detail: { id: 'commit_g', phase: 'committed' }, target: host }])
+  done!(); done!()
+  expect(events.length).toBe(1)
+  document.removeEventListener('brust:island', on)
+  unmount()
+})
+
+test('committed() after the host left the document is ignored', async () => {
+  reset(); const flush = makeIdle()
+  let done: (() => void) | undefined
+  let disposed = 0
+  def('commit_h', (_h, _p, committed) => { done = committed; return () => { disposed++ } })
+  html(`<div id="wrap"><brust-island id="c" data-id="commit_h" x-props='{}'>server</brust-island></div>`)
+  let fired = 0
+  const on = () => { fired++ }
+  document.addEventListener('brust:island', on)
+  mount(); flush()
+  const host = document.getElementById('c')!
+  document.getElementById('wrap')!.remove()
+  await new Promise<void>((r) => queueMicrotask(() => queueMicrotask(r)))   // the observer disposes the root
+  expect(disposed).toBe(1)
+  done!()
+  expect(host.hasAttribute('data-committed')).toBe(false)
+  // back in the document, the old hydration's committed() is still not this host's signal
+  document.body.appendChild(host)
+  done!()
+  expect(host.hasAttribute('data-committed')).toBe(false)
+  expect(fired).toBe(0)
+  document.removeEventListener('brust:island', on)
+  unmount()
+})
+
+test('a 2-arg hydrate fn still hydrates and never signals committed', () => {
+  reset(); const flush = makeIdle()
+  let fired = 0
+  const on = () => { fired++ }
+  document.addEventListener('brust:island', on)
+  const seen: unknown[] = []
+  def('commit_i', (h: HTMLElement, props: Record<string, unknown>) => { seen.push([h.id, props]) })
+  html(`<brust-island id="c" data-id="commit_i" x-props='{"a":1}'>server</brust-island>`)
+  mount(); flush()
+  const host = document.getElementById('c')!
+  expect(seen).toEqual([['c', { a: 1 }]])
+  expect(host.getAttribute('data-hydrated')).toBe('1')
+  expect(host.hasAttribute('data-committed')).toBe(false)
+  expect(fired).toBe(0)
+  document.removeEventListener('brust:island', on)
+  unmount()
+})
