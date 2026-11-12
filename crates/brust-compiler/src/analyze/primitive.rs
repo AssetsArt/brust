@@ -22,7 +22,7 @@ const SHAPE: &str = include_str!("primitive.shape.js");
 /// The tags a recognised factory makes (`NODES`), when `export` of the module at `path` is one.
 pub fn primitive_nodes(path: &str, export: &str, opts: &AnalyzeOptions) -> Option<Vec<String>> {
     let bytes = std::fs::read(opts.root.join(path)).ok()?;
-    let parsed = crate::parse::parse_tsx(path, bytes).ok()?;
+    let parsed = crate::parse::parse_cached(path, bytes).ok()?;
     parsed.with_ast(|ast| {
         let local = exported_local(ast, export)?;
         let mut nodes_name = None;

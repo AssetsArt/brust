@@ -86,7 +86,7 @@ fn export_names(
     let Ok(bytes) = std::fs::read(opts.root.join(path)) else {
         return;
     };
-    let Ok(parsed) = crate::parse::parse_tsx(path, bytes) else {
+    let Ok(parsed) = crate::parse::parse_cached(path, bytes) else {
         return;
     };
     let stars = parsed.with_ast(|ast| {
@@ -166,7 +166,7 @@ fn read_export(
     }
     let bytes =
         std::fs::read(opts.root.join(path)).map_err(|e| format!("cannot read {path}: {e}"))?;
-    let parsed = crate::parse::parse_tsx(path, bytes)
+    let parsed = crate::parse::parse_cached(path, bytes)
         .map_err(|e| format!("cannot parse {path}: {}", e.message))?;
     let found = parsed.with_ast(|ast| find_export(ast, path, export))?;
     let follow = |spec: &str| -> Result<String, String> {

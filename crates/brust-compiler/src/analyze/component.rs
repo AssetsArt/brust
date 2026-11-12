@@ -45,6 +45,7 @@ pub fn analyze_component_in(
     opts: Option<&AnalyzeOptions>,
 ) -> Result<ComponentIR, Diagnostic> {
     let path = parsed.path();
+    crate::stats::analysed(&path, "default");
     let mut ir = ComponentIR::new(component_id(&path), path);
     parsed.with_ast(|ast| {
         let Some(func) = default_export_fn(ast) else {
@@ -180,6 +181,9 @@ pub fn analyze_with(
 ) -> Result<ComponentIR, Diagnostic> {
     use crate::analyze::modules::{Export, Lookup, cache_key, compile, normalize};
     let _aliases = crate::analyze::aliases::Scope::enter(&opts.root, &opts.path_aliases);
+    // F535: every module this run reads is parsed once (the contexts walk, element-freedom and barrels read the same
+    // modules again and again). Declared after the alias scope, so it closes first.
+    let _parses = crate::parse::ParseCache::enter();
     modules
         .borrow_mut()
         .set_root(cache_key(&normalize(path), &Export::Default));
@@ -1329,6 +1333,7 @@ pub fn analyze_named_component_in(
     opts: Option<&AnalyzeOptions>,
 ) -> Option<ComponentIR> {
     let path = parsed.path();
+    crate::stats::analysed(&path, name);
     let mut ir = ComponentIR::new(named_component_id(&path, name), path);
     let found = parsed.with_ast(|ast| {
         let found = module_component(ast, name)?;

@@ -211,7 +211,7 @@ pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions, packages:
         if String::from_utf8_lossy(&bytes).contains("Math.random") {
             return false;
         }
-        let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+        let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
             return false;
         };
         let rels: Option<Vec<String>> = parsed.with_ast(|ast| {

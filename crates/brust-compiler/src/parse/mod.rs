@@ -150,6 +150,7 @@ pub fn run_on_compiler_thread<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 
 /// Parses one `.tsx` module. Call it inside [`run_on_compiler_thread`].
 pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
+    crate::stats::parsed(path);
     #[cfg(feature = "bun-stubs")]
     ensure_stack_limit();
 
@@ -231,6 +232,86 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
         _text: text,
         _path: path_box,
     })
+}
+
+/// F535: the modules one analysis run parsed, by (alias scope, path) and checked against the exact text, so a module
+/// read again (by the contexts walk, element-freedom, barrels, ...) is parsed once per run. Only open while a
+/// [`ParseCache`] guard is alive (`analyze_with` holds one), so no parse outlives the run that made it.
+#[derive(Default)]
+struct Cache {
+    parses: std::collections::HashMap<(u64, String), Vec<std::rc::Rc<Parsed>>>,
+    /// `plain_fn::module_may_hold_element`, by (alias scope, resolved module path, depth).
+    may_hold: std::collections::HashMap<(u64, String, u8), bool>,
+}
+
+/// F535: `module_may_hold_element`'s answer for a resolved module at a depth, memoised for the run (`None` when no run
+/// cache is open or it was not asked yet).
+pub(crate) fn may_hold_memo(path: &str, depth: u8) -> Option<bool> {
+    let key = (crate::analyze::aliases::scope_id(), path.to_string(), depth);
+    CACHE.with(|c| c.borrow().as_ref()?.may_hold.get(&key).copied())
+}
+
+pub(crate) fn may_hold_remember(path: &str, depth: u8, v: bool) {
+    let key = (crate::analyze::aliases::scope_id(), path.to_string(), depth);
+    CACHE.with(|c| {
+        if let Some(m) = c.borrow_mut().as_mut() {
+            m.may_hold.insert(key, v);
+        }
+    });
+}
+
+thread_local!(static CACHE: core::cell::RefCell<Option<Cache>> = const { core::cell::RefCell::new(None) });
+
+/// Opens the parse cache for this thread until dropped; nested guards share the outermost one.
+pub struct ParseCache(bool);
+
+impl ParseCache {
+    pub fn enter() -> ParseCache {
+        CACHE.with(|c| {
+            let mut c = c.borrow_mut();
+            let open = c.is_none();
+            if open {
+                *c = Some(Cache::default());
+            }
+            ParseCache(open)
+        })
+    }
+}
+
+impl Drop for ParseCache {
+    fn drop(&mut self) {
+        if self.0 {
+            // Taken out before it drops: a `Parsed` dropping never runs with the cache borrowed.
+            let cache = CACHE.with(|c| c.borrow_mut().take());
+            drop(cache);
+        }
+    }
+}
+
+/// [`parse_tsx`] through the run's cache: the same path, text and alias scope give the same `Parsed`. Without an
+/// open cache it parses every time. A parse error is not kept (the caller fails closed on it anyway).
+pub fn parse_cached(path: &str, source: Vec<u8>) -> Result<std::rc::Rc<Parsed>, ParseError> {
+    let key = (crate::analyze::aliases::scope_id(), path.to_string());
+    let hit = CACHE.with(|c| {
+        c.borrow().as_ref().map(|m| {
+            m.parses
+                .get(&key)
+                .and_then(|v| v.iter().find(|p| p.text() == source.as_slice()).cloned())
+        })
+    });
+    match hit {
+        Some(Some(p)) => Ok(p),
+        Some(None) => {
+            let p = std::rc::Rc::new(parse_tsx(path, source)?);
+            CACHE.with(|c| {
+                if let Some(m) = c.borrow_mut().as_mut() {
+                    m.parses.entry(key).or_default().push(p.clone());
+                }
+            });
+            Ok(p)
+        }
+        None => parse_tsx(path, source).map(std::rc::Rc::new),
+    }
 }
 
 fn plain_error(message: &str) -> ParseError {

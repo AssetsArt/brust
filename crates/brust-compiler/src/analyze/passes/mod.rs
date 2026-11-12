@@ -124,6 +124,7 @@ impl PassState {
 /// child is cloned for the call site with the content spliced in, so the content's directives are the clone's own. Only
 /// those call sites change; a clone that cannot be made keeps the refusal (and says why).
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
+    crate::stats::passes_ran(&ir.id);
     let saved = has_slot_content(&ir.template).then(|| ir.clone());
     let st = run_passes_with(ir, ctx, BTreeSet::new());
     match saved {
