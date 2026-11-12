@@ -22,7 +22,7 @@
     "jsGzipKb": {
       "min": 0,
       "median": 88,
-      "max": 240
+      "max": 241
     },
     "libraries": {
       "packages": 76,
@@ -809,7 +809,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 5,
-      "jsGzipKb": 97,
+      "jsGzipKb": 98,
       "workerCalls": 1,
       "codes": [
         "context-state",
@@ -829,7 +829,7 @@
       "islands": 1,
       "components": 10,
       "reactComponents": 8,
-      "jsGzipKb": 240,
+      "jsGzipKb": 241,
       "workerCalls": 1,
       "codes": [
         "control-flow",
@@ -930,7 +930,7 @@
       "islands": 1,
       "components": 27,
       "reactComponents": 10,
-      "jsGzipKb": 101,
+      "jsGzipKb": 102,
       "workerCalls": 1,
       "codes": [
         "context-island",
@@ -1133,7 +1133,7 @@
       "islands": 1,
       "components": 18,
       "reactComponents": 12,
-      "jsGzipKb": 117,
+      "jsGzipKb": 118,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1276,7 +1276,7 @@
       "islands": 1,
       "components": 11,
       "reactComponents": 7,
-      "jsGzipKb": 92,
+      "jsGzipKb": 93,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1370,7 +1370,7 @@
       "islands": 1,
       "components": 7,
       "reactComponents": 4,
-      "jsGzipKb": 93,
+      "jsGzipKb": 94,
       "workerCalls": 1,
       "codes": [
         "external-component",

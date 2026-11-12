@@ -21,7 +21,7 @@ interface Shipped {
 
 export interface RenderingTiersData {
   toc: TocItem[]
-  blocks: Record<'warning' | 'manifest', CodeBlockData>
+  blocks: Record<'warning' | 'manifest' | 'committed', CodeBlockData>
   tiers: { card: Shipped; catch: Shipped; search: Shipped }
   cards: { no: string; name: string; art: string; types: string[] }[]
   catchMon: { no: string; name: string; type: string; art: string; shinyArt: string }
@@ -52,10 +52,15 @@ export async function renderingTiersLoader(): Promise<RenderingTiersData> {
       { id: 'live', title: 'The three, live' },
       { id: 'hooks', title: 'What decides the tier' },
       { id: 'runtime', title: 'What the browser loads' },
+      { id: 'committed', title: 'When an island is ready' },
       { id: 'see', title: 'See what you got' },
     ],
     blocks: {
       warning: codeBlock({ lang: 'sh', cwd: '~/pokedex', code: '$ bun run build\nwarning hook-unsupported components/TeamBuilder.tsx:12:3 hook useTransition is not supported\nwarning hook-unsupported components/UnifiedIsland.tsx:11:3 hook useTransition is not supported\n[brust] built dist in 73ms' }),
+      committed: codeBlock({
+        lang: 'ts',
+        code: "function ready(island: Element, run: () => void) {\n  // committed before this code ran: the attribute says so, the event will not come again\n  if (island.getAttribute('data-committed') === '1') return run()\n  island.addEventListener('brust:island', run, { once: true })\n}\n\ndocument.addEventListener('brust:island', (e) => {\n  const { id, phase } = (e as CustomEvent<{ id: string; phase: 'committed' }>).detail\n  console.log(id, phase, e.target) // e.target is the <brust-island> host\n})",
+      }),
       manifest: codeBlock({ lang: 'json', file: 'dist/manifest.json', code: '"pokemonSearch_<hash>": {\n  "tier": "react",\n  "client": "client/react-pokemonSearch_<hash>-<hash>.js",\n  "jobs": [{ "kind": "ssr", … }]\n}' }),
     },
     tiers: { card: shipped('pokemonCard'), catch: shipped('catchCard'), search: shipped('pokemonSearch') },
@@ -189,6 +194,17 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       <Note>
         Before an island hydrates, its server HTML is visible but not interactive. The island hydrates once its chunk has loaded and the browser is idle (waiting at most 250 ms for an idle moment). A click on an island&apos;s server HTML in that window is dropped, not replayed; the same control works on the next click. A React server-rendered page behaves the same way, because React attaches no listeners before <code>hydrateRoot</code>. On a slow connection the window is longer: in our measurements (slow 4G, a 4x slower CPU) it was about half a second, and with no throttling about 20 ms.
       </Note>
+
+      {/* source: packages/runtime-dom/src/island.ts (hydrateHost, committed), packages/brust/src/build/bundle.ts (islandShim, __Commit), tests/server/island-committed.chromium.test.ts (F545) */}
+      <h2 id="committed">When an island is ready</h2>
+      <p>
+        <code>data-hydrated=&quot;1&quot;</code> on a <code>&lt;brust-island&gt;</code> means its hydrate call has run, not that React has finished: <code>hydrateRoot</code> and <code>createRoot().render()</code> only schedule the render. Once the island&apos;s root has committed (its layout effects have run, its event handlers work), the host gets <code>data-committed=&quot;1&quot;</code> and dispatches a <code>brust:island</code> event that bubbles, with <code>detail: {'{'} id, phase: &apos;committed&apos; {'}'}</code>. <code>id</code> is the host&apos;s <code>data-id</code>. It fires once per host, for hydrated islands and <code>client_only</code> ones alike, after <code>data-hydrated</code>, and never for a host that left the page first.
+      </p>
+      <p>
+        The signal covers the island&apos;s root, not every <code>&lt;Suspense&gt;</code> boundary inside it: React may hydrate the content of an inner boundary after the root commits, and that later hydration sends no event.
+      </p>
+      <p>Code that may run after the event checks the attribute first:</p>
+      <CodeBlock code={blocks.committed.code} lang={blocks.committed.lang} html={blocks.committed.html} />
 
             <h2 id="see">See what you got</h2>
       <p>Every fallback is printed once per component by the build, with the rule and the line. This is the pokedex example's build:</p>
