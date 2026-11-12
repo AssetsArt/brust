@@ -117,6 +117,46 @@ pub struct NapiCorsOptions {
     pub max_age_seconds: Option<u32>,
 }
 
+/// F539 `[csp]`; napi camelCases the keys: `mode, scriptSrc, scriptSrcUnsafe, styleSrc, connectSrc, imgSrc, fontSrc,
+/// frameAncestors, reportUri`. Present = on. Validated by `start` (`csp: …`).
+#[napi(object)]
+pub struct NapiCspOptions {
+    /// `"enforce"` (default) or `"report-only"`.
+    pub mode: Option<String>,
+    pub script_src: Option<Vec<String>>,
+    pub script_src_unsafe: Option<bool>,
+    pub style_src: Option<Vec<String>>,
+    pub connect_src: Option<Vec<String>>,
+    pub img_src: Option<Vec<String>>,
+    pub font_src: Option<Vec<String>>,
+    pub frame_ancestors: Option<Vec<String>>,
+    pub report_uri: Option<String>,
+}
+
+/// Field for field; absent lists are empty.
+fn csp_config(c: NapiCspOptions) -> Result<brust_core::csp::CspConfig, String> {
+    use brust_core::csp::{CspConfig, CspMode};
+    Ok(CspConfig {
+        mode: match c.mode.as_deref() {
+            None | Some("enforce") => CspMode::Enforce,
+            Some("report-only") => CspMode::ReportOnly,
+            Some(o) => {
+                return Err(format!(
+                    "csp: mode must be \"enforce\" or \"report-only\" (got {o:?})"
+                ));
+            }
+        },
+        script_src: c.script_src.unwrap_or_default(),
+        script_src_unsafe: c.script_src_unsafe.unwrap_or(false),
+        style_src: c.style_src.unwrap_or_default(),
+        connect_src: c.connect_src.unwrap_or_default(),
+        img_src: c.img_src.unwrap_or_default(),
+        font_src: c.font_src.unwrap_or_default(),
+        frame_ancestors: c.frame_ancestors.unwrap_or_default(),
+        report_uri: c.report_uri,
+    })
+}
+
 /// M3-F A3 consumer `{ prefix?, maxBodyBytes?, maxResponseBytes? }` (defaults `/_brust/action`, 1 MiB, 8 MiB). Present = actions on.
 #[napi(object)]
 pub struct NapiActionsOptions {
@@ -282,6 +322,8 @@ pub struct StartOptions {
     pub generator: Option<String>,
     /// Global CORS policy; absent = CORS off.
     pub cors: Option<NapiCorsOptions>,
+    /// F539: `[csp]`; absent = no Content-Security-Policy header.
+    pub csp: Option<NapiCspOptions>,
     /// The actions subtree (M3-F); absent = no actions (byte-identical server).
     pub actions: Option<NapiActionsOptions>,
     /// L16: base URL / credentials / prefix injected for the browser `client()`; absent = from `actions` alone.
@@ -300,7 +342,7 @@ pub struct StartOptions {
 }
 
 /// Boot the server (manifest, routes, templates, bind). Throws on any boot
-/// error (`manifest: …`, `routes: …`, `render: …`, `cors: …`, `actions: …`,
+/// error (`manifest: …`, `routes: …`, `render: …`, `cors: …`, `csp: …`, `actions: …`,
 /// `bind failed on …`).
 #[napi]
 pub fn start_server(opts: StartOptions) -> napi::Result<()> {
@@ -327,6 +369,11 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
         job_cache_capacity: opts.job_cache_capacity.map_or(1000, u64::from),
         generator: opts.generator,
         cors: opts.cors.map(cors_config),
+        csp: opts
+            .csp
+            .map(csp_config)
+            .transpose()
+            .map_err(napi::Error::from_reason)?,
         actions: opts
             .actions
             .map(actions_config)

@@ -204,6 +204,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             l1_capacity: cfg.l1_capacity,
             job_cache_capacity: cfg.job_cache_capacity,
             cors: cfg.cors,
+            csp: cfg.csp,
             generator: cfg.generator,
             actions: cfg.actions,
             actions_client: cfg.actions_client,

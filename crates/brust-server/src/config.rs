@@ -39,6 +39,8 @@ pub struct Config {
     pub job_cache_capacity: u64,
     pub tls: Option<TlsConfig>,
     pub cors: Option<CorsConfig>,
+    /// F539: `[csp]`; `None` = no Content-Security-Policy header.
+    pub csp: Option<brust_core::csp::CspConfig>,
     /// `X-Powered-By` value; `None` = header not stamped.
     pub generator: Option<String>,
     /// M3-F: the actions subtree; `None` = no actions.
@@ -66,6 +68,7 @@ impl Default for Config {
             job_cache_capacity: 1000,
             tls: None,
             cors: None,
+            csp: None,
             generator: None,
             actions: None,
             actions_client: None,

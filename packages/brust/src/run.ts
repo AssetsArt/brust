@@ -75,6 +75,8 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}), ...streamOptions(m.actions), ...(m.actions.ws ? { ws: m.actions.ws } : {}) } } : {}),
     ...(actionsClient(cfg, m) ? { actionsClient: actionsClient(cfg, m) } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
+    // F539: not under `brust dev` (its overlay and devtools add <style> elements a strict policy blocks); `brust start` sends it.
+    ...(cfg.csp && !devToken ? { csp: cfg.csp } : {}),
     ...(devToken ? { devToken } : {}),
     ...(stats !== 'off' ? { stats, ...(stats === 'token' ? { statsToken: statsTokenOf(cfg.statsToken, env) } : {}) } : {}),
     ...(m.cache ? { l2: { adapter: m.cache.adapter, getTimeoutMs: m.cache.getTimeoutMs, maxBodyBytes: m.cache.maxBodyBytes, namespace: m.cache.namespace, buildId: m.cache.buildId } } : {}),

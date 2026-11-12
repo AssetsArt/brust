@@ -7,7 +7,7 @@ import { builtinModules } from 'node:module'
 import { dirname, join, relative } from 'node:path'
 import { relPosix } from './posix'
 import type { BunPlugin } from 'bun'
-import { BrustConfigError, type CorsConfig, loadCors } from '../config'
+import { BrustConfigError, type CorsConfig, type CspConfig, loadCors, loadCsp } from '../config'
 import { layoutAssets } from './cf-assets'
 import { serverOnlyEmptyPlugin } from './server-only'
 import { type CfConfigJson, cfEntrySource } from './cf-entry'
@@ -36,6 +36,8 @@ export interface CfPrepared {
   pkgName: string | undefined
   /** brust.toml `[cors]`, validated before any write */
   cors: CorsConfig | undefined
+  /** brust.toml `[csp]` when enabled, validated before any write (F539) */
+  csp: CspConfig | undefined
   warnings: string[]
 }
 
@@ -79,13 +81,15 @@ export async function prepareCloudflare(appRoot: string, cfg: CloudflareBuildCon
   }
   const coreVersion = String((JSON.parse(readFileSync(join(import.meta.dir, '..', '..', 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0')
   let cors: CorsConfig | undefined
+  let csp: CspConfig | undefined
   try {
     cors = await loadCors(appRoot)
+    csp = await loadCsp(appRoot)
   } catch (e) {
     if (e instanceof BrustConfigError) throw new BuildError('config', e.message)
     throw e
   }
-  return { cfg: cfg ?? DEFAULT_CFG, core, user, coreVersion, pkgName, cors, warnings }
+  return { cfg: cfg ?? DEFAULT_CFG, core, user, coreVersion, pkgName, cors, csp, warnings }
 }
 
 export interface CfBuildCtx {
@@ -249,6 +253,12 @@ if (bad.length) { console.error(bad.join('\\n')); process.exit(1) }
 }
 
 /** The `actions` block of the Worker's CONFIG. F475: the `stream` list and its ceiling only when the app lists streamed routes; the idle and total timeouts and `maxStreams` are the platform's on Workers, so they are not sent. */
+/** F539: `[csp]` → the Rust `CfCsp` keys (`mode` becomes `reportOnly`). */
+export function cfCsp(c: CspConfig): NonNullable<CfConfigJson['csp']> {
+  const { mode, ...rest } = c
+  return { reportOnly: mode === 'report-only', ...rest }
+}
+
 export function cfActions(a: NonNullable<CfBuildCtx['manifest']['actions']>): NonNullable<CfConfigJson['actions']> {
   return {
     prefix: a.prefix,
@@ -294,6 +304,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     stats: p.cfg.stats,
     edgeCache: p.cfg.edgeCache,
     ...(cors ? { cors } : {}),
+    ...(p.csp ? { csp: cfCsp(p.csp) } : {}),
     ...(a ? { actions: cfActions(a) } : {}),
     ...(cache ? { cache: { adapter: cache.adapter, getTimeoutMs: cache.getTimeoutMs, maxBodyBytes: cache.maxBodyBytes, namespace: cache.namespace, buildId: cache.buildId, epochIntervalMs: cache.epochIntervalMs } } : {}),
   }

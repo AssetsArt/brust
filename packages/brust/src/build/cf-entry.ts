@@ -8,6 +8,8 @@ export interface CfConfigJson {
   stats: boolean
   edgeCache: 'off'
   cors?: unknown
+  /** F539 `[csp]` (optional under abi 1, like `cache`): Rust `CfCsp`, `reportOnly` for `mode = "report-only"`. */
+  csp?: { reportOnly: boolean; scriptSrc?: string[]; scriptSrcUnsafe?: boolean; styleSrc?: string[]; connectSrc?: string[]; imgSrc?: string[]; fontSrc?: string[]; frameAncestors?: string[]; reportUri?: string }
   /** F475: `stream` + `maxStreamBytes` only when the app lists streamed routes; the idle/total timeouts and `maxStreams` are the platform's on Workers. */
   actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes: number; crossSite: 'reject' | 'allow'; stream?: string[]; maxStreamBytes?: number }
   /** The cache adapter (optional under abi 1, cache adapters R13). */

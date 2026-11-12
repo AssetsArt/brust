@@ -1,0 +1,10 @@
+# F539 fixture: an app under a base path with a non-default actions prefix and [csp] on. The served test
+# (tests/server/csp.chromium.test.ts) rewrites [csp] for its second run and puts this file back.
+[server]
+base_path = "/shop"
+
+[actions]
+prefix = "/shop/rpc"
+
+[csp]
+enabled = true

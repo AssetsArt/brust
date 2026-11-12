@@ -38,6 +38,8 @@ export interface StartOptions {
   generator?: string
   /** Global CORS policy; absent = CORS off. Boot error `cors: …` when invalid. */
   cors?: CorsOptions
+  /** F539 `[csp]`; absent = no Content-Security-Policy header. Boot error `csp: …` when invalid. */
+  csp?: CspOptions
   /** The actions subtree (M3-F A3); absent = no actions. Boot error `actions: …` when invalid. */
   actions?: ActionsOptions
   /** L16: what the page tells the browser `client()` (base URL, credentials, a non-default prefix); absent = from `actions` alone. */
@@ -69,6 +71,18 @@ export interface CorsOptions {
   exposeHeaders?: string[]
   credentials?: boolean
   maxAgeSeconds?: number
+}
+/** napi `NapiCspOptions` (F539): `mode` `"enforce"` (default) or `"report-only"`; absent lists are empty. */
+export interface CspOptions {
+  mode?: 'enforce' | 'report-only'
+  scriptSrc?: string[]
+  scriptSrcUnsafe?: boolean
+  styleSrc?: string[]
+  connectSrc?: string[]
+  imgSrc?: string[]
+  fontSrc?: string[]
+  frameAncestors?: string[]
+  reportUri?: string
 }
 /** napi `NapiActionsClient`. */
 export interface ActionsClientOptions {
