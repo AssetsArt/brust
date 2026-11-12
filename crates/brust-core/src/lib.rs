@@ -29,6 +29,7 @@ pub mod config;
 #[doc(hidden)]
 pub mod core;
 mod cors;
+pub mod csp;
 pub mod host;
 pub mod inputs;
 pub mod l2;

@@ -27,6 +27,32 @@ struct CfConfig {
     /// The cache adapter (optional under abi 1, cache-adapter R13).
     #[serde(default)]
     cache: Option<CfCache>,
+    /// F539 `[csp]` (optional under abi 1, like `cache`); absent = no Content-Security-Policy header.
+    #[serde(default)]
+    csp: Option<CfCsp>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CfCsp {
+    #[serde(default)]
+    report_only: bool,
+    #[serde(default)]
+    script_src: Vec<String>,
+    #[serde(default)]
+    script_src_unsafe: bool,
+    #[serde(default)]
+    style_src: Vec<String>,
+    #[serde(default)]
+    connect_src: Vec<String>,
+    #[serde(default)]
+    img_src: Vec<String>,
+    #[serde(default)]
+    font_src: Vec<String>,
+    #[serde(default)]
+    frame_ancestors: Vec<String>,
+    #[serde(default)]
+    report_uri: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -179,6 +205,21 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
             credentials: c.credentials,
             max_age_seconds: c.max_age_seconds,
         }),
+        csp: c.csp.map(|c| brust_core::csp::CspConfig {
+            mode: if c.report_only {
+                brust_core::csp::CspMode::ReportOnly
+            } else {
+                brust_core::csp::CspMode::Enforce
+            },
+            script_src: c.script_src,
+            script_src_unsafe: c.script_src_unsafe,
+            style_src: c.style_src,
+            connect_src: c.connect_src,
+            img_src: c.img_src,
+            font_src: c.font_src,
+            frame_ancestors: c.frame_ancestors,
+            report_uri: c.report_uri,
+        }),
         generator: c.generator,
         actions,
         actions_client: None,
@@ -272,6 +313,7 @@ mod tests {
         assert_eq!(c.stats, brust_core::config::StatsAccess::Off);
         assert_eq!((c.l1_capacity, c.job_cache_capacity), (256, 512));
         assert!(c.cors.is_none() && c.actions.is_none() && c.generator.is_none());
+        assert!(c.csp.is_none());
     }
 
     #[test]
@@ -284,6 +326,21 @@ mod tests {
         assert!(e.contains("edgeCache") && e.contains("M4-CF-7"), "{e}");
         let e = parse(&OK.replace("\"stats\"", "\"statz\"")).unwrap_err();
         assert!(e.contains("statz"), "{e}");
+    }
+
+    #[test]
+    fn a_csp_maps_to_the_core_config() {
+        let (c, _) = parse(&with_cache(
+            r#","csp":{"reportOnly":true,"styleSrc":["'unsafe-inline'"],"frameAncestors":["'none'"]}}"#,
+        ))
+        .unwrap();
+        let p = c.csp.unwrap();
+        assert_eq!(p.mode, brust_core::csp::CspMode::ReportOnly);
+        assert_eq!(p.style_src, ["'unsafe-inline'"]);
+        assert_eq!(p.frame_ancestors, ["'none'"]);
+        assert!(p.script_src.is_empty() && !p.script_src_unsafe);
+        let e = parse(&with_cache(r#","csp":{"scriptSrcs":[]}}"#)).unwrap_err();
+        assert!(e.contains("scriptSrcs"), "{e}");
     }
 
     const CACHE: &str = r#","cache":{"adapter":"custom","getTimeoutMs":100,"maxBodyBytes":1048576,"namespace":"ns","buildId":"0123456789abcdef","epochIntervalMs":250}}"#;

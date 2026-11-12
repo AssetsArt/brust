@@ -815,6 +815,13 @@ test('prefetch gap: the record holds 32 URLs, oldest out', async () => {
   now.mockRestore()
 })
 
+/** The progress bar's adopted sheet as text, whitespace removed (happy-dom re-serialises rules). */
+const barSheet = () =>
+  document.adoptedStyleSheets
+    .map((sh) => [...sh.cssRules].map((r) => r.cssText).join(''))
+    .find((t) => t.includes('brust-bar'))
+    ?.replace(/\s+/g, '') ?? ''
+
 test('the progress bar: only after 150 ms of loading, outside <body>, done at success; off and cache hits never show it', async () => {
   start()
   let release!: () => void
@@ -830,25 +837,27 @@ test('the progress bar: only after 150 ms of loading, outside <body>, done at su
   await new Promise((r) => setTimeout(r, 80))
   const bar = $('div[data-brust-bar]')!
   expect(bar.parentNode).toBe(document.documentElement)
-  const css = document.head.querySelector('style[data-brust-bar]')!
-  expect(css).toBe(document.head.firstElementChild!)
-  expect(css.textContent).toContain('height:var(--brust-progress-height,2px)')
-  expect(css.textContent).toContain('background:var(--brust-progress-color,#2f7cf6)')
-  expect(css.textContent).toContain('animation:brust-bar 8s cubic-bezier(.1,.8,.2,1) forwards')
-  expect(css.textContent).toContain('@keyframes brust-bar{to{transform:scaleX(.8)}}')
+  // F539: a constructable sheet (a strict style-src does not block it), not an inline <style>
+  expect(document.head.querySelector('style[data-brust-bar]')).toBeNull()
+  const css = barSheet()
+  expect(css).toContain(':where(div[data-brust-bar]){')
+  expect(css).toContain('height:var(--brust-progress-height,2px)')
+  expect(css).toContain('background:var(--brust-progress-color,#2f7cf6)')
+  expect(css).toContain('animation:brust-bar8scubic-bezier(.1,.8,.2,1)forwards')
+  expect(css).toContain('@keyframesbrust-bar{100%{transform:scaleX(.8);}}')
   // the finish: runs to full, then fades
-  expect(css.textContent).toContain('div[data-brust-bar=done]{animation:none;transform:none;opacity:0;transition:transform .2s,opacity .3s .2s}')
+  expect(css).toContain(':where(div[data-brust-bar=done]){animation:none;transform:none;opacity:0;transition:transform.2s,opacity.3s.2s;}')
   // reduced motion: at .8 at once, and the finish is instant
-  expect(css.textContent).toContain('@media (prefers-reduced-motion:reduce){div[data-brust-bar]{animation:none;transform:scaleX(.8)}div[data-brust-bar=done]{transition:none}}')
+  expect(css).toContain('@media(prefers-reduced-motion:reduce){:where(div[data-brust-bar]){animation:none;transform:scaleX(.8);}:where(div[data-brust-bar=done]){transition:none;}}')
   release()
   await settle()
   expect(names()).toEqual(['click', 'load', 'success'])
   expect(bar.getAttribute('data-brust-bar')).toBe('done')
-  // the runtime-added <style> survives the head reconcile of the next navigation
+  // the sheet survives the next navigation (adopted sheets are not head elements: the reconcile never sees them)
   globalThis.fetch = f
   pages['/c'] = { html: doc(app('1', 'c')) }
   await bridge().navigate('/c')
-  expect(document.head.querySelector('style[data-brust-bar]')).not.toBeNull()
+  expect(barSheet()).toContain('brust-bar')
   await new Promise((r) => setTimeout(r, 520))
   expect(bar.isConnected).toBe(false)
   // a cache hit: never shown
@@ -864,6 +873,37 @@ test('the progress bar: only after 150 ms of loading, outside <body>, done at su
   expect($('div[data-brust-bar]')).toBeNull()
   await done
   globalThis.fetch = f
+})
+
+test('the progress bar without adoptedStyleSheets: a runtime <style> first in the head, kept by the head reconcile', async () => {
+  const d = document as unknown as { adoptedStyleSheets: unknown }
+  const own = Object.getOwnPropertyDescriptor(d, 'adoptedStyleSheets')
+  Object.defineProperty(d, 'adoptedStyleSheets', { value: undefined, configurable: true, writable: true })
+  try {
+    start()
+    let release!: () => void
+    pages['/b'] = { html: doc(app('1', 'b')) }
+    const f = globalThis.fetch
+    globalThis.fetch = (async (u: string, init?: RequestInit) => {
+      if (String(u).endsWith('/b')) await new Promise<void>((r) => (release = r))
+      return f(u, init)
+    }) as typeof fetch
+    click($('#to-b')!)
+    await new Promise((r) => setTimeout(r, 180))
+    expect($('div[data-brust-bar]')).not.toBeNull()
+    const css = document.head.querySelector('style[data-brust-bar]')!
+    expect(css).toBe(document.head.firstElementChild!)
+    expect(css.textContent).toContain(':where(div[data-brust-bar]){position:fixed;')
+    release()
+    await settle()
+    globalThis.fetch = f
+    pages['/c'] = { html: doc(app('1', 'c')) }
+    await bridge().navigate('/c')
+    expect(document.head.querySelector('style[data-brust-bar]')).not.toBeNull()
+  } finally {
+    if (own) Object.defineProperty(d, 'adoptedStyleSheets', own)
+    else delete (d as { adoptedStyleSheets?: unknown }).adoptedStyleSheets
+  }
 })
 
 test('applyHead removes only what the server sent; a head element a component added at runtime stays', async () => {

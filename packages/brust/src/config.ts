@@ -2,11 +2,11 @@
 //   env (BRUST_ADDR / BRUST_PORT / BRUST_WORKERS / BRUST_RENDER_SLOTS / BRUST_DRAIN_TIMEOUT_MS /
 //        BRUST_BOOT_TIMEOUT_MS / BRUST_CALL_TIMEOUT_MS / BRUST_SLOT_BYTES / BRUST_MAX_LOADER_RESPONSE_BYTES / BRUST_STATS)
 //   > CLI flags (`brust start --port/--workers`) and `run({ config })`
-//   > brust.toml ([server] address / port / base_path / stats / stats_token / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [actions] base_url / credentials, [components] cache_entries)
+//   > brust.toml ([server] address / port / base_path / stats / stats_token / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [csp], [actions] base_url / credentials, [components] cache_entries)
 //   > defaults (localhost, 1337, availableParallelism(), 1, 10000, 30000, 30000, 262144, 8388608).
 // L16 R16.1: `actionsBaseUrl` follows env (BRUST_ACTIONS_BASE_URL) > run({ config }) > toml `[actions] base_url`.
 // `cors` has no env layer; `run({ config: { cors } })` replaces a toml `[cors]` as a whole (never merged), and
-// `cors: null` turns a toml `[cors]` off.
+// `cors: null` turns a toml `[cors]` off. `csp` follows the same rule (F539).
 // `brust start`'s BRUST_DIST_DIR / BRUST_APP_ENTRY follow the same env > flag rule (run.ts).
 // A missing brust.toml is fine; a present one with the wrong shape is an error. Messages follow
 // 0.1.x `runtime/config.ts`.
@@ -23,6 +23,24 @@ export interface CorsConfig {
   credentials: boolean
   maxAgeSeconds?: number
 }
+
+/** F539 `[csp]` in brust.toml (on with `enabled = true`); same shape and validation as the Rust `CspConfig`
+ * (crates/brust-core/src/csp.rs). Each list adds sources to the directive brust composes. */
+export interface CspConfig {
+  mode: CspMode
+  scriptSrc?: string[]
+  /** Lets `scriptSrc` hold the sources that void the hashes (`'unsafe-inline'`, `'unsafe-eval'`, `'unsafe-hashes'`, `*`, a bare scheme). */
+  scriptSrcUnsafe?: boolean
+  /** `style-src-elem` extras, keywords included (`'unsafe-inline'` for an app that writes `<style>` inline). */
+  styleSrc?: string[]
+  connectSrc?: string[]
+  imgSrc?: string[]
+  fontSrc?: string[]
+  frameAncestors?: string[]
+  reportUri?: string
+}
+export const CSP_MODES = ['enforce', 'report-only'] as const
+export type CspMode = (typeof CSP_MODES)[number]
 
 /** F507 `[server] stats`: who may read `/_brust/cache/stats`. */
 export const STATS_MODES = ['off', 'public', 'token'] as const
@@ -59,6 +77,8 @@ export interface BrustConfig {
   componentsCacheEntries?: number
   /** `run({ config: { cors } })` over brust.toml `[cors]` (a whole-object replace); absent = CORS off. No env layer. */
   cors?: CorsConfig
+  /** F539 `[csp]` / `run({ config: { csp } })` (a whole-object replace; `null` = off); absent = no Content-Security-Policy header. */
+  csp?: CspConfig
   /** F495 `[server] base_path` / `run({ config: { basePath } })`: the path the app is mounted under on a shared origin (`/portal`; `''` = the
    * root), absent when nothing set it. A build setting too (`brust build` bakes it into the manifest): `brust start` refuses a manifest
    * built for another one, and with none set serves the one the manifest names. */
@@ -79,7 +99,10 @@ export interface BrustConfig {
 }
 
 /** What `run({ config })` / `loadConfig`'s `cli` accepts: any setting, and `cors: null` to turn a toml `[cors]` off. */
-export type ConfigOverrides = Omit<Partial<BrustConfig>, 'cors'> & { cors?: (Omit<CorsConfig, 'credentials'> & { credentials?: boolean }) | null }
+export type ConfigOverrides = Omit<Partial<BrustConfig>, 'cors' | 'csp'> & {
+  cors?: (Omit<CorsConfig, 'credentials'> & { credentials?: boolean }) | null
+  csp?: (Omit<CspConfig, 'mode'> & { mode?: CspMode }) | null
+}
 
 /** F506: the `[server] trailing_slash` values. */
 export const TRAILING_SLASH = ['strict', 'redirect', 'ignore'] as const
@@ -151,6 +174,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
   checkCli(cli)
   // cli (validated, normalised) over toml as a whole object (R10.2); `null` = off.
   const cors = cli.cors === undefined ? fromToml.cors : cli.cors === null ? undefined : checkCors(cli.cors, 'config.cors', null, false)
+  const csp = cli.csp === undefined ? fromToml.csp : cli.csp === null ? undefined : checkCsp(cli.csp, 'config.csp', null, false)
   // F507: the two keys belong together, wherever each one came from.
   const stats = env.stats ?? cli.stats ?? fromToml.stats
   const statsToken = cli.statsToken ?? fromToml.statsToken
@@ -169,6 +193,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
     maxLoaderResponseBytes: env.maxLoaderResponseBytes ?? cli.maxLoaderResponseBytes ?? fromToml.maxLoaderResponseBytes ?? DEFAULTS.maxLoaderResponseBytes,
     ioThreads: env.ioThreads ?? cli.ioThreads,
     ...(cors ? { cors } : {}),
+    ...(csp ? { csp } : {}),
     ...pick('componentsCacheEntries', cli.componentsCacheEntries ?? fromToml.componentsCacheEntries),
     ...pick('basePath', cli.basePath ?? fromToml.basePath),
     ...pick('trailingSlash', cli.trailingSlash ?? fromToml.trailingSlash),
@@ -184,6 +209,17 @@ const pick = <K extends string, V>(k: K, v: V | undefined) => (v === undefined ?
 /** `[cors]` of brust.toml and nothing else (no env, no cli): what the Cloudflare build ships in CONFIG.
  * Throws `BrustConfigError` on a bad table, exactly like `loadConfig`. */
 export async function loadCors(cwd: string): Promise<CorsConfig | undefined> {
+  const t = await tomlRoot(cwd)
+  return t && 'cors' in t.root ? parseCors(t.root.cors, t.path) : undefined
+}
+
+/** F539: `[csp]` of brust.toml and nothing else, for the Cloudflare CONFIG (like [`loadCors`]); `undefined` when off. */
+export async function loadCsp(cwd: string): Promise<CspConfig | undefined> {
+  const t = await tomlRoot(cwd)
+  return t && 'csp' in t.root ? parseCsp(t.root.csp, t.path) : undefined
+}
+
+async function tomlRoot(cwd: string): Promise<{ root: Record<string, unknown>; path: string } | undefined> {
   const tomlPath = join(cwd, 'brust.toml')
   const file = Bun.file(tomlPath)
   if (!(await file.exists())) return undefined
@@ -193,8 +229,7 @@ export async function loadCors(cwd: string): Promise<CorsConfig | undefined> {
   } catch (e) {
     throw new BrustConfigError(`failed to parse ${tomlPath}: ${(e as Error).message}`, tomlPath)
   }
-  const root = (parsed ?? {}) as Record<string, unknown>
-  return 'cors' in root ? parseCors(root.cors, tomlPath) : undefined
+  return { root: (parsed ?? {}) as Record<string, unknown>, path: tomlPath }
 }
 
 /** CLI / programmatic overrides get the same bounds as env (a CLI `--port 0` = any free port). */
@@ -297,6 +332,10 @@ function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
     }
   }
   if ('cors' in root) out.cors = parseCors(root.cors, file)
+  if ('csp' in root) {
+    const csp = parseCsp(root.csp, file)
+    if (csp) out.csp = csp
+  }
   if ('actions' in root) {
     const a = table(root.actions, '[actions]', file)
     if (a.base_url !== undefined) {
@@ -361,6 +400,83 @@ function checkCors(c: unknown, where: string, file: string | null, snake: boolea
     credentials,
     ...(age !== undefined ? { maxAgeSeconds: age as number } : {}),
   }
+}
+
+const CSP_KEYS = ['mode', 'scriptSrc', 'scriptSrcUnsafe', 'styleSrc', 'connectSrc', 'imgSrc', 'fontSrc', 'frameAncestors', 'reportUri']
+const CSP_LISTS = ['scriptSrc', 'styleSrc', 'connectSrc', 'imgSrc', 'fontSrc', 'frameAncestors'] as const
+
+/** brust.toml `[csp]`: `enabled = true` turns it on (absent/false = off, the table is still checked). Unlike `[cors]`, an unknown
+ * key is an error: a misspelt directive in a security policy must not pass silently. */
+function parseCsp(v: unknown, file: string): CspConfig | undefined {
+  const t = table(v, '[csp]', file)
+  if (t.enabled !== undefined && typeof t.enabled !== 'boolean') throw new BrustConfigError(`${file}: csp.enabled must be a boolean (got ${JSON.stringify(t.enabled)})`, file)
+  const camel = (k: string) => k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
+  const rest: Record<string, unknown> = {}
+  for (const [k, val] of Object.entries(t)) {
+    if (k === 'enabled') continue
+    if (!CSP_KEYS.includes(camel(k)) || /[A-Z]/.test(k))
+      throw new BrustConfigError(`${file}: csp.${k} is not a csp option (expected enabled, ${CSP_KEYS.map((c) => c.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)).join(', ')})`, file)
+    rest[camel(k)] = val
+  }
+  const csp = checkCsp(rest, `${file}: csp`, file, true)
+  return t.enabled === true ? csp : undefined
+}
+
+/** Why one source expression is refused (Rust `csp::source`, verbatim), or `undefined`: one entry, ASCII, no `;` `,` or control
+ * character, and a quote only as a whole `'keyword'`. Keywords (`'unsafe-inline'`, `'self'`, `'nonce-…'`, `'sha256-…'`) pass. */
+export function cspSourceError(s: string): string | undefined {
+  if (s.trim() === '') return 'is empty'
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: a control character is exactly what is refused
+  if (/[;,\u0000-\u001f\u007f]|[^\x00-\x7f]/.test(s)) return `${JSON.stringify(s)} holds ';', ',', a control or a non-ASCII character: one source per entry`
+  const quotes = s.split("'").length - 1
+  const t = s.trim()
+  if (quotes !== 0 && !(quotes === 2 && t.length > 2 && t.startsWith("'") && t.endsWith("'"))) return `${JSON.stringify(s)} has unbalanced quotes: write a keyword as 'keyword'`
+  return undefined
+}
+
+/** The one `[csp]` validator (Rust `CspConfig::validate`), for toml (snake_case names in messages) and `run({ config: { csp } })`. */
+function checkCsp(c: unknown, where: string, file: string | null, snake: boolean): CspConfig {
+  const fail = (m: string) => new BrustConfigError(m, file)
+  if (c === null || typeof c !== 'object' || Array.isArray(c)) throw fail(`${where} must be ${file === null ? 'an object (or null)' : 'a table'} (got ${JSON.stringify(c)})`)
+  const t = c as Record<string, unknown>
+  const bad = Object.keys(t).find((k) => !CSP_KEYS.includes(k))
+  if (bad !== undefined) throw fail(`${where}.${bad} is not a csp option (expected ${CSP_KEYS.join(', ')})`)
+  const name = (k: string) => (snake ? k.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`) : k)
+  if (t.mode !== undefined && !CSP_MODES.includes(t.mode as CspMode)) throw fail(`${where}.mode must be one of ${CSP_MODES.join(', ')} (got ${JSON.stringify(t.mode)})`)
+  if (t.scriptSrcUnsafe !== undefined && typeof t.scriptSrcUnsafe !== 'boolean') throw fail(`${where}.${name('scriptSrcUnsafe')} must be a boolean (got ${JSON.stringify(t.scriptSrcUnsafe)})`)
+  const out: CspConfig = { mode: (t.mode as CspMode | undefined) ?? 'enforce' }
+  for (const key of CSP_LISTS) {
+    const val = t[key]
+    if (val === undefined) continue
+    if (!Array.isArray(val) || val.some((x) => typeof x !== 'string')) throw fail(`${where}.${name(key)} must be an array of strings (got ${JSON.stringify(val)})`)
+    for (const src of val as string[]) {
+      const why = cspSourceError(src)
+      if (why) throw fail(`${where}.${name(key)}: ${why}`)
+    }
+    out[key] = val as string[]
+  }
+  if (t.reportUri !== undefined) {
+    if (typeof t.reportUri !== 'string') throw fail(`${where}.${name('reportUri')} must be a string (got ${JSON.stringify(t.reportUri)})`)
+    const why = cspSourceError(t.reportUri)
+    if (why) throw fail(`${where}.${name('reportUri')}: ${why}`)
+    out.reportUri = t.reportUri
+  }
+  if (t.scriptSrcUnsafe === true) out.scriptSrcUnsafe = true
+  else {
+    const unsafe = out.scriptSrc?.find(voidsHashes)
+    if (unsafe !== undefined)
+      throw fail(
+        `${where}.${name('scriptSrc')}: ${unsafe} would let any script run and void the hash policy ('unsafe-inline' is ignored next to hashes; 'unsafe-eval' / 'unsafe-hashes' allow eval / inline handlers; data:, blob:, filesystem:, * and a bare scheme such as https: allow scripts from anywhere); list hosts (https://cdn.example.com) instead, or set ${name('scriptSrcUnsafe')} = true to send it anyway`,
+      )
+  }
+  return out
+}
+
+/** A `script-src` source that lets script in past the hashes (Rust `csp::voids_hashes`): the unsafe keywords (not
+ * `'wasm-unsafe-eval'`), `*`, and a bare scheme (`https:`, `data:`, `blob:`, `filesystem:`, …). A host is fine. */
+export function voidsHashes(s: string): boolean {
+  const k = s.trim().toLowerCase()
+  return ["'unsafe-inline'", "'unsafe-eval'", "'unsafe-hashes'", '*'].includes(k) || /^[a-z][a-z0-9+.-]*:$/.test(k)
 }
 
 /** Integer env var in `[min, max]`; unset or empty = absent. */

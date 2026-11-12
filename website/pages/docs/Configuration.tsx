@@ -317,6 +317,9 @@ export default function Configuration({ blocks }: ConfigurationData) {
       </p>
       <CodeBlock code={blocks.cors.code} lang={blocks.cors.lang} file={blocks.cors.file} html={blocks.cors.html} />
       <p>
+        <code>[csp]</code> sends a Content-Security-Policy header with every page (off by default); see <a href="/docs/csp">Content Security Policy</a>.
+      </p>
+      <p>
         <code>[build] server_only</code> names modules that must never reach the browser; reaching one from client code fails the build with <code>server-only-in-client</code>.
       </p>
       <CodeBlock code={blocks.build.code} lang={blocks.build.lang} file={blocks.build.file} html={blocks.build.html} />

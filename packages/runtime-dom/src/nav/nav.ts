@@ -84,23 +84,36 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
   }
 
   // ---- the progress bar (§10.2): only for a navigation still loading 150 ms after `load`; outside <body>, so no swap
-  // removes it, and its <style> is runtime-added, so the head reconcile keeps it. The <style> goes first in the head
-  // and its rules are one attribute selector each, so an app rule on div[data-brust-bar] wins ----
+  // removes it. Its rules are a constructable sheet in document.adoptedStyleSheets (F539: a sheet built through the CSSOM
+  // is not an inline <style>, so a strict `style-src` does not block it); where that is unsupported, a runtime-added <style>
+  // first in the head, which the head reconcile keeps. Adopted sheets cascade after the document's own, so every selector
+  // is wrapped in :where() (specificity 0): an app rule on div[data-brust-bar] wins either way ----
   let bar: Element | undefined
-  let css: HTMLStyleElement | undefined
+  let css: HTMLStyleElement | CSSStyleSheet | undefined
   let wait: ReturnType<typeof setTimeout> | undefined
+  const BAR_CSS =
+    `:where(div[${BAR}]){position:fixed;z-index:2147483647;top:0;left:0;width:100%;height:var(--brust-progress-height,2px);pointer-events:none;background:var(--brust-progress-color,#2f7cf6);transform-origin:0;transform:scaleX(0);animation:brust-bar 8s cubic-bezier(.1,.8,.2,1) forwards}` +
+    `:where(div[${BAR}=done]){animation:none;transform:none;opacity:0;transition:transform .2s,opacity .3s .2s}@keyframes brust-bar{to{transform:scaleX(.8)}}` +
+    `@media (prefers-reduced-motion:reduce){:where(div[${BAR}]){animation:none;transform:scaleX(.8)}:where(div[${BAR}=done]){transition:none}}`
+  const barStyles = () => {
+    if (!css) {
+      try {
+        if (!Array.isArray(document.adoptedStyleSheets)) throw 0
+        ;(css = new CSSStyleSheet()).replaceSync(BAR_CSS)
+      } catch {
+        ;(css = document.createElement('style')).textContent = BAR_CSS
+        css.setAttribute(BAR, '')
+      }
+    }
+    if (css instanceof CSSStyleSheet) {
+      if (!document.adoptedStyleSheets.includes(css)) document.adoptedStyleSheets = [...document.adoptedStyleSheets, css]
+    } else if (!css.isConnected) document.head.prepend(css)
+  }
   const progress = (on?: boolean) => {
     clearTimeout(wait)
     if (on) {
       if (!bar && html.getAttribute('data-brust-progress') !== 'off') wait = setTimeout(() => {
-        if (!css) {
-          ;(css = document.createElement('style')).textContent =
-            `div[${BAR}]{position:fixed;z-index:2147483647;top:0;left:0;width:100%;height:var(--brust-progress-height,2px);pointer-events:none;background:var(--brust-progress-color,#2f7cf6);transform-origin:0;transform:scaleX(0);animation:brust-bar 8s cubic-bezier(.1,.8,.2,1) forwards}` +
-            `div[${BAR}=done]{animation:none;transform:none;opacity:0;transition:transform .2s,opacity .3s .2s}@keyframes brust-bar{to{transform:scaleX(.8)}}` +
-            `@media (prefers-reduced-motion:reduce){div[${BAR}]{animation:none;transform:scaleX(.8)}div[${BAR}=done]{transition:none}}`
-          css.setAttribute(BAR, '')
-        }
-        if (!css.isConnected) document.head.prepend(css)
+        barStyles()
         html.append((bar = document.createElement('div')))
         bar.setAttribute(BAR, '')
       }, 150)

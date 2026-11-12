@@ -31,6 +31,8 @@ pub struct CoreConfig {
     pub l1_capacity: u64,
     pub job_cache_capacity: u64,
     pub cors: Option<CorsConfig>,
+    /// F539: `[csp]`; `None` = no Content-Security-Policy header (the default).
+    pub csp: Option<crate::csp::CspConfig>,
     /// `X-Powered-By` value, and the `<meta name="generator">` content of every full document; `None` = neither.
     pub generator: Option<String>,
     /// M3-F: the actions subtree; `None` = no actions.
@@ -83,6 +85,8 @@ pub struct Core<H: Host> {
     /// `cors` resolved into prebuilt header values once at `new` (per server,
     /// not a process global: several servers may live in one process).
     pub(crate) cors_resolved: Option<ResolvedCors>,
+    /// F539: the policy header, prebuilt at `new` with the hashes of `action_prefix_tag`'s scripts.
+    pub(crate) csp: Option<crate::csp::Resolved>,
     /// M3-F: the validated actions subtree; `None` = no actions.
     #[doc(hidden)]
     pub actions: Option<ActionsConfig>,
@@ -119,7 +123,7 @@ pub struct Core<H: Host> {
 impl<H: Host> Core<H> {
     /// Build the routes, renderer and job plans of `loaded` and validate the CORS / actions
     /// policy. Every failure is an `Err` with the prefix `start` reports: `"routes: …"`,
-    /// `"render: …"`, `"manifest: …"`, `"cors: …"`, `"actions: …"`.
+    /// `"render: …"`, `"manifest: …"`, `"cors: …"`, `"actions: …"`, `"csp: …"`.
     pub fn new(host: H, loaded: Loaded, cfg: CoreConfig) -> Result<Self, String> {
         let routes =
             RouteTable::from_manifest(&loaded.manifest).map_err(|e| format!("routes: {e}"))?;
@@ -161,6 +165,21 @@ impl<H: Host> Core<H> {
             }
         }
         .map(String::into_boxed_str);
+        let csp = match &cfg.csp {
+            Some(c) => {
+                c.validate().map_err(|e| format!("csp: {e}"))?;
+                // The actions client fetches a cross-origin `base_url` (validated an origin above).
+                let connect = cfg
+                    .actions_client
+                    .as_ref()
+                    .and_then(|a| a.base_url.as_deref());
+                Some(
+                    crate::csp::Resolved::new(c, action_prefix_tag.as_deref(), connect)
+                        .map_err(|e| format!("csp: {e}"))?,
+                )
+            }
+            None => None,
+        };
         // One invalidation clock for both caches: `page()` stamps it once per request (F89).
         let clock = Arc::new(InvalClock::default());
         let components = crate::components::Registry::for_manifest(
@@ -192,6 +211,7 @@ impl<H: Host> Core<H> {
             missing_slots: Default::default(),
             cors_resolved: cfg.cors.as_ref().map(ResolvedCors::from_config),
             cors: cfg.cors,
+            csp,
             // A4 verbatim (a validated prefix holds only [A-Za-z0-9._~/-], so no escaping); L16 adds the base.
             action_prefix_tag,
 
@@ -321,6 +341,9 @@ impl<H: Host> Core<H> {
         }
         if let Some(c) = &self.cors_resolved {
             c.stamp_response(h, origin);
+        }
+        if let Some(c) = &self.csp {
+            c.stamp(h);
         }
     }
 }

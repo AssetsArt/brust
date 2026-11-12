@@ -26,6 +26,7 @@ matchit = "0.9"
 percent-encoding = "2.3"
 blake3 = "1"
 flate2 = { version = "1", optional = true }
+sha2 = { version = "0.11.1", default-features = false }
 
 [lints]
 workspace = true
