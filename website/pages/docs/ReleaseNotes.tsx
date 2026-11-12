@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-47', title: '2.0.0-alpha.47' },
       { id: 'alpha-46', title: '2.0.0-alpha.46' },
       { id: 'alpha-45', title: '2.0.0-alpha.45' },
       { id: 'alpha-44', title: '2.0.0-alpha.44' },
@@ -69,6 +70,46 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-47">2.0.0-alpha.47 · 12 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.46: #491 (ledger F544) */}
+      <p>This version closes the gaps that kept some apps from replacing a hand-written Content Security Policy with <code>[csp]</code>: more directives, <code>default-src &apos;none&apos;</code>, a per-request host, a per-deploy switch and a policy under <code>brust dev</code>. It also sends <code>form-action</code> whenever <code>[csp]</code> is on, which can block a form that posts to another origin.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #491 (F544); crates/brust-core/src/csp.rs (compose); packages/brust/src/config.ts (CSP_LISTS, checkCsp) */}
+        <li>
+          <strong><code>[csp]</code> has keys for the directives apps most often had to write by hand (#491).</strong> <code>form_action</code>, <code>frame_src</code>, <code>media_src</code>, <code>worker_src</code>, <code>manifest_src</code> and <code>object_src</code> are lists, and <code>default_src</code> and <code>base_uri</code> take <code>&quot;self&quot;</code> (the default) or <code>&quot;none&quot;</code>. The <code>frame_src</code>, <code>media_src</code>, <code>worker_src</code> and <code>manifest_src</code> directives are sent only when you set them, with <code>&apos;self&apos;</code> first. <code>object-src</code> stays <code>&apos;none&apos;</code> unless you list sources in <code>object_src</code>. A misspelt key or value is still a startup error. See <a href="/docs/csp">Content Security Policy</a>.
+        </li>
+        {/* source: PR #491 (F544); crates/brust-core/src/csp.rs (compose); tests/server/csp-gaps.chromium.test.ts */}
+        <li>
+          <strong><code>default_src = &quot;none&quot;</code> works without breaking brust&rsquo;s own scripts, fetches and assets (#491).</strong> With it, nothing falls back to your origin, so brust names what its runtime loads: <code>script-src</code> and <code>style-src-elem</code> as before, and <code>connect-src</code>, <code>img-src</code> and <code>font-src</code> with <code>&apos;self&apos;</code> (navigation and prefetch fetches, actions and your WebSockets; the images a navigation preloads and those brust-built CSS serves; the fonts it serves). Frames, media, workers and manifests stay closed until you list them, and then only what you list is allowed. A served browser test runs an island, an action, a WebSocket and SPA navigation with the progress bar under this policy with no violations.
+        </li>
+        {/* source: PR #491 (F544); crates/brust-core/src/csp.rs (safe_host, expand_host, stamp); crates/brust-server/src/server/mod.rs; crates/brust-wasm/src/entry.rs */}
+        <li>
+          <strong>A source can use <code>{'{host}'}</code>, the host the request was sent to (#491).</strong> <code>connect_src = [&quot;wss://{'{host}'}&quot;]</code> allows each page&rsquo;s socket on its own host name when one app answers to several. The value is the request&rsquo;s authority with its port, and it is used only when it is a plain host name or IP address with an optional port: any other <code>Host</code> header drops the source from that response and is never copied into the header. <code>{'{host}'}</code> is refused in <code>script_src</code> and in <code>object_src</code>, where a source taken from the request would let any host name that reaches your server serve script or plugins. A policy with a <code>{'{host}'}</code> source adds <code>Vary: Host</code>. A static page or the <code>public/</code> rule on Cloudflare has no request, so the build leaves those sources out and prints a warning (<code>ssg-csp-host</code>, <code>cf-csp-host</code>).
+        </li>
+        {/* source: PR #491 (F544); packages/brust/src/config.ts (withCspEnv); crates/brust-wasm/src/config.rs (parse_with_csp_mode); packages/brust/src/build/cf-entry.ts; packages/brust/src/build/cloudflare.ts */}
+        <li>
+          <strong><code>BRUST_CSP_MODE</code> switches the policy per deploy without editing <code>brust.toml</code> (#491).</strong> Read when <code>brust start</code> or the Worker starts: <code>off</code> sends no policy; <code>report-only</code> or <code>enforce</code> sends it in that mode, from your <code>[csp]</code> table even when <code>enabled</code> is not true (or the default policy when there is no table). Any other value stops startup. On Cloudflare it is a Worker variable, and the build now ships the <code>[csp]</code> table in the Worker&rsquo;s config even when it is off so the variable can turn it on. It reaches only pages a server or Worker renders: <code>--target static</code> pages and HTML files in <code>public/</code> keep the policy written at build, and the Cloudflare build prints <code>cf-csp-public</code> when <code>public/</code> holds HTML.
+        </li>
+        {/* source: PR #491 (F544); packages/brust/src/run.ts (cspOption); packages/brust/src/config.ts (dev, devMode) */}
+        <li>
+          <strong><code>[csp] dev = true</code> sends the policy under <code>brust dev</code> too (#491).</strong> It goes out in <code>dev_mode</code> (<code>report-only</code> by default) with <code>style-src-elem &apos;unsafe-inline&apos;</code> added for the error overlay&rsquo;s styles; the dev client, the devtools and their WebSocket are same-origin and already covered by <code>&apos;self&apos;</code>. <code>brust start</code> never gets that addition. Without <code>dev = true</code>, <code>brust dev</code> still sends no policy.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #491 (F544); crates/brust-core/src/csp.rs (compose) */}
+        <li>
+          <strong>With <code>[csp]</code> on, brust now always sends <code>form-action &apos;self&apos;</code>, so a form that posts to another origin is blocked (#491).</strong> <code>form-action</code> does not fall back to <code>default-src</code>, so an app with <code>[csp]</code> had no form restriction before. Forms that post to your own app, actions included, are unaffected. Add the other origin to <code>form_action</code>, for example <code>form_action = [&quot;https://pay.example.com&quot;]</code>, before upgrading; with <code>mode = &quot;report-only&quot;</code> the browser only reports it. The directive is part of the policy in every place brust sends it, static pages included.
+        </li>
+        {/* source: PR #491 (F544); crates/brust-core/src/csp.rs (Resolved::stamp) */}
+        <li>
+          <strong>A response that already has a <code>Content-Security-Policy-Report-Only</code> header now keeps brust from adding its own (#491).</strong> Before, only a response with the same kind of header was left alone, so a loader&rsquo;s report-only policy could end up beside brust&rsquo;s enforced one. Now a loader that sets either header owns the response&rsquo;s policy and brust adds neither.
+        </li>
+      </ul>
 
       <h2 id="alpha-46">2.0.0-alpha.46 · 12 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.45: #487, #489 (ledger F541, F543) */}
