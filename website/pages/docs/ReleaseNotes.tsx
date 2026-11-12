@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-48', title: '2.0.0-alpha.48' },
       { id: 'alpha-47', title: '2.0.0-alpha.47' },
       { id: 'alpha-46', title: '2.0.0-alpha.46' },
       { id: 'alpha-45', title: '2.0.0-alpha.45' },
@@ -70,6 +71,38 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-48">2.0.0-alpha.48 · 13 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.47: #493 (ledger F545) */}
+      <p>This version lets code outside React know when a React island has committed its tree, which <code>data-hydrated</code> never meant.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #493 (F545); packages/runtime-dom/src/island.ts (hydrateHost); packages/brust/src/build/bundle.ts (islandShim, __Commit); tests/server/island-committed.chromium.test.ts */}
+        <li>
+          <strong>A React island now tells you when its tree has committed (#493).</strong> <code>data-hydrated=&quot;1&quot;</code> is set as soon as the island&rsquo;s hydrate call returns, but <code>hydrateRoot</code> and <code>createRoot().render()</code> only schedule the render, so React may not have rendered yet. Once the island&rsquo;s root has committed, its <code>&lt;brust-island&gt;</code> host gets <code>data-committed=&quot;1&quot;</code> and dispatches a bubbling <code>brust:island</code> event with <code>detail: {'{'} id, phase: &apos;committed&apos; {'}'}</code>, where <code>id</code> is the host&rsquo;s <code>data-id</code>. It works for hydrated islands and for <code>client_only</code> ones that mount with <code>createRoot</code>. The signal fires once per host and never for a host that has left the page. <code>data-committed</code> always comes after <code>data-hydrated</code>; <code>data-hydrated</code> keeps its meaning and timing. brust renders the root inside a small wrapper that adds no element and does not change <code>useId</code> values, so server and client markup stay the same. See <a href="/docs/rendering-tiers">Rendering tiers</a>.
+        </li>
+        {/* source: PR #493 (F545); packages/runtime-dom/README.md; the Rendering tiers docs page, section When an island is ready */}
+        <li>
+          <strong>Code that may run late checks the attribute first (#493).</strong> The event fires once, so a listener added after it would never hear it. Test <code>host.getAttribute(&apos;data-committed&apos;) === &apos;1&apos;</code> and only otherwise listen with <code>host.addEventListener(&apos;brust:island&apos;, run, {'{'} once: true {'}'})</code>.
+        </li>
+        {/* source: PR #493 (F545); packages/runtime-dom/src/island.ts (IslandHydrate, IslandEventDetail); packages/runtime-dom/test/island.test.ts */}
+        <li>
+          <strong>A hand-written island hydrate function can take a third argument, <code>committed()</code> (#493).</strong> Call it when the island&rsquo;s tree has committed and the runtime sets the attribute and sends the event. A function with two arguments still works; it never signals. A <code>committed()</code> called while the hydrate function is still running waits until it has returned, and a hydrate function that throws never signals. The runtime exports the type of the event&rsquo;s <code>detail</code> as <code>IslandEventDetail</code>.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #493 (F545); the Rendering tiers docs page, section When an island is ready; packages/runtime-dom/README.md */}
+        <li>
+          <strong>The signal covers the island&rsquo;s root, not every <code>&lt;Suspense&gt;</code> boundary inside it (#493).</strong> React may hydrate the content of an inner boundary after the root has committed, and that later hydration sends no event. Do not read the event as &ldquo;every part of this island is interactive&rdquo; when the island holds a <code>&lt;Suspense&gt;</code> boundary.
+        </li>
+        {/* source: PR #493 (F545); docs/react-coverage.md; docs/runtime-budget.json */}
+        <li>
+          <strong>Pages that load an island carry about 0.2 KiB more client JavaScript (#493).</strong> The island part of the runtime grew by the signal above; the measured runtime for a React-tier page in the React coverage report went from 4.3 to 4.5 KiB (gzip). Nothing to rebuild beyond upgrading.
+        </li>
+      </ul>
 
       <h2 id="alpha-47">2.0.0-alpha.47 · 12 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.46: #491 (ledger F544) */}
