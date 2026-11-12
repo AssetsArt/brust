@@ -16,8 +16,8 @@
 // names, i.e. fidelity, not a security boundary: the author controls both files) is REFUSED, with the reason;
 // the compiler then renders its components as React islands of the package export, exactly as before.
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, posix, relative, resolve, sep } from 'node:path'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { BuildError } from './errors'
 import { RELATIVE_SPEC } from './esm-resolve'
 import { RECOGNISED, verifyRecognised } from './recognised'
@@ -53,6 +53,55 @@ const lstatSyncOrNull = (p: string) => {
     return lstatSync(p)
   } catch {
     return null
+  }
+}
+
+// F536: another build or `brust dev` of the same app may be reading `.brust/pkg-src` while this one prepares it, so no
+// file a reader can open is ever deleted or rewritten with the bytes it already has. A file is replaced only when its
+// text differs, and then by renaming a finished temp file over it (a reader sees the old file or the new one, never a
+// partial one). The temp files are named `.tmp-*` so nothing treats them as sources.
+const TMP_PREFIX = '.tmp-'
+/** A temp file this old belongs to a killed process. */
+const TMP_STALE_MS = 10 * 60 * 1000
+let tmpCounter = 0
+
+/** Writes `text` to `target` (its directory exists) unless the file already holds exactly that. */
+function putFile(target: string, text: string): void {
+  try {
+    if (readFileSync(target, 'utf8') === text) return
+  } catch {}
+  const tmp = join(dirname(target), `${TMP_PREFIX}${process.pid}-${tmpCounter++}-${basename(target)}`)
+  try {
+    writeFileSync(tmp, text)
+    renameSync(tmp, target)
+  } catch (e) {
+    rmSync(tmp, { force: true })
+    throw e
+  }
+}
+
+/** Removes what `dir` holds beyond the `keep` files (absolute paths): a source an earlier version of the package had,
+ * and the temp files of a killed process. A younger `.tmp-*` file is another process's write in flight. Links are
+ * removed, never followed. */
+function pruneStale(dir: string, keep: Set<string>): void {
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const e of entries) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) {
+      pruneStale(p, keep)
+      try {
+        if (readdirSync(p).length === 0) rmSync(p, { recursive: true })
+      } catch {}
+    } else if (e.name.startsWith(TMP_PREFIX)) {
+      try {
+        if (Date.now() - lstatSync(p).mtimeMs > TMP_STALE_MS) rmSync(p, { force: true })
+      } catch {}
+    } else if (!keep.has(p)) rmSync(p, { force: true })
   }
 }
 
@@ -415,8 +464,9 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
     // The directories just made are this build's: a real path elsewhere means a link was planted in between.
     if (!`${realpathSync(dirname(target))}${sep}`.startsWith(realpathSync(resolve(appRoot, PKG_SRC_DIR)) + sep))
       return { ok: false, reason: `the source ${f.path} would be written outside ${PKG_SRC_DIR}` }
-    writeFileSync(target, f.text)
+    putFile(target, f.text)
   }
+  pruneStale(resolve(appRoot, outRel), new Set(targets.map((t) => t.target)))
   budget.bytes += bytes
   return { ok: true, dir: outRel, entry: posix.join(outRel, (entrySrc ?? barrel)!.path), imports: [...bare].sort() }
 }
@@ -437,7 +487,8 @@ function recognisedVersion(name: string, dir: string): string | null {
 
 /**
  * Writes the sources of every package `specs` reaches from the app (and of every package those sources import),
- * and returns the resolution map for the compiler. The directory is rebuilt from nothing on every call.
+ * and returns the resolution map for the compiler. The directory is brought up to date in place, never emptied: a file
+ * is rewritten only when its text changed and a package nothing references any more is removed at the end (F536).
  */
 export function preparePackageSources(appRoot: string, specs: Iterable<string>): PackageSources {
   const root = realpathSync(appRoot)
@@ -451,7 +502,7 @@ export function preparePackageSources(appRoot: string, specs: Iterable<string>):
     } catch {}
     if (!`${real}${sep}`.startsWith(root + sep)) throw new BuildError('package-source', `${relative(root, p)} resolves outside the app root (a link?); remove it and build again`)
   }
-  rmSync(join(root, PKG_SRC_DIR), { recursive: true, force: true })
+  // F536: the directory is kept and brought up to date in place (see `putFile`), never emptied first.
   mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
   if (!realpathSync(join(root, PKG_SRC_DIR)).startsWith(root + sep)) throw new BuildError('package-source', `${PKG_SRC_DIR} resolves outside the app root (a link?); remove it and build again`)
   const out: PackageSources = { scopes: {}, refused: {}, dirs: {}, recognised: {} }
@@ -509,6 +560,20 @@ export function preparePackageSources(appRoot: string, specs: Iterable<string>):
   }
   for (const n of recognisedBad) delete out.recognised[n]
   mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
-  writeFileSync(join(root, PKG_SRC_DIR, 'index.json'), `${JSON.stringify(out, null, 2)}\n`)
+  putFile(join(root, PKG_SRC_DIR, 'index.json'), `${JSON.stringify(out, null, 2)}\n`)
+  // Whatever this build does not reference any more (a dropped dependency, a layout of an older release) is removed last,
+  // so nothing a reader of this build's map needs is touched. `index.json` and another process's `.tmp-*` write in flight stay.
+  const referenced = new Set(Object.keys(out.dirs).map((d) => basename(d)))
+  const pkgSrc = join(root, PKG_SRC_DIR)
+  for (const e of readdirSync(pkgSrc, { withFileTypes: true })) {
+    if (e.name === 'index.json' || referenced.has(e.name)) continue
+    const p = join(pkgSrc, e.name)
+    if (e.name.startsWith(TMP_PREFIX)) {
+      try {
+        if (Date.now() - lstatSync(p).mtimeMs <= TMP_STALE_MS) continue
+      } catch {}
+    }
+    rmSync(p, { recursive: true, force: true })
+  }
   return out
 }

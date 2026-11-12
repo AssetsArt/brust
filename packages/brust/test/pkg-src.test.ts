@@ -2,7 +2,7 @@
 // written under `.brust/pkg-src`; every package that cannot be proven is refused with its reason (the compiler then keeps
 // its React island). Stub packages, so the rules do not depend on a release.
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, sep } from 'node:path'
 import { integrityGaps, PKG_SRC_DIR, preparePackageSources, skeleton } from '../src/build/pkg-src'
@@ -78,12 +78,90 @@ test('bare imports of a written package are followed in that package scope', () 
   expect(r.dirs[scope]).toBe(join(root, 'node_modules/outer'))
 })
 
-test('the directory is rebuilt from nothing: a stale source is never left behind', () => {
+test('the directory is brought up to date in place: a stale source and a stale package directory are pruned', () => {
   const root = app()
   put(join(root, PKG_SRC_DIR, 'stale@0.0.0-00000000/src/x.tsx'), 'export const x = 1')
-  preparePackageSources(root, [])
+  pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
+  const first = preparePackageSources(root, ['leafy'])
+  const dir = join(root, dirname(dirname(first.scopes['']!.leafy!)))
+  put(join(dir, 'src/old.tsx'), 'export const old = 1')
+  preparePackageSources(root, ['leafy'])
   expect(existsSync(join(root, PKG_SRC_DIR, 'stale@0.0.0-00000000'))).toBe(false)
+  expect(existsSync(join(dir, 'src/old.tsx'))).toBe(false)
+  expect(readFileSync(join(dir, 'src/leaf.tsx'), 'utf8')).toBe(LEAF)
 })
+
+// F536: a build and a `brust dev` generation of one app share `.brust/pkg-src`; one must never delete or rewrite a file
+// the other is reading.
+const stamp = (f: string) => {
+  const s = statSync(f)
+  return `${s.ino}:${s.mtimeMs}`
+}
+const filesUnder = (d: string): string[] =>
+  readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(join(d, e.name)) : [join(d, e.name)]))
+
+test('F536 A1: a second prepare with the same inputs touches no file; a changed package swaps only its own files; a dropped package is pruned alone', () => {
+  const root = app()
+  pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
+  pkg(root, 'other', { 'src/other.tsx': `export function Other() { return <b>other</b> }\n` })
+  const r1 = preparePackageSources(root, ['leafy', 'other'])
+  const before = new Map(filesUnder(join(root, PKG_SRC_DIR)).map((f) => [f, stamp(f)]))
+  expect([...before.keys()].some((f) => basename(f) === 'index.json')).toBe(true)
+  // The same inputs: the same map, and no file rewritten (same inode and mtime), no temp file left behind.
+  expect(preparePackageSources(root, ['leafy', 'other'])).toEqual(r1)
+  const same = new Map(filesUnder(join(root, PKG_SRC_DIR)).map((f) => [f, stamp(f)]))
+  expect(same).toEqual(before)
+  expect([...same.keys()].some((f) => basename(f).startsWith('.tmp-'))).toBe(false)
+  // One package changes: only its files are replaced.
+  const OTHER2 = `export function Other() { return <b>other two</b> }\n`
+  pkg(root, 'other', { 'src/other.tsx': OTHER2 })
+  const r2 = preparePackageSources(root, ['leafy', 'other'])
+  const otherFile = join(root, r2.scopes['']!.other!)
+  expect(readFileSync(otherFile, 'utf8')).toBe(OTHER2)
+  const after = new Map(filesUnder(join(root, PKG_SRC_DIR)).map((f) => [f, stamp(f)]))
+  expect(after.get(otherFile)).not.toBe(before.get(otherFile))
+  for (const [f, v] of before) if (f !== otherFile && basename(f) !== 'index.json') expect(after.get(f), f).toBe(v)
+  // One package is no longer reached: its directory goes, the other's files are untouched.
+  const r3 = preparePackageSources(root, ['leafy'])
+  expect(existsSync(otherFile)).toBe(false)
+  expect(existsSync(dirname(dirname(otherFile)))).toBe(false)
+  const leafFile = join(root, r3.scopes['']!.leafy!)
+  expect(stamp(leafFile)).toBe(before.get(leafFile)!)
+})
+
+test('F536 A2: a reader of the map never sees a missing or partial file while another thread prepares in a loop', async () => {
+  const root = app()
+  pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
+  pkg(root, 'other', { 'src/other.tsx': `export function Other() { return <b>other</b> }\n` })
+  const first = preparePackageSources(root, ['leafy'])
+  const leaf = join(root, first.scopes['']!.leafy!)
+  const worker = new Worker(new URL('./fixtures/pkg-src-writer.ts', import.meta.url).href)
+  const done = new Promise<void>((resolve, reject) => {
+    worker.onmessage = () => resolve()
+    worker.onerror = (e) => reject(new Error(String(e.message)))
+  })
+  worker.postMessage({ root, rounds: 120 })
+  const bad: string[] = []
+  let reads = 0
+  let finished = false
+  void done.then(() => (finished = true))
+  while (!finished) {
+    for (const f of [leaf, join(root, PKG_SRC_DIR, 'index.json')]) {
+      try {
+        const text = readFileSync(f, 'utf8')
+        reads++
+        if (f === leaf ? text !== LEAF : JSON.parse(text).scopes === undefined) bad.push(`partial ${basename(f)}`)
+      } catch (e) {
+        bad.push(`${basename(f)}: ${String(e instanceof Error ? e.message : e).slice(0, 60)}`)
+      }
+    }
+    await Bun.sleep(0)
+  }
+  await done
+  worker.terminate()
+  expect(reads).toBeGreaterThan(100)
+  expect(bad).toEqual([])
+}, 60_000)
 
 const refusedFor = (root: string, spec: string) => preparePackageSources(root, [spec]).refused['']?.[spec]
 
