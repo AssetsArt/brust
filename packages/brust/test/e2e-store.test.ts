@@ -76,7 +76,7 @@ test('/cart: one cart tag right before the runtime script; second request is an 
   expect(r1.status).toBe(200)
   expect(r1.headers.get('x-brust-cache')).toBe('MISS')
   expect(h1.split(TAG)).toHaveLength(2)
-  const tag = `<script type="application/json" ${TAG}="cart">{"count":3}</script>`
+  const tag = `<script type="application/json" ${TAG}="cart">{"count":3,"~w":["count"]}</script>` // F533: the loader wrote count
   expect(h1).toContain(tag)
   expect(h1.indexOf(tag) + tag.length).toBe(h1.indexOf(RUNTIME))
   const s1 = await stats()
@@ -91,7 +91,7 @@ test('/cart: one cart tag right before the runtime script; second request is an 
 test('/both: cart then user tags', async () => {
   const h = await (await fetch(`${base}/both`)).text()
   expect(tagsOf(h).map((m) => m[1])).toEqual(['cart', 'user'])
-  expect(tagsOf(h).map((m) => JSON.parse(m[2]!))).toEqual([{ count: 1 }, { label: 'ann' }])
+  expect(tagsOf(h).map((m) => JSON.parse(m[2]!))).toEqual([{ count: 1, '~w': ['count'] }, { label: 'ann', '~w': ['label'] }])
 })
 
 test('/island: ssr job runs; the job key follows the store value (?n=6 twice -> one job, ?n=7 -> another)', async () => {

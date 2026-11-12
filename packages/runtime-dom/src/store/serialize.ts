@@ -22,6 +22,12 @@ export function storeScriptTag(name: string, state: unknown): string {
   return `<script type="application/json" data-brust-store="${safeName}">${toScriptJson(state)}</script>`
 }
 
+/**
+ * F533: the reserved per-store key of a loader response's snapshot naming the keys the loader WROTE in that request
+ * (only when it wrote any). A navigation sets exactly those on a live store; every reader of a tag strips it.
+ */
+export const WRITTEN = '~w'
+
 export function parseStoreScript(el: { textContent: string | null }): Record<string, unknown> {
   const text = el.textContent ?? '{}'
   try {

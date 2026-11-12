@@ -2,6 +2,7 @@
 // globalThis registry. Resolution (browser registry / server resolver) lives in ./registry.
 import { type Computed, type Signal, isSignal } from '../core-api'
 import { type StoreInstanceRecord, computeSnapshot, resolveRecord, ssrSnapshotOf } from './registry'
+import { WRITTEN } from './serialize'
 
 // Unwrap a Signal/Computed to its value type; `never` if it is neither. Uses `infer` (not
 // `extends Signal<unknown>`): `Signal<T>.set(next: T)` is contravariant in T, so
@@ -34,37 +35,52 @@ export interface StoreHandle<S extends object> {
 
 // Each instance's signals must notify the store's subscriber set on write. After factory(), for every
 // signal property we wrap .set to also bump the version and fire the store-level subscribers (computeds
-// downstream recompute lazily; React re-reads snapshot).
-function bridgeSubscribers(instance: Record<string, unknown>, subs: Set<() => void>, version: { n: number }): void {
+// downstream recompute lazily; React re-reads snapshot). `rec.written` (server records only, F533) collects
+// every key set, before the equal-value early return: a loader writing the value a store already holds
+// still wrote it.
+function bridgeSubscribers(rec: StoreInstanceRecord): void {
+  const instance = rec.instance as Record<string, unknown>
   for (const key of Object.keys(instance)) {
     const sig = instance[key]
     if (!isSignal(sig)) continue
     const origSet = sig.set.bind(sig)
     sig.set = (next) => {
+      rec.written?.add(key)
       // peek, not sig(): 0.1.x read with sig(), which subscribes a running effect to the written signal.
       const before = sig.peek()
       origSet(next as never)
       if (Object.is(before, sig.peek())) return
-      version.n += 1
-      for (const cb of Array.from(subs)) cb()
+      rec.version.n += 1
+      for (const cb of Array.from(rec.subs)) cb()
     }
   }
 }
 
+/** Sets the signals `state` names. A seed, not a write: nothing it sets is marked written (F533). */
 export function hydrateRecord(rec: StoreInstanceRecord, state: Record<string, unknown>): void {
   const inst = rec.instance as Record<string, unknown>
-  for (const key of Object.keys(state)) {
-    const v = inst[key]
-    if (isSignal(v)) v.set(state[key])
+  const written = rec.written
+  rec.written = undefined
+  try {
+    for (const key of Object.keys(state)) {
+      const v = inst[key]
+      if (isSignal(v)) v.set(state[key])
+    }
+  } finally {
+    rec.written = written
   }
 }
 
 export function defineStore<S extends object>(name: string, factory: () => S): StoreHandle<S> & S {
   const create = (server: boolean): StoreInstanceRecord => {
     const instance = factory() as Record<string, unknown>
+    if (WRITTEN in instance) throw new Error(`store '${name}': '${WRITTEN}' is reserved and cannot name a store member`)
     const rec: StoreInstanceRecord = { instance, subs: new Set(), version: { n: 0 }, snap: null }
-    bridgeSubscribers(instance, rec.subs, rec.version)
-    if (server) rec.handle = handle // collectSnapshot() serializes through it
+    if (server) {
+      rec.handle = handle // collectSnapshot() serializes through it
+      rec.written = new Set()
+    }
+    bridgeSubscribers(rec)
     return rec
   }
   const resolve = () => resolveRecord(name, create, hydrateRecord)

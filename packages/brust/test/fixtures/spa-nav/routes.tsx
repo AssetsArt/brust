@@ -1,8 +1,8 @@
 // SPA navigation fixture (F454, design 2026-10-25 §7): two root layouts, nested layouts three deep, a layout whose markup
 // depends on the URL through its loader (A's active link), a layout with a React island (B), two outlets the HTML parser
 // breaks (P: in a `<p>`, T: in a `<table>`), a page with x-for, a React island page, two store pages, two store island
-// pages, a long page with an anchor and the * route. Every layout carries a native counter, so a test can tell a kept
-// layout from a replaced one.
+// pages, the item pages (a loader-written key on a live store, F533), a long page with an anchor and the * route. Every
+// layout carries a native counter, so a test can tell a kept layout from a replaced one.
 import { defineRoutes } from '@brust/core/routes'
 import A from './A'
 import A2 from './A2'
@@ -11,6 +11,7 @@ import Block from './Block'
 import Go from './Go'
 import Home from './Home'
 import IslandPage from './IslandPage'
+import ItemPage from './ItemPage'
 import Leaf from './Leaf'
 import List from './List'
 import Long from './Long'
@@ -24,6 +25,7 @@ import StoreA from './StoreA'
 import StoreB from './StoreB'
 import T from './T'
 import { cart } from './stores/cart'
+import { item } from './stores/item'
 import { late } from './stores/late'
 import { mood } from './stores/mood'
 
@@ -36,7 +38,10 @@ export const routes = defineRoutes([
       { path: '/island', Component: IslandPage },
       { path: '/go', Component: Go },
       { path: '/store-a', Component: StoreA, loader: () => { cart.count.set(5); return {} } },
-      { path: '/store-b', Component: StoreB, loader: () => { cart.count.set(5); late.v.set(7); return {} } },
+      // /store-b writes only `late`: the live cart keeps its client value (F533: a navigation sets only loader-written keys)
+      { path: '/store-b', Component: StoreB, loader: () => { late.v.set(7); return {} } },
+      // F533: each loader writes item.id; a native page and a React island read id and the client-only count
+      ...['1', '2', '3'].map((id) => ({ path: `/i/${id}`, Component: ItemPage, loader: () => { item.id.set(id); return { at: id } } })),
       { path: '/long', Component: Long },
       // an island that reads a store, seeded 1 then 2 (F462)
       { path: '/mood-a', Component: Mood, loader: () => { mood.v.set(1); return {} } },

@@ -1,7 +1,7 @@
 // Browser store registry + the server-resolver hook (M3-F D3/D6/C7).
 // The registry lives on globalThis (C7) so two copies of this module share one instance per name.
-import { isComputed, isSignal, untracked } from '../core-api'
-import { parseStoreScript } from './serialize'
+import { batch, isComputed, isSignal, untracked } from '../core-api'
+import { WRITTEN, parseStoreScript } from './serialize'
 
 // The resolved per-scope store record, shared by the browser registry and the server per-request
 // map. `version` bumps on every signal write so `snapshot()` returns a referentially-stable object
@@ -17,6 +17,8 @@ export interface StoreInstanceRecord {
   /** Browser only: the seed tag `ssr` was read from (`null` when the page carried none). */
   ssrSeed?: Element | null
   handle?: { serialize(): Record<string, unknown> }
+  /** Server only (F533): the keys set since the record was created (a seed's hydrate excluded); a loader response sends them as `~w`. */
+  written?: Set<string>
 }
 
 /** Plain-value view of a record (signals and computeds read, actions dropped), memoized in `rec.snap` per version. */
@@ -45,9 +47,20 @@ export function __setServerResolver(fn: ServerResolver | null): void {
   serverResolver = fn
 }
 
+const WRITES = Symbol.for('brust.storeWrites') // F533: what a navigation calls; nav never imports this module
+
 function browserRegistry(): Registry {
-  const g = globalThis as { [STORES]?: Registry }
+  const g = globalThis as { [STORES]?: Registry; [WRITES]?: typeof applyWrittenKeys }
+  g[WRITES] ??= applyWrittenKeys
   return (g[STORES] ??= Object.create(null) as Registry)
+}
+
+/** A store tag's state, and apart from it the keys its loader wrote (F533 `~w`): every reader strips them. */
+function readTag(el: Element): [Record<string, unknown>, unknown] {
+  const s = parseStoreScript(el)
+  const w = s[WRITTEN]
+  delete s[WRITTEN]
+  return [s, w]
 }
 
 // Attribute comparison, never a built selector: the name is not escaped for CSS.
@@ -77,7 +90,7 @@ export function resolveRecord(
   if (!rec) {
     const made = (rec = reg[name] = create(false))
     const el = seedScript(name)
-    if (el) seed(rec, parseStoreScript(el))
+    if (el) seed(rec, readTag(el)[0])
     rec.ssrSeed = el
     // Identity-stable: the same object stays `rec.snap` until the first write.
     rec.ssr = untracked(() => computeSnapshot(made)) // a first access inside an effect must not subscribe it
@@ -98,8 +111,31 @@ export function ssrSnapshotOf(name: string, rec: StoreInstanceRecord): Record<st
   const el = seedScript(name)
   if (!el || el === rec.ssrSeed) return base
   let snap = tagSnapshots.get(el)
-  if (!snap) tagSnapshots.set(el, (snap = { ...base, ...parseStoreScript(el) }))
+  if (!snap) tagSnapshots.set(el, (snap = { ...base, ...readTag(el)[0] }))
   return snap
+}
+
+/**
+ * F533: a navigation's store tags, applied in the swap. For each live store, the keys its tag lists under `~w` (what
+ * the destination's loader wrote) are set; every other key keeps its client value. A store not live yet is untouched
+ * (its first access seeds from the tag, as on a full load). The written values also become the store's `ssr` truth.
+ */
+export function applyWrittenKeys(tags: readonly Element[]): void {
+  const reg = browserRegistry()
+  batch(() => {
+    for (const el of tags) {
+      const rec = reg[el.getAttribute('data-brust-store')!]
+      const [state, w] = readTag(el)
+      if (!rec || !Array.isArray(w)) continue
+      const inst = rec.instance as Record<string, unknown>
+      const fresh: Record<string, unknown> = {}
+      for (const k of w) {
+        const v = inst[k]
+        if (k in state && isSignal(v)) v.set((fresh[k] = state[k]))
+      }
+      if (rec.ssr) rec.ssr = { ...rec.ssr, ...fresh }
+    }
+  })
 }
 
 /** Apply a navigation-payload snapshot to live client stores. Reserved for the SPA wave (D9): no callers yet. */

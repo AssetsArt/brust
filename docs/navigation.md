@@ -6,7 +6,7 @@ You write nothing for this. Every full document carries a small `nav` script (`<
 
 ## 1. The one rule
 
-> A navigation shows exactly what a full load of that URL would show. Only JavaScript state that lives outside the page survives: live stores, module-level state, and elements you marked `data-brust-persist`.
+> A navigation shows exactly what a full load of that URL would show. Only JavaScript state that lives outside the page survives: live stores (except the keys the new page's loaders write), module-level state, and elements you marked `data-brust-persist`.
 
 When you are unsure what a navigation does, ask what a full load would do.
 
@@ -197,7 +197,14 @@ It works in a native component and in a React island, and the first paint matche
 
 ## 10. Stores across a navigation
 
-A store that is already live keeps its client value across a navigation. The new page's store snapshot only seeds a store the tab has not used yet. This is the one deliberate exception to the rule above, and it matches React apps, where client store state survives a route change. See [Store](./store.md).
+A store that is already live keeps its client state across a navigation, except for the keys the new page's loaders wrote for that request: those take the server's value, as the page's props do. So a page whose loader sets `item.id` shows the new id in every component and island, while a `count` that only the client writes keeps the tab's value.
+
+- A key counts as written when a loader of the new page (its layouts' loaders included) calls `.set()` on it, even with the value the store already holds. `store.hydrate()` is a seed, not a write. A loader that writes nothing leaves the live store as it is.
+- A store the tab has not used yet seeds from the new page's snapshot, as on a full load.
+- Order: (1) the old page's effect cleanups run and its islands unmount, (2) the written keys are set, (3) the new page mounts and its islands hydrate, (4) the new page's effects run. A cleanup that reads the store still sees the old page's values, an effect of the old page never sees the new ones, and the new page never runs an effect with the old ones. Components that stay (a kept layout, a `data-brust-persist` element) update like on any store write.
+- A page from the cache (a prefetch, back and forward) applies the values written when that document was fetched, the same as its props.
+
+Keys the loader did not write are the one deliberate exception to the rule above, and it matches React apps, where client store state survives a route change. See [Store](./store.md).
 
 ## 11. React islands
 

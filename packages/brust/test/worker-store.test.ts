@@ -210,7 +210,7 @@ test('defineStore in a loader -> store snapshot', async () => {
     }),
     jobs: {},
   })
-  expect(await h.loader(ctx())).toEqual({ ok: true, data: {}, store: { cart_loader: { count: 3 } } })
+  expect(await h.loader(ctx())).toEqual({ ok: true, data: {}, store: { cart_loader: { count: 3, '~w': ['count'] } } })
 })
 
 test('a manifest-touched real store contributes its defaults', async () => {

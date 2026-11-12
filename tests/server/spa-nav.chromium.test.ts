@@ -273,6 +273,34 @@ test('a live store keeps its client value; a store first used on B is seeded fro
   await close()
 })
 
+test('F533: the keys the new page\'s loader wrote replace a live store\'s, the rest keep their client value', async () => {
+  const { page, errors, close } = await open('/i/1')
+  const shown = () => page.evaluate(() => [document.querySelector('#item-id')!.textContent, document.querySelector('#item-bump')!.textContent, document.querySelector('#item-island')!.textContent])
+  const ids = () => page.evaluate(() => (window as unknown as { __itemIds: string[] }).__itemIds)
+  expect(await shown()).toEqual(['1', '0', '1:0'])
+  await clickUntil(page, '#item-bump', '1') // a client write the next loaders never make
+  expect(await ids()).toEqual(['1:1'])
+  // a link click: the native page and the island show the new id and the kept count. Order (Amendment 1): the old
+  // page's island unmount effect and effect cleanup run and read the store's old id, then the loader's id is set, then
+  // the new page mounts and its effect runs with id 2 only
+  await nav(page, () => page.click('#to-i2'))
+  expect(await shown()).toEqual(['2', '1', '2:1'])
+  expect(await ids()).toEqual(['1:1', 'unmount island:1', 'cleanup 1:1', '2:2'])
+  // back: the cached /i/1 document re-applies its own write
+  await nav(page, () => page.goBack())
+  expect(await shown()).toEqual(['1', '1', '1:1'])
+  // prefetched on intent, then clicked: the prefetched document's write
+  const fetched = page.waitForResponse((r) => r.url().endsWith('/i/3'))
+  await page.hover('#to-i3')
+  await fetched
+  await nav(page, () => page.click('#to-i3'))
+  expect(await shown()).toEqual(['3', '1', '3:1'])
+  expect(await ids()).toEqual(['1:1', 'unmount island:1', 'cleanup 1:1', '2:2', 'unmount island:2', 'cleanup 2:2', '1:1', 'unmount island:1', 'cleanup 1:1', '3:3'])
+  expect(await page.evaluate(() => window.__mark)).toBe(1) // never a full load
+  expect(errors).toEqual([]) // no React #418 / hydration warning
+  await close()
+})
+
 test('F462: an old-page island hydrating while the next page\'s modules load renders its own page\'s seed (no #418)', async () => {
   const ctx = await browser.newContext()
   const page = await ctx.newPage()
