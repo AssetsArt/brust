@@ -214,6 +214,64 @@ pub fn compose(cfg: &CspConfig, hashes: &[String], connect_origin: Option<&str>)
     d.join("; ")
 }
 
+/// F541: the header (name, value) a server with this `[csp]`, base path and actions sends, composed exactly as
+/// [`Core::new`](crate::Core::new) does; for a build that has no server to ask (the Cloudflare assets' `_headers`).
+pub fn header_for(
+    cfg: &CspConfig,
+    base: &str,
+    actions: Option<&crate::config::ActionsConfig>,
+    client: Option<&crate::config::ActionsClient>,
+) -> Result<(String, String), String> {
+    cfg.validate()?;
+    let tags = crate::core::page_globals(base, actions, client);
+    let r = Resolved::new(
+        cfg,
+        tags.as_deref(),
+        client.and_then(|c| c.base_url.as_deref()),
+    )?;
+    let value = r.value.to_str().map_err(|e| e.to_string())?.to_string();
+    Ok((r.name.as_str().to_string(), value))
+}
+
+/// F541: how a static page carries the policy a server sends as a header. A `<meta http-equiv>` policy cannot hold
+/// `frame-ancestors`, `report-uri`, `report-to` or `sandbox` (browsers ignore them there), and there is no report-only
+/// meta: those go to one header rule of the static host instead.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StaticPolicy {
+    /// The `content` of `<meta http-equiv="Content-Security-Policy">`; `None` in report-only mode.
+    pub meta: Option<String>,
+    /// The header the host still sends for every path: (name, value).
+    pub header: Option<(String, String)>,
+}
+
+/// Directives a meta policy ignores.
+const HEADER_ONLY: [&str; 4] = ["frame-ancestors", "report-uri", "report-to", "sandbox"];
+
+/// Splits the header a server sends (`name`, `value`, as [`Resolved`] composed them) for a static page.
+pub fn split_for_meta(name: &str, value: &str) -> StaticPolicy {
+    if name.eq_ignore_ascii_case(http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY.as_str()) {
+        return StaticPolicy {
+            meta: None,
+            header: Some((
+                "Content-Security-Policy-Report-Only".into(),
+                value.to_string(),
+            )),
+        };
+    }
+    let (header, meta): (Vec<&str>, Vec<&str>) = value
+        .split(';')
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .partition(|d| {
+            let n = d.split_ascii_whitespace().next().unwrap_or("");
+            HEADER_ONLY.iter().any(|h| n.eq_ignore_ascii_case(h))
+        });
+    StaticPolicy {
+        meta: (!meta.is_empty()).then(|| meta.join("; ")),
+        header: (!header.is_empty()).then(|| ("Content-Security-Policy".into(), header.join("; "))),
+    }
+}
+
 /// The prebuilt header: its name for the mode and its value.
 #[derive(Clone, Debug)]
 pub(crate) struct Resolved {
@@ -569,6 +627,111 @@ mod tests {
         assert_eq!(
             own.get(http::header::CONTENT_SECURITY_POLICY).unwrap(),
             "default-src 'none'"
+        );
+    }
+
+    #[test]
+    fn a_static_page_gets_the_meta_able_directives_and_the_host_the_rest() {
+        let c = CspConfig {
+            frame_ancestors: vec!["'none'".into()],
+            report_uri: Some("/r".into()),
+            ..cfg()
+        };
+        let r = Resolved::new(&c, Some("<script>a=1</script>"), None).unwrap();
+        let s = split_for_meta(r.name.as_str(), r.value());
+        let meta = s.meta.unwrap();
+        assert!(
+            meta.starts_with("default-src 'self'; script-src 'self' 'sha256-"),
+            "{meta}"
+        );
+        assert!(
+            !meta.contains("frame-ancestors") && !meta.contains("report-uri"),
+            "{meta}"
+        );
+        // every other directive is kept, in order
+        let all: Vec<&str> = r.value().split("; ").collect();
+        let kept: Vec<&str> = meta.split("; ").collect();
+        assert_eq!(
+            kept,
+            all.iter()
+                .copied()
+                .filter(|d| !d.starts_with("frame-ancestors") && !d.starts_with("report-uri"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            s.header,
+            Some((
+                "Content-Security-Policy".into(),
+                "frame-ancestors 'none'; report-uri /r".into()
+            ))
+        );
+        // the base policy needs no header rule
+        let base = Resolved::new(&cfg(), None, None).unwrap();
+        let s = split_for_meta(base.name.as_str(), base.value());
+        assert_eq!(s.meta.as_deref(), Some(base.value()));
+        assert_eq!(s.header, None);
+    }
+
+    #[test]
+    fn header_for_is_what_a_server_with_the_same_config_sends() {
+        let actions = crate::config::ActionsConfig {
+            prefix: "/site/rpc".into(),
+            ..Default::default()
+        };
+        let (name, value) = header_for(&cfg(), "/site", Some(&actions), None).unwrap();
+        assert_eq!(name, "content-security-policy");
+        let tags = crate::core::page_globals("/site", Some(&actions), None).unwrap();
+        assert_eq!(tags.matches("<script>").count(), 2, "{tags}");
+        let r = Resolved::new(&cfg(), Some(&tags), None).unwrap();
+        assert_eq!(value, r.value());
+        for h in script_hashes(&tags) {
+            assert!(value.contains(&h), "{h} in {value}");
+        }
+        assert!(
+            header_for(
+                &CspConfig {
+                    script_src: vec!["*".into()],
+                    ..cfg()
+                },
+                "",
+                None,
+                None
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn report_only_is_a_header_rule_and_no_meta() {
+        let r = Resolved::new(
+            &CspConfig {
+                mode: CspMode::ReportOnly,
+                ..cfg()
+            },
+            None,
+            None,
+        )
+        .unwrap();
+        let s = split_for_meta(r.name.as_str(), r.value());
+        assert_eq!(s.meta, None);
+        assert_eq!(
+            s.header,
+            Some((
+                "Content-Security-Policy-Report-Only".into(),
+                r.value().to_string()
+            ))
+        );
+        // header names are case-insensitive
+        assert_eq!(
+            split_for_meta("content-security-policy-report-only", "x").meta,
+            None
+        );
+        assert_eq!(
+            split_for_meta("CONTENT-SECURITY-POLICY", "a b; sandbox")
+                .header
+                .unwrap()
+                .1,
+            "sandbox"
         );
     }
 

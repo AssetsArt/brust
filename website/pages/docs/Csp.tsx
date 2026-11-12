@@ -7,7 +7,6 @@
 // This page is static.
 import CodeBlock from '../../components/CodeBlock'
 import Lead from '../../components/docs/Lead'
-import Note from '../../components/docs/Note'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 
@@ -51,6 +50,7 @@ export async function cspLoader(): Promise<CspData> {
       { id: 'report-only', title: 'Report-only' },
       { id: 'your-own', title: 'Your own header' },
       { id: 'where', title: 'Where it applies' },
+      { id: 'static', title: 'Static sites' },
     ],
     blocks: {
       on: codeBlock({ lang: 'text', file: 'brust.toml', code: ON }),
@@ -163,12 +163,36 @@ export default function Csp({ blocks }: CspData) {
           Every HTML response of <code>brust start</code>, and the pages a Cloudflare Worker renders (<code>--target cloudflare</code>). Assets, actions and other non-HTML responses get no header.
         </li>
         <li>
+          On <code>--target cloudflare</code>, HTML files you put in <code>public/</code> are served by the platform, not the Worker. When there are any, the build adds the same policy to the <code>/*</code> rule of{' '}
+          <code>dist/cf/assets/_headers</code>.
+        </li>
+        <li>
+          <code>--target static</code>: see <a href="#static">Static sites</a>.
+        </li>
+        <li>
           <code>brust dev</code> sends none: its overlay and devtools add <code>&lt;style&gt;</code> elements a strict policy would block. Check your policy with <code>brust start</code>.
         </li>
       </ul>
-      <Note>
-        <code>--target static</code> pages and the static assets of the Cloudflare target are served by the platform, not by brust, so they get no header from <code>[csp]</code> yet. Set the header in your host&rsquo;s configuration for those.
-      </Note>
+
+      <h2 id="static">Static sites</h2>
+      <p>
+        A <code>brust build --target static</code> page has no server to send a header, so the policy goes into the page: every page, the 404 page included, opens its <code>&lt;head&gt;</code> with{' '}
+        <code>&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;…&quot;&gt;</code>, the same policy <code>brust start</code> sends, with the same hashes. It is the first element of the head (right after <code>&lt;meta charset&gt;</code> when the head starts with one,
+        which must stay within the first 1024 bytes) because a policy in a meta tag applies only to what comes after it. Every page carries the same policy, so navigating between pages without a reload stays inside it.
+      </p>
+      <ul>
+        <li>
+          Browsers ignore <code>frame-ancestors</code>, <code>report-uri</code>, <code>report-to</code> and <code>sandbox</code> in a meta tag. When your policy has them, the build puts them in the <code>/*</code> rule of{' '}
+          <code>dist/static/_headers</code> as a <code>Content-Security-Policy</code> header, which Cloudflare Pages and Workers Static Assets send for every path. On another host, send that header from its own configuration.
+        </li>
+        <li>
+          A report sent through that header covers only the directives in it. Violations of the meta policy are not reported anywhere: a meta tag cannot name a report URI.
+        </li>
+        <li>
+          <code>mode = &quot;report-only&quot;</code> cannot be a meta tag. In that mode the pages get no meta, and the whole policy goes into the <code>/*</code> rule as <code>Content-Security-Policy-Report-Only</code>.
+        </li>
+        <li>A page without a <code>&lt;head&gt;</code> stops the build: it would have no policy.</li>
+      </ul>
     </>
   )
 }

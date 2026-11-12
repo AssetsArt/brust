@@ -171,6 +171,35 @@ const configOf = (out: string) => {
   return JSON.parse(/CONFIG = '(.*)'/.exec(js)![1]!) as Record<string, unknown>
 }
 
+test('F541: with [csp] and an HTML file in public/, assets/_headers carries the policy the Worker sends (composed by the core)', () => {
+  const dir = join(FIX, 'cf-app-csp')
+  cleanup.push(dir)
+  cpSync(APP, dir, { recursive: true })
+  // [actions] base_url too: the Worker gets no actions client config (brust-wasm config.rs), so its header has no connect-src
+  const toml = readFileSync(join(dir, 'brust.toml'), 'utf8').replace('[actions]\n', '[actions]\nbase_url = "https://api.example"\n')
+  expect(toml).toContain('base_url = "https://api.example"')
+  writeFileSync(join(dir, 'brust.toml'), `${toml}\n[csp]\nenabled = true\nframe_ancestors = ["'none'"]\n`)
+  const out = join(outDir(), 'dist')
+  const without = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
+  expect(without.code).toBe(0)
+  // no HTML in public/: the Worker stamps every page, nothing for the platform to add
+  expect(readFileSync(join(out, 'cf', 'assets', '_headers'), 'utf8')).not.toContain('Content-Security-Policy')
+  writeFileSync(join(dir, 'public', 'plain.html'), '<!doctype html><html><head><title>p</title></head><body>p</body></html>')
+  const out2 = join(outDir(), 'dist')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out2])
+  expect(r.code).toBe(0)
+  const headers = readFileSync(join(out2, 'cf', 'assets', '_headers'), 'utf8')
+  const { cspHeader } = require('../src/native') as typeof import('../src/native')
+  const [, value] = cspHeader({ mode: 'enforce', frameAncestors: ["'none'"] }, '', '/api')
+  expect(headers.startsWith(`/*\n  Content-Security-Policy: ${value}\n`)).toBe(true)
+  // a header, not a meta: frame-ancestors stays in it
+  expect(value).toContain("frame-ancestors 'none'")
+  // == the header the Worker composes for this config: no actions client there, so no connect-src for the base_url
+  expect(value).not.toContain('connect-src')
+  expect(value).not.toContain('api.example')
+  expect(headers.match(/Content-Security-Policy/g)?.length).toBe(1)
+})
+
 test('[cors] reaches CONFIG, even with an unrelated bad env var on the build host (F1)', () => {
   const dir = appWithToml('[cors]\norigins = ["https://ok.example"]\ncredentials = true')
   const out = join(outDir(), 'dist')

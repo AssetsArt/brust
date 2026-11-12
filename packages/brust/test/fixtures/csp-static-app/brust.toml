@@ -1,0 +1,7 @@
+# F541 fixture: a static build under a base path with [csp] on. test/static-csp.test.ts and
+# tests/server/csp-static.chromium.test.ts build copies of it with other [csp] tables.
+[server]
+base_path = "/site"
+
+[csp]
+enabled = true

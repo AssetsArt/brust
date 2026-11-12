@@ -644,6 +644,44 @@ pub fn cache_expr_reads(src: String) -> napi::Result<Vec<String>> {
         .map_err(napi::Error::from_reason)
 }
 
+/// F541: the static-page form of the policy header a rendered page carries (`name`, `value`): the meta `content`, and
+/// the header the static host still sends (directives a meta cannot hold; report-only). Needs no running server.
+#[napi(object)]
+pub struct NapiStaticCsp {
+    pub meta: Option<String>,
+    pub header_name: Option<String>,
+    pub header_value: Option<String>,
+}
+
+#[napi]
+pub fn csp_for_static(name: String, value: String) -> NapiStaticCsp {
+    let s = brust_core::csp::split_for_meta(&name, &value);
+    let (header_name, header_value) = s.header.unzip();
+    NapiStaticCsp {
+        meta: s.meta,
+        header_name,
+        header_value,
+    }
+}
+
+/// F541: the policy header (name, value) a server with this `[csp]`, base path and actions prefix sends (the Worker of
+/// `--target cloudflare`, which has no actions client config), composed by the core. Throws `csp: …` on a bad table.
+#[napi]
+pub fn csp_header(
+    csp: NapiCspOptions,
+    base_path: String,
+    actions_prefix: Option<String>,
+) -> napi::Result<Vec<String>> {
+    let cfg = csp_config(csp).map_err(napi::Error::from_reason)?;
+    let actions = actions_prefix.map(|prefix| ActionsConfig {
+        prefix,
+        ..ActionsConfig::default()
+    });
+    let (name, value) = brust_core::csp::header_for(&cfg, &base_path, actions.as_ref(), None)
+        .map_err(|e| napi::Error::from_reason(format!("csp: {e}")))?;
+    Ok(vec![name, value])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

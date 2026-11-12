@@ -8,7 +8,7 @@ import { dirname, join, relative } from 'node:path'
 import { relPosix } from './posix'
 import type { BunPlugin } from 'bun'
 import { BrustConfigError, type CorsConfig, type CspConfig, loadCors, loadCsp } from '../config'
-import { layoutAssets } from './cf-assets'
+import { layoutAssets, withCspHeader } from './cf-assets'
 import { serverOnlyEmptyPlugin } from './server-only'
 import { type CfConfigJson, cfEntrySource } from './cf-entry'
 import { type CoreCf, resolveCoreCf } from './cf-core'
@@ -349,7 +349,17 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   writeFileSync(appFile, await js[0]!.text())
 
   // An actions-only Worker has no pages and so no Static Assets (no `assets` binding in its wrangler.jsonc either).
-  if (!ctx.actionsOnly) warnings.push(...layoutAssets(out, cfDir, p.coreVersion, ctx.manifest.base_path ?? '').warnings)
+  if (!ctx.actionsOnly) {
+    const laid = layoutAssets(out, cfDir, p.coreVersion, ctx.manifest.base_path ?? '')
+    warnings.push(...laid.warnings)
+    // F541: the Worker stamps its pages; an HTML file in public/ is served by the platform, so it gets the same policy
+    // (as `brust start` stamps it) from the /* rule, composed by the core exactly as the Worker composes it.
+    if (p.csp && laid.files.some((f) => f.endsWith('.html'))) {
+      const [name, value] = (await import('../native')).cspHeader(p.csp, ctx.manifest.base_path ?? '', a?.prefix ?? null)
+      const file = join(cfDir, 'assets', '_headers')
+      writeFileSync(file, withCspHeader(readFileSync(file, 'utf8'), [name === 'content-security-policy-report-only' ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy', value]))
+    }
+  }
   const compatibilityDate = p.cfg.compatibilityDate ?? p.core.meta.compatibilityDate
   if (compatibilityDate < CF_MIN_COMPAT_DATE) throw new BuildError('config', `compatibility_date ${compatibilityDate} is older than ${CF_MIN_COMPAT_DATE}`)
   if (doClass) {
