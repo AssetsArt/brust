@@ -33,7 +33,7 @@ pub fn is_radix_use_id(path: &str, export: &str, opts: &AnalyzeOptions) -> bool 
 
 /// [`is_radix_use_id`] over the module's source.
 pub fn is_radix_use_id_source(path: &str, bytes: Vec<u8>, export: &str) -> bool {
-    let Ok(parsed) = crate::parse::parse_tsx(path, bytes) else {
+    let Ok(parsed) = crate::parse::parse_cached(path, bytes) else {
         return false;
     };
     parsed.with_ast(|ast| {

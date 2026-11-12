@@ -274,7 +274,7 @@ pub fn imported_const(
     }
     let path = resolve(from, source, opts)?;
     let bytes = std::fs::read(opts.root.join(&path)).ok()?;
-    let parsed = crate::parse::parse_tsx(&path, bytes).ok()?;
+    let parsed = crate::parse::parse_cached(&path, bytes).ok()?;
     parsed.with_ast(|ast| {
         let dummy = js_ast::G::Fn::default();
         let mut names = NameTable::new(ast, &dummy);
@@ -301,7 +301,7 @@ pub fn imported_literal(
 ) -> Option<(String, RawExpr)> {
     let path = resolve(from, source, opts)?;
     let bytes = std::fs::read(opts.root.join(&path)).ok()?;
-    let parsed = crate::parse::parse_tsx(&path, bytes).ok()?;
+    let parsed = crate::parse::parse_cached(&path, bytes).ok()?;
     parsed.with_ast(|ast| {
         let dummy = js_ast::G::Fn::default();
         let mut names = NameTable::new(ast, &dummy);
@@ -357,7 +357,7 @@ pub fn imported_call_const(
     let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
         return not("cannot be read");
     };
-    let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+    let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
         return not("cannot be parsed");
     };
     parsed.with_ast(|ast| {

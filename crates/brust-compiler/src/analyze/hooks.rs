@@ -2771,7 +2771,7 @@ fn adopt_react_alias(names: &mut NameTable<'_>, m: Module<'_, '_>, value: &js_as
     let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
         return;
     };
-    let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+    let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
         return;
     };
     let hook = parsed.with_ast(|ast| NameTable::for_hook(ast).exported_react_hook(ast, &imported));
@@ -2839,7 +2839,7 @@ fn inline_hook(
             return true;
         }
     };
-    let parsed = match crate::parse::parse_tsx(&path, bytes) {
+    let parsed = match crate::parse::parse_cached(&path, bytes) {
         Ok(p) => p,
         Err(e) => {
             out.fallback(
@@ -2930,7 +2930,7 @@ fn follow_reexports(
         let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
             break;
         };
-        let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+        let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
             break;
         };
         let next = parsed.with_ast(|ast| {
@@ -4316,7 +4316,7 @@ fn is_scope_hook_call(m: Module<'_, '_>, names: &NameTable<'_>, call: &js_ast::E
             let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
                 return false;
             };
-            let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+            let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
                 return false;
             };
             parsed.with_ast(|ast| {

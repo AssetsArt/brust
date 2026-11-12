@@ -7,4 +7,5 @@ pub mod ir;
 pub mod lower;
 pub mod parse;
 pub mod pipeline;
+pub mod stats;
 pub mod summary;

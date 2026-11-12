@@ -724,14 +724,30 @@ pub fn module_may_hold_element(
                     || opts.root.join(format!("{joined}/index{e}")).is_file()
             });
     };
-    let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+    // F535: the answer for a module depends only on the module and the depth it is read at; a run asks it again for
+    // every component that imports it.
+    if let Some(v) = crate::parse::may_hold_memo(&path, depth) {
+        return v;
+    }
+    let v = module_holds_element(&path, opts, depth);
+    crate::parse::may_hold_remember(&path, depth, v);
+    v
+}
+
+/// [`module_may_hold_element`] for the resolved app module `path`.
+fn module_holds_element(
+    path: &str,
+    opts: &crate::analyze::component::AnalyzeOptions,
+    depth: u8,
+) -> bool {
+    let Ok(bytes) = std::fs::read(opts.root.join(path)) else {
         return true;
     };
     let text = String::from_utf8_lossy(&bytes);
     if text.contains("createElement") || text.contains("cloneElement") {
         return true;
     }
-    let Ok(parsed) = crate::parse::parse_tsx(&path, bytes.clone()) else {
+    let Ok(parsed) = crate::parse::parse_cached(path, bytes.clone()) else {
         return true;
     };
     // JSX lowers to `jsx(…)` calls marked as elements; a hand-written runtime call imports `react/jsx-runtime`.
@@ -750,7 +766,7 @@ pub fn module_may_hold_element(
                 || p.starts_with("react/")
                 || p.starts_with("react-dom")
                 || p.starts_with("preact")
-                || module_may_hold_element(&path, p, opts, depth + 1)
+                || module_may_hold_element(path, p, opts, depth + 1)
         })
 }
 
@@ -765,7 +781,7 @@ fn follow_reexports(
     depth: u8,
 ) -> Option<(String, String)> {
     let bytes = std::fs::read(opts.root.join(path)).ok()?;
-    let parsed = crate::parse::parse_tsx(path, bytes).ok()?;
+    let parsed = crate::parse::parse_cached(path, bytes).ok()?;
     // Ok(None): declared here; Ok(Some(spec, original)): a named re-export; Err: anything else.
     let step = parsed.with_ast(|ast| {
         let dummy = js_ast::G::Fn::default();
@@ -857,7 +873,7 @@ pub fn imported_plain_fn(
     let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
         return false;
     };
-    let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+    let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
         return false;
     };
     parsed.with_ast(|ast| {

@@ -29,12 +29,20 @@ pub struct AliasImport {
 
 #[derive(Default)]
 struct Active {
+    /// F535: distinct per scope entered on this thread, so a parse cache never mixes two alias configurations.
+    id: u64,
     root: PathBuf,
     aliases: Vec<PathAlias>,
 }
 
 thread_local! {
     static ACTIVE: RefCell<Option<Rc<Active>>> = const { RefCell::new(None) };
+    static NEXT_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+}
+
+/// The alias scope parses on this thread run under now: 0 when none is in force (F535).
+pub fn scope_id() -> u64 {
+    ACTIVE.with(|a| a.borrow().as_ref().map_or(0, |a| a.id))
 }
 
 /// Aliases in force for the parses on this thread until dropped (the outermost analysis entry sets it).
@@ -44,6 +52,11 @@ impl Scope {
     pub fn enter(root: &Path, aliases: &[PathAlias]) -> Scope {
         let next = (!aliases.is_empty()).then(|| {
             Rc::new(Active {
+                id: NEXT_ID.with(|n| {
+                    let id = n.get();
+                    n.set(id + 1);
+                    id
+                }),
                 root: root.to_path_buf(),
                 aliases: aliases.to_vec(),
             })

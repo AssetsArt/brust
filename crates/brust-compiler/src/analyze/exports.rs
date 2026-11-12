@@ -164,7 +164,7 @@ impl Module<'_> {
 /// (`export { Root }` after `const Root = Dialog.Root`), if it is one.
 pub fn package_member(path: &str, export: &Export, opts: &AnalyzeOptions) -> Option<MemberRef> {
     let bytes = std::fs::read(opts.root.join(path)).ok()?;
-    let parsed = crate::parse::parse_tsx(path, bytes).ok()?;
+    let parsed = crate::parse::parse_cached(path, bytes).ok()?;
     let name = match export {
         Export::Default => "default",
         Export::Named(n) => n,
@@ -193,7 +193,7 @@ fn follow(
         return None;
     }
     let bytes = std::fs::read(opts.root.join(path)).ok()?;
-    let parsed = crate::parse::parse_tsx(path, bytes).ok()?;
+    let parsed = crate::parse::parse_cached(path, bytes).ok()?;
     let name = match export {
         Export::Default => "default",
         Export::Named(n) => n,
@@ -244,7 +244,7 @@ pub fn declared_member(
             return Some(path);
         };
         let bytes = std::fs::read(opts.root.join(&path.0)).ok()?;
-        let parsed = crate::parse::parse_tsx(&path.0, bytes).ok()?;
+        let parsed = crate::parse::parse_cached(&path.0, bytes).ok()?;
         let name = match &path.1 {
             Export::Default => "default".to_string(),
             Export::Named(n) => n.clone(),

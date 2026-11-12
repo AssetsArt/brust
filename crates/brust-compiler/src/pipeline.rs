@@ -23,6 +23,7 @@ pub fn compile_tree(
     opts: &AnalyzeOptions,
     runtime_import: &str,
 ) -> Result<Vec<Lowered>, Diagnostic> {
+    crate::stats::reset();
     let modules = RefCell::new(ModuleCache::default());
     let root_text = source.clone();
     let root = analyze_with(path, source, opts, &modules)?;

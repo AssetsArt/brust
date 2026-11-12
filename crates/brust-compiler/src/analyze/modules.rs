@@ -162,7 +162,7 @@ pub fn compile_specialised(
     let source =
         std::fs::read(opts.root.join(path)).map_err(|e| format!("cannot read {path}: {e}"))?;
     let parsed =
-        crate::parse::parse_tsx(path, source).map_err(|e| format!("{path}: {}", e.message))?;
+        crate::parse::parse_cached(path, source).map_err(|e| format!("{path}: {}", e.message))?;
     let mut ir = match export {
         Export::Default => analyze_component_in(&parsed, Some(opts)).map_err(|d| d.message)?,
         Export::Named(name) => {
@@ -215,7 +215,7 @@ fn compile_uncached(
             )
         })?,
     };
-    let parsed = crate::parse::parse_tsx(path, source).map_err(|e| {
+    let parsed = crate::parse::parse_cached(path, source).map_err(|e| {
         Diagnostic::error(
             "parse",
             format!("{path}: {} at {}:{}", e.message, e.line, e.column),
