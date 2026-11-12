@@ -82,18 +82,22 @@ test("'unsafe-inline' / 'unsafe-eval' in script_src need script_src_unsafe = tru
   expect((await loadConfig(tmpApp(`[csp]\nenabled = true\nstyle_src = ["'unsafe-inline'"]\n`))).csp?.styleSrc).toEqual(["'unsafe-inline'"])
 })
 
+// script-src sources that void the hashes / that do not: the same table as crates/brust-core/src/csp.rs (VOIDS / KEEPS).
+const VOIDS = ["'unsafe-inline'", "'unsafe-eval'", "'unsafe-hashes'", 'data:', 'blob:', 'filesystem:', ' https: ', 'HTTP:', 'ws:', '*', 'https://*', 'HTTP://*', 'http://*', '*:443', '*:*', 'https://*:*', 'https://*/path', '*/x', 'wss://*:8443/a']
+const KEEPS = ['https://cdn.example.com', '*.example.com', 'https://*.example.com', 'https://*.example.com:443', 'https://cdn.example.com/*', 'cdn.example.com:*', "'self'", "'wasm-unsafe-eval'", "'sha256-AbC='", "'nonce-x'"]
+
 test('script_src refuses every source that voids the hashes; hosts and the other directives are free', async () => {
-  for (const k of ["'unsafe-hashes'", 'data:', 'blob:', 'filesystem:', '*', 'https:', 'HTTP:']) {
-    expect(voidsHashes(k)).toBe(true)
+  for (const k of VOIDS) {
+    expect([k, voidsHashes(k)]).toEqual([k, true])
     expect(await err(`[csp]\nenabled = true\nscript_src = ["${k}"]\n`)).toContain('script_src_unsafe = true')
     expect((await loadConfig(tmpApp(`[csp]\nenabled = true\nscript_src = ["${k}"]\nscript_src_unsafe = true\n`))).csp?.scriptSrc).toEqual([k])
   }
-  for (const k of ['https://cdn.example.com', '*.example.com', 'https://*.example.com', "'self'", "'wasm-unsafe-eval'", "'sha256-AbC='", "'nonce-x'"]) {
-    expect(voidsHashes(k)).toBe(false)
+  for (const k of KEEPS) {
+    expect([k, voidsHashes(k)]).toEqual([k, false])
     expect((await loadConfig(tmpApp(`[csp]\nenabled = true\nscript_src = ["${k}"]\n`))).csp?.scriptSrc).toEqual([k])
   }
-  const free = await loadConfig(tmpApp(`[csp]\nenabled = true\nimg_src = ["data:", "blob:", "https:"]\nstyle_src = ["*"]\n`))
-  expect(free.csp).toEqual({ mode: 'enforce', imgSrc: ['data:', 'blob:', 'https:'], styleSrc: ['*'] })
+  const free = await loadConfig(tmpApp(`[csp]\nenabled = true\nimg_src = ["data:", "blob:", "https:", "https://*"]\nstyle_src = ["*"]\n`))
+  expect(free.csp).toEqual({ mode: 'enforce', imgSrc: ['data:', 'blob:', 'https:', 'https://*'], styleSrc: ['*'] })
 })
 
 test("'strict-dynamic' in script_src is refused, even with script_src_unsafe = true", async () => {

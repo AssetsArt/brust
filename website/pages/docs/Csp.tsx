@@ -137,7 +137,7 @@ export default function Csp({ blocks }: CspData) {
       </p>
       <p>
         <code>script_src</code> takes hosts (<code>https://cdn.example.com</code>, <code>*.example.com</code>), and refuses the sources that would let any script run, unless you also set <code>script_src_unsafe = true</code>:{' '}
-        <code>&apos;unsafe-inline&apos;</code> (next to brust&rsquo;s hashes browsers ignore it anyway), <code>&apos;unsafe-eval&apos;</code>, <code>&apos;unsafe-hashes&apos;</code>, <code>*</code>, and a bare scheme such as <code>https:</code>,{' '}
+        <code>&apos;unsafe-inline&apos;</code> (next to brust&rsquo;s hashes browsers ignore it anyway), <code>&apos;unsafe-eval&apos;</code>, <code>&apos;unsafe-hashes&apos;</code>, a host of just <code>*</code> (<code>*</code>, <code>https://*</code>, <code>*:443</code>), and a bare scheme such as <code>https:</code>,{' '}
         <code>data:</code>, <code>blob:</code> or <code>filesystem:</code>. <code>&apos;wasm-unsafe-eval&apos;</code> is allowed. The other lists take all of these freely.
       </p>
       <p>

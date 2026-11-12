@@ -479,10 +479,16 @@ function checkCsp(c: unknown, where: string, file: string | null, snake: boolean
 }
 
 /** A `script-src` source that lets script in past the hashes (Rust `csp::voids_hashes`): the unsafe keywords (not
- * `'wasm-unsafe-eval'`), `*`, and a bare scheme (`https:`, `data:`, `blob:`, `filesystem:`, …). A host is fine. */
+ * `'wasm-unsafe-eval'`), a bare scheme (`https:`, `data:`, `blob:`, `filesystem:`, …), and any source whose host part is
+ * exactly `*` (a lone `*`, `https://` plus `*`, `*:443`, the same with a path): a lone `*` host matches every host. A host is fine. */
 export function voidsHashes(s: string): boolean {
   const k = s.trim().toLowerCase()
-  return ["'unsafe-inline'", "'unsafe-eval'", "'unsafe-hashes'", '*'].includes(k) || /^[a-z][a-z0-9+.-]*:$/.test(k)
+  if (["'unsafe-inline'", "'unsafe-eval'", "'unsafe-hashes'"].includes(k)) return true
+  const scheme = /^[a-z][a-z0-9+.-]*$/
+  if (k.endsWith(':') && scheme.test(k.slice(0, -1))) return true
+  const at = k.indexOf('://')
+  const rest = at >= 0 && scheme.test(k.slice(0, at)) ? k.slice(at + 3) : k
+  return rest.split(/[:/]/)[0] === '*'
 }
 
 /** Integer env var in `[min, max]`; unset or empty = absent. */

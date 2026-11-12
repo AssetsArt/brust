@@ -77,20 +77,30 @@ impl CspConfig {
     }
 }
 
-/// A `script-src` source that lets script in past the hashes: the unsafe keywords (not `'wasm-unsafe-eval'`), `*`, and a
-/// bare scheme (`https:`, `data:`, `blob:`, `filesystem:`, …). A host (`https://cdn.example.com`, `*.example.com`) is fine.
+/// A `script-src` source that lets script in past the hashes: the unsafe keywords (not `'wasm-unsafe-eval'`), a bare
+/// scheme (`https:`, `data:`, `blob:`, `filesystem:`, …), and any source whose host part is exactly `*` (`*`, `https://*`,
+/// `*:443`, `https://*:*/path`): a lone `*` host matches every host. A host (`https://cdn.example.com`, `*.example.com`) is
+/// fine.
 pub fn voids_hashes(s: &str) -> bool {
     let k = s.trim().to_ascii_lowercase();
     if matches!(
         k.as_str(),
-        "'unsafe-inline'" | "'unsafe-eval'" | "'unsafe-hashes'" | "*"
+        "'unsafe-inline'" | "'unsafe-eval'" | "'unsafe-hashes'"
     ) {
         return true;
     }
-    let Some(scheme) = k.strip_suffix(':') else {
-        return false;
+    if k.strip_suffix(':').is_some_and(is_scheme) {
+        return true;
+    }
+    let rest = match k.split_once("://") {
+        Some((scheme, rest)) if is_scheme(scheme) => rest,
+        _ => k.as_str(),
     };
-    let mut c = scheme.chars();
+    rest.split([':', '/']).next() == Some("*")
+}
+
+fn is_scheme(s: &str) -> bool {
+    let mut c = s.chars();
     c.next().is_some_and(|f| f.is_ascii_alphabetic())
         && c.all(|x| x.is_ascii_alphanumeric() || matches!(x, '+' | '-' | '.'))
 }
@@ -388,18 +398,46 @@ mod tests {
         );
     }
 
+    /// script-src sources that void the hashes / that do not (shared with config-csp.test.ts).
+    const VOIDS: [&str; 19] = [
+        "'unsafe-inline'",
+        "'unsafe-eval'",
+        "'unsafe-hashes'",
+        "data:",
+        "blob:",
+        "filesystem:",
+        " https: ",
+        "HTTP:",
+        "ws:",
+        "*",
+        "https://*",
+        "HTTP://*",
+        "http://*",
+        "*:443",
+        "*:*",
+        "https://*:*",
+        "https://*/path",
+        "*/x",
+        "wss://*:8443/a",
+    ];
+    const KEEPS: [&str; 10] = [
+        "https://cdn.example.com",
+        "*.example.com",
+        "https://*.example.com",
+        "https://*.example.com:443",
+        "https://cdn.example.com/*",
+        "cdn.example.com:*",
+        "'self'",
+        "'wasm-unsafe-eval'",
+        "'sha256-AbC='",
+        "'nonce-x'",
+    ];
+
     #[test]
     fn sources_that_void_the_hashes_need_the_second_flag() {
-        for s in [
-            "'unsafe-hashes'",
-            "data:",
-            "blob:",
-            "filesystem:",
-            "*",
-            " https: ",
-            "HTTP:",
-            "ws:",
-        ] {
+        // The same table as packages/brust/test/config-csp.test.ts.
+        for s in VOIDS {
+            assert!(voids_hashes(s), "{s:?}");
             let c = CspConfig {
                 script_src: vec![s.into()],
                 ..cfg()
@@ -418,15 +456,8 @@ mod tests {
                 "{s:?}"
             );
         }
-        for s in [
-            "https://cdn.example.com",
-            "*.example.com",
-            "https://*.example.com",
-            "'self'",
-            "'wasm-unsafe-eval'",
-            "'sha256-AbC='",
-            "'nonce-x'",
-        ] {
+        for s in KEEPS {
+            assert!(!voids_hashes(s), "{s:?}");
             let c = CspConfig {
                 script_src: vec![s.into()],
                 ..cfg()
