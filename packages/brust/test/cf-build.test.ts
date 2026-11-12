@@ -175,7 +175,10 @@ test('F541: with [csp] and an HTML file in public/, assets/_headers carries the 
   const dir = join(FIX, 'cf-app-csp')
   cleanup.push(dir)
   cpSync(APP, dir, { recursive: true })
-  writeFileSync(join(dir, 'brust.toml'), `${readFileSync(join(dir, 'brust.toml'), 'utf8')}\n[csp]\nenabled = true\nframe_ancestors = ["'none'"]\n`)
+  // [actions] base_url too: the Worker gets no actions client config (brust-wasm config.rs), so its header has no connect-src
+  const toml = readFileSync(join(dir, 'brust.toml'), 'utf8').replace('[actions]\n', '[actions]\nbase_url = "https://api.example"\n')
+  expect(toml).toContain('base_url = "https://api.example"')
+  writeFileSync(join(dir, 'brust.toml'), `${toml}\n[csp]\nenabled = true\nframe_ancestors = ["'none'"]\n`)
   const out = join(outDir(), 'dist')
   const without = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
   expect(without.code).toBe(0)
@@ -191,6 +194,9 @@ test('F541: with [csp] and an HTML file in public/, assets/_headers carries the 
   expect(headers.startsWith(`/*\n  Content-Security-Policy: ${value}\n`)).toBe(true)
   // a header, not a meta: frame-ancestors stays in it
   expect(value).toContain("frame-ancestors 'none'")
+  // == the header the Worker composes for this config: no actions client there, so no connect-src for the base_url
+  expect(value).not.toContain('connect-src')
+  expect(value).not.toContain('api.example')
   expect(headers.match(/Content-Security-Policy/g)?.length).toBe(1)
 })
 

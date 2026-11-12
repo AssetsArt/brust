@@ -176,9 +176,9 @@ export default function Csp({ blocks }: CspData) {
 
       <h2 id="static">Static sites</h2>
       <p>
-        A <code>brust build --target static</code> page has no server to send a header, so the policy goes into the page: every page, the 404 page included, starts its <code>&lt;head&gt;</code> with{' '}
-        <code>&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;…&quot;&gt;</code>, the same policy <code>brust start</code> sends, with the same hashes. It is the first element of the head because a policy in a meta tag applies only to
-        what comes after it. Every page carries the same policy, so navigating between pages without a reload stays inside it.
+        A <code>brust build --target static</code> page has no server to send a header, so the policy goes into the page: every page, the 404 page included, opens its <code>&lt;head&gt;</code> with{' '}
+        <code>&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;…&quot;&gt;</code>, the same policy <code>brust start</code> sends, with the same hashes. It is the first element of the head (right after <code>&lt;meta charset&gt;</code> when the head starts with one,
+        which must stay within the first 1024 bytes) because a policy in a meta tag applies only to what comes after it. Every page carries the same policy, so navigating between pages without a reload stays inside it.
       </p>
       <ul>
         <li>

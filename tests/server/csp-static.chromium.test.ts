@@ -70,7 +70,8 @@ test('a static build under the enforced meta policy: island + SPA nav between st
     expect(res?.status()).toBe(200)
     // the policy is the page's own meta, first in <head>; there is no CSP header for this build
     expect(res?.headers()['content-security-policy']).toBeUndefined()
-    expect(await page.evaluate(() => document.head.firstElementChild?.outerHTML.startsWith('<meta http-equiv="Content-Security-Policy"'))).toBe(true)
+    // the policy right after <meta charset> (which stays first, in the first 1024 bytes)
+    expect(await page.evaluate(() => [...document.head.children].slice(0, 2).map((e) => e.outerHTML.slice(0, 41)))).toEqual(['<meta charset="utf-8">', '<meta http-equiv="Content-Security-Policy'])
     // the base-path global is an inline script: it ran (allowed by hash)
     expect(await page.evaluate(() => (globalThis as { __BRUST_BASE_PATH__?: string }).__BRUST_BASE_PATH__)).toBe('/site')
     await page.waitForSelector('brust-island[data-hydrated="1"]', { state: 'attached', timeout: 15_000 })
@@ -103,5 +104,5 @@ test('a static build under the enforced meta policy: island + SPA nav between st
 test('the default 404 carries the meta too', async () => {
   const r = await fetch(`${base}/site/nope`)
   expect(r.status).toBe(404)
-  expect(await r.text()).toContain('<head><meta http-equiv="Content-Security-Policy" content="default-src')
+  expect(await r.text()).toContain('<head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src')
 })

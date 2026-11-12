@@ -200,12 +200,16 @@ export function pageCsp(rendered: Rendered[], split: (name: string, value: strin
   return { metas, common: top?.[1].meta, header, warnings }
 }
 
-/** `html` with `<meta http-equiv="Content-Security-Policy">` as the first element of its <head> (a meta policy governs only
- * what comes after it). A page without a <head> cannot carry it: a build error, never a page that silently has none. */
+/** `html` with `<meta http-equiv="Content-Security-Policy">` first in its <head> (a meta policy governs only what comes
+ * after it), or right after a `<meta charset>` that opens the head: the charset declaration must stay in the first 1024
+ * bytes, a long policy could push it out, and it loads nothing the policy would govern. A page without a <head> cannot
+ * carry it: a build error, never a page that silently has none. */
 export function withCspMeta(html: string, content: string, where: string): string {
   const m = /<head(\s[^>]*)?>/i.exec(html)
   if (!m) throw new BuildError('ssg-csp', `${where}: no <head> to put the Content-Security-Policy meta in ([csp] is on)`)
-  const at = m.index + m[0].length
+  let at = m.index + m[0].length
+  const charset = /^\s*<meta\s+charset\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+)\s*\/?>/i.exec(html.slice(at))
+  if (charset) at += charset[0].length
   const attr = content.replace(/[&"<>]/g, (c) => `&#${c.charCodeAt(0)};`)
   return `${html.slice(0, at)}<meta http-equiv="Content-Security-Policy" content="${attr}">${html.slice(at)}`
 }

@@ -59,7 +59,7 @@ const htmlFiles = (dir: string) =>
     .filter((f) => f.endsWith('.html'))
     .sort()
 const read = (dir: string, f: string) => readFileSync(join(dir, 'dist/static', f), 'utf8')
-const metaOf = (html: string) => /<head[^>]*><meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(html)?.[1]?.replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)))
+const metaOf = (html: string) => /<head[^>]*><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="([^"]*)">/i.exec(html)?.[1]?.replace(/&#39;/g, "'").replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)))
 const sha = (text: string) => `'sha256-${createHash('sha256').update(text).digest('base64')}'`
 
 let enforce = ''
@@ -75,7 +75,7 @@ afterAll(() => {
   for (const d of copies) rmSync(d, { recursive: true, force: true })
 })
 
-test('enforce: every page (default 404 too) has the meta first in <head>, == the core split of the served header', async () => {
+test('enforce: every page (default 404 too) has the meta right after <meta charset> (first in <head>), == the core split of the served header', async () => {
   const files = htmlFiles(enforce)
   expect(files).toEqual(['404.html', 'site.html', 'site/about.html'])
   const [name, value] = await served(enforce, '/site')
@@ -137,10 +137,16 @@ test('pageCsp: a meta per page from its own header; one rule, the most common; a
   expect(ro).toEqual({ metas: [undefined], common: undefined, header: ['Content-Security-Policy-Report-Only', 'default-src x'], warnings: [] })
 })
 
-test('withCspMeta: first in <head>, attribute escaped; no <head> is a build error', () => {
-  expect(withCspMeta('<!doctype html><html><HEAD lang="x"><meta charset="utf-8"></HEAD></html>', `a 'b' "c" <d> &e`, 'p')).toBe(
-    `<!doctype html><html><HEAD lang="x"><meta http-equiv="Content-Security-Policy" content="a 'b' &#34;c&#34; &#60;d&#62; &#38;e"><meta charset="utf-8"></HEAD></html>`,
+test('withCspMeta: right after a <meta charset> that opens the head, else first; attribute escaped; no <head> is a build error', () => {
+  const csp = `<meta http-equiv="Content-Security-Policy" content="a 'b' &#34;c&#34; &#60;d&#62; &#38;e">`
+  // the charset declaration stays first (it must stay in the first 1024 bytes), the policy second
+  expect(withCspMeta('<!doctype html><html><HEAD lang="x"><meta charset="utf-8"><title>t</title></HEAD></html>', `a 'b' "c" <d> &e`, 'p')).toBe(
+    `<!doctype html><html><HEAD lang="x"><meta charset="utf-8">${csp}<title>t</title></HEAD></html>`,
   )
+  for (const charset of ['<META CHARSET=UTF-8>', "<meta charset='utf-8' />", '\n  <meta  charset = "utf-8">']) expect(withCspMeta(`<head>${charset}<title>t</title></head>`, 'p', 'x')).toBe(`<head>${charset}<meta http-equiv="Content-Security-Policy" content="p"><title>t</title></head>`)
+  // no charset, or something before it: first in <head> (nothing may come before the policy but the charset)
+  expect(withCspMeta('<head><title>t</title></head>', 'p', 'x')).toBe('<head><meta http-equiv="Content-Security-Policy" content="p"><title>t</title></head>')
+  expect(withCspMeta('<head><script src="/a.js"></script><meta charset="utf-8"></head>', 'p', 'x')).toBe('<head><meta http-equiv="Content-Security-Policy" content="p"><script src="/a.js"></script><meta charset="utf-8"></head>')
   // <header> is not <head>
   expect(() => withCspMeta('<html><body><header>x</header></body></html>', 'p', 'GET /x')).toThrow('GET /x: no <head>')
 })
