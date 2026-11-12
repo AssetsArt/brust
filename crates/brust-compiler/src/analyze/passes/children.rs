@@ -4454,6 +4454,12 @@ impl Walker<'_, '_> {
             .collect();
         let clone_id = id.clone();
         let shared_id = cir.id.clone();
+        // F535: this call site is already being cloned further up (mutual recursion inside one module): the key below
+        // is salted per level, so without this it clones until the stack runs out.
+        let fixing = format!("{c_path}#{exp}@{}~{loc}", ctx.path);
+        if !ctx.modules.borrow_mut().fixing.insert(fixing.clone()) {
+            return Err("this call site is already being cloned (it renders itself through another component)".into());
+        }
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
             &export,
@@ -4467,7 +4473,9 @@ impl Walker<'_, '_> {
                 ir.fixed_clone_of = Some(shared_id.clone());
                 Ok(())
             },
-        )?;
+        );
+        ctx.modules.borrow_mut().fixing.remove(&fixing);
+        let clone = clone?;
         if !matches!(clone.tier, Tier::Static) {
             let why = match &clone.tier {
                 Tier::React { reason, .. } => format!("its clone still needs React ({reason})"),

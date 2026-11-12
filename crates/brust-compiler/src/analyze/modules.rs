@@ -27,6 +27,10 @@ pub struct ModuleCache {
     pub store_exports: HashMap<(String, String), Result<crate::ir::StoreRef, String>>,
     /// Store name → the module that defines it, for `store-name-duplicate`.
     pub store_names: BTreeMap<String, String>,
+    /// F535: fixed clones being compiled now, by (component, module of the call site, call-site offset). A clone that
+    /// reaches the same call site again (two components of one module rendering each other) would clone forever: every
+    /// level salts its key with the clone above it.
+    pub fixing: std::collections::HashSet<String>,
 }
 
 impl ModuleCache {
