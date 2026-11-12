@@ -111,6 +111,8 @@ pub(super) struct Unit {
     pub callees: BTreeSet<Callee>,
     /// Local functions named in the body (by index of their symbol).
     pub reaches: BTreeSet<u32>,
+    /// Function expressions a name in the body may hold that no name of their own binds (`go = (e) => …`).
+    pub extra: Vec<js_ast::Expr>,
 }
 
 /// The bindings of one unit: its own parameters, and everything declared inside it (a nested function's parameters too).
@@ -405,6 +407,7 @@ impl<'a> Reader<'a> {
         let mut decls: HashMap<u32, DeclKind> = HashMap::new();
         let mut assigned: HashMap<u32, Vec<js_ast::Expr>> = HashMap::new();
         let mut assigned_other: HashSet<u32> = HashSet::new();
+        let mut written_roots: HashSet<u32> = HashSet::new();
         for part in ast.parts.iter() {
             walk_stmts(part.stmts.slice(), &mut |n| {
                 self.declared(n, None, &mut |idx, kind| {
@@ -430,6 +433,34 @@ impl<'a> Reader<'a> {
                 });
                 match n {
                     N::E(e) => {
+                        // A member written anywhere in the file (`props.onSave = f`, `props.n++`): its root holds more than
+                        // what its caller passed.
+                        let written = match &e.data {
+                            E::EBinary(b) if is_assign_op(b.op) => {
+                                let mut ts = Vec::new();
+                                if matches!(b.op, js_ast::OpCode::BinAssign) {
+                                    assign_targets(&b.left, &mut ts);
+                                } else {
+                                    ts.push(b.left);
+                                }
+                                ts
+                            }
+                            E::EUnary(u)
+                                if is_update_op(u.op)
+                                    || matches!(u.op, js_ast::OpCode::UnDelete) =>
+                            {
+                                vec![u.value]
+                            }
+                            _ => Vec::new(),
+                        };
+                        for t in written {
+                            let (root, hops) = chain_root(&t);
+                            if hops > 0
+                                && let Some(i) = self.ident_idx(root)
+                            {
+                                written_roots.insert(i);
+                            }
+                        }
                         if let E::EBinary(b) = &e.data
                             && is_assign_op(b.op)
                         {
@@ -493,6 +524,7 @@ impl<'a> Reader<'a> {
         self.decls = decls;
         self.assigned = assigned;
         self.assigned_other = assigned_other;
+        self.written_roots = written_roots;
         self.fn_by_loc = by_loc;
     }
 
@@ -776,6 +808,9 @@ impl<'a> Reader<'a> {
                         if !ctx.inner.contains(&idx)
                             && self.ident_idx(init).is_some_and(|i| {
                                 matches!(self.decls.get(&i), Some(DeclKind::Param))
+                                    && !self.written_roots.contains(&i)
+                                    && !self.assigned.contains_key(&i)
+                                    && !self.assigned_other.contains(&i)
                             }) =>
                     {
                         local
@@ -784,18 +819,14 @@ impl<'a> Reader<'a> {
                 },
                 Some(DeclKind::Fn) => local,
                 Some(DeclKind::Class) => unknown(name),
-                // A loop or catch binding, a nested function's parameter, a pattern with no value; a parameter of the
-                // enclosing component or module is a closure value of the handler.
-                Some(DeclKind::Other)
-                | Some(DeclKind::Pattern { init: None, .. })
-                | Some(DeclKind::Param) => {
-                    if ctx.inner.contains(&idx) {
-                        unknown(name)
-                    } else {
-                        local
-                    }
-                }
-                None => local,
+                // A parameter of a function outside the handler (the component's props, mostly) is a value its caller gives;
+                // a parameter of a function inside it, a loop or catch binding and a pattern with no value are not fixed by
+                // the file.
+                Some(DeclKind::Param) if !ctx.inner.contains(&idx) => local,
+                Some(DeclKind::Param)
+                | Some(DeclKind::Other)
+                | Some(DeclKind::Pattern { init: None, .. }) => unknown(name),
+                None => unknown(name),
             };
         }
         if let E::EDot(_) = &target.data
@@ -826,16 +857,19 @@ impl<'a> Reader<'a> {
     /// The named local functions the name `idx` may hold: itself, or what a chain of `const f = go` / `useCallback(go)`
     /// aliases (and any later `f = other`) leads to. A reached function's body is part of what the caller does, so an alias
     /// must lead to it as the function's own name does.
-    pub(super) fn fn_targets(&self, idx: u32) -> Vec<u32> {
+    /// It also returns the function expressions the name was given that no name of their own binds (`go = (e) => …`):
+    /// those are walked as units of their own.
+    pub(super) fn fn_values(&self, idx: u32) -> (Vec<u32>, Vec<js_ast::Expr>) {
         // Most names are neither a function nor an alias of one: nothing to follow.
         let aliasing = matches!(
             self.decls.get(&idx),
             Some(DeclKind::Plain(Some(_))) | Some(DeclKind::Pattern { init: Some(_), .. })
         ) || self.assigned.contains_key(&idx);
         if !aliasing && !self.fns.contains_key(&idx) {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let mut out = Vec::new();
+        let mut exprs: Vec<js_ast::Expr> = Vec::new();
         let mut seen = HashSet::new();
         let mut work = vec![idx];
         while let Some(cur) = work.pop() {
@@ -860,10 +894,12 @@ impl<'a> Reader<'a> {
                 let t = unwrap_callback(self.ast, &v);
                 if let Some(next) = self.ident_idx(&t) {
                     work.push(next);
+                } else if is_fn_expr(&t) && !self.fn_by_loc.contains_key(&t.loc.start) {
+                    exprs.push(t);
                 }
             }
         }
-        out
+        (out, exprs)
     }
 
     fn build_ctx(&self, node: FnNode, root_loc: i32) -> (Ctx, bool) {
@@ -932,7 +968,9 @@ impl<'a> Reader<'a> {
                     if ctx.params.contains_key(&idx) || name == "arguments" {
                         unit.reads_params = true;
                     }
-                    unit.reaches.extend(self.fn_targets(idx));
+                    let (ids, exprs) = self.fn_values(idx);
+                    unit.reaches.extend(ids);
+                    unit.extra.extend(exprs);
                 }
                 E::EArrow(_) | E::EFunction(_) => {
                     if e.loc.start != root_loc
@@ -1014,14 +1052,26 @@ impl<'a> Reader<'a> {
         let mut reaches: BTreeSet<u32> = BTreeSet::new();
         let reads_params;
         let mut work: Vec<u32> = Vec::new();
+        // Function expressions some name may hold that nothing else binds: walked as units of their own.
+        let mut pending: Vec<js_ast::Expr> = Vec::new();
         match self.ident_idx(&target) {
-            Some(idx) if self.fns.contains_key(&idx) => {
-                // `onClick={go}`: the handler IS that local function.
+            Some(idx)
+                if self.fns.contains_key(&idx)
+                    && !self.assigned.contains_key(&idx)
+                    && !self.assigned_other.contains(&idx) =>
+            {
+                // `onClick={go}`: the handler IS that local function (a name assigned again is whatever it was last given:
+                // the next branch walks every function it may hold and lists the name as an unknown callee).
                 let u = self.unit_of_fn(idx).expect("a known local function");
                 reads_params = u.reads_params;
                 work.push(idx);
             }
-            Some(idx) if !self.fn_targets(idx).is_empty() => {
+            Some(idx)
+                if {
+                    let (ids, exprs) = self.fn_values(idx);
+                    !ids.is_empty() || !exprs.is_empty()
+                } =>
+            {
                 // `const h = go; onClick={h}`: the file does not say which it is when `h` is assigned more than once, and the
                 // event may reach any of them.
                 reads_params = true;
@@ -1030,7 +1080,9 @@ impl<'a> Reader<'a> {
                     inner: HashSet::new(),
                 };
                 callees.insert(self.classify_depth(&target, &none, 0));
-                work.extend(self.fn_targets(idx));
+                let (ids, exprs) = self.fn_values(idx);
+                work.extend(ids);
+                pending.extend(exprs);
             }
             _ if is_fn_expr(&target) => {
                 let u = self.analyze_unit(FnNode::Expr(target));
@@ -1039,6 +1091,7 @@ impl<'a> Reader<'a> {
                 globals.extend(u.globals.iter().cloned());
                 callees.extend(u.callees.iter().cloned());
                 work.extend(u.reaches.iter().copied());
+                pending.extend(u.extra.iter().copied());
             }
             _ => {
                 // Code the file does not show (a prop, an import, a call result, a conditional): it receives the event, and
@@ -1049,6 +1102,7 @@ impl<'a> Reader<'a> {
                 globals.extend(u.globals.iter().cloned());
                 callees.extend(u.callees.iter().cloned());
                 work.extend(u.reaches.iter().copied());
+                pending.extend(u.extra.iter().copied());
                 let none = Ctx {
                     params: HashMap::new(),
                     inner: HashSet::new(),
@@ -1057,19 +1111,35 @@ impl<'a> Reader<'a> {
             }
         }
         let mut seen: HashSet<u32> = HashSet::new();
-        while let Some(idx) = work.pop() {
-            if !seen.insert(idx) {
-                continue;
+        let mut seen_exprs: HashSet<i32> = HashSet::new();
+        loop {
+            if let Some(idx) = work.pop() {
+                if !seen.insert(idx) {
+                    continue;
+                }
+                let Some(u) = self.unit_of_fn(idx) else {
+                    continue;
+                };
+                reaches.insert(idx);
+                writes.extend(u.writes.iter().cloned());
+                globals.extend(u.globals.iter().cloned());
+                callees.extend(u.callees.iter().cloned());
+                work.extend(u.reaches.iter().copied());
+                pending.extend(u.extra.iter().copied());
+                self.record_fn(idx, &u);
+            } else if let Some(e) = pending.pop() {
+                if !seen_exprs.insert(e.loc.start) {
+                    continue;
+                }
+                let u = self.analyze_unit(FnNode::Expr(e));
+                writes.extend(u.writes.iter().cloned());
+                globals.extend(u.globals.iter().cloned());
+                callees.extend(u.callees.iter().cloned());
+                work.extend(u.reaches.iter().copied());
+                pending.extend(u.extra.iter().copied());
+            } else {
+                break;
             }
-            let Some(u) = self.unit_of_fn(idx) else {
-                continue;
-            };
-            reaches.insert(idx);
-            writes.extend(u.writes.iter().cloned());
-            globals.extend(u.globals.iter().cloned());
-            callees.extend(u.callees.iter().cloned());
-            work.extend(u.reaches.iter().copied());
-            self.record_fn(idx, &u);
         }
         writes.sort_by(|a, b| {
             (a.line, a.col, a.target, &a.path).cmp(&(b.line, b.col, b.target, &b.path))
@@ -1621,6 +1691,54 @@ mod tests {
         let (_, h) = handler("", "const { onSave } = props", "() => onSave()");
         assert!(
             h.callees.iter().all(|c| c.kind == "local"),
+            "{:?}",
+            h.callees
+        );
+    }
+
+    #[test]
+    fn a_reassigned_handler_function_and_untraceable_bindings_are_never_local() {
+        // `onClick={go}` where `go` is assigned again: every function it may hold is walked, and the name is unknown.
+        let (_, h) = handler(
+            "let go = (e: any) => { e.target.x = 1 }\ngo = (e: any) => { document.title = 'x' }",
+            "",
+            "go",
+        );
+        assert!(
+            h.callees
+                .iter()
+                .any(|c| c.name == "go" && c.kind == "unknown"),
+            "{:?}",
+            h.callees
+        );
+        assert_eq!(
+            writes(&h),
+            vec![
+                ("param-member", "e.target.x"),
+                ("global-member", "document.title")
+            ]
+        );
+        // A loop binding of the component, and a prop object that is written to, are not fixed by the file.
+        let f = facts(
+            "export default function Promo({ items }: any) {\n  const out: any[] = []\n  for (const f of items) out.push(<b onClick={() => f()}>x</b>)\n  return <>{out}</>\n}\n",
+        );
+        assert!(
+            f.handlers[0]
+                .callees
+                .iter()
+                .any(|c| c.name == "f" && c.kind == "unknown"),
+            "{:?}",
+            f.handlers[0].callees
+        );
+        let (_, h) = handler(
+            "",
+            "props.onSave = window.fetch\nconst { onSave } = props",
+            "() => onSave('/x')",
+        );
+        assert!(
+            h.callees
+                .iter()
+                .any(|c| c.name == "onSave" && c.kind == "unknown"),
             "{:?}",
             h.callees
         );
