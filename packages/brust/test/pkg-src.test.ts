@@ -2,10 +2,11 @@
 // written under `.brust/pkg-src`; every package that cannot be proven is refused with its reason (the compiler then keeps
 // its React island). Stub packages, so the rules do not depend on a release.
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, sep } from 'node:path'
-import { integrityGaps, PKG_SRC_DIR, preparePackageSources, skeleton } from '../src/build/pkg-src'
+import { BuildError } from '../src/build/errors'
+import { integrityGaps, PKG_DIR_GRACE_MS, PKG_SRC_DIR, preparePackageSources, skeleton } from '../src/build/pkg-src'
 
 const cleanup: string[] = []
 afterAll(() => {
@@ -78,12 +79,154 @@ test('bare imports of a written package are followed in that package scope', () 
   expect(r.dirs[scope]).toBe(join(root, 'node_modules/outer'))
 })
 
-test('the directory is rebuilt from nothing: a stale source is never left behind', () => {
+/** Sets the mtime of `path` to just past the grace window ago. */
+const age = (path: string) => {
+  const old = new Date(Date.now() - PKG_DIR_GRACE_MS - 60_000)
+  utimesSync(path, old, old)
+}
+
+test('the directory is brought up to date in place: a stale source goes at once, a stale package directory once it is old', () => {
   const root = app()
-  put(join(root, PKG_SRC_DIR, 'stale@0.0.0-00000000/src/x.tsx'), 'export const x = 1')
-  preparePackageSources(root, [])
-  expect(existsSync(join(root, PKG_SRC_DIR, 'stale@0.0.0-00000000'))).toBe(false)
+  const legacy = join(root, PKG_SRC_DIR, 'stale@0.0.0-00000000')
+  put(join(legacy, 'src/x.tsx'), 'export const x = 1')
+  pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
+  const first = preparePackageSources(root, ['leafy'])
+  const dir = join(root, dirname(dirname(first.scopes['']!.leafy!)))
+  put(join(dir, 'src/old.tsx'), 'export const old = 1')
+  preparePackageSources(root, ['leafy'])
+  // A source of a referenced package this version does not have: no reader needs it, removed at once.
+  expect(existsSync(join(dir, 'src/old.tsx'))).toBe(false)
+  expect(readFileSync(join(dir, 'src/leaf.tsx'), 'utf8')).toBe(LEAF)
+  // A directory nothing references (no stamp: an older layout) goes by its own mtime: young stays, old goes.
+  expect(existsSync(legacy)).toBe(true)
+  age(legacy)
+  preparePackageSources(root, ['leafy'])
+  expect(existsSync(legacy)).toBe(false)
 })
+
+// F536: a build and a `brust dev` generation of one app share `.brust/pkg-src`; one must never delete or rewrite a file
+// the other is reading.
+const stamp = (f: string) => {
+  const s = statSync(f)
+  return `${s.ino}:${s.mtimeMs}`
+}
+// `.used` is the one file every run rewrites on purpose (the mark of the latest run that referenced the directory).
+const filesUnder = (d: string): string[] =>
+  readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(join(d, e.name)) : e.name === '.used' ? [] : [join(d, e.name)]))
+
+test('F536 A1: a second prepare with the same inputs touches no file; a changed package swaps only its own files; a dropped package is pruned alone', () => {
+  const root = app()
+  pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
+  pkg(root, 'other', { 'src/other.tsx': `export function Other() { return <b>other</b> }\n` })
+  const r1 = preparePackageSources(root, ['leafy', 'other'])
+  const before = new Map(filesUnder(join(root, PKG_SRC_DIR)).map((f) => [f, stamp(f)]))
+  expect([...before.keys()].some((f) => basename(f) === 'index.json')).toBe(true)
+  // The same inputs: the same map, and no file rewritten (same inode and mtime), no temp file left behind.
+  expect(preparePackageSources(root, ['leafy', 'other'])).toEqual(r1)
+  const same = new Map(filesUnder(join(root, PKG_SRC_DIR)).map((f) => [f, stamp(f)]))
+  expect(same).toEqual(before)
+  expect([...same.keys()].some((f) => basename(f).startsWith('.tmp-'))).toBe(false)
+  // One package changes: only its files are replaced.
+  const OTHER2 = `export function Other() { return <b>other two</b> }\n`
+  pkg(root, 'other', { 'src/other.tsx': OTHER2 })
+  const r2 = preparePackageSources(root, ['leafy', 'other'])
+  const otherFile = join(root, r2.scopes['']!.other!)
+  expect(readFileSync(otherFile, 'utf8')).toBe(OTHER2)
+  const after = new Map(filesUnder(join(root, PKG_SRC_DIR)).map((f) => [f, stamp(f)]))
+  expect(after.get(otherFile)).not.toBe(before.get(otherFile))
+  for (const [f, v] of before) if (f !== otherFile && basename(f) !== 'index.json') expect(after.get(f), f).toBe(v)
+  // One package is no longer reached: its directory stays while a run may still read it, goes once its mark is old; the
+  // other's files are untouched throughout.
+  const r3 = preparePackageSources(root, ['leafy'])
+  expect(existsSync(otherFile)).toBe(true)
+  age(join(dirname(dirname(otherFile)), '.used'))
+  preparePackageSources(root, ['leafy'])
+  expect(existsSync(otherFile)).toBe(false)
+  expect(existsSync(dirname(dirname(otherFile)))).toBe(false)
+  const leafFile = join(root, r3.scopes['']!.leafy!)
+  expect(stamp(leafFile)).toBe(before.get(leafFile)!)
+})
+
+test('F536 F1: a run that ends with a different spec set never removes a package directory a run still compiling may read', () => {
+  const root = app()
+  pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
+  pkg(root, 'other', { 'src/other.tsx': `export function Other() { return <b>other</b> }\n` })
+  // Run A references `other`; an edit made during it drops the import, so run B's spec set lacks it (and the mirror: B adds
+  // a package A's end-of-run prune must not take).
+  const a = preparePackageSources(root, ['leafy', 'other'])
+  const otherDir = join(root, dirname(dirname(a.scopes['']!.other!)))
+  preparePackageSources(root, ['leafy'])
+  expect(readFileSync(join(root, a.scopes['']!.other!), 'utf8')).toContain('other')
+  expect(existsSync(join(otherDir, '.used'))).toBe(true)
+  // The mark of a run that is not running any more ages out: then, and only then, a later run removes the directory.
+  age(join(otherDir, '.used'))
+  const c = preparePackageSources(root, ['leafy'])
+  expect(existsSync(otherDir)).toBe(false)
+  expect(existsSync(join(root, c.scopes['']!.leafy!))).toBe(true)
+  // A run that references it again (a later edit puts the import back) marks it young again, so it survives too.
+  const d = preparePackageSources(root, ['leafy', 'other'])
+  const again = join(root, dirname(dirname(d.scopes['']!.other!)))
+  age(join(again, '.used'))
+  preparePackageSources(root, ['leafy', 'other'])
+  preparePackageSources(root, ['leafy'])
+  expect(existsSync(again)).toBe(true)
+})
+
+test('F536 F2: a write that fails fails the build naming the file, it never turns the package into a refusal', () => {
+  const root = app()
+  pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
+  const first = preparePackageSources(root, ['leafy'])
+  expect(first.refused).toEqual({})
+  // The source's path now holds a non-empty directory: renaming a finished temp file over it fails (EISDIR / ENOTEMPTY).
+  const leaf = join(root, first.scopes['']!.leafy!)
+  rmSync(leaf)
+  put(join(leaf, 'blocker'), 'x')
+  let err: unknown
+  try {
+    preparePackageSources(root, ['leafy'])
+  } catch (e) {
+    err = e
+  }
+  expect(err).toBeInstanceOf(BuildError)
+  expect((err as BuildError).rule).toBe('package-source')
+  expect((err as BuildError).message).toMatch(/could not write \.brust\/pkg-src\/p-[0-9a-f]{16}\/src\/leaf\.tsx: /)
+  // No temp file is left behind.
+  expect(filesUnder(join(root, PKG_SRC_DIR)).some((f) => basename(f).startsWith('.tmp-'))).toBe(false)
+})
+
+test('F536 A2: a reader of the map never sees a missing or partial file while another thread prepares in a loop', async () => {
+  const root = app()
+  pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
+  pkg(root, 'other', { 'src/other.tsx': `export function Other() { return <b>other</b> }\n` })
+  const first = preparePackageSources(root, ['leafy'])
+  const leaf = join(root, first.scopes['']!.leafy!)
+  const worker = new Worker(new URL('./fixtures/pkg-src-writer.ts', import.meta.url).href)
+  const done = new Promise<void>((resolve, reject) => {
+    worker.onmessage = () => resolve()
+    worker.onerror = (e) => reject(new Error(String(e.message)))
+  })
+  worker.postMessage({ root, rounds: 120 })
+  const bad: string[] = []
+  let reads = 0
+  let finished = false
+  void done.then(() => (finished = true))
+  while (!finished) {
+    for (const f of [leaf, join(root, PKG_SRC_DIR, 'index.json')]) {
+      try {
+        const text = readFileSync(f, 'utf8')
+        reads++
+        if (f === leaf ? text !== LEAF : JSON.parse(text).scopes === undefined) bad.push(`partial ${basename(f)}`)
+      } catch (e) {
+        bad.push(`${basename(f)}: ${String(e instanceof Error ? e.message : e).slice(0, 60)}`)
+      }
+    }
+    await Bun.sleep(0)
+  }
+  await done
+  worker.terminate()
+  expect(reads).toBeGreaterThan(100)
+  expect(bad).toEqual([])
+}, 60_000)
 
 const refusedFor = (root: string, spec: string) => preparePackageSources(root, [spec]).refused['']?.[spec]
 
