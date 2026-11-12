@@ -5,6 +5,7 @@ import A from "../actions.ts"
 import M from "../dist/manifest.json"
 import T from "../dist/cf/templates.json"
 import { fetchInScope, flattenRoutes, jsonCall, makeHandlers, noActions } from "@brust/core/server-handlers"
+import { env as ENV } from "cloudflare:workers"
 import { mountActions } from "@brust/core/server-handlers/actions"
 const h = makeHandlers({ leaves: flattenRoutes(R.routes ?? R.default).leaves, jobs: J, manifest: M, stores: JM.stores ?? {} })
 const app = mountActions(A, "/_brust/action")
@@ -17,3 +18,4 @@ export const MANIFEST = JSON.stringify(M)
 export const TEMPLATES = T
 export { install } from "@brust/core/server-handlers"
 export const CONFIG = "{\"abi\":1,\"generator\":\"brust/cf-e2e\",\"l1Capacity\":256,\"jobCacheCapacity\":512,\"stats\":true,\"edgeCache\":\"off\",\"cors\":{\"origins\":[\"https://ok.example\"],\"credentials\":false},\"actions\":{\"prefix\":\"/_brust/action\",\"maxBodyBytes\":1024,\"maxResponseBytes\":8388608,\"crossSite\":\"reject\"}}"
+export const CSP_MODE = ENV?.BRUST_CSP_MODE

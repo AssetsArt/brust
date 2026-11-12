@@ -7,7 +7,7 @@ import { builtinModules } from 'node:module'
 import { dirname, join, relative } from 'node:path'
 import { relPosix } from './posix'
 import type { BunPlugin } from 'bun'
-import { BrustConfigError, type CorsConfig, type CspConfig, loadCors, loadCsp } from '../config'
+import { BrustConfigError, type CorsConfig, type CspConfig, cspHostSources, loadCors, loadCspTable } from '../config'
 import { layoutAssets, withCspHeader } from './cf-assets'
 import { serverOnlyEmptyPlugin } from './server-only'
 import { type CfConfigJson, cfEntrySource } from './cf-entry'
@@ -38,6 +38,8 @@ export interface CfPrepared {
   cors: CorsConfig | undefined
   /** brust.toml `[csp]` when enabled, validated before any write (F539) */
   csp: CspConfig | undefined
+  /** F544: the `[csp]` table whether enabled or not (CONFIG carries it for the Worker's BRUST_CSP_MODE) */
+  cspTable: { csp: CspConfig; enabled: boolean } | undefined
   warnings: string[]
 }
 
@@ -81,15 +83,15 @@ export async function prepareCloudflare(appRoot: string, cfg: CloudflareBuildCon
   }
   const coreVersion = String((JSON.parse(readFileSync(join(import.meta.dir, '..', '..', 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0')
   let cors: CorsConfig | undefined
-  let csp: CspConfig | undefined
+  let cspTable: CfPrepared['cspTable']
   try {
     cors = await loadCors(appRoot)
-    csp = await loadCsp(appRoot)
+    cspTable = await loadCspTable(appRoot)
   } catch (e) {
     if (e instanceof BrustConfigError) throw new BuildError('config', e.message)
     throw e
   }
-  return { cfg: cfg ?? DEFAULT_CFG, core, user, coreVersion, pkgName, cors, csp, warnings }
+  return { cfg: cfg ?? DEFAULT_CFG, core, user, coreVersion, pkgName, cors, csp: cspTable?.enabled ? cspTable.csp : undefined, cspTable, warnings }
 }
 
 export interface CfBuildCtx {
@@ -253,10 +255,10 @@ if (bad.length) { console.error(bad.join('\\n')); process.exit(1) }
 }
 
 /** The `actions` block of the Worker's CONFIG. F475: the `stream` list and its ceiling only when the app lists streamed routes; the idle and total timeouts and `maxStreams` are the platform's on Workers, so they are not sent. */
-/** F539: `[csp]` → the Rust `CfCsp` keys (`mode` becomes `reportOnly`). */
-export function cfCsp(c: CspConfig): NonNullable<CfConfigJson['csp']> {
-  const { mode, ...rest } = c
-  return { reportOnly: mode === 'report-only', ...rest }
+/** F539: `[csp]` → the Rust `CfCsp` keys (`mode` becomes `reportOnly`; F544: `enabled`; the dev keys stay behind). */
+export function cfCsp(c: CspConfig, enabled = true): NonNullable<CfConfigJson['csp']> {
+  const { mode, dev: _dev, devMode: _devMode, dropHost: _drop, ...rest } = c
+  return { enabled, reportOnly: mode === 'report-only', ...rest }
 }
 
 export function cfActions(a: NonNullable<CfBuildCtx['manifest']['actions']>): NonNullable<CfConfigJson['actions']> {
@@ -304,7 +306,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     stats: p.cfg.stats,
     edgeCache: p.cfg.edgeCache,
     ...(cors ? { cors } : {}),
-    ...(p.csp ? { csp: cfCsp(p.csp) } : {}),
+    ...(p.cspTable ? { csp: cfCsp(p.cspTable.csp, p.cspTable.enabled) } : {}),
     ...(a ? { actions: cfActions(a) } : {}),
     ...(cache ? { cache: { adapter: cache.adapter, getTimeoutMs: cache.getTimeoutMs, maxBodyBytes: cache.maxBodyBytes, namespace: cache.namespace, buildId: cache.buildId, epochIntervalMs: cache.epochIntervalMs } } : {}),
   }
@@ -354,8 +356,17 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     warnings.push(...laid.warnings)
     // F541: the Worker stamps its pages; an HTML file in public/ is served by the platform, so it gets the same policy
     // (as `brust start` stamps it) from the /* rule, composed by the core exactly as the Worker composes it.
-    if (p.csp && laid.files.some((f) => f.endsWith('.html'))) {
-      const [name, value] = (await import('../native')).cspHeader(p.csp, ctx.manifest.base_path ?? '', a?.prefix ?? null)
+    const publicHtml = laid.files.some((f) => f.endsWith('.html'))
+    // F544: the platform serves public/ HTML with what the build wrote; the Worker's BRUST_CSP_MODE never reaches it.
+    if (p.cspTable && publicHtml)
+      warnings.push(
+        `[brust] warning cf-csp-public public/ holds HTML files: their policy is fixed at build in assets/_headers (${p.csp ? `[csp] as built, mode ${p.csp.mode}` : '[csp] is off, so none'}); the Worker's BRUST_CSP_MODE does not reach them, rebuild to change it`,
+      )
+    if (p.csp && publicHtml) {
+      const { dev: _dev, devMode: _devMode, ...csp } = p.csp
+      for (const src of cspHostSources(csp))
+        warnings.push(`[brust] warning cf-csp-host csp.${src}: the _headers rule for public/ HTML has no request to take the host from; the source is left out of it (the Worker's pages expand it)`)
+      const [name, value] = (await import('../native')).cspHeader(csp, ctx.manifest.base_path ?? '', a?.prefix ?? null)
       const file = join(cfDir, 'assets', '_headers')
       writeFileSync(file, withCspHeader(readFileSync(file, 'utf8'), [name === 'content-security-policy-report-only' ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy', value]))
     }

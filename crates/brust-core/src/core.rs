@@ -321,12 +321,19 @@ impl<H: Host> Core<H> {
         self.cors_resolved.is_some()
     }
 
+    /// F544: `[csp]` has a `{host}` source: the host must hand [`Core::finish`] the request's authority.
+    #[inline]
+    pub fn csp_needs_host(&self) -> bool {
+        self.csp.as_ref().is_some_and(|c| c.needs_host())
+    }
+
     /// The response chokepoint every path passes (static assets, error helpers, L1 HITs,
     /// rendered pages, actions): `X-Powered-By` insert-if-absent (headers the pipeline set win;
     /// L1 holds a body, never a response, so stamping a HIT can never duplicate), then the CORS
-    /// stamp for the request's `origin`. CORS is stamped HERE and ONLY here (cors.rs:9-14).
+    /// stamp for the request's `origin`. CORS is stamped HERE and ONLY here (cors.rs:9-14). F544: `host` is the request's
+    /// authority, read only when [`csp_needs_host`](Self::csp_needs_host) (a `{host}` source in `[csp]`).
     #[inline]
-    pub fn finish(&self, origin: Option<&HeaderValue>, h: &mut HeaderMap) {
+    pub fn finish(&self, origin: Option<&HeaderValue>, host: Option<&str>, h: &mut HeaderMap) {
         if let Some(v) = &self.powered_by {
             h.entry(HeaderName::from_static("x-powered-by"))
                 .or_insert_with(|| v.clone());
@@ -335,7 +342,7 @@ impl<H: Host> Core<H> {
             c.stamp_response(h, origin);
         }
         if let Some(c) = &self.csp {
-            c.stamp(h);
+            c.stamp(h, host);
         }
     }
 }

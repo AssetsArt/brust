@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { type BrustConfig, type ConfigOverrides, loadConfig } from './config'
 import { watchLauncher } from './launcher-watch'
-import { beginDrain, localAddr, type StartOptions, type StreamOptions, startServer, untilReady, type WsOptions } from './native'
+import { beginDrain, type CspOptions, localAddr, type StartOptions, type StreamOptions, startServer, untilReady, type WsOptions } from './native'
 import { DEFAULT_MAX_LOADER_RESPONSE_BYTES } from './worker'
 
 export interface RunOptions {
@@ -75,12 +75,25 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}), ...streamOptions(m.actions), ...(m.actions.ws ? { ws: m.actions.ws } : {}) } } : {}),
     ...(actionsClient(cfg, m) ? { actionsClient: actionsClient(cfg, m) } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
-    // F539: not under `brust dev` (its overlay and devtools add <style> elements a strict policy blocks); `brust start` sends it.
-    ...(cfg.csp && !devToken ? { csp: cfg.csp } : {}),
+    ...cspOption(cfg.csp, devToken, env),
     ...(devToken ? { devToken } : {}),
     ...(stats !== 'off' ? { stats, ...(stats === 'token' ? { statsToken: statsTokenOf(cfg.statsToken, env) } : {}) } : {}),
     ...(m.cache ? { l2: { adapter: m.cache.adapter, getTimeoutMs: m.cache.getTimeoutMs, maxBodyBytes: m.cache.maxBodyBytes, namespace: m.cache.namespace, buildId: m.cache.buildId } } : {}),
   }
+}
+
+/** F539/F544: the napi `csp`. Under `brust dev` (a dev token) only with `[csp] dev = true`: in `devMode` (`report-only` by
+ * default) and with what the dev overlay needs (its `<style>` in a shadow root: `style-src-elem 'unsafe-inline'`; the dev
+ * client and devtools are same-origin scripts and fetches, and its WebSocket is same-origin too: `'self'` covers them). A
+ * static render (`BRUST_SSG`) drops `{host}` sources: no request to take the host from. */
+export function cspOption(csp: BrustConfig['csp'], devToken: string | undefined, env: Record<string, string | undefined>): { csp?: CspOptions } {
+  if (!csp) return {}
+  const { dev, devMode, ...rest } = csp
+  if (devToken) {
+    if (!dev) return {}
+    return { csp: { ...rest, mode: devMode ?? 'report-only', styleSrc: [...(rest.styleSrc ?? []), "'unsafe-inline'"] } }
+  }
+  return { csp: env.BRUST_SSG === '1' ? { ...rest, dropHost: true } : rest }
 }
 
 /** F507: the bearer token `[server] stats_token = "env:NAME"` names; a boot error naming the variable (never a value) when it is unset or empty. */

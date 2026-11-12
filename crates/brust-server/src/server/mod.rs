@@ -388,8 +388,24 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 .cors_enabled()
                                 .then(|| req.headers().get(http::header::ORIGIN).cloned())
                                 .flatten();
+                            // F544: the authority a `{host}` CSP source expands with (HTTP/2 :authority, else Host).
+                            let host = state.core.csp_needs_host().then(|| {
+                                req.uri()
+                                    .authority()
+                                    .map(|a| a.as_str().to_owned())
+                                    .or_else(|| {
+                                        req.headers()
+                                            .get(http::header::HOST)
+                                            .and_then(|v| v.to_str().ok())
+                                            .map(str::to_owned)
+                                    })
+                            });
                             let mut resp = crate::pipeline::handle(req, &state, &conn).await;
-                            state.core.finish(origin.as_ref(), resp.headers_mut());
+                            state.core.finish(
+                                origin.as_ref(),
+                                host.flatten().as_deref(),
+                                resp.headers_mut(),
+                            );
                             // F127: a refused body (413) is read out only up to a bound (`read_capped`), so the connection
                             // must not be reused: the rest of that body could still be in flight.
                             if resp.status() == http::StatusCode::PAYLOAD_TOO_LARGE {

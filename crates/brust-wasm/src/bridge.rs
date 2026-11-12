@@ -8,6 +8,7 @@
 //! | `MANIFEST` | `string`, `manifest.json`'s text |
 //! | `TEMPLATES` | `Record<string, string>` keyed by `components[id].template` |
 //! | `CONFIG` | `string`, JSON (`config.rs`) |
+//! | `CSP_MODE` | F544: the Worker's `BRUST_CSP_MODE` binding (`string` or `undefined`), applied to `CONFIG.csp` at boot |
 //! | `install` | `(rt: { invalidate, replay, l2Count }) => { cache } \| void`, called once by `#[event(start)]`; the app must not call `rt` at module top level. `cache` (cache adapters R11/R14) = `{ get, set, since?, origin }` or `null`/absent |
 //!
 //! `rt.invalidate(args)` takes `{key?, tags?, path?, method?, prefix?}` and returns `{l1Removed, jobRemoved}`;
@@ -30,6 +31,8 @@ extern "C" {
     static CONFIG: js_sys::JsString;
     #[wasm_bindgen(thread_local_v2, js_name = TEMPLATES)]
     static TEMPLATES: js_sys::Object;
+    #[wasm_bindgen(thread_local_v2, js_name = CSP_MODE)]
+    static CSP_MODE: JsValue;
     #[wasm_bindgen(catch, js_name = loader)]
     pub fn js_loader(json: &str) -> Result<js_sys::Promise, JsValue>;
     #[wasm_bindgen(catch, js_name = jobs)]
@@ -46,6 +49,11 @@ pub fn manifest() -> String {
 
 pub fn config() -> String {
     CONFIG.with(|s| String::from(s))
+}
+
+/// F544: `BRUST_CSP_MODE` as the Worker sees it; `None` when unset.
+pub fn csp_mode() -> Option<String> {
+    CSP_MODE.with(|v| v.as_string())
 }
 
 /// `TEMPLATES` as `rel path → source`; a non-string value is skipped (and then missing).

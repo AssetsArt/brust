@@ -5,8 +5,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { cfCsp } from '../src/build/cloudflare'
-import { BrustConfigError, cspSourceError, loadConfig, loadCsp, voidsHashes } from '../src/config'
-import { startOptions } from '../src/run'
+import { BrustConfigError, cspSourceError, loadConfig, loadCsp, loadCspTable, voidsHashes, withCspEnv } from '../src/config'
+import { cspOption, startOptions } from '../src/run'
 
 const dirs: string[] = []
 function tmpApp(toml?: string): string {
@@ -125,8 +125,87 @@ test('startServer gets csp only when on; the Cloudflare CONFIG gets reportOnly',
   expect(startOptions(on, '/d', {}, 'v').csp).toEqual({ mode: 'report-only', styleSrc: ["'unsafe-inline'"] })
   // brust dev (a server with a dev token) sends none: its overlay adds <style> elements
   expect('csp' in startOptions(on, '/d', {}, 'v', 'dev-token')).toBe(false)
-  expect(cfCsp(on.csp!)).toEqual({ reportOnly: true, styleSrc: ["'unsafe-inline'"] })
+  expect(cfCsp(on.csp!)).toEqual({ enabled: true, reportOnly: true, styleSrc: ["'unsafe-inline'"] })
   const dir = tmpApp(`[csp]\nenabled = true\nframe_ancestors = ["'none'"]\n`)
   expect(await loadCsp(dir)).toEqual({ mode: 'enforce', frameAncestors: ["'none'"] })
   expect(await loadCsp(tmpApp('[csp]\nenabled = false\n'))).toBeUndefined()
+})
+
+// ---- F544 ----
+
+test('F544 keys: default_src / base_uri (self | none), form_action and the new lists, dev / dev_mode', async () => {
+  const cfg = await loadConfig(
+    tmpApp(
+      `[csp]\nenabled = true\ndefault_src = "none"\nbase_uri = "none"\nform_action = ["https://pay.example"]\nframe_src = ["https://v.example"]\nmedia_src = ["https://m.example"]\nworker_src = ["blob:"]\nmanifest_src = ["https://cdn.example"]\nobject_src = ["https://o.example"]\nconnect_src = ["wss://{host}"]\ndev = true\ndev_mode = "enforce"\n`,
+    ),
+  )
+  expect(cfg.csp).toEqual({
+    mode: 'enforce',
+    defaultSrc: 'none',
+    baseUri: 'none',
+    formAction: ['https://pay.example'],
+    frameSrc: ['https://v.example'],
+    mediaSrc: ['https://m.example'],
+    workerSrc: ['blob:'],
+    manifestSrc: ['https://cdn.example'],
+    objectSrc: ['https://o.example'],
+    connectSrc: ['wss://{host}'],
+    dev: true,
+    devMode: 'enforce',
+  })
+  expect(await err('[csp]\nenabled = true\ndefault_src = "some"\n')).toContain('csp.default_src must be one of self, none')
+  expect(await err('[csp]\nenabled = true\nbase_uri = "\'self\'"\n')).toContain('csp.base_uri must be one of self, none')
+  expect(await err('[csp]\nenabled = true\ndev = "yes"\n')).toContain('csp.dev must be a boolean')
+  expect(await err('[csp]\nenabled = true\ndev_mode = "off"\n')).toContain('csp.dev_mode must be one of enforce, report-only')
+  expect(await err('[csp]\nenabled = true\nframe_src = ["a;b"]\n')).toContain('csp.frame_src')
+  expect(await err('[csp]\nenabled = true\ndrop_host = true\n')).toContain('csp.drop_host is not a csp option')
+})
+
+test('{host} is refused in script_src (even with script_src_unsafe) and object_src, and allowed in every other list', async () => {
+  expect(await err('[csp]\nenabled = true\nscript_src = ["https://{host}"]\nscript_src_unsafe = true\n')).toContain('uses {host}, which is refused here')
+  expect(await err('[csp]\nenabled = true\nobject_src = ["https://{host}"]\n')).toContain("csp.object_src: https://{host} uses {host}, which is refused here: plugin sources stay 'none' or named hosts")
+  for (const k of ['connect_src', 'img_src', 'style_src', 'form_action', 'frame_src', 'worker_src'])
+    expect((await loadConfig(tmpApp(`[csp]\nenabled = true\n${k} = ["https://{host}"]\n`))).csp).toBeDefined()
+})
+
+test('BRUST_CSP_MODE: off, or report-only / enforce over the table (even when off) or the default policy; a bad value is an error', async () => {
+  const off = { mode: 'enforce' as const, formAction: ['https://pay.example'] }
+  expect(withCspEnv(undefined, off, undefined)).toBeUndefined()
+  expect(withCspEnv(off, off, '')).toEqual(off)
+  expect(withCspEnv(off, off, 'off')).toBeUndefined()
+  expect(withCspEnv(undefined, off, 'report-only')).toEqual({ ...off, mode: 'report-only' })
+  expect(withCspEnv(undefined, undefined, 'enforce')).toEqual({ mode: 'enforce' })
+  expect(() => withCspEnv(off, off, 'strict')).toThrow('BRUST_CSP_MODE must be one of off, report-only, enforce (got "strict")')
+  // through loadConfig, from the process environment
+  const dir = tmpApp('[csp]\nenabled = false\nform_action = ["https://pay.example"]\n')
+  const saved = process.env.BRUST_CSP_MODE
+  try {
+    process.env.BRUST_CSP_MODE = 'report-only'
+    expect((await loadConfig(dir)).csp).toEqual({ mode: 'report-only', formAction: ['https://pay.example'] })
+    process.env.BRUST_CSP_MODE = 'off'
+    expect((await loadConfig(tmpApp('[csp]\nenabled = true\n'))).csp).toBeUndefined()
+    process.env.BRUST_CSP_MODE = 'nope'
+    await expect(loadConfig(dir)).rejects.toThrow('BRUST_CSP_MODE must be one of')
+  } finally {
+    if (saved === undefined) delete process.env.BRUST_CSP_MODE
+    else process.env.BRUST_CSP_MODE = saved
+  }
+})
+
+test('cspOption: none under brust dev unless dev = true (then dev_mode, report-only by default, plus the overlay style); a static render drops {host}', () => {
+  const csp = { mode: 'enforce' as const, styleSrc: ['https://f.example'], connectSrc: ['wss://{host}'] }
+  expect(cspOption(csp, 'tok', {})).toEqual({})
+  expect(cspOption({ ...csp, dev: true }, 'tok', {})).toEqual({ csp: { mode: 'report-only', styleSrc: ['https://f.example', "'unsafe-inline'"], connectSrc: ['wss://{host}'] } })
+  expect(cspOption({ ...csp, dev: true, devMode: 'enforce' }, 'tok', {}).csp?.mode).toBe('enforce')
+  // brust start: as configured, without the dev keys
+  expect(cspOption({ ...csp, dev: true, devMode: 'enforce' }, undefined, {})).toEqual({ csp })
+  expect(cspOption(csp, undefined, { BRUST_SSG: '1' })).toEqual({ csp: { ...csp, dropHost: true } })
+  expect(cspOption(undefined, undefined, {})).toEqual({})
+})
+
+test('the Cloudflare CONFIG carries the table when off too (enabled false), without the dev keys', async () => {
+  const t = await loadCspTable(tmpApp('[csp]\ndev = true\nform_action = ["https://pay.example"]\n'))
+  expect(t).toEqual({ enabled: false, csp: { mode: 'enforce', dev: true, formAction: ['https://pay.example'] } })
+  expect(cfCsp(t!.csp, t!.enabled)).toEqual({ enabled: false, reportOnly: false, formAction: ['https://pay.example'] })
+  expect(await loadCspTable(tmpApp())).toBeUndefined()
 })

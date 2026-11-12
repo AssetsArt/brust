@@ -456,6 +456,8 @@ jobs:
       - run: bun test --timeout 300000 tests/server/csp.chromium.test.ts
       # F541: a static build under the enforced meta policy, served like Cloudflare Pages: island + SPA nav between static pages, zero violations; an unhashed inline script is blocked.
       - run: bun test --timeout 300000 tests/server/csp-static.chromium.test.ts
+      # F544: default_src = "none" + form_action + connect_src ws://{host}: island, action, WebSocket and SPA nav with zero violations; form-action; BRUST_CSP_MODE off / report-only / bad value at boot.
+      - run: bun test --timeout 300000 tests/server/csp-gaps.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/live-style.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/props-order.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/loader-style.chromium.test.ts

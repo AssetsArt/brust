@@ -99,6 +99,8 @@ describe.skipIf(!ENABLED)('cf-min on local workerd', () => {
     expect(await r.text()).toContain('cf-min home')
     // The real build's generator (`brust/<version>`), not the D3 snapshot's `brust/cf-e2e`.
     expect(r.headers.get('x-powered-by')).toStartWith('brust/')
+    // F544: no [csp] and no BRUST_CSP_MODE binding: the Worker boots and sends no policy
+    expect([r.headers.get('content-security-policy'), r.headers.get('content-security-policy-report-only')]).toEqual([null, null])
     expect((await S()).loader_calls).toBe(0)
   })
 
@@ -259,4 +261,46 @@ describe.skipIf(!ENABLED)('cf-min on local workerd', () => {
     writeFileSync(join(OUT, 'latency.txt'), line)
     console.log(line.trim())
   })
+
+  // F544: the Worker's BRUST_CSP_MODE binding (the entry's CSP_MODE export, read from cloudflare:workers env) at boot.
+  test('F544 BRUST_CSP_MODE: report-only boots and sends the default policy report-only; a bad value refuses to boot', async () => {
+    const boot = async (value: string): Promise<{ status: number | null; headers: Headers | null; out: string }> => {
+      const [port, inspector] = [await freePort(), await freePort()]
+      const p = Bun.spawn(
+        ['bunx', WRANGLER, 'dev', '--port', String(port), '--ip', '127.0.0.1', '--inspector-port', String(inspector), '--persist-to', join(OUT, `state-csp-${value}`), '--show-interactive-dev-session=false', '--var', `BRUST_CSP_MODE:${value}`],
+        { cwd: CF, env: ENV, stdout: 'pipe', stderr: 'pipe' },
+      )
+      let out = ''
+      const pump = async (st: ReadableStream<Uint8Array>) => {
+        const d = new TextDecoder()
+        for await (const chunk of st) out += d.decode(chunk)
+      }
+      void pump(p.stdout as ReadableStream<Uint8Array>)
+      void pump(p.stderr as ReadableStream<Uint8Array>)
+      try {
+        const deadline = Date.now() + 120_000
+        while (!/Ready on/.test(out)) {
+          if (Date.now() > deadline || p.exitCode !== null) return { status: null, headers: null, out }
+          await Bun.sleep(250)
+        }
+        const r = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' }).catch(() => null)
+        await r?.text()
+        await Bun.sleep(200)
+        return { status: r?.status ?? null, headers: r?.headers ?? null, out }
+      } finally {
+        p.kill('SIGINT')
+        const done = await Promise.race([p.exited.then(() => true), Bun.sleep(5000).then(() => false)])
+        if (!done) p.kill('SIGKILL')
+        await p.exited
+      }
+    }
+    const ro = await boot('report-only')
+    expect(ro.status).toBe(200)
+    expect(ro.headers?.get('content-security-policy')).toBeNull()
+    expect(ro.headers?.get('content-security-policy-report-only')).toStartWith("default-src 'self'; script-src 'self'")
+    const bad = await boot('strict')
+    // the Worker refuses to start: no page is served, and the reason is logged
+    expect(bad.status === null || bad.status >= 500).toBe(true)
+    expect(bad.out).toContain('BRUST_CSP_MODE must be one of off, report-only, enforce')
+  }, 300_000)
 })

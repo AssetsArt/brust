@@ -198,6 +198,9 @@ test('F541: with [csp] and an HTML file in public/, assets/_headers carries the 
   expect(value).not.toContain('connect-src')
   expect(value).not.toContain('api.example')
   expect(headers.match(/Content-Security-Policy/g)?.length).toBe(1)
+  // F544: the Worker's BRUST_CSP_MODE does not reach public/ HTML: the build says so
+  expect(r.out + r.err).toContain('warning cf-csp-public public/ holds HTML files: their policy is fixed at build in assets/_headers ([csp] as built, mode enforce)')
+  expect(without.out + without.err).not.toContain('cf-csp-public')
 })
 
 test('[cors] reaches CONFIG, even with an unrelated bad env var on the build host (F1)', () => {

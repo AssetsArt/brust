@@ -38,9 +38,30 @@ export interface CspConfig {
   fontSrc?: string[]
   frameAncestors?: string[]
   reportUri?: string
+  /** F544: `default-src`; `'none'` makes brust name every directive its own runtime needs. Absent = `'self'`. */
+  defaultSrc?: SelfOrNone
+  /** F544: `base-uri`. Absent = `'self'`. */
+  baseUri?: SelfOrNone
+  /** F544: `form-action 'self'` plus these. */
+  formAction?: string[]
+  frameSrc?: string[]
+  mediaSrc?: string[]
+  workerSrc?: string[]
+  manifestSrc?: string[]
+  /** F544: absent = `object-src 'none'`. */
+  objectSrc?: string[]
+  /** F544: send the header under `brust dev` too (with the dev additions); its mode is `devMode`, `report-only` by default. */
+  dev?: boolean
+  devMode?: CspMode
+  /** F544, set by the run, never by config: a static render drops `{host}` sources (napi `dropHost`). */
+  dropHost?: boolean
 }
 export const CSP_MODES = ['enforce', 'report-only'] as const
 export type CspMode = (typeof CSP_MODES)[number]
+export const SELF_OR_NONE = ['self', 'none'] as const
+export type SelfOrNone = (typeof SELF_OR_NONE)[number]
+/** F544 `BRUST_CSP_MODE`: the per-deploy switch over `[csp]` (`off`, or turn it on in a mode). */
+export const CSP_ENV_MODES = ['off', 'report-only', 'enforce'] as const
 
 /** F507 `[server] stats`: who may read `/_brust/cache/stats`. */
 export const STATS_MODES = ['off', 'public', 'token'] as const
@@ -77,8 +98,11 @@ export interface BrustConfig {
   componentsCacheEntries?: number
   /** `run({ config: { cors } })` over brust.toml `[cors]` (a whole-object replace); absent = CORS off. No env layer. */
   cors?: CorsConfig
-  /** F539 `[csp]` / `run({ config: { csp } })` (a whole-object replace; `null` = off); absent = no Content-Security-Policy header. */
+  /** F539 `[csp]` / `run({ config: { csp } })` (a whole-object replace; `null` = off); absent = no Content-Security-Policy header.
+   * F544: env `BRUST_CSP_MODE` overrides it (`off`, or `report-only` / `enforce` over the table, enabled or not). */
   csp?: CspConfig
+  /** F544: the brust.toml `[csp]` table even when `enabled` is not true, for `BRUST_CSP_MODE` to turn on. */
+  cspTable?: CspConfig
   /** F495 `[server] base_path` / `run({ config: { basePath } })`: the path the app is mounted under on a shared origin (`/portal`; `''` = the
    * root), absent when nothing set it. A build setting too (`brust build` bakes it into the manifest): `brust start` refuses a manifest
    * built for another one, and with none set serves the one the manifest names. */
@@ -99,7 +123,7 @@ export interface BrustConfig {
 }
 
 /** What `run({ config })` / `loadConfig`'s `cli` accepts: any setting, and `cors: null` to turn a toml `[cors]` off. */
-export type ConfigOverrides = Omit<Partial<BrustConfig>, 'cors' | 'csp'> & {
+export type ConfigOverrides = Omit<Partial<BrustConfig>, 'cors' | 'csp' | 'cspTable'> & {
   cors?: (Omit<CorsConfig, 'credentials'> & { credentials?: boolean }) | null
   csp?: (Omit<CspConfig, 'mode'> & { mode?: CspMode }) | null
 }
@@ -174,7 +198,8 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
   checkCli(cli)
   // cli (validated, normalised) over toml as a whole object (R10.2); `null` = off.
   const cors = cli.cors === undefined ? fromToml.cors : cli.cors === null ? undefined : checkCors(cli.cors, 'config.cors', null, false)
-  const csp = cli.csp === undefined ? fromToml.csp : cli.csp === null ? undefined : checkCsp(cli.csp, 'config.csp', null, false)
+  const configured = cli.csp === undefined ? fromToml.csp : cli.csp === null ? undefined : checkCsp(cli.csp, 'config.csp', null, false)
+  const csp = withCspEnv(configured, fromToml.cspTable, process.env.BRUST_CSP_MODE)
   // F507: the two keys belong together, wherever each one came from.
   const stats = env.stats ?? cli.stats ?? fromToml.stats
   const statsToken = cli.statsToken ?? fromToml.statsToken
@@ -215,8 +240,32 @@ export async function loadCors(cwd: string): Promise<CorsConfig | undefined> {
 
 /** F539: `[csp]` of brust.toml and nothing else, for the Cloudflare CONFIG (like [`loadCors`]); `undefined` when off. */
 export async function loadCsp(cwd: string): Promise<CspConfig | undefined> {
+  const t = await loadCspTable(cwd)
+  return t?.enabled ? t.csp : undefined
+}
+
+/** F544: `[csp]` of brust.toml with whether it is enabled; the Cloudflare CONFIG carries it either way, for the Worker's
+ * `BRUST_CSP_MODE` binding to turn on. */
+export async function loadCspTable(cwd: string): Promise<{ csp: CspConfig; enabled: boolean } | undefined> {
   const t = await tomlRoot(cwd)
-  return t && 'csp' in t.root ? parseCsp(t.root.csp, t.path) : undefined
+  return t && 'csp' in t.root ? parseCspTable(t.root.csp, t.path) : undefined
+}
+
+/** F544: the `{host}` sources of `csp` as `<snake_key> <source>`, for the builds that have no request to expand them with
+ * (static pages, Cloudflare public/ HTML): the core drops them there, and the build says so. */
+export function cspHostSources(csp: CspConfig | undefined): string[] {
+  if (!csp) return []
+  const snake = (k: string) => k.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)
+  return CSP_LISTS.flatMap((k) => (csp[k] ?? []).filter((s) => s.includes(CSP_HOST)).map((s) => `${snake(k)} ${s}`))
+}
+
+/** F544 `BRUST_CSP_MODE` over the configured policy: `off` = none; `report-only` / `enforce` = the policy (or the brust.toml
+ * table even when not enabled, or the default policy) in that mode; unset or empty = as configured. A bad value throws. */
+export function withCspEnv(configured: CspConfig | undefined, table: CspConfig | undefined, raw: string | undefined): CspConfig | undefined {
+  if (raw === undefined || raw === '') return configured
+  if (!(CSP_ENV_MODES as readonly string[]).includes(raw)) throw new BrustConfigError(`BRUST_CSP_MODE must be one of ${CSP_ENV_MODES.join(', ')} (got ${JSON.stringify(raw)})`, null)
+  if (raw === 'off') return undefined
+  return { ...(configured ?? table ?? {}), mode: raw as CspMode }
 }
 
 async function tomlRoot(cwd: string): Promise<{ root: Record<string, unknown>; path: string } | undefined> {
@@ -333,8 +382,9 @@ function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
   }
   if ('cors' in root) out.cors = parseCors(root.cors, file)
   if ('csp' in root) {
-    const csp = parseCsp(root.csp, file)
-    if (csp) out.csp = csp
+    const { csp, enabled } = parseCspTable(root.csp, file)
+    out.cspTable = csp
+    if (enabled) out.csp = csp
   }
   if ('actions' in root) {
     const a = table(root.actions, '[actions]', file)
@@ -402,12 +452,34 @@ function checkCors(c: unknown, where: string, file: string | null, snake: boolea
   }
 }
 
-const CSP_KEYS = ['mode', 'scriptSrc', 'scriptSrcUnsafe', 'styleSrc', 'connectSrc', 'imgSrc', 'fontSrc', 'frameAncestors', 'reportUri']
-const CSP_LISTS = ['scriptSrc', 'styleSrc', 'connectSrc', 'imgSrc', 'fontSrc', 'frameAncestors'] as const
+const CSP_KEYS = [
+  'mode',
+  'scriptSrc',
+  'scriptSrcUnsafe',
+  'styleSrc',
+  'connectSrc',
+  'imgSrc',
+  'fontSrc',
+  'frameAncestors',
+  'reportUri',
+  'defaultSrc',
+  'baseUri',
+  'formAction',
+  'frameSrc',
+  'mediaSrc',
+  'workerSrc',
+  'manifestSrc',
+  'objectSrc',
+  'dev',
+  'devMode',
+]
+const CSP_LISTS = ['scriptSrc', 'styleSrc', 'connectSrc', 'imgSrc', 'fontSrc', 'frameAncestors', 'formAction', 'frameSrc', 'mediaSrc', 'workerSrc', 'manifestSrc', 'objectSrc'] as const
+/** F544: the request-host placeholder (`wss://{host}`), expanded per response by the core. */
+export const CSP_HOST = '{host}'
 
 /** brust.toml `[csp]`: `enabled = true` turns it on (absent/false = off, the table is still checked). Unlike `[cors]`, an unknown
  * key is an error: a misspelt directive in a security policy must not pass silently. */
-function parseCsp(v: unknown, file: string): CspConfig | undefined {
+function parseCspTable(v: unknown, file: string): { csp: CspConfig; enabled: boolean } {
   const t = table(v, '[csp]', file)
   if (t.enabled !== undefined && typeof t.enabled !== 'boolean') throw new BrustConfigError(`${file}: csp.enabled must be a boolean (got ${JSON.stringify(t.enabled)})`, file)
   const camel = (k: string) => k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
@@ -418,8 +490,7 @@ function parseCsp(v: unknown, file: string): CspConfig | undefined {
       throw new BrustConfigError(`${file}: csp.${k} is not a csp option (expected enabled, ${CSP_KEYS.map((c) => c.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)).join(', ')})`, file)
     rest[camel(k)] = val
   }
-  const csp = checkCsp(rest, `${file}: csp`, file, true)
-  return t.enabled === true ? csp : undefined
+  return { csp: checkCsp(rest, `${file}: csp`, file, true), enabled: t.enabled === true }
 }
 
 /** Why one source expression is refused (Rust `csp::source`, verbatim), or `undefined`: one entry, ASCII, no `;` `,` or control
@@ -444,7 +515,14 @@ function checkCsp(c: unknown, where: string, file: string | null, snake: boolean
   const name = (k: string) => (snake ? k.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`) : k)
   if (t.mode !== undefined && !CSP_MODES.includes(t.mode as CspMode)) throw fail(`${where}.mode must be one of ${CSP_MODES.join(', ')} (got ${JSON.stringify(t.mode)})`)
   if (t.scriptSrcUnsafe !== undefined && typeof t.scriptSrcUnsafe !== 'boolean') throw fail(`${where}.${name('scriptSrcUnsafe')} must be a boolean (got ${JSON.stringify(t.scriptSrcUnsafe)})`)
+  for (const key of ['defaultSrc', 'baseUri'] as const)
+    if (t[key] !== undefined && !SELF_OR_NONE.includes(t[key] as SelfOrNone)) throw fail(`${where}.${name(key)} must be one of ${SELF_OR_NONE.join(', ')} (got ${JSON.stringify(t[key])})`)
+  if (t.dev !== undefined && typeof t.dev !== 'boolean') throw fail(`${where}.dev must be a boolean (got ${JSON.stringify(t.dev)})`)
+  if (t.devMode !== undefined && !CSP_MODES.includes(t.devMode as CspMode)) throw fail(`${where}.${name('devMode')} must be one of ${CSP_MODES.join(', ')} (got ${JSON.stringify(t.devMode)})`)
   const out: CspConfig = { mode: (t.mode as CspMode | undefined) ?? 'enforce' }
+  for (const key of ['defaultSrc', 'baseUri'] as const) if (t[key] !== undefined) out[key] = t[key] as SelfOrNone
+  if (t.dev !== undefined) out.dev = t.dev as boolean
+  if (t.devMode !== undefined) out.devMode = t.devMode as CspMode
   for (const key of CSP_LISTS) {
     const val = t[key]
     if (val === undefined) continue
@@ -461,6 +539,13 @@ function checkCsp(c: unknown, where: string, file: string | null, snake: boolean
     if (why) throw fail(`${where}.${name('reportUri')}: ${why}`)
     out.reportUri = t.reportUri
   }
+  // F544: a per-request host as a script source would let any host name that reaches the server serve script.
+  const hosted = out.scriptSrc?.find((s) => s.includes(CSP_HOST))
+  if (hosted !== undefined)
+    throw fail(`${where}.${name('scriptSrc')}: ${hosted} uses ${CSP_HOST}, which is refused here: a script source taken from the request's Host would let any host name that reaches this server serve script; name the hosts`)
+  // F544: plugins stay 'none' or named; a per-request host is not a plugin source.
+  const plugin = out.objectSrc?.find((s) => s.includes(CSP_HOST))
+  if (plugin !== undefined) throw fail(`${where}.${name('objectSrc')}: ${plugin} uses ${CSP_HOST}, which is refused here: plugin sources stay 'none' or named hosts`)
   // Not unlocked by scriptSrcUnsafe: it does not weaken the policy, it breaks every page.
   const dynamic = out.scriptSrc?.find((s) => s.trim().toLowerCase() === "'strict-dynamic'")
   if (dynamic !== undefined)

@@ -83,6 +83,17 @@ export interface CspOptions {
   fontSrc?: string[]
   frameAncestors?: string[]
   reportUri?: string
+  /** F544 */
+  defaultSrc?: 'self' | 'none'
+  baseUri?: 'self' | 'none'
+  formAction?: string[]
+  frameSrc?: string[]
+  mediaSrc?: string[]
+  workerSrc?: string[]
+  manifestSrc?: string[]
+  objectSrc?: string[]
+  /** F544: a static render: `{host}` sources are dropped. */
+  dropHost?: boolean
 }
 /** napi `NapiActionsClient`. */
 export interface ActionsClientOptions {

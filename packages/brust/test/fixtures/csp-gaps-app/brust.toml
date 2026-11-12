@@ -1,0 +1,13 @@
+# F544 fixture: default_src = "none", form_action and a {host} source, under a base path with an actions prefix.
+# tests/server/csp-gaps.chromium.test.ts serves it and starts it with BRUST_CSP_MODE set.
+[server]
+base_path = "/shop"
+
+[actions]
+prefix = "/shop/rpc"
+
+[csp]
+enabled = true
+default_src = "none"
+form_action = ["https://pay.example"]
+connect_src = ["ws://{host}"]

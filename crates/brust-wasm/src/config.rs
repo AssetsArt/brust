@@ -32,9 +32,16 @@ struct CfConfig {
     csp: Option<CfCsp>,
 }
 
-#[derive(Deserialize)]
+fn on() -> bool {
+    true
+}
+
+#[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CfCsp {
+    /// F544: the table is shipped off too (the entry's BRUST_CSP_MODE may turn it on); absent = on (older entries).
+    #[serde(default = "on")]
+    enabled: bool,
     #[serde(default)]
     report_only: bool,
     #[serde(default)]
@@ -53,6 +60,23 @@ struct CfCsp {
     frame_ancestors: Vec<String>,
     #[serde(default)]
     report_uri: Option<String>,
+    /// F544: `"self"` (default) or `"none"`.
+    #[serde(default)]
+    default_src: Option<String>,
+    #[serde(default)]
+    base_uri: Option<String>,
+    #[serde(default)]
+    form_action: Vec<String>,
+    #[serde(default)]
+    frame_src: Vec<String>,
+    #[serde(default)]
+    media_src: Vec<String>,
+    #[serde(default)]
+    worker_src: Vec<String>,
+    #[serde(default)]
+    manifest_src: Vec<String>,
+    #[serde(default)]
+    object_src: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -127,7 +151,28 @@ pub fn parse(json: &str) -> Result<(CoreConfig, bool), String> {
 
 /// [`parse`] plus the cache adapter's epoch cadence.
 pub fn parse_all(json: &str) -> Result<Parsed, String> {
-    let c: CfConfig = serde_json::from_str(json).map_err(|e| format!("CONFIG: {e}"))?;
+    parse_with_csp_mode(json, None)
+}
+
+/// [`parse_all`] with F544's `BRUST_CSP_MODE` (the Worker's binding) over `CONFIG.csp`: `off` = no policy;
+/// `report-only` / `enforce` = the table (shipped even when not enabled) or the default policy, in that mode; unset or
+/// empty = as built. Any other value refuses to boot.
+pub fn parse_with_csp_mode(json: &str, mode: Option<&str>) -> Result<Parsed, String> {
+    let mut c: CfConfig = serde_json::from_str(json).map_err(|e| format!("CONFIG: {e}"))?;
+    c.csp = match mode {
+        None | Some("") => c.csp.filter(|c| c.enabled),
+        Some("off") => None,
+        Some(m @ ("report-only" | "enforce")) => {
+            let mut t = c.csp.unwrap_or_default();
+            t.report_only = m == "report-only";
+            Some(t)
+        }
+        Some(o) => {
+            return Err(format!(
+                "BRUST_CSP_MODE must be one of off, report-only, enforce (got {o:?})"
+            ));
+        }
+    };
     if c.abi != 1 {
         return Err(format!("CONFIG: abi {} unsupported (want 1)", c.abi));
     }
@@ -205,21 +250,36 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
             credentials: c.credentials,
             max_age_seconds: c.max_age_seconds,
         }),
-        csp: c.csp.map(|c| brust_core::csp::CspConfig {
-            mode: if c.report_only {
-                brust_core::csp::CspMode::ReportOnly
-            } else {
-                brust_core::csp::CspMode::Enforce
-            },
-            script_src: c.script_src,
-            script_src_unsafe: c.script_src_unsafe,
-            style_src: c.style_src,
-            connect_src: c.connect_src,
-            img_src: c.img_src,
-            font_src: c.font_src,
-            frame_ancestors: c.frame_ancestors,
-            report_uri: c.report_uri,
-        }),
+        csp: c
+            .csp
+            .map(|c| -> Result<_, String> {
+                use brust_core::csp::SelfOrNone;
+                Ok(brust_core::csp::CspConfig {
+                    mode: if c.report_only {
+                        brust_core::csp::CspMode::ReportOnly
+                    } else {
+                        brust_core::csp::CspMode::Enforce
+                    },
+                    script_src: c.script_src,
+                    script_src_unsafe: c.script_src_unsafe,
+                    style_src: c.style_src,
+                    connect_src: c.connect_src,
+                    img_src: c.img_src,
+                    font_src: c.font_src,
+                    frame_ancestors: c.frame_ancestors,
+                    report_uri: c.report_uri,
+                    default_src: SelfOrNone::parse(c.default_src.as_deref(), "csp.defaultSrc")?,
+                    base_uri: SelfOrNone::parse(c.base_uri.as_deref(), "csp.baseUri")?,
+                    form_action: c.form_action,
+                    frame_src: c.frame_src,
+                    media_src: c.media_src,
+                    worker_src: c.worker_src,
+                    manifest_src: c.manifest_src,
+                    object_src: c.object_src,
+                    drop_host: false,
+                })
+            })
+            .transpose()?,
         generator: c.generator,
         actions,
         actions_client: None,
@@ -341,6 +401,64 @@ mod tests {
         assert!(p.script_src.is_empty() && !p.script_src_unsafe);
         let e = parse(&with_cache(r#","csp":{"scriptSrcs":[]}}"#)).unwrap_err();
         assert!(e.contains("scriptSrcs"), "{e}");
+        // F544: a table shipped off is no policy; the new keys map
+        let (c, _) = parse(&with_cache(
+            r#","csp":{"enabled":false,"formAction":["https://pay.example"]}}"#,
+        ))
+        .unwrap();
+        assert!(c.csp.is_none());
+        let (c, _) = parse(&with_cache(
+            r#","csp":{"enabled":true,"defaultSrc":"none","baseUri":"none","formAction":["https://pay.example"],"frameSrc":["https://v.example"],"objectSrc":["https://o.example"]}}"#,
+        ))
+        .unwrap();
+        let p = c.csp.unwrap();
+        assert_eq!(p.default_src, brust_core::csp::SelfOrNone::None);
+        assert_eq!(p.base_uri, brust_core::csp::SelfOrNone::None);
+        assert_eq!(p.form_action, ["https://pay.example"]);
+        assert_eq!(
+            (p.frame_src.len(), p.object_src.len(), p.drop_host),
+            (1, 1, false)
+        );
+        let e = parse(&with_cache(r#","csp":{"defaultSrc":"some"}}"#)).unwrap_err();
+        assert!(e.contains("csp.defaultSrc"), "{e}");
+    }
+
+    #[test]
+    fn brust_csp_mode_switches_the_built_policy() {
+        use brust_core::csp::CspMode;
+        let off_table =
+            with_cache(r#","csp":{"enabled":false,"formAction":["https://pay.example"]}}"#);
+        let on_table = with_cache(r#","csp":{"enabled":true,"reportOnly":true}}"#);
+        let mode = |json: &str, m: Option<&str>| parse_with_csp_mode(json, m).map(|p| p.core.csp);
+        // unset / empty: as built
+        assert!(mode(&off_table, None).unwrap().is_none());
+        assert_eq!(
+            mode(&on_table, Some("")).unwrap().unwrap().mode,
+            CspMode::ReportOnly
+        );
+        // off: none, even when built on
+        assert!(mode(&on_table, Some("off")).unwrap().is_none());
+        // on: the shipped table (even when off), in that mode
+        let p = mode(&off_table, Some("enforce")).unwrap().unwrap();
+        assert_eq!((p.mode, p.form_action.len()), (CspMode::Enforce, 1));
+        assert_eq!(
+            mode(&on_table, Some("enforce")).unwrap().unwrap().mode,
+            CspMode::Enforce
+        );
+        // no table at all: the default policy
+        assert_eq!(
+            mode(OK, Some("report-only")).unwrap().unwrap(),
+            brust_core::csp::CspConfig {
+                mode: CspMode::ReportOnly,
+                ..Default::default()
+            }
+        );
+        // anything else refuses to boot
+        let e = mode(OK, Some("strict")).unwrap_err();
+        assert!(
+            e.contains("BRUST_CSP_MODE") && e.contains("\"strict\""),
+            "{e}"
+        );
     }
 
     const CACHE: &str = r#","cache":{"adapter":"custom","getTimeoutMs":100,"maxBodyBytes":1048576,"namespace":"ns","buildId":"0123456789abcdef","epochIntervalMs":250}}"#;
