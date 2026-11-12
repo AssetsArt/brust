@@ -82,15 +82,23 @@ export function mount(root: ParentNode = document.body): void {
   pageBooted = true
 }
 let observedRoot: ParentNode | null = null
+const gone = (n: Node) => { if (!n.isConnected) disposeTree(n) }
+const added = (n: Node) => { if (n instanceof Element && n.isConnected) mountTree(n) }
 function startObserver(root: ParentNode): void {
   observedRoot = root
-  observer = new MutationObserver((records) => {
-    for (const r of records) {
-      r.removedNodes.forEach((n) => { if (!n.isConnected) disposeTree(n) })
-      r.addedNodes.forEach((n) => { if (n instanceof Element && n.isConnected) mountTree(n) })
-    }
-  })
-  observer.observe(root, { childList: true, subtree: true })
+  const o = (observer = new MutationObserver((records) => {
+    for (const r of records) { r.removedNodes.forEach(gone); r.addedNodes.forEach(added) }
+  }))
+  o.observe(root, { childList: true, subtree: true })
+  // F533: a navigation's swap does not wait for the observer. It takes the pending records (the observer never sees
+  // them again): every removed node is disposed (cleanups and island unmounts run), then `between` (the new page's
+  // store writes), then every added node mounts. The copy whose observer runs owns the hook.
+  ;(globalThis as Record<symbol, unknown>)[Symbol.for('brust.mountFlush')] = (between: () => void) => {
+    const rs = o.takeRecords()
+    for (const r of rs) r.removedNodes.forEach(gone)
+    between()
+    for (const r of rs) r.addedNodes.forEach(added)
+  }
 }
 export function unmount(root: ParentNode = document.body): void {
   if (root === observedRoot) { observer?.disconnect(); observer = null; observedRoot = null; pageBooted = false }   // torn down: the next mount() is a fresh boot

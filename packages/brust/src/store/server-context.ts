@@ -2,7 +2,7 @@
 // never imported by client code. No runtime import from core: `core-adapter.ts` registers
 // `getServerInstance` as core's resolver at worker boot (S8).
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { isStoreHandle, type StoreRecord, type StoreSnapshot } from './core-adapter'
+import { isStoreHandle, type StoreRecord, type StoreSnapshot, WRITTEN } from './core-adapter'
 
 interface Scope {
   records: Map<string, StoreRecord>
@@ -23,17 +23,25 @@ export function getServerInstance(name: string, create: () => StoreRecord): Stor
     rec = create()
     scope.records.set(name, rec) // before hydrate: handle.hydrate resolves back to this record
     const s = scope.seed?.[name]
-    if (s && typeof s === 'object') rec.handle?.hydrate(s)
+    if (s && typeof s === 'object') {
+      const { [WRITTEN]: _, ...state } = s // F533: the seed is a loader's snapshot; its written-key list is not state
+      rec.handle?.hydrate(state) // a seed: core marks nothing it sets as written
+    }
   }
   return rec
 }
 
-/** Touched stores only; `null` when none (C2: then `store` is omitted, R1). */
+/** Touched stores only; `null` when none (C2: then `store` is omitted, R1). A store the scope wrote to carries the
+ * written keys under the reserved `~w` (F533: a navigation sets exactly those on a live client store). */
 export function collectSnapshot(): StoreSnapshot | null {
   const scope = storeContext.getStore()
   if (!scope || scope.records.size === 0) return null
   const out: StoreSnapshot = {}
-  for (const [name, rec] of scope.records) out[name] = rec.handle ? rec.handle.serialize() : {}
+  for (const [name, rec] of scope.records) {
+    const state = rec.handle ? rec.handle.serialize() : {}
+    if (rec.written?.size) state[WRITTEN] = [...rec.written]
+    out[name] = state
+  }
   return out
 }
 

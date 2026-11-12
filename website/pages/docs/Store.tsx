@@ -128,7 +128,11 @@ export default function Store({ blocks, candidates }: StoreData) {
           the signals and derive in the component.
         </li>
         <li>
-          A store that is already live keeps its client value across a <a href="/docs/navigation">navigation</a>. The new page's snapshot only seeds a store the tab has not used yet.
+          A store that is already live keeps its client value across a <a href="/docs/navigation#stores">navigation</a>, except for the keys the new page's loaders wrote (<code>.set()</code> in a loader, even to the same value): those take the
+          server's value before the new page mounts. A store the tab has not used yet seeds from the new page's snapshot.
+        </li>
+        <li>
+          <code>~w</code> is reserved: a store member cannot use that name (the snapshot lists the written keys under it).
         </li>
       </ul>
       <p>

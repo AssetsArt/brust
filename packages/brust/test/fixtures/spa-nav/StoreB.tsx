@@ -2,7 +2,8 @@ import { useStore } from '@brust/core/store/react'
 import { cart } from './stores/cart'
 import { late } from './stores/late'
 
-/** Native: cart keeps a live tab's value (§5.5); late is first used here and seeds from this page's snapshot. */
+/** Native: cart keeps a live tab's value (its loader writes no cart key, F533); late is first used here and seeds from
+ * this page's snapshot. */
 export default function StoreB() {
   const c = useStore(cart)
   const l = useStore(late)

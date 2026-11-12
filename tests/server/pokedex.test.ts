@@ -157,7 +157,7 @@ test('first paint: every layout page carries ONE data-brust-store="team" tag = t
     const { html } = await get(p)
     const tags = storeTags(html).filter((t) => t.name === 'team')
     expect(tags, p).toHaveLength(1)
-    expect(tags[0]!.json, p).toEqual({ max: 6, members: [] })
+    expect(tags[0]!.json, p).toEqual({ max: 6, members: [], '~w': ['members', 'max'] }) // F533: the layout loader wrote both
     expect(tags[0]!.at, p).toBeLessThan(html.search(/<script[^>]*\/_brust\/client\/runtime-/))
     expect(html, p).toMatch(/data-testid="team-count"[^>]*>0</)
   }
@@ -178,15 +178,15 @@ test('/unified?start=5: one unified tag {count:5}; island, native counter and re
   const { r, html } = await get('/unified?start=5')
   expect(r.status).toBe(200)
   const tags = storeTags(html)
-  expect(tags.filter((t) => t.name === 'unified').map((t) => t.json)).toEqual([{ count: 5 }])
+  expect(tags.filter((t) => t.name === 'unified').map((t) => t.json)).toEqual([{ count: 5, '~w': ['count'] }])
   expect(tags.filter((t) => t.name === 'team')).toHaveLength(1)
   const text = (h: string, id: string) => new RegExp(`data-testid="unified-${id}-count"[^>]*>\\s*([0-9]+)\\s*<`).exec(h)?.[1]
   expect(['island', 'native', 'node'].map((id) => text(html, id))).toEqual(['5', '5', '5'])
   const zero = (await get('/unified')).html
   expect(['island', 'native', 'node'].map((id) => text(zero, id))).toEqual(['0', '0', '0'])
-  expect(storeTags(zero).find((t) => t.name === 'unified')!.json).toEqual({ count: 0 })
-  expect(storeTags((await get('/unified?start=-9')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 0 })
-  expect(storeTags((await get('/unified?start=99999999')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 1000000 })
+  expect(storeTags(zero).find((t) => t.name === 'unified')!.json).toEqual({ count: 0, '~w': ['count'] })
+  expect(storeTags((await get('/unified?start=-9')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 0, '~w': ['count'] })
+  expect(storeTags((await get('/unified?start=99999999')).html).find((t) => t.name === 'unified')!.json).toEqual({ count: 1000000, '~w': ['count'] })
 })
 
 // ---- team actions through Rust. LAST in the file on purpose: these mutate the DB, the tests above assume it is empty. ----

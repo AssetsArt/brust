@@ -9,6 +9,8 @@ export interface NavBridge { navigate(url: string, opts?: { replace?: boolean })
 export type Load = (url: string) => Promise<unknown>
 
 const KEY = Symbol.for('brust.nav')
+const WRITES = Symbol.for('brust.storeWrites')
+const FLUSH = Symbol.for('brust.mountFlush')
 const LOADING = 'data-brust-loading'
 const NAV = 'script[data-brust-nav]'
 const noHash = (u: string) => u.split('#')[0]!
@@ -164,7 +166,8 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
       if (doc?.querySelector(NAV)?.getAttribute('data-brust-build') !== build) throw new Error(`not a brust page of this build`)
 
       // §3 step 4: everything the new page needs before it is shown. The store tags first, at the end of the body, after
-      // the old ones (a store seeds from the first tag of its name; a live store never re-reads one): an old-page island
+      // the old ones (a store seeds from the first tag of its name; a live store takes only its loader-written keys, at
+      // the swap): an old-page island
       // that hydrates while the modules load still finds its own page's tag, and a store new to this page, first read
       // by one of its modules, finds the new one. The swap removes them with the old body tail. Then the module scripts
       // in document order (one at a time: the order they register in is the order the server wrote), then the
@@ -194,6 +197,11 @@ export function boot(load: Load = (u) => import(/* @vite-ignore */ u)): () => vo
         fresh = applyHead(plan, (e) => served.has(e))
         for (const e of fresh) served.add(e)
         ;[body, whole] = swapBody(doc, LOADING)
+        // F533: the keys the new page's loader wrote are set on the live stores, after the old level is disposed and
+        // before the new one mounts (mount.ts's flush), so no old effect sees the new value and no new one the old
+        const write = () => (g as Record<symbol, ((t: Element[]) => void) | undefined>)[WRITES]?.(stores)
+        const flush = (g as Record<symbol, ((between: () => void) => void) | undefined>)[FLUSH]
+        flush ? flush(write) : write()
         added.length = 0
         if (trigger === 'popstate') cur = pop || tag()
         else if (replace) history.replaceState({ ...history.state, brust: cur }, '', url)

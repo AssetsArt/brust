@@ -1,7 +1,9 @@
 // packages/brust/src/store/core-adapter.ts — the ONE file that names the store-core lane's API
 // (design §2.1, C7/C8). Until m3f-store-core merges it holds only the shapes this lane expects;
 // A mismatch with core is fixed here, in one line.
-import { __setServerResolver } from '@brust/runtime-dom/store/internal'
+import { __setServerResolver, WRITTEN } from '@brust/runtime-dom/store/internal'
+
+export { WRITTEN }
 
 /** C1: `{ [storeName]: { [signalKey]: Json } }`. */
 export type StoreSnapshot = Record<string, Record<string, unknown>>
@@ -11,6 +13,8 @@ export type StoreSnapshot = Record<string, Record<string, unknown>>
 export interface StoreRecord {
   instance: object
   handle?: { serialize(): Record<string, unknown>; hydrate(state: Record<string, unknown>): void }
+  /** F533: the keys written in this scope (core marks them in its signal set wrapper). */
+  written?: Set<string>
 }
 
 /** EXPECTED core hook: `__setServerResolver(fn: ServerResolver)` exported by `@brust/runtime-dom/store`. */

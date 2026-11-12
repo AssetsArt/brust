@@ -89,6 +89,17 @@ test('no server features: no actions app, no /_brust/action, no cookie', async (
   for (const p of ['/docs/actions', '/docs/store']) expect([p, (await fetch(`${base}${p}`)).headers.get('set-cookie')]).toEqual([p, null])
 })
 
+test('Navigation + Store state the store rule of a navigation: loader-written keys replace, the rest is kept (F533)', async () => {
+  const nav = await (await fetch(`${base}/docs/navigation`)).text()
+  expect(nav).toContain('except for the keys the new page&#39;s loaders wrote')
+  expect(nav).toContain('the old page&#39;s effect cleanups run and its islands unmount, then the written keys are set, then the new page mounts')
+  expect(nav).toContain('applies the values written when that document was fetched')
+  expect(nav).not.toContain('The new page&#39;s snapshot only seeds a store the tab has not used yet. It is the one place')
+  const store = await (await fetch(`${base}/docs/store`)).text()
+  expect(store).toContain('except for the keys the new page&#39;s loaders wrote')
+  expect(store).toContain('is reserved: a store member cannot use that name')
+})
+
 test('Rendering tiers: the labels come from the manifest', async () => {
   const html = await (await fetch(`${base}/docs/rendering-tiers`)).text()
   expect(html).toContain('tier static · client none')

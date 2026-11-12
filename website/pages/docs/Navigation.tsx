@@ -114,7 +114,7 @@ export default function Navigation({ blocks }: NavigationData) {
 
       <h2 id="rule">The one rule</h2>
       <p>
-        A navigation shows exactly what a full load of that URL would show. Only JavaScript state that lives outside the page survives: live stores, module-level state, and elements you marked <code>data-brust-persist</code>. When you are unsure what
+        A navigation shows exactly what a full load of that URL would show. Only JavaScript state that lives outside the page survives: live stores (except the keys the new page's loaders write), module-level state, and elements you marked <code>data-brust-persist</code>. When you are unsure what
         a navigation does, ask what a full load would do.
       </p>
 
@@ -489,9 +489,24 @@ export default function Navigation({ blocks }: NavigationData) {
       </ul>
 
       <h2 id="stores">Stores and islands</h2>
+      <p>
+        A store that is already live keeps its client state across a navigation, except for the keys the new page's loaders wrote for that request: those take the server's value, as the page's props do. A page whose loader sets{' '}
+        <code>item.id</code> shows the new id in every component and island, while a <code>count</code> that only the client writes keeps the tab's value.
+      </p>
+      <ul>
+        <li>
+          A key counts as written when a loader of the new page (its layouts' loaders included) calls <code>.set()</code> on it, even with the value the store already holds. <code>store.hydrate()</code> is a seed, not a write. A loader that
+          writes nothing leaves the live store as it is.
+        </li>
+        <li>A store the tab has not used yet seeds from the new page's snapshot, as on a full load.</li>
+        <li>
+          The order is: the old page's effect cleanups run and its islands unmount, then the written keys are set, then the new page mounts and its islands hydrate, then the new page's effects run. A cleanup that reads the store still sees
+          the old page's values, an effect of the old page never sees the new ones, and the new page never runs an effect with the old ones. Components that stay (a kept layout, a persisted element) update like on any store write.
+        </li>
+        <li>A page from the cache (a prefetch, back and forward) applies the values written when that document was fetched, the same as its props.</li>
+      </ul>
       <Note tag="Exception">
-        A store that is already live keeps its client value across a navigation. The new page's snapshot only seeds a store the tab has not used yet. It is the one place a navigation differs from a full load, and it matches React apps. See{' '}
-        <a href="/docs/store">Store</a>.
+        Keys the loader did not write keep their client value: it is the one place a navigation differs from a full load, and it matches React apps. See <a href="/docs/store">Store</a>.
       </Note>
       <p>
         When a page leaves the document, its islands are unmounted and their effect cleanups run, as on a React route change. The islands of the new page hydrate when idle, as on a full load.
