@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-45', title: '2.0.0-alpha.45' },
       { id: 'alpha-44', title: '2.0.0-alpha.44' },
       { id: 'alpha-43', title: '2.0.0-alpha.43' },
       { id: 'alpha-42', title: '2.0.0-alpha.42' },
@@ -67,6 +68,50 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-45">2.0.0-alpha.45 · 12 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.44: #484–#486 (ledger F538, F539, F542) */}
+      <p>This version adds an opt-in, hash-based <code>Content-Security-Policy</code>, makes the facts <code>compileComponent</code> returns for each handler report what the handler writes, and stops <code>brust dev</code> from adding its scripts to HTML your own routes return.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #486 (F539); crates/brust-core/src/csp.rs; packages/brust/src/config.ts; the Content Security Policy page */}
+        <li>
+          <strong>A new <code>[csp]</code> section makes brust send a strict <code>Content-Security-Policy</code> header (#486).</strong> It is off by default; with <code>enabled = true</code> every HTML response of <code>brust start</code> (and every page a Cloudflare Worker renders with <code>--target cloudflare</code>) gets <code>script-src &apos;self&apos;</code> plus a <code>sha256</code> hash for each inline script brust itself writes, such as the base path and actions globals. <code>mode</code> is <code>&quot;enforce&quot;</code> or <code>&quot;report-only&quot;</code>, and <code>script_src</code>, <code>style_src</code>, <code>connect_src</code>, <code>img_src</code>, <code>font_src</code>, <code>frame_ancestors</code> and <code>report_uri</code> add sources. A loader that sets its own <code>Content-Security-Policy</code> keeps it. Inline scripts you write yourself are blocked in <code>enforce</code> mode; start in <code>report-only</code> on an existing app. See <a href="/docs/csp">Content Security Policy</a>.
+        </li>
+        {/* source: PR #486 (F539); crates/brust-core/src/csp.rs; packages/brust/src/config.ts */}
+        <li>
+          <strong><code>script_src</code> refuses the sources that would void the hashes, and a misspelt key is an error (#486).</strong> <code>&apos;unsafe-inline&apos;</code>, <code>&apos;unsafe-eval&apos;</code>, <code>&apos;unsafe-hashes&apos;</code>, a host of just <code>*</code> and bare schemes such as <code>https:</code>, <code>data:</code> and <code>blob:</code> are refused with an error that names the entry unless you also set <code>script_src_unsafe = true</code>; <code>&apos;strict-dynamic&apos;</code> is refused always, because it would block every script brust adds. The same applies to an unknown key under <code>[csp]</code>.
+        </li>
+        {/* source: PR #485 (F538); crates/brust-compiler/src/analyze/facts/effects.rs; packages/brust/src/compile/index.ts; the Runtime components page */}
+        <li>
+          <strong>The facts <code>compileComponent</code> returns now say what each handler writes, reads and reaches (#485).</strong> Before, a handler such as <code>{'{'}(e) =&gt; {'{'} e.currentTarget.innerHTML = html; setN(n + 1) {'}'}{'}'}</code> reported only the setter as a callee, so a check that allowed only setter and local callees accepted it. Each entry of <code>facts.handlers</code> now also has <code>writes</code> (every assignment, <code>++</code>, <code>delete</code> and destructuring or loop target, with a <code>target</code> and the written <code>path</code>), <code>readsParams</code>, <code>globals</code> and <code>reaches</code>, and <code>facts.functions</code> lists the same facts for each local function a handler reaches by call, by name or through an alias. A write&rsquo;s <code>target</code> is <code>local</code>, <code>param</code>, <code>param-member</code>, <code>prop-member</code>, <code>closure</code>, <code>closure-member</code>, <code>global</code>, <code>global-member</code> or <code>other</code>; what the walk cannot trace is <code>other</code> (or an <code>unknown</code> callee), never left out. The facts are still a report, not a sandbox: allow-list writes with target <code>local</code> and callees of kind <code>setter</code> or <code>local</code>. Writes inside <code>useEffect</code>, callback refs and module-level code are not listed; <code>hooks</code>, <code>attrs</code> and <code>globals</code> name them.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #484 (F542); packages/brust/src/dev/proxy.ts; packages/brust/test/dev-proxy-inject.test.ts */}
+        <li>
+          <strong><code>brust dev</code> no longer injects its client and devtools scripts into HTML that an action or an Elysia route returns (#484).</strong> Before, every <code>text/html</code> response got them, so a page of your own returned from such a route and shown in a sandboxed <code>&lt;iframe sandbox=&quot;allow-scripts&quot;&gt;</code> logged a cross-origin script error per frame. Now only a page <code>brust</code> itself rendered (including its 404 and error pages) is injected; the HTML your route returns passes through untouched. The pages the dev proxy writes itself, such as the 502 page, keep their scripts.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #485 (F538); crates/brust-compiler/src/analyze/facts/effects.rs; crates/brust-compiler/src/analyze/facts.rs; packages/brust/src/compile/index.ts */}
+        <li>
+          <strong>If your code reads <code>facts.handlers[].callees</code>, some <code>kind</code> values changed (#485).</strong> A call rooted at a global (<code>window.localStorage.getItem</code>, <code>navigator.sendBeacon</code>, <code>document.body.append</code>) is now <code>global-member</code>, and one rooted at a handler parameter or a name derived from it (<code>e.preventDefault</code>, <code>e.target.remove</code>) is <code>param-member</code>; both used to be <code>member</code>, which now means a chain rooted at anything else. A callback that came in from outside the component (a prop, its destructured name, a helper&rsquo;s argument) is <code>prop</code>, or <code>prop-member</code> through a member of it, where it used to be <code>local</code>; a parameter that is reassigned, handed to a call or written to is no longer claimed as <code>prop</code>. A class, an object the file built, a loop or catch variable and a name assigned more than once are <code>unknown</code> instead of <code>local</code>. A setter counts only when it comes from React&rsquo;s own <code>useState</code> or <code>useReducer</code> (a local function that happens to be called <code>useState</code> no longer does). A handler that is not a function written in the file, such as <code>onClick={'{'}props.go{'}'}</code>, is now itself listed as a callee. A check that allowed <code>setter</code> and <code>local</code> still works and is stricter; one that matched on <code>member</code> needs the new kinds.
+        </li>
+        {/* source: PR #486 (F539); packages/runtime-dom/src/nav/nav.ts */}
+        <li>
+          <strong>The navigation progress bar&rsquo;s styles are now an adopted stylesheet, and an app rule overrides them (#486).</strong> They used to be a runtime <code>&lt;style&gt;</code> element, which a strict <code>style-src</code> blocks. The bar now builds a constructable stylesheet and adds it to <code>document.adoptedStyleSheets</code>; a browser without that support gets the <code>&lt;style&gt;</code> as before. Every selector is wrapped in <code>:where()</code>, so any rule of yours on <code>div[data-brust-bar]</code> wins over the built-in one regardless of order. The bar looks the same unless you already style it.
+        </li>
+        {/* source: PR #486 (F539); the Content Security Policy page (Where it applies); crates/brust-core/src/csp.rs */}
+        <li>
+          <strong><code>[csp]</code> does not apply under <code>brust dev</code>, <code>--target static</code> pages or the static assets of the Cloudflare target (#486).</strong> The dev overlay adds <code>&lt;style&gt;</code> elements a strict policy would block, so check your policy with <code>brust start</code>; static pages and Cloudflare assets are served by the platform, so set the header in your host&rsquo;s configuration for those. Inline-script nonces for your own scripts are not added yet.
+        </li>
+      </ul>
 
       <h2 id="alpha-44">2.0.0-alpha.44 · 12 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.43: #482 (ledger F537) */}
