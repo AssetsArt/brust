@@ -45,6 +45,75 @@ export interface Diagnostic {
   file?: string | null
 }
 
+/** One call (or `new`) a handler reaches (F520, F538). */
+export interface CalleeFact {
+  /** The callee as written (`fetch`, `bump`, `e.target.remove`); an alias is named for what it aliases (`const f = window.fetch; f()` is `window.fetch`); empty for a call-result callee. */
+  name: string
+  /**
+   * `import` (an imported binding), `local` (a function written in the file), `setter` (React's `useState`/`useReducer` setter),
+   * `prop` (a parameter of an enclosing function, or a name destructured from or aliasing one: the component's props, a helper's argument. Caller-supplied, so never `local`; claimed only for a parameter that is never reassigned, never handed to a call, and none of whose members (or its aliases' members) is written in the file),
+   * `prop-member` (a member chain rooted at one: `props.onSave`),
+   * `global` (an unbound identifier), `global-member` (a member chain rooted at a global or at a name that aliases one: `document.body.append`),
+   * `param-member` (rooted at a parameter or a name derived from one: `e.target.remove`), `member` (rooted at anything else; `from` is set when the root is imported),
+   * `unknown` (a call-result callee, a function passed in as a parameter, a name the file does not fix: assigned twice, a loop variable).
+   * A handler that is not a function written in the file (`onClick={props.go}`, `onClick={sdk.bump}`) is itself listed as a callee.
+   */
+  kind: 'import' | 'local' | 'setter' | 'prop' | 'prop-member' | 'global' | 'global-member' | 'param-member' | 'member' | 'unknown'
+  from?: string
+}
+
+/** One assignment, update (`++`, `--`) or `delete` in a handler or in a local function it reaches (F538). */
+export interface WriteFact {
+  line: number
+  col: number
+  /**
+   * What the written place is rooted at: `local` (a variable the handler declares, or a property of an object literal it made, one level deep), `param` (a parameter
+   * variable itself: `e = x`), `param-member` (through a parameter or an alias of one: `e.currentTarget.innerHTML = x`), `prop-member` (through a parameter of
+   * an enclosing function, such as the component's props: `props.obj.x = 1`), `closure` (a variable of the enclosing component or module: `count = 1`),
+   * `closure-member` (a property reached through one: `ref.current = x`), `global` (`location = x`), `global-member`
+   * (`document.title = x`, `window.location.href = x`), `other` (anything the walk cannot trace: a call result, `this`, a loop variable, a name assigned from several sources).
+   */
+  target: 'local' | 'param' | 'param-member' | 'prop-member' | 'closure' | 'closure-member' | 'global' | 'global-member' | 'other'
+  /** The written place as the source spells it, best effort (`e.currentTarget.innerHTML`, `items[?].x`). */
+  path: string
+}
+
+/** A local function a handler reaches (F538). */
+export interface FnRef {
+  name: string
+  line: number
+  col: number
+}
+
+/** What one `onX` prop's function does (F520, F538). */
+export interface HandlerFact {
+  /** The prop without `on`, lower-cased. */
+  event: string
+  tag: string
+  line: number
+  col: number
+  /** The calls its function makes: block bodies, nested callbacks and every local function it reaches (by call or by naming it). */
+  callees: CalleeFact[]
+  /** Every assignment, update and `delete` it performs, the local functions it reaches included, in source order. `e.currentTarget.innerHTML = x` calls nothing: this is where it shows. */
+  writes: WriteFact[]
+  /** It reads one of its own parameters. A destructuring signature, `arguments` and a handler the file does not show (a prop, an import) count; an unused `(e) =>` does not. */
+  readsParams: boolean
+  /** Every unbound name its code reaches, the local functions it reaches included. Sorted. */
+  globals: string[]
+  /** The local functions it reaches, each with its own entry in `Facts.functions`. */
+  reaches: FnRef[]
+}
+
+/** What one local function does in its own body (F538): the rule applied to a handler can be applied to each function behind it. */
+export interface FnFact extends FnRef {
+  writes: WriteFact[]
+  readsParams: boolean
+  globals: string[]
+  callees: CalleeFact[]
+  /** The local functions its body names. */
+  reaches: FnRef[]
+}
+
 /**
  * What the source FILE refers to (F520, R6), from the compiler's own parse and symbol table, over the whole file: the
  * render, every handler and effect, and module-level helpers. Present whenever the text parses, on `ok: false` too.
@@ -53,6 +122,10 @@ export interface Diagnostic {
  * (`window[k]`), `eval` or a dynamic `import()` can reach a name the walk never sees (they are listed in `risky` so a check
  * can refuse them), and what an imported function does is outside the file. Pair them with a Content-Security-Policy.
  * Type-only imports are erased by the parser before this walk and never appear in `imports`.
+ *
+ * Facts are a REPORT, not a sandbox, and policy stays with the caller. For handlers, allow-list writes whose `target` is `local` and callees
+ * whose `kind` is `setter` or `local`; refuse everything else, including what the walk could not trace (`other`, `unknown`). Effects (`useEffect`),
+ * callback refs (`ref={fn}`) and module-level code are named by `hooks`, `attrs` and `globals`; their writes are not listed.
  */
 export interface Facts {
   /** Runtime imports, one entry per specifier as written; `names`: imported names (`default`, `*`), empty for a bare import, `require()` or `import('x')`. */
@@ -69,8 +142,10 @@ export interface Facts {
   spreads: boolean
   /** `dangerouslySetInnerHTML` is written on an element. */
   rawHtml: boolean
-  /** Every `onX` prop in source order, with the calls its function makes (block bodies, nested callbacks and the local functions it calls included). */
-  handlers: { event: string; tag: string; line: number; col: number; callees: { name: string; kind: 'import' | 'local' | 'setter' | 'global' | 'member' | 'unknown'; from?: string }[] }[]
+  /** Every `onX` prop in source order, with what its function calls, writes and reads (block bodies, nested callbacks and the local functions it reaches included). */
+  handlers: HandlerFact[]
+  /** Every local function some handler reaches, with the same facts for its own body. Sorted by position. */
+  functions: FnFact[]
   /** Constructs that can reach a name the walk cannot see, in source order. */
   risky: { kind: 'dynamic-import' | 'computed-member' | 'constructor-access' | 'eval'; line: number; col: number }[]
 }
