@@ -129,7 +129,8 @@ test('F534: the identity holds across runtime copies (an island chunk reads the 
   const next = tag(name, { obj: { v: 2 }, '~w': ['obj'] })
   first.remove()
   applyWrittenKeys([next]) // the page's copy (nav calls it through globalThis)
-  const other = (await import('../src/store/registry.ts?f534-copy')) as typeof import('../src/store/registry')
+  const copy = '../src/store/registry.ts?f534-copy' // a query makes a distinct module instance; a variable keeps tsc off it
+  const other = (await import(copy)) as typeof import('../src/store/registry')
   expect(other.ssrSnapshotOf).not.toBe(ssrSnapshotOf) // a distinct module instance
   const rec = (globalThis as unknown as Record<symbol, Record<string, StoreInstanceRecord>>)[Symbol.for('brust.stores')]![name]!
   expect(other.ssrSnapshotOf(name, rec)!.obj).toBe(s.obj())
