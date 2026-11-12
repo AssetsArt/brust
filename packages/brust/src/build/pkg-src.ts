@@ -65,6 +65,21 @@ const TMP_PREFIX = '.tmp-'
 const TMP_STALE_MS = 10 * 60 * 1000
 let tmpCounter = 0
 
+/** `renameSync` over a file another process has open: on Windows that is a sharing violation (EPERM/EBUSY/EACCES) for as long
+ * as the reader holds the handle, and a reader holds it for the moment it takes to read the file, so it is retried briefly. */
+function renameOver(from: string, to: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(from, to)
+      return
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code
+      if (attempt >= 50 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw e
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10)
+    }
+  }
+}
+
 /** Writes `text` to `target` (its directory exists) unless the file already holds exactly that. */
 function putFile(target: string, text: string): void {
   try {
@@ -73,7 +88,7 @@ function putFile(target: string, text: string): void {
   const tmp = join(dirname(target), `${TMP_PREFIX}${process.pid}-${tmpCounter++}-${basename(target)}`)
   try {
     writeFileSync(tmp, text)
-    renameSync(tmp, target)
+    renameOver(tmp, target)
   } catch (e) {
     rmSync(tmp, { force: true })
     throw e
@@ -101,7 +116,11 @@ function pruneStale(dir: string, keep: Set<string>): void {
       try {
         if (Date.now() - lstatSync(p).mtimeMs > TMP_STALE_MS) rmSync(p, { force: true })
       } catch {}
-    } else if (!keep.has(p)) rmSync(p, { force: true })
+    } else if (!keep.has(p)) {
+      try {
+        rmSync(p, { force: true })
+      } catch {} // a reader holds it open (Windows): the next build removes it; a file outside the map is never imported
+    }
   }
 }
 
@@ -573,7 +592,9 @@ export function preparePackageSources(appRoot: string, specs: Iterable<string>):
         if (Date.now() - lstatSync(p).mtimeMs <= TMP_STALE_MS) continue
       } catch {}
     }
-    rmSync(p, { recursive: true, force: true })
+    try {
+      rmSync(p, { recursive: true, force: true })
+    } catch {} // a reader holds a file open (Windows): the next build removes it
   }
   return out
 }
