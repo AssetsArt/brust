@@ -464,6 +464,28 @@ impl<'a> Reader<'a> {
                                 written_roots.insert(i);
                             }
                         }
+                        // A name handed to a call (`Object.assign(props, x)`, `mutate(props)`, `<Inner {...props} />`) can
+                        // be changed where the file does not show it.
+                        let args: Vec<js_ast::Expr> = match &e.data {
+                            E::ECall(c) => c.args.to_vec(),
+                            E::ENew(nw) => nw.args.to_vec(),
+                            _ => Vec::new(),
+                        };
+                        for a in args {
+                            let mut handed = vec![a];
+                            if let E::EObject(o) = &a.data {
+                                handed.extend(o.properties.iter().filter_map(|p| {
+                                    matches!(p.kind, js_ast::G::PropertyKind::Spread)
+                                        .then_some(p.value)
+                                        .flatten()
+                                }));
+                            }
+                            for h in handed {
+                                if let Some(i) = self.ident_idx(&h) {
+                                    written_roots.insert(i);
+                                }
+                            }
+                        }
                         if let E::EBinary(b) = &e.data
                             && is_assign_op(b.op)
                         {
@@ -527,7 +549,12 @@ impl<'a> Reader<'a> {
         self.decls = decls;
         self.assigned = assigned;
         self.assigned_other = assigned_other;
-        self.written_roots = written_roots;
+        // Resolve each written or handed-over name to the parameter it aliases (`const p = props; p.x = 1` touches `props`).
+        let touched: HashSet<u32> = written_roots
+            .iter()
+            .filter_map(|r| self.alias_param(*r))
+            .collect();
+        self.touched_params = touched;
         self.fn_by_loc = by_loc;
     }
 
@@ -729,11 +756,28 @@ impl<'a> Reader<'a> {
         });
     }
 
+    /// The parameter the name `idx` is, or is a `const` alias of (`const p = props.api`), following initialisers only.
+    fn alias_param(&self, idx: u32) -> Option<u32> {
+        let mut cur = idx;
+        for _ in 0..8 {
+            match self.decls.get(&cur) {
+                Some(DeclKind::Param) => return Some(cur),
+                Some(DeclKind::Plain(Some(init))) => cur = self.ident_idx(chain_root(init).0)?,
+                _ => return None,
+            }
+        }
+        None
+    }
+
     /// The parameter of an enclosing function `e` is rooted at (through member hops and `const` aliases).
     fn param_root(&self, e: &js_ast::Expr) -> Option<u32> {
         let mut cur = *e;
         for _ in 0..8 {
             let idx = self.ident_idx(chain_root(&cur).0)?;
+            // An alias that is assigned again is not what it was declared as.
+            if self.assigned.contains_key(&idx) || self.assigned_other.contains(&idx) {
+                return None;
+            }
             match self.decls.get(&idx) {
                 Some(DeclKind::Param) => return Some(idx),
                 Some(DeclKind::Plain(Some(init))) => cur = *init,
@@ -743,12 +787,12 @@ impl<'a> Reader<'a> {
         None
     }
 
-    /// The parameter is never reassigned and none of its members is written anywhere in the file: what a caller passed
-    /// is what it holds. A `prop` or `prop-member` callee is claimed only then (a platform that trusts host props relies on it).
+    /// The parameter is never reassigned, none of its members is written anywhere in the file (through itself or an alias of
+    /// it) and it is never handed to a call: what a caller passed is what it holds. A `prop` or `prop-member` callee is claimed only then (a platform that trusts host props relies on it).
     fn param_untouched(&self, idx: u32) -> bool {
         !self.assigned.contains_key(&idx)
             && !self.assigned_other.contains(&idx)
-            && !self.written_roots.contains(&idx)
+            && !self.touched_params.contains(&idx)
     }
 
     fn prop_untouched(&self, e: &js_ast::Expr) -> bool {
@@ -1790,6 +1834,31 @@ mod tests {
             "() => props.onSave('/x')",
         );
         assert_eq!(kinds(&h), vec![("props.onSave", "member")]);
+        // The write through an alias of the props, an alias that is reassigned, and the props handed to a call.
+        let (_, h) = handler(
+            "",
+            "const p = props\np.onSave = window.fetch",
+            "() => props.onSave('/x')",
+        );
+        assert_eq!(kinds(&h), vec![("props.onSave", "member")]);
+        let (_, h) = handler(
+            "",
+            "let p = props\np = { onSave: window.fetch }",
+            "() => p.onSave('/x')",
+        );
+        assert_eq!(kinds(&h), vec![("p.onSave", "member")]);
+        let (_, h) = handler(
+            "",
+            "Object.assign(props, { onSave: window.fetch })",
+            "() => props.onSave('/x')",
+        );
+        assert_eq!(kinds(&h), vec![("props.onSave", "member")]);
+        // Spread into an element by the function that owns the parameter; another function's parameter is its own.
+        let f = facts(
+            "function Q(props: any) { return <b onClick={() => props.go()}><Inner {...props} /></b> }\nfunction Inner(p: any) { return <i onClick={() => p.go()}>x</i> }\nexport default function R(props: any) { return <Q {...props} /> }\n",
+        );
+        assert_eq!(kinds(&f.handlers[0]), vec![("props.go", "member")]);
+        assert_eq!(kinds(&f.handlers[1]), vec![("p.go", "prop-member")]);
         let f = facts(
             "function Btn(f: any) {\n  f = window.fetch\n  return <button onClick={() => f('x')}>x</button>\n}\nexport default function P() { return Btn(1) }\n",
         );
