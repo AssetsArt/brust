@@ -330,6 +330,15 @@ pub fn safe_host(host: &str) -> Option<&str> {
     (port_ok && name_ok).then_some(host)
 }
 
+/// The response already says it varies by `Host` (or by everything).
+fn varies_by_host(h: &HeaderMap) -> bool {
+    h.get_all(http::header::VARY)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|t| matches!(t.trim().to_ascii_lowercase().as_str(), "host" | "*"))
+}
+
 /// `value` with each `{host}` source expanded with `host`, or dropped when `host` is `None` (unsafe, or no request).
 /// A directive left with no source keeps its name: an empty list allows nothing.
 pub fn expand_host(value: &str, host: Option<&str>) -> String {
@@ -467,6 +476,11 @@ impl Resolved {
             _ => self.value.clone(),
         };
         h.insert(self.name.clone(), value);
+        // The policy depends on the Host whenever it has a {host} source (expanded or dropped): a shared cache in front
+        // must not serve one Host's policy for another.
+        if self.template.is_some() && !varies_by_host(h) {
+            h.append(http::header::VARY, HeaderValue::from_static("Host"));
+        }
     }
 
     #[cfg(test)]
@@ -1123,8 +1137,49 @@ mod tests {
             ),
             "default-src 'none'; frame-src; img-src 'self'"
         );
-        // no {host} anywhere: prebuilt, the request is never looked at
-        assert!(!Resolved::new(&cfg(), None, None).unwrap().needs_host());
+        // no {host} anywhere: prebuilt, the request is never looked at, and no Vary is added
+        let plain = Resolved::new(&cfg(), None, None).unwrap();
+        assert!(!plain.needs_host());
+        let mut h = html();
+        plain.stamp(&mut h, Some("shop.example"));
+        assert!(h.get(http::header::VARY).is_none());
+    }
+
+    #[test]
+    fn a_host_policy_varies_by_host_once() {
+        let r = Resolved::new(
+            &CspConfig {
+                connect_src: vec!["wss://{host}".into()],
+                ..cfg()
+            },
+            None,
+            None,
+        )
+        .unwrap();
+        for (before, want) in [
+            (None, vec!["Host"]),
+            (Some("Accept-Encoding"), vec!["Accept-Encoding", "Host"]),
+            (Some("accept-encoding, HOST"), vec!["accept-encoding, HOST"]),
+            (Some("*"), vec!["*"]),
+        ] {
+            for host in [Some("shop.example"), Some("bad host"), None] {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/html"),
+                );
+                if let Some(v) = before {
+                    h.insert(http::header::VARY, HeaderValue::from_static(v));
+                }
+                r.stamp(&mut h, host);
+                let got: Vec<&str> = h
+                    .get_all(http::header::VARY)
+                    .iter()
+                    .map(|v| v.to_str().unwrap())
+                    .collect();
+                assert_eq!(got, want, "{before:?} {host:?}");
+            }
+        }
     }
 
     #[test]

@@ -173,7 +173,7 @@ export default function Csp({ blocks }: CspData) {
         A source may hold <code>{'{host}'}</code>. brust replaces it with the host the request was sent to (with its port), as each response goes out, so one app serving many host names allows each page its own host. The <code>Host</code> header is
         written by the client, so it is used only when it is a plain host name or IP address with an optional port. Anything else, and every source that holds <code>{'{host}'}</code> is left out of that response&rsquo;s policy: it is never copied
         into the header. <code>{'{host}'}</code> is refused in <code>script_src</code>: a script source taken from the request would let any host name that reaches your server serve script. Static pages and the Cloudflare <code>public/</code> rule have no
-        request, so the build leaves those sources out and prints a warning.
+        request, so the build leaves those sources out and prints a warning. A response whose policy has a <code>{'{host}'}</code> source carries <code>Vary: Host</code>, so a cache in front of brust keeps one copy per host.
       </p>
 
       <h2 id="inline-styles">Inline styles</h2>
@@ -214,6 +214,10 @@ export default function Csp({ blocks }: CspData) {
         The environment variable <code>BRUST_CSP_MODE</code>, read when the server starts, overrides <code>[csp]</code> without editing <code>brust.toml</code>: <code>off</code> sends no policy; <code>report-only</code> or <code>enforce</code> sends
         it in that mode, from your <code>[csp]</code> table even when <code>enabled</code> is not true (or the default policy when there is no table). Any other value stops the server at startup. On Cloudflare it is a variable of the Worker
         (<code>vars</code> or a dashboard variable), read when the Worker starts. It is the switch to use when a policy breaks a page in production.
+      </p>
+      <p>
+        It reaches only the pages a server or a Worker renders. On <code>--target cloudflare</code>, HTML files in <code>public/</code> are served by the platform with the policy the build wrote into <code>_headers</code>, and on{' '}
+        <code>--target static</code> every page carries the policy fixed at build. Switching those needs a rebuild; the Cloudflare build prints <code>warning cf-csp-public</code> when <code>public/</code> holds HTML.
       </p>
 
       <h2 id="dev">Under brust dev</h2>

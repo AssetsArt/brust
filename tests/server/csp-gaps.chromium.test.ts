@@ -74,7 +74,10 @@ async function open(url: string): Promise<{ page: Page; console: string[]; close
 
 test("the header: default-src 'none' with brust's own directives, form-action, and {host} = the request's authority", async () => {
   const host = new URL(base).host
-  const policy = (await fetch(`${base}/shop`)).headers.get('content-security-policy') ?? ''
+  const res = await fetch(`${base}/shop`)
+  const policy = res.headers.get('content-security-policy') ?? ''
+  // a {host} policy depends on the Host: a shared cache in front must key on it
+  expect(res.headers.get('vary')?.split(',').map((t) => t.trim().toLowerCase())).toContain('host')
   expect(policy).toStartWith("default-src 'none'; script-src 'self' 'sha256-")
   expect(policy).toContain(`connect-src 'self' ws://${host};`)
   expect(policy).toContain("img-src 'self';")

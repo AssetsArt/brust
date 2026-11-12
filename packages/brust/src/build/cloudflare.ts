@@ -356,7 +356,13 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     warnings.push(...laid.warnings)
     // F541: the Worker stamps its pages; an HTML file in public/ is served by the platform, so it gets the same policy
     // (as `brust start` stamps it) from the /* rule, composed by the core exactly as the Worker composes it.
-    if (p.csp && laid.files.some((f) => f.endsWith('.html'))) {
+    const publicHtml = laid.files.some((f) => f.endsWith('.html'))
+    // F544: the platform serves public/ HTML with what the build wrote; the Worker's BRUST_CSP_MODE never reaches it.
+    if (p.cspTable && publicHtml)
+      warnings.push(
+        `[brust] warning cf-csp-public public/ holds HTML files: their policy is fixed at build in assets/_headers (${p.csp ? `[csp] as built, mode ${p.csp.mode}` : '[csp] is off, so none'}); the Worker's BRUST_CSP_MODE does not reach them, rebuild to change it`,
+      )
+    if (p.csp && publicHtml) {
       const { dev: _dev, devMode: _devMode, ...csp } = p.csp
       for (const src of cspHostSources(csp))
         warnings.push(`[brust] warning cf-csp-host csp.${src}: the _headers rule for public/ HTML has no request to take the host from; the source is left out of it (the Worker's pages expand it)`)
