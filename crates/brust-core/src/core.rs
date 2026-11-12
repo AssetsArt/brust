@@ -109,6 +109,8 @@ pub struct Core<H: Host> {
     /// The cache adapter; `None` = no L2 call is ever made.
     #[doc(hidden)]
     pub l2: Option<L2Config>,
+    /// F543: [`crate::l2::fingerprint`] of the runtime values injected into a cached body, in every L2 key.
+    pub(crate) l2_fp: Box<str>,
     /// `stats.l2`, shared with the host's background `l2_set` tasks.
     #[doc(hidden)]
     pub l2_counters: Arc<L2Counters>,
@@ -180,6 +182,17 @@ impl<H: Host> Core<H> {
             }
             None => None,
         };
+        let generator_meta: Option<Box<str>> = cfg
+            .generator
+            .as_deref()
+            .map(|g| crate::render::generator_meta_tag(g).into_boxed_str());
+        // F543: what `render_document` adds to a body that the build did not write.
+        let l2_fp = crate::l2::fingerprint(&[
+            action_prefix_tag.as_deref(),
+            generator_meta.as_deref(),
+            Some(loaded.manifest.base_path.as_str()),
+        ])
+        .into_boxed_str();
         // One invalidation clock for both caches: `page()` stamps it once per request (F89).
         let clock = Arc::new(InvalClock::default());
         let components = crate::components::Registry::for_manifest(
@@ -217,11 +230,9 @@ impl<H: Host> Core<H> {
 
             actions: cfg.actions,
             powered_by: powered_by(cfg.generator.as_deref()),
-            generator_meta: cfg
-                .generator
-                .as_deref()
-                .map(|g| crate::render::generator_meta_tag(g).into_boxed_str()),
+            generator_meta,
             https: cfg.https,
+            l2_fp,
             l2: cfg.l2,
             l2_counters: Arc::default(),
             l2_floor: SharedFloor::default(),

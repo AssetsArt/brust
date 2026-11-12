@@ -56,6 +56,44 @@ fn miss_then_hit_l2_on_a_second_server() {
     assert_eq!(stats(&b)["loader_calls"], 0);
 }
 
+/// F543: two processes of one build over one shared L2 that differ in a runtime value the core injects into the body (here the
+/// generator meta) never read each other's bodies; the same config still shares them (`miss_then_hit_l2_on_a_second_server`).
+#[test]
+fn a_different_runtime_config_does_not_read_the_others_body() {
+    let l2 = FakeL2::new();
+    let boot_gen = |generator: &str| {
+        let f = fake().with_l2(Arc::clone(&l2));
+        let mut cfg = config(&fx());
+        cfg.l2 = Some(l2_config(1000, 1 << 20));
+        cfg.generator = Some(generator.to_string());
+        let s = brust_server::start(cfg).expect("start");
+        let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&f))));
+        f.bind(&s, id);
+        s
+    };
+    let a = boot_gen("brust/1.0.0-a");
+    let (_, h, body_a) = get(&a, "/pokemon/pikachu", &[]);
+    assert_eq!(cache_hdr(&h), Some("MISS"));
+    wait_for("the set", || l2.ops().1 == 1 && l2.len() == 1);
+    let b = boot_gen("brust/2.0.0-b");
+    let (st, h, body_b) = get(&b, "/pokemon/pikachu", &[]);
+    assert_eq!(
+        (st, cache_hdr(&h)),
+        (200, Some("MISS")),
+        "B must not take A's body"
+    );
+    let (ta, tb) = (&body_a, &body_b);
+    assert!(
+        ta.contains("brust/1.0.0-a") && !ta.contains("brust/2.0.0-b"),
+        "{ta}"
+    );
+    assert!(
+        tb.contains("brust/2.0.0-b") && !tb.contains("brust/1.0.0-a"),
+        "{tb}"
+    );
+    wait_for("both stored", || l2.len() == 2);
+}
+
 #[test]
 fn get_timeout_renders() {
     let l2 = FakeL2::new();
