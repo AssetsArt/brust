@@ -234,6 +234,9 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
     if (req.method === 'HEAD' || res.status === 204 || res.status === 304) return new Response(null, { status: res.status, headers: out })
     if (/text\/html/i.test(type)) {
       out.set('content-type', type)
+      // F542: only a page the core rendered carries its trace (every page path sets it, crates/brust-core/src/pipeline.rs). HTML an
+      // action or an Elysia route returned is the app's own: a page of its own, maybe in a sandboxed frame, gets no dev scripts.
+      if (!trace) return tag(new Response(res.body, { status: res.status, headers: out }))
       return tag(new Response(inject(await res.text(), gen, trace, base), { status: res.status, headers: out }))
     }
     if (doc && res.status >= 500) return tag(htmlPage(res.status, `${res.status} ${res.statusText || 'server error'}`, await res.text(), gen, trace, base))
