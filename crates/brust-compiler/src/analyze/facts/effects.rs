@@ -410,6 +410,7 @@ impl<'a> Reader<'a> {
         let mut decls: HashMap<u32, DeclKind> = HashMap::new();
         let mut assigned: HashMap<u32, Vec<js_ast::Expr>> = HashMap::new();
         let mut assigned_other: HashSet<u32> = HashSet::new();
+        let mut written_roots: HashSet<u32> = HashSet::new();
         for part in ast.parts.iter() {
             walk_stmts(part.stmts.slice(), &mut |n| {
                 self.declared(n, None, &mut |idx, kind| {
@@ -435,6 +436,34 @@ impl<'a> Reader<'a> {
                 });
                 match n {
                     N::E(e) => {
+                        // A member written anywhere in the file (`props.onSave = f`, `props.n++`): its root holds more than
+                        // what its caller passed.
+                        let written = match &e.data {
+                            E::EBinary(b) if is_assign_op(b.op) => {
+                                let mut ts = Vec::new();
+                                if matches!(b.op, js_ast::OpCode::BinAssign) {
+                                    assign_targets(&b.left, &mut ts);
+                                } else {
+                                    ts.push(b.left);
+                                }
+                                ts
+                            }
+                            E::EUnary(u)
+                                if is_update_op(u.op)
+                                    || matches!(u.op, js_ast::OpCode::UnDelete) =>
+                            {
+                                vec![u.value]
+                            }
+                            _ => Vec::new(),
+                        };
+                        for t in written {
+                            let (root, hops) = chain_root(&t);
+                            if hops > 0
+                                && let Some(i) = self.ident_idx(root)
+                            {
+                                written_roots.insert(i);
+                            }
+                        }
                         if let E::EBinary(b) = &e.data
                             && is_assign_op(b.op)
                         {
@@ -498,6 +527,7 @@ impl<'a> Reader<'a> {
         self.decls = decls;
         self.assigned = assigned;
         self.assigned_other = assigned_other;
+        self.written_roots = written_roots;
         self.fn_by_loc = by_loc;
     }
 
@@ -699,6 +729,32 @@ impl<'a> Reader<'a> {
         });
     }
 
+    /// The parameter of an enclosing function `e` is rooted at (through member hops and `const` aliases).
+    fn param_root(&self, e: &js_ast::Expr) -> Option<u32> {
+        let mut cur = *e;
+        for _ in 0..8 {
+            let idx = self.ident_idx(chain_root(&cur).0)?;
+            match self.decls.get(&idx) {
+                Some(DeclKind::Param) => return Some(idx),
+                Some(DeclKind::Plain(Some(init))) => cur = *init,
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// The parameter is never reassigned and none of its members is written anywhere in the file: what a caller passed
+    /// is what it holds. A `prop` or `prop-member` callee is claimed only then (a platform that trusts host props relies on it).
+    fn param_untouched(&self, idx: u32) -> bool {
+        !self.assigned.contains_key(&idx)
+            && !self.assigned_other.contains(&idx)
+            && !self.written_roots.contains(&idx)
+    }
+
+    fn prop_untouched(&self, e: &js_ast::Expr) -> bool {
+        self.param_root(e).is_some_and(|i| self.param_untouched(i))
+    }
+
     /// The callee a call to `target` is, seen from the unit `ctx` (see [`Callee::kind`]): an alias of a global or of a
     /// parameter is named for what it aliases (`const f = window.fetch; f()` is the global member `window.fetch`).
     fn classify_depth(&self, target: &js_ast::Expr, ctx: &Ctx, depth: u8) -> Callee {
@@ -790,7 +846,7 @@ impl<'a> Reader<'a> {
                         from: None,
                     },
                     // `const { onSave } = props`: caller-supplied.
-                    Origin::Prop => Callee {
+                    Origin::Prop if self.prop_untouched(init) => Callee {
                         name,
                         kind: "prop",
                         from: None,
@@ -802,11 +858,17 @@ impl<'a> Reader<'a> {
                 // A parameter of a function outside the handler (the component's props, mostly) is a value its caller gives;
                 // a parameter of a function inside it, a loop or catch binding and a pattern with no value are not fixed by
                 // the file.
-                Some(DeclKind::Param) if !ctx.inner.contains(&idx) => Callee {
-                    name,
-                    kind: "prop",
-                    from: None,
-                },
+                Some(DeclKind::Param) if !ctx.inner.contains(&idx) => {
+                    if self.param_untouched(idx) {
+                        Callee {
+                            name,
+                            kind: "prop",
+                            from: None,
+                        }
+                    } else {
+                        unknown(name)
+                    }
+                }
                 Some(DeclKind::Param)
                 | Some(DeclKind::Other)
                 | Some(DeclKind::Pattern { init: None, .. }) => unknown(name),
@@ -826,7 +888,8 @@ impl<'a> Reader<'a> {
             }
             let kind = match self.origin_of_ref(ridx, ctx, &mut HashSet::new()) {
                 Origin::Param => "param-member",
-                Origin::Prop => "prop-member",
+                Origin::Prop if self.prop_untouched(target) => "prop-member",
+                Origin::Prop => "member",
                 Origin::Global => "global-member",
                 _ => "member",
             };
@@ -1719,13 +1782,24 @@ mod tests {
             "props.onSave = window.fetch\nconst { onSave } = props",
             "() => onSave('/x')",
         );
-        assert!(
-            h.callees
-                .iter()
-                .any(|c| c.name == "onSave" && c.kind == "prop"),
-            "{:?}",
-            h.callees
+        // `prop` is claimed only for a parameter that holds what its caller passed: the props object is written to here.
+        assert_eq!(kinds(&h), vec![("onSave", "unknown")]);
+        let (_, h) = handler(
+            "",
+            "props.onSave = window.fetch",
+            "() => props.onSave('/x')",
         );
+        assert_eq!(kinds(&h), vec![("props.onSave", "member")]);
+        let f = facts(
+            "function Btn(f: any) {\n  f = window.fetch\n  return <button onClick={() => f('x')}>x</button>\n}\nexport default function P() { return Btn(1) }\n",
+        );
+        assert_eq!(kinds(&f.handlers[0]), vec![("f", "unknown")]);
+        // A handler that writes a member of the props does not stop an untouched parameter being a `prop`.
+        let f = facts(
+            "function Btn(f: any, o: any) {\n  return <button onClick={() => { f(1); o.x = 2 }}>x</button>\n}\nexport default function P() { return Btn(1, 2) }\n",
+        );
+        assert_eq!(kinds(&f.handlers[0]), vec![("f", "prop")]);
+        assert_eq!(writes(&f.handlers[0]), vec![("prop-member", "o.x")]);
     }
 
     #[test]

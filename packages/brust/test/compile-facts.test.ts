@@ -134,7 +134,10 @@ test('F538: a pure setter handler has no writes, reads no parameter and reaches 
 test('F538: a parameter of an enclosing function is a prop callee, never local', async () => {
   const f = await facts("export default function P() {\n  const Btn = (f: any) => <button onClick={() => f('x')}>x</button>\n  return Btn(document.write.bind(document))\n}\n")
   expect(f.handlers[0]!.callees).toEqual([{ name: 'f', kind: 'prop' }])
-  const g = await facts("export default function P(props: any) {\n  return <button onClick={() => { props.onSave(1); props.obj.x = 2 }}>x</button>\n}\n")
+  const g = await facts("export default function P(props: any, o: any) {\n  return <button onClick={() => { props.onSave(1); o.obj.x = 2 }}>x</button>\n}\n")
   expect(g.handlers[0]!.callees).toEqual([{ name: 'props.onSave', kind: 'prop-member' }])
-  expect(g.handlers[0]!.writes).toMatchObject([{ target: 'prop-member', path: 'props.obj.x' }])
+  expect(g.handlers[0]!.writes).toMatchObject([{ target: 'prop-member', path: 'o.obj.x' }])
+  // `prop` means the parameter holds what its caller passed: one that is reassigned or written to is not claimed.
+  const h = await facts("export default function P(props: any) {\n  props.onSave = window.fetch\n  return <button onClick={() => props.onSave(1)}>x</button>\n}\n")
+  expect(h.handlers[0]!.callees).toEqual([{ name: 'props.onSave', kind: 'member' }])
 })

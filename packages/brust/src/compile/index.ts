@@ -51,7 +51,7 @@ export interface CalleeFact {
   name: string
   /**
    * `import` (an imported binding), `local` (a function written in the file), `setter` (React's `useState`/`useReducer` setter),
-   * `prop` (a parameter of an enclosing function, or a name destructured from or aliasing one: the component's props, a helper's argument. Caller-supplied, so never `local`),
+   * `prop` (a parameter of an enclosing function, or a name destructured from or aliasing one: the component's props, a helper's argument. Caller-supplied, so never `local`; claimed only for a parameter that is never reassigned and none of whose members is written in the file),
    * `prop-member` (a member chain rooted at one: `props.onSave`),
    * `global` (an unbound identifier), `global-member` (a member chain rooted at a global or at a name that aliases one: `document.body.append`),
    * `param-member` (rooted at a parameter or a name derived from one: `e.target.remove`), `member` (rooted at anything else; `from` is set when the root is imported),
