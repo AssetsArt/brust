@@ -151,6 +151,8 @@ export interface NativeBinding {
   cacheClear(): number
   /** Static output (gaps round R9.4): the request reads of a cache key expression; throws when it does not parse. */
   cacheExprReads(src: string): string[]
+  cspForStatic(name: string, value: string): StaticCsp
+  cspHeader(csp: CspOptions, basePath: string, actionsPrefix?: string | null): [string, string]
   // ----- F529 plan §2c: WebSockets (crates/brust-napi/src/ws.rs). Every ws* call is synchronous and never throws;
   // an unknown or closed socket answers 0 / false / [] / "". -----
   /** The calling worker's socket handler (`workerId` = what `registerWorker` returned); a returned Promise is awaited. */
@@ -202,3 +204,13 @@ export const cacheReplay = (args: InvalidateArgs, seq: number | null): Invalidat
 export const cacheL2Count = (name: string): boolean => native().cacheL2Count(name)
 export const cacheClear = (): number => native().cacheClear()
 export const cacheExprReads = (src: string): string[] => native().cacheExprReads(src)
+/** F541: a rendered page's policy header as a static page carries it (Rust `csp::split_for_meta`). */
+export const cspForStatic = (name: string, value: string): StaticCsp => native().cspForStatic(name, value)
+/** F541: the policy header (name, value) a server with this `[csp]`, base path and actions prefix sends (Rust `csp::header_for`). */
+export const cspHeader = (csp: CspOptions, basePath: string, actionsPrefix?: string | null): [string, string] => native().cspHeader(csp, basePath, actionsPrefix)
+/** napi `NapiStaticCsp`: the meta `content`, and the header the static host still sends. */
+export interface StaticCsp {
+  meta?: string | null
+  headerName?: string | null
+  headerValue?: string | null
+}

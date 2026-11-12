@@ -293,6 +293,7 @@ jobs:
       # Linux-only (Chromium, redis, workerd); scripts/windows-smoke.ts covers scaffold -> build -> start here.
       # windows-skip: packages/brust/test/cf-dev.test.ts the fake wrangler is a #!/bin/sh script and the test drives the SIGTERM restart (POSIX-only)
       # windows-skip: packages/brust/test/lifecycle.test.ts SIGTERM drain is POSIX-only (F486 C4); Windows stop is lane win-stop (F488)
+      # windows-skip: packages/brust/test/static-csp.test.ts starts and stops `brust start` per case to read the served policy (the Windows server child outlives the stop for up to 1 s, F488) and the build output is the same on every OS
       # windows-skip: packages/create-app/test/shadcn.test.ts the round trips run the printed lines through a real sh and #!/bin/sh stubs (POSIX shell)
       # windows-skip: packages/create-app/test/pack.test.ts asserts the tarball's exec bit and lists it with sh/tar (the exec bit is POSIX-only)
       # windows-skip: packages/create-app/test/scaffold.test.ts npm install of workerd and the cloudflare cases; scripts/windows-smoke.ts covers the scaffold
@@ -403,6 +404,8 @@ jobs:
       - run: cd packages/brust && bun test test/handlers.test.ts test/fetch-in-scope.test.ts
       # gaps round L9: brust build --target static, end to end on test/fixtures/static-app.
       - run: cd packages/brust && bun test --timeout 300000 test/static.test.ts
+      # F541: [csp] in a --target static build: the meta first in every page's <head> (== the core's split of the served header, hashes of the page's inline scripts), header-only directives and report-only in the /* rule of _headers.
+      - run: cd packages/brust && bun test --timeout 300000 test/static-csp.test.ts
       # gaps round L19: CSS (global, modules, injection) end to end on test/fixtures/css-app.
       - run: cd packages/brust && bun test --timeout 300000 test/css.test.ts
       # gaps round L21 + L32: Tailwind CSS v4 (brust's plugin over the repo's pinned tailwindcss, @tailwindcss/node, @tailwindcss/oxide).
@@ -451,6 +454,8 @@ jobs:
       - run: bun test --timeout 180000 tests/server/runtime-components.chromium.test.ts
       # F539: [csp] on under a base path with an actions prefix: no violation from brust's own tags, island + action, SPA nav with the progress bar; an inline app <style> is blocked, then applied with style_src 'unsafe-inline'.
       - run: bun test --timeout 300000 tests/server/csp.chromium.test.ts
+      # F541: a static build under the enforced meta policy, served like Cloudflare Pages: island + SPA nav between static pages, zero violations; an unhashed inline script is blocked.
+      - run: bun test --timeout 300000 tests/server/csp-static.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/live-style.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/props-order.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/loader-style.chromium.test.ts

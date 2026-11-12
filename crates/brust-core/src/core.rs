@@ -140,30 +140,11 @@ impl<H: Host> Core<H> {
         if let Some(c) = &cfg.actions_client {
             c.validate().map_err(|e| format!("actions: {e}"))?;
         }
-        let action_prefix_tag: Option<Box<str>> = {
-            let base = loaded.manifest.base_path.as_str();
-            let actions = match &cfg.actions_client {
-                Some(c) => c.tags_under(base),
-                None => cfg.actions.as_ref().and_then(|a| {
-                    ActionsClient {
-                        prefix: Some(a.prefix.clone()),
-                        ..Default::default()
-                    }
-                    .tags_under(base)
-                }),
-            };
-            // F495: the client reads its mount point from one global, like the actions prefix.
-            let base_tag = (!base.is_empty()).then(|| {
-                format!(
-                    "<script>globalThis.__BRUST_BASE_PATH__={}</script>",
-                    crate::config::js_string(base)
-                )
-            });
-            match (base_tag, actions) {
-                (None, None) => None,
-                (b, a) => Some(b.unwrap_or_default() + &a.unwrap_or_default()),
-            }
-        }
+        let action_prefix_tag: Option<Box<str>> = page_globals(
+            &loaded.manifest.base_path,
+            cfg.actions.as_ref(),
+            cfg.actions_client.as_ref(),
+        )
         .map(String::into_boxed_str);
         let csp = match &cfg.csp {
             Some(c) => {
@@ -345,6 +326,37 @@ impl<H: Host> Core<H> {
         if let Some(c) = &self.csp {
             c.stamp(h);
         }
+    }
+}
+
+/// The inline scripts every page of a server under `base` holds (A4/L16/F495): the base path global, then the actions
+/// client globals (from `client`, else a non-default `actions` prefix). `None` = none. Fixed per server; F541's build
+/// calls it too, to hash the same tags a Worker writes.
+pub fn page_globals(
+    base: &str,
+    actions: Option<&ActionsConfig>,
+    client: Option<&ActionsClient>,
+) -> Option<String> {
+    let actions = match client {
+        Some(c) => c.tags_under(base),
+        None => actions.and_then(|a| {
+            ActionsClient {
+                prefix: Some(a.prefix.clone()),
+                ..Default::default()
+            }
+            .tags_under(base)
+        }),
+    };
+    // F495: the client reads its mount point from one global, like the actions prefix.
+    let base_tag = (!base.is_empty()).then(|| {
+        format!(
+            "<script>globalThis.__BRUST_BASE_PATH__={}</script>",
+            crate::config::js_string(base)
+        )
+    });
+    match (base_tag, actions) {
+        (None, None) => None,
+        (b, a) => Some(b.unwrap_or_default() + &a.unwrap_or_default()),
     }
 }
 

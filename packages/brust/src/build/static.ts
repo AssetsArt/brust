@@ -6,7 +6,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { FlatRoute } from '../routes'
-import { layoutAssets } from './cf-assets'
+import type { StaticCsp } from '../native'
+import { layoutAssets, withCspHeader } from './cf-assets'
 import { BuildError } from './errors'
 import type { Rendered } from './ssg-render'
 import { assertNoCacheBindings } from './static-worker'
@@ -160,10 +161,69 @@ async function render(dist: string, entry: string, cwd: string, paths: string[])
   return { addr, rendered, records }
 }
 
+/** F541: what a static page carries of the `[csp]` header the render server sent: one meta per page (its own policy, so a
+ * loader's own header still wins on its page) and one `/*` header rule for the host (directives a meta cannot hold, or
+ * the whole report-only policy). `split` is the core's `csp::split_for_meta` (napi `cspForStatic`). */
+export interface PageCsp {
+  /** Per rendered page (by index): the meta `content`, or undefined (no policy on that response). */
+  metas: (string | undefined)[]
+  /** The meta of the policy most pages carry: the default 404 (not rendered) gets it. */
+  common?: string
+  /** The header rule (name, value), when there is one. */
+  header?: [string, string]
+  warnings: string[]
+}
+
+export function pageCsp(rendered: Rendered[], split: (name: string, value: string) => StaticCsp): PageCsp {
+  const metas: (string | undefined)[] = []
+  const rules = new Map<string, { n: number; meta?: string }>()
+  for (const r of rendered) {
+    const name = ['content-security-policy', 'content-security-policy-report-only'].find((n) => r.headers[n] !== undefined)
+    if (name === undefined) {
+      metas.push(undefined)
+      continue
+    }
+    const s = split(name, r.headers[name]!)
+    metas.push(s.meta ?? undefined)
+    const key = s.headerName ? `${s.headerName}\n${s.headerValue}` : ''
+    const seen = rules.get(key) ?? { n: 0, meta: s.meta ?? undefined }
+    seen.n++
+    rules.set(key, seen)
+  }
+  const ranked = [...rules.entries()].sort((a, b) => b[1].n - a[1].n)
+  const top = ranked[0]
+  const warnings = ranked
+    .slice(1)
+    .filter(([k]) => k !== '')
+    .map(([k]) => `[brust] warning ssg-csp-header ${k.split('\n').join(': ')} is set by a page of its own; a static host sends one header rule for every page, so it is dropped`)
+  const header = top && top[0] !== '' ? (top[0].split('\n') as [string, string]) : undefined
+  return { metas, common: top?.[1].meta, header, warnings }
+}
+
+/** `html` with `<meta http-equiv="Content-Security-Policy">` as the first element of its <head> (a meta policy governs only
+ * what comes after it). A page without a <head> cannot carry it: a build error, never a page that silently has none. */
+export function withCspMeta(html: string, content: string, where: string): string {
+  const m = /<head(\s[^>]*)?>/i.exec(html)
+  if (!m) throw new BuildError('ssg-csp', `${where}: no <head> to put the Content-Security-Policy meta in ([csp] is on)`)
+  const at = m.index + m[0].length
+  const attr = content.replace(/[&"<>]/g, (c) => `&#${c.charCodeAt(0)};`)
+  return `${html.slice(0, at)}<meta http-equiv="Content-Security-Policy" content="${attr}">${html.slice(at)}`
+}
+
+
 /** Renders `plan` against the built dist at `dist` and writes `<dist>/static/`. Returns the report. */
 export async function writeStatic(
   dist: string,
-  o: { entry: string; appRoot: string; plan: StaticPlan; version: string; strict: boolean; log: (s: string) => void; /** The dir as the user will find it (the build renders into a temp dist). */ shownDir?: string },
+  o: {
+    entry: string
+    appRoot: string
+    plan: StaticPlan
+    version: string
+    strict: boolean
+    log: (s: string) => void
+    /** The dir as the user will find it (the build renders into a temp dist). */ shownDir?: string
+    /** F541: `cspForStatic` (the core's split); a test may pass its own. */ cspForStatic?: (name: string, value: string) => StaticCsp
+  },
 ): Promise<StaticReport> {
   const dir = join(dist, 'static')
   rmSync(dir, { recursive: true, force: true })
@@ -204,10 +264,15 @@ export async function writeStatic(
     mkdirSync(dirname(join(dir, file)), { recursive: true })
     writeFileSync(join(dir, file), body)
   }
+  // F541: [csp] on -> the render server stamped its policy on every page; a static file carries it as a meta.
+  const anyCsp = rendered.some((r) => r.headers['content-security-policy'] !== undefined || r.headers['content-security-policy-report-only'] !== undefined)
+  const csp = anyCsp ? pageCsp(rendered, o.cspForStatic ?? (await import('../native')).cspForStatic) : null
+  for (const w of csp?.warnings ?? []) warn(w)
   rendered.forEach((r, i) => {
     const page: PlannedPage = o.plan.pages[i]!
     const where = `GET ${page.path} (route ${page.routeId} ${page.pattern})`
-    const body = Buffer.from(r.body, 'base64')
+    const meta = csp?.metas[i]
+    const body = meta === undefined ? Buffer.from(r.body, 'base64') : Buffer.from(withCspMeta(text(r), meta, where))
     if (text(r).includes(addr) || (r.headers.location ?? '').includes(addr))
       throw new BuildError('ssg-render', `${where}: the response names the render server's loopback origin; a static page must not (build absolute URLs from a configured origin)`)
     if (page.expect === 404) {
@@ -228,9 +293,10 @@ export async function writeStatic(
     throw new BuildError('ssg-render', `${where}: status ${r.status}, want 200 (or a redirect()): ${excerpt(text(r))}`)
   })
   if (o.plan.defaultNotFound) {
-    write('404.html', Buffer.from(default404(o.version)))
+    write('404.html', Buffer.from(csp?.common ? withCspMeta(default404(o.version), csp.common, 'the default 404.html') : default404(o.version)))
     warn("[brust] warning ssg-404 no '*' route: wrote a default 404.html (without one, Cloudflare Pages serves every unknown path as the home page)")
   }
+  if (csp?.header) writeFileSync(join(dir, '_headers'), withCspHeader(readFileSync(join(dir, '_headers'), 'utf8'), csp.header))
   writeFileSync(join(dir, '_redirects'), report.redirects.map((r) => `${redirectSource(r.from)} ${r.to} ${r.status}\n`).join(''))
 
   const seen = new Set<string>()

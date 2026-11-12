@@ -83,3 +83,8 @@ export function headersFile(files: string[], version: string, base = ''): { text
   }
   return { text: `${rules.join('\n\n')}\n`, warnings }
 }
+
+/** `_headers` with the policy header added to its `/*` rule (one rule for every path; never per-page rules). */
+export function withCspHeader(headers: string, [name, value]: [string, string]): string {
+  return headers.startsWith('/*\n') ? `/*\n  ${name}: ${value}\n${headers.slice(3)}` : `/*\n  ${name}: ${value}\n\n${headers}`
+}
