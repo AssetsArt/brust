@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-42', title: '2.0.0-alpha.42' },
       { id: 'alpha-41', title: '2.0.0-alpha.41' },
       { id: 'alpha-40', title: '2.0.0-alpha.40' },
       { id: 'alpha-39', title: '2.0.0-alpha.39' },
@@ -64,6 +65,30 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-42">2.0.0-alpha.42 · 12 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.41: #476 (ledger F533) */}
+      <p>This version makes a client navigation show the same store values as a full load of the same URL, for the keys the destination&rsquo;s loader wrote.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #476 (F533); docs/store.md; packages/runtime-dom/src/nav/nav.ts; packages/runtime-dom/src/store/registry.ts; packages/runtime-dom/test/nav-store-writes.test.ts; tests/server/spa-nav.chromium.test.ts */}
+        <li>
+          <strong>On a client navigation, a live store now takes the keys the destination&rsquo;s loader set (#476).</strong> Before, a store the tab already used kept every client value, so the new page could show new props next to old store values. Now a key the loader set with <code>.set()</code> in that request is applied to the live store, even when the value is equal to the current one. A key the loader did not set keeps its client value. A store the tab has not used yet seeds from the page as before, and a loader that sets nothing changes nothing. This replaces the earlier rule that a live store keeps its value across a navigation. See <a href="/docs/navigation">Navigation</a> and <a href="/docs/store">Store</a>.
+        </li>
+        {/* source: PR #476 (F533); packages/runtime-dom/src/nav/nav.ts; packages/runtime-dom/src/mount.ts; tests/server/spa-nav.chromium.test.ts */}
+        <li>
+          <strong>The swap runs in a fixed order (#476).</strong> First the old page&rsquo;s effect cleanups run (native <code>onCleanup</code> and island unmounts), so they read the old values. Then the loader&rsquo;s values are applied. Then the new page mounts or hydrates, and its effects run with the new values only. This holds for native pages and islands alike, with no hydration mismatch.
+        </li>
+        {/* source: PR #476 (F533); tests/server/spa-nav.chromium.test.ts */}
+        <li>
+          <strong>A cached, prefetched or back-navigated page applies the values from its own fetch (#476).</strong> Like its props, the store values belong to the response the page came from.
+        </li>
+        {/* source: PR #476 (F533); packages/runtime-dom/src/store/define-store.ts; docs/store.md */}
+        <li>
+          <strong>A store signal can no longer be named <code>~w</code> (#476).</strong> The name carries the list of written keys in the page snapshot, so <code>defineStore</code> refuses it.
+        </li>
+      </ul>
 
       <h2 id="alpha-41">2.0.0-alpha.41 · 12 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.40: #468–#474 (ledger F529, F532; plan 2026-11-11-websocket) */}
