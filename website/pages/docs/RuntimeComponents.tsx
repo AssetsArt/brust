@@ -75,7 +75,11 @@ const FACTS = `const r = await compileComponent({ source, filename: 'el/Promo.ts
 const f = r.facts            // present when the text parses, on { ok: false } too
 if (f && (f.risky.length > 0 || f.rawHtml || f.globals.some((g) => !ALLOWED_GLOBALS.has(g)))) {
   return null                // your policy: refuse what you do not want to run
-}`
+}
+// Handlers: allow-list what they write and call, and refuse the rest (incl. what the walk could not trace).
+const writesOk = (w) => w.target === 'local'
+const callsOk = (c) => c.kind === 'setter' || c.kind === 'local'
+if (f?.handlers.some((h) => !h.writes.every(writesOk) || !h.callees.every(callsOk))) return null`
 
 export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> {
   return {
@@ -294,7 +298,16 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
           </tr>
           <tr>
             <td><code>handlers</code></td>
-            <td>Each <code>onX</code> prop with its <code>event</code>, <code>tag</code>, position and the calls its function makes (block bodies and the local functions it calls included). A callee&rsquo;s <code>kind</code> is <code>import</code>, <code>local</code>, <code>setter</code>, <code>global</code>, <code>member</code> or <code>unknown</code>.</td>
+            <td>
+              Each <code>onX</code> prop with its <code>event</code>, <code>tag</code> and position, and what its function does, block bodies, nested callbacks and every local function it reaches (by call or by naming it) included:
+              <code>callees</code> (a callee&rsquo;s <code>kind</code> is <code>import</code>, <code>local</code>, <code>setter</code>, <code>global</code>, <code>global-member</code>, <code>param-member</code>, <code>member</code> or <code>unknown</code>; a handler that is
+              not a function written in the file, such as <code>onClick={'{'}props.go{'}'}</code>, is itself a callee), <code>writes</code> (every assignment, <code>++</code> and <code>delete</code>, each with a <code>target</code> and the written
+              <code>path</code>), <code>readsParams</code> (it looks at the event), <code>globals</code> and <code>reaches</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>functions</code></td>
+            <td>Every local function some handler reaches, with the same facts for its own body, so the rule applied to a handler can be applied to each function behind it.</td>
           </tr>
           <tr>
             <td><code>risky</code></td>
@@ -302,8 +315,15 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
           </tr>
         </tbody>
       </table>
+      <p>
+        A <code>writes</code> entry&rsquo;s <code>target</code> says what the written place is rooted at: <code>local</code> (a variable the handler declares, or a property of an object literal it made, one level deep), <code>param</code> (<code>e = x</code>),
+        <code>param-member</code> (<code>e.currentTarget.innerHTML = x</code>, also through a <code>const</code> alias of the event), <code>closure</code> and <code>closure-member</code> (a variable of the component or module, or a property of one), <code>global</code>
+        (<code>location = x</code>), <code>global-member</code> (<code>document.title = x</code>) and <code>other</code> for anything the walk cannot trace (a call result, <code>this</code>, a loop variable, a name assigned from several sources). A target that is not
+        recognised is <code>other</code>, never <code>local</code>, and a callee it cannot name is <code>unknown</code>, never omitted. <strong>Allow-list</strong>: write targets <code>local</code> and callee kinds <code>setter</code> and <code>local</code>, and refuse the rest.
+        Effects (<code>useEffect</code>), callback refs and module-level code are named by <code>hooks</code>, <code>attrs</code> and <code>globals</code>; their writes are not listed.
+      </p>
       <Note tag="Limit">
-        Facts name what the source refers to. They are an input to an allowlist, not a proof of isolation: a computed member such as <code>window[k]</code>, <code>eval</code> or a dynamic <code>import()</code> can reach a name the walk never sees (which is why they are
+        Facts are a report, not a sandbox. They name what the source refers to. They are an input to an allowlist, not a proof of isolation: a computed member such as <code>window[k]</code>, <code>eval</code> or a dynamic <code>import()</code> can reach a name the walk never sees (which is why they are
         listed in <code>risky</code>), and what an imported function does is outside the file. Pair them with a Content-Security-Policy. There is no built-in allow or deny profile; the <code>runtime-import</code> refusal already stops foreign imports.
       </Note>
 

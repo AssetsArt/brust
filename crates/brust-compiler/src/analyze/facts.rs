@@ -15,7 +15,11 @@ use js_ast::b::B;
 use js_ast::expr::Data as E;
 use js_ast::stmt::Data as S;
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+mod effects;
+use effects::{DeclKind, UnitCache};
+pub use effects::{FnFact, FnRef, WriteFact};
 
 /// The import specifiers the parser adds for JSX (`react/jsx-runtime`). Whether one was GENERATED is a question of the
 /// text: a source that spells the specifier itself (`import { jsx } from 'react/jsx-runtime'`) wrote it, and it is listed.
@@ -47,9 +51,12 @@ pub struct Facts {
     pub spreads: bool,
     /// `dangerouslySetInnerHTML` is written on an element.
     pub raw_html: bool,
-    /// Every `onX` prop, in source order, with what its function calls (a block body, a nested callback and the body of a
-    /// local function it calls included).
+    /// Every `onX` prop, in source order, with what its function calls, writes and reads (a block body, a nested callback
+    /// and the body of every local function it reaches included).
     pub handlers: Vec<HandlerFact>,
+    /// Every local function some handler reaches (by call, or by naming it), with the same facts for its own body, so a rule
+    /// applied to a handler can be applied to each function behind it. Sorted by position.
+    pub functions: Vec<FnFact>,
     /// Constructs through which code can reach a name the walk cannot see, in source order.
     pub risky: Vec<Risky>,
 }
@@ -78,6 +85,16 @@ pub struct HandlerFact {
     pub line: u32,
     pub col: u32,
     pub callees: Vec<Callee>,
+    /// Every assignment, update (`++`) and `delete` the handler performs, its local functions' included (F538): the
+    /// handler's own effect, which `callees` do not show (`e.currentTarget.innerHTML = x` calls nothing). Sorted by position.
+    pub writes: Vec<WriteFact>,
+    /// The handler reads one of its own parameters (`(e) => … e.target …`; a destructuring signature, `arguments` and a
+    /// handler the file does not show, such as a prop or an import, count). `false`: it does not look at the event.
+    pub reads_params: bool,
+    /// Every unbound name the handler's code reaches, its local functions' included, sorted.
+    pub globals: Vec<String>,
+    /// The local functions it reaches, by call or by naming them (`go`, `[1].forEach(go)`), sorted.
+    pub reaches: Vec<FnRef>,
 }
 
 /// One call (or `new`) a handler reaches.
@@ -86,9 +103,13 @@ pub struct HandlerFact {
 pub struct Callee {
     /// The callee as written: `fetch`, `bump`, `cart.count.set`, `document.body.appendChild`; empty for an `unknown` one.
     pub name: String,
-    /// `import` (an imported binding), `local` (a function or value bound in the file), `setter` (the setter a `useState`
-    /// or `useReducer` returned), `global` (an unbound identifier), `member` (a member chain rooted at any of those; `from`
-    /// is set when the root is imported), `unknown` (a computed or call-result callee).
+    /// `import` (an imported binding), `local` (a function bound in the file, or a prop of the component), `setter` (the
+    /// setter a `useState` or `useReducer` returned), `global` (an unbound identifier), `global-member` (a member chain
+    /// rooted at an unbound identifier, or at a name that aliases one: `document.body.append`, `const { fetch } = window`),
+    /// `param-member` (a member chain rooted at a parameter or at a name derived from one: `e.target.remove`), `member` (a
+    /// member chain rooted at anything else; `from` is set when the root is imported), `unknown` (a computed or call-result
+    /// callee, a function passed in as a parameter, a name whose value the file does not fix). A handler that is not a
+    /// function written in the file (`onClick={props.go}`, `onClick={sdk.bump}`) is itself listed as a callee.
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
@@ -375,6 +396,13 @@ struct Reader<'a> {
     tags: BTreeSet<String>,
     attrs: BTreeSet<String>,
     hooks: BTreeSet<HookFact>,
+    /// F538: how every name was declared, what was assigned to it, and where each named local function sits.
+    decls: HashMap<u32, DeclKind>,
+    assigned: HashMap<u32, Vec<js_ast::Expr>>,
+    assigned_other: HashSet<u32>,
+    fn_by_loc: HashMap<i32, u32>,
+    units: UnitCache,
+    fn_facts: BTreeMap<(u32, u32), FnFact>,
 }
 
 #[derive(Clone, Copy)]
@@ -571,6 +599,9 @@ impl<'a> Reader<'a> {
                                 && let E::ECall(c) = &v.data
                                 && hook_name(ast, &c.target)
                                     .is_some_and(|h| h == "useState" || h == "useReducer")
+                                // React's own hook: a function of the file that happens to be called `useState` can
+                                // return any "setter" it likes (F538).
+                                && self.root_import(&c.target).as_deref() == Some("react")
                                 && let Some(second) = arr.items().get(1)
                                 && let B::BIdentifier(id) = second.binding.data
                             {
@@ -748,115 +779,19 @@ impl<'a> Reader<'a> {
             self.attrs.insert(name.clone());
             if let Some(event) = event_of(&name) {
                 let (line, col) = self.pos(value);
-                let mut callees = BTreeSet::new();
-                self.callees_of(value, &mut callees, &mut HashSet::new());
+                let fx = self.handler_effects(value);
                 self.facts.handlers.push(HandlerFact {
                     event,
                     tag: tag.clone().unwrap_or_default(),
                     line,
                     col,
-                    callees: callees.into_iter().collect(),
+                    callees: fx.callees,
+                    writes: fx.writes,
+                    reads_params: fx.reads_params,
+                    globals: fx.globals,
+                    reaches: fx.reaches,
                 });
             }
-        }
-    }
-
-    /// The calls `value` makes when it runs as a handler: its own body (every depth), and through a local function it names
-    /// or calls, that function's body.
-    fn callees_of(
-        &self,
-        value: &js_ast::Expr,
-        out: &mut BTreeSet<Callee>,
-        seen: &mut HashSet<u32>,
-    ) {
-        let target = unwrap_callback(self.ast, value);
-        // A handler named by an identifier runs that local function.
-        if let Some(r) = ident_ref(&target)
-            && let Some(node) = self.fns.get(&r.inner_index()).copied()
-            && seen.insert(r.inner_index())
-        {
-            self.callees_in_node(node, out, seen);
-            return;
-        }
-        self.callees_in_node(FnNode::Expr(target), out, seen);
-    }
-
-    fn callees_in_node(&self, node: FnNode, out: &mut BTreeSet<Callee>, seen: &mut HashSet<u32>) {
-        let mut found: Vec<js_ast::Expr> = Vec::new();
-        let mut collect = |n: N<'_>| {
-            if let N::E(e) = n
-                && matches!(e.data, E::ECall(_) | E::ENew(_))
-            {
-                found.push(*e);
-            }
-        };
-        match node {
-            FnNode::Stmt(s) => walk_stmt(&s, &mut collect),
-            FnNode::Expr(e) => walk_expr(&e, &mut collect),
-        }
-        for call in found {
-            let target = match &call.data {
-                E::ECall(c) if c.was_jsx_element => continue,
-                E::ECall(c) => c.target,
-                E::ENew(n) => n.target,
-                _ => continue,
-            };
-            let callee = self.classify(&target);
-            // A call to a local function brings that function's own calls with it.
-            if callee.kind == "local"
-                && let Some(r) = ident_ref(&target)
-                && let Some(node) = self.fns.get(&r.inner_index()).copied()
-                && seen.insert(r.inner_index())
-            {
-                self.callees_in_node(node, out, seen);
-            }
-            out.insert(callee);
-        }
-    }
-
-    fn classify(&self, target: &js_ast::Expr) -> Callee {
-        if let Some(r) = ident_ref(target) {
-            let name = self.name_of(r);
-            if let Some((spec, _)) = self.imported.get(&r.inner_index()) {
-                return Callee {
-                    name,
-                    kind: "import",
-                    from: Some(spec.clone()),
-                };
-            }
-            if self.setters.contains(&r.inner_index()) {
-                return Callee {
-                    name,
-                    kind: "setter",
-                    from: None,
-                };
-            }
-            let unbound = self
-                .symbol(r)
-                .is_some_and(|s| s.kind == js_ast::symbol::Kind::Unbound);
-            return Callee {
-                name,
-                kind: if unbound { "global" } else { "local" },
-                from: None,
-            };
-        }
-        if let E::EDot(_) = &target.data
-            && let Some((name, root)) = dotted(self, target)
-        {
-            let from = self
-                .imported
-                .get(&root.inner_index())
-                .map(|(s, _)| s.clone());
-            return Callee {
-                name,
-                kind: "member",
-                from,
-            };
-        }
-        Callee {
-            name: String::new(),
-            kind: "unknown",
-            from: None,
         }
     }
 }
@@ -913,8 +848,15 @@ pub fn read(parsed: &Parsed) -> Facts {
             tags: BTreeSet::new(),
             attrs: BTreeSet::new(),
             hooks: BTreeSet::new(),
+            decls: HashMap::new(),
+            assigned: HashMap::new(),
+            assigned_other: HashSet::new(),
+            fn_by_loc: HashMap::new(),
+            units: UnitCache::default(),
+            fn_facts: BTreeMap::new(),
         };
         r.collect();
+        r.collect_effects();
         r.read();
         let Reader {
             mut facts,
@@ -922,12 +864,14 @@ pub fn read(parsed: &Parsed) -> Facts {
             tags,
             attrs,
             hooks,
+            fn_facts,
             ..
         } = r;
         facts.globals = globals.into_iter().collect();
         facts.tags = tags.into_iter().collect();
         facts.attrs = attrs.into_iter().collect();
         facts.hooks = hooks.into_iter().collect();
+        facts.functions = fn_facts.into_values().collect();
         facts
     })
 }
@@ -1016,7 +960,10 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec![("peek", "local"), ("window.localStorage.getItem", "member")]
+            vec![
+                ("peek", "local"),
+                ("window.localStorage.getItem", "global-member")
+            ]
         );
     }
 
@@ -1041,7 +988,7 @@ mod tests {
             click.callees
         );
         assert!(has("sdk.cart.add", "member", Some("../shop/sdk")));
-        assert!(has("navigator.sendBeacon", "member", None));
+        assert!(has("navigator.sendBeacon", "global-member", None));
         assert!(has("XMLHttpRequest", "global", None));
         assert!(has("", "unknown", None));
         assert_eq!(f.handlers[1].event, "mouseenter");

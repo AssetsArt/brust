@@ -61,7 +61,7 @@ test('R6.4: a module-level helper that reads window is seen (the render never re
   expect(f.globals).toEqual(['window'])
   expect(f.handlers[0]!.callees.map((c) => [c.name, c.kind])).toEqual([
     ['peek', 'local'],
-    ['window.localStorage.getItem', 'member'],
+    ['window.localStorage.getItem', 'global-member'],
   ])
 })
 
@@ -74,7 +74,7 @@ test('R6.1: imports, handlers with imported callees, spreads and risky construct
   expect(f.handlers[0]!.callees).toEqual(
     expect.arrayContaining([
       { name: 'bump', kind: 'import', from: '../shop/sdk' },
-      { name: 'navigator.sendBeacon', kind: 'member' },
+      { name: 'navigator.sendBeacon', kind: 'global-member' },
     ]),
   )
   expect(f.risky).toEqual([{ kind: 'computed-member', line: 7, col: 14 }])
@@ -104,4 +104,29 @@ test('a file name that would make the artifact id longer than the registry accep
   expect(d.class).toBe('error')
   expect(d.message).toContain(`limit is ${MAX_ID_LENGTH}`)
   expect(r.facts).toBeDefined()
+})
+
+test('F538: a handler reports its writes, parameter reads, globals and the local functions it reaches, camelCased', async () => {
+  const f = await facts(
+    "function paint(el: any) {\n  el.style.color = 'red'\n}\nexport default function Promo() {\n  return <b onClick={(e: any) => { e.currentTarget.innerHTML = '<i>x</i>'; document.title = 'x'; paint(e.target) }}>x</b>\n}\n",
+  )
+  const h = f.handlers[0]!
+  expect(h.readsParams).toBe(true)
+  expect(h.writes.map((w) => [w.target, w.path])).toEqual([
+    ['param-member', 'el.style.color'],
+    ['param-member', 'e.currentTarget.innerHTML'],
+    ['global-member', 'document.title'],
+  ])
+  expect(h.writes[1]).toMatchObject({ line: 5, col: expect.any(Number) })
+  expect(h.globals).toEqual(['document'])
+  expect(h.reaches).toEqual([{ name: 'paint', line: 1, col: expect.any(Number) }])
+  expect(f.functions).toMatchObject([{ name: 'paint', readsParams: true, writes: [{ target: 'param-member', path: 'el.style.color' }], reaches: [] }])
+  // Nothing arrives snake_cased.
+  expect(JSON.stringify(f)).not.toMatch(/reads_params|param_member/)
+})
+
+test('F538: a pure setter handler has no writes, reads no parameter and reaches nothing', async () => {
+  const f = await facts("import { useState } from 'react'\nexport default function Promo() {\n  const [n, setN] = useState(0)\n  return <button onClick={() => setN(n + 1)}>{n}</button>\n}\n")
+  expect(f.handlers[0]).toMatchObject({ writes: [], readsParams: false, globals: [], reaches: [], callees: [{ name: 'setN', kind: 'setter' }] })
+  expect(f.functions).toEqual([])
 })
