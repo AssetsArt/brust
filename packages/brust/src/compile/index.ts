@@ -50,13 +50,15 @@ export interface CalleeFact {
   /** The callee as written (`fetch`, `bump`, `e.target.remove`); an alias is named for what it aliases (`const f = window.fetch; f()` is `window.fetch`); empty for a call-result callee. */
   name: string
   /**
-   * `import` (an imported binding), `local` (a function written in the file, or a prop of the component), `setter` (React's `useState`/`useReducer` setter),
+   * `import` (an imported binding), `local` (a function written in the file), `setter` (React's `useState`/`useReducer` setter),
+   * `prop` (a parameter of an enclosing function, or a name destructured from or aliasing one: the component's props, a helper's argument. Caller-supplied, so never `local`),
+   * `prop-member` (a member chain rooted at one: `props.onSave`),
    * `global` (an unbound identifier), `global-member` (a member chain rooted at a global or at a name that aliases one: `document.body.append`),
    * `param-member` (rooted at a parameter or a name derived from one: `e.target.remove`), `member` (rooted at anything else; `from` is set when the root is imported),
    * `unknown` (a call-result callee, a function passed in as a parameter, a name the file does not fix: assigned twice, a loop variable).
    * A handler that is not a function written in the file (`onClick={props.go}`, `onClick={sdk.bump}`) is itself listed as a callee.
    */
-  kind: 'import' | 'local' | 'setter' | 'global' | 'global-member' | 'param-member' | 'member' | 'unknown'
+  kind: 'import' | 'local' | 'setter' | 'prop' | 'prop-member' | 'global' | 'global-member' | 'param-member' | 'member' | 'unknown'
   from?: string
 }
 
@@ -66,11 +68,12 @@ export interface WriteFact {
   col: number
   /**
    * What the written place is rooted at: `local` (a variable the handler declares, or a property of an object literal it made, one level deep), `param` (a parameter
-   * variable itself: `e = x`), `param-member` (through a parameter or an alias of one: `e.currentTarget.innerHTML = x`), `closure` (a variable of the enclosing
-   * component or module: `count = 1`), `closure-member` (a property reached through one: `ref.current = x`), `global` (`location = x`), `global-member`
+   * variable itself: `e = x`), `param-member` (through a parameter or an alias of one: `e.currentTarget.innerHTML = x`), `prop-member` (through a parameter of
+   * an enclosing function, such as the component's props: `props.obj.x = 1`), `closure` (a variable of the enclosing component or module: `count = 1`),
+   * `closure-member` (a property reached through one: `ref.current = x`), `global` (`location = x`), `global-member`
    * (`document.title = x`, `window.location.href = x`), `other` (anything the walk cannot trace: a call result, `this`, a loop variable, a name assigned from several sources).
    */
-  target: 'local' | 'param' | 'param-member' | 'closure' | 'closure-member' | 'global' | 'global-member' | 'other'
+  target: 'local' | 'param' | 'param-member' | 'prop-member' | 'closure' | 'closure-member' | 'global' | 'global-member' | 'other'
   /** The written place as the source spells it, best effort (`e.currentTarget.innerHTML`, `items[?].x`). */
   path: string
 }

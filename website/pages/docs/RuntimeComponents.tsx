@@ -300,7 +300,7 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
             <td><code>handlers</code></td>
             <td>
               Each <code>onX</code> prop with its <code>event</code>, <code>tag</code> and position, and what its function does, block bodies, nested callbacks and every local function it reaches (by call or by naming it) included:
-              <code>callees</code> (a callee&rsquo;s <code>kind</code> is <code>import</code>, <code>local</code>, <code>setter</code>, <code>global</code>, <code>global-member</code>, <code>param-member</code>, <code>member</code> or <code>unknown</code>; a handler that is
+              <code>callees</code> (a callee&rsquo;s <code>kind</code> is <code>import</code>, <code>local</code>, <code>setter</code>, <code>prop</code>, <code>prop-member</code>, <code>global</code>, <code>global-member</code>, <code>param-member</code>, <code>member</code> or <code>unknown</code>; a handler that is
               not a function written in the file, such as <code>onClick={'{'}props.go{'}'}</code>, is itself a callee), <code>writes</code> (every assignment, <code>++</code> and <code>delete</code>, each with a <code>target</code> and the written
               <code>path</code>), <code>readsParams</code> (it looks at the event), <code>globals</code> and <code>reaches</code>.
             </td>
@@ -317,9 +317,10 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
       </table>
       <p>
         A <code>writes</code> entry&rsquo;s <code>target</code> says what the written place is rooted at: <code>local</code> (a variable the handler declares, or a property of an object literal it made, one level deep), <code>param</code> (<code>e = x</code>),
-        <code>param-member</code> (<code>e.currentTarget.innerHTML = x</code>, also through a <code>const</code> alias of the event), <code>closure</code> and <code>closure-member</code> (a variable of the component or module, or a property of one), <code>global</code>
+        <code>param-member</code> (<code>e.currentTarget.innerHTML = x</code>, also through a <code>const</code> alias of the event), <code>prop-member</code> (through a parameter of an enclosing function, such as <code>props.obj.x = 1</code>), <code>closure</code> and <code>closure-member</code> (a variable of the component or module, or a property of one), <code>global</code>
         (<code>location = x</code>), <code>global-member</code> (<code>document.title = x</code>) and <code>other</code> for anything the walk cannot trace (a call result, <code>this</code>, a loop variable, a name assigned from several sources). A target that is not
-        recognised is <code>other</code>, never <code>local</code>, and a callee it cannot name is <code>unknown</code>, never omitted. <strong>Allow-list</strong>: write targets <code>local</code> and callee kinds <code>setter</code> and <code>local</code>, and refuse the rest.
+        recognised is <code>other</code>, never <code>local</code>, and a callee it cannot name is <code>unknown</code>, never omitted. A callee of kind <code>prop</code> or <code>prop-member</code> is <em>not local</em>: it came in from outside the component (its props, or a helper&rsquo;s argument), and the file does not say what it is, even when the same file passes a global into it.
+        <strong>Allow-list</strong>: write targets <code>local</code> and callee kinds <code>setter</code> and <code>local</code>, and refuse the rest; add <code>prop</code> only on purpose, for a platform that trusts the props its host passes.
         Effects (<code>useEffect</code>), callback refs and module-level code are named by <code>hooks</code>, <code>attrs</code> and <code>globals</code>; their writes are not listed.
       </p>
       <Note tag="Limit">

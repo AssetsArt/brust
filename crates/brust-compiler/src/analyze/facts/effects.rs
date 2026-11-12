@@ -82,6 +82,9 @@ enum Origin {
     /// A literal, or a function the code itself made. A property OF it is unknown (`o.t = document.body` stores a reference).
     Fresh,
     Param,
+    /// A parameter of a function that encloses the handler (the component's props, a helper's arguments), or a name derived
+    /// from one: a value that came in from outside, which nothing in the file fixes.
+    Prop,
     Global,
     Closure,
     Other,
@@ -407,7 +410,6 @@ impl<'a> Reader<'a> {
         let mut decls: HashMap<u32, DeclKind> = HashMap::new();
         let mut assigned: HashMap<u32, Vec<js_ast::Expr>> = HashMap::new();
         let mut assigned_other: HashSet<u32> = HashSet::new();
-        let mut written_roots: HashSet<u32> = HashSet::new();
         for part in ast.parts.iter() {
             walk_stmts(part.stmts.slice(), &mut |n| {
                 self.declared(n, None, &mut |idx, kind| {
@@ -433,34 +435,6 @@ impl<'a> Reader<'a> {
                 });
                 match n {
                     N::E(e) => {
-                        // A member written anywhere in the file (`props.onSave = f`, `props.n++`): its root holds more than
-                        // what its caller passed.
-                        let written = match &e.data {
-                            E::EBinary(b) if is_assign_op(b.op) => {
-                                let mut ts = Vec::new();
-                                if matches!(b.op, js_ast::OpCode::BinAssign) {
-                                    assign_targets(&b.left, &mut ts);
-                                } else {
-                                    ts.push(b.left);
-                                }
-                                ts
-                            }
-                            E::EUnary(u)
-                                if is_update_op(u.op)
-                                    || matches!(u.op, js_ast::OpCode::UnDelete) =>
-                            {
-                                vec![u.value]
-                            }
-                            _ => Vec::new(),
-                        };
-                        for t in written {
-                            let (root, hops) = chain_root(&t);
-                            if hops > 0
-                                && let Some(i) = self.ident_idx(root)
-                            {
-                                written_roots.insert(i);
-                            }
-                        }
                         if let E::EBinary(b) = &e.data
                             && is_assign_op(b.op)
                         {
@@ -524,7 +498,6 @@ impl<'a> Reader<'a> {
         self.decls = decls;
         self.assigned = assigned;
         self.assigned_other = assigned_other;
-        self.written_roots = written_roots;
         self.fn_by_loc = by_loc;
     }
 
@@ -551,9 +524,22 @@ impl<'a> Reader<'a> {
             }
             o
         } else if !ctx.inner.contains(&idx) {
-            // Declared outside the unit: the enclosing component's or the module's.
+            // Declared outside the unit: the enclosing component's or the module's. A parameter of an enclosing function, and
+            // a name aliasing or destructured from one, is a `Prop`; anything else is a `Closure` variable.
+            let o = match self.decls.get(&idx) {
+                Some(DeclKind::Param) => Origin::Prop,
+                Some(DeclKind::Plain(Some(init))) => self.origin_of_expr(init, ctx, seen),
+                Some(DeclKind::Pattern {
+                    init: Some(init), ..
+                }) => member_of(self.origin_of_expr(init, ctx, seen)),
+                _ => Origin::Closure,
+            };
             seen.remove(&idx);
-            return Origin::Closure;
+            return if o == Origin::Prop {
+                Origin::Prop
+            } else {
+                Origin::Closure
+            };
         } else {
             match self.decls.get(&idx) {
                 Some(DeclKind::Plain(Some(init))) => self.origin_of_expr(init, ctx, seen),
@@ -690,6 +676,7 @@ impl<'a> Reader<'a> {
                 };
                 match self.origin_of_ref(idx, ctx, &mut HashSet::new()) {
                     Origin::Param => "param-member",
+                    Origin::Prop => "prop-member",
                     Origin::Global => "global-member",
                     Origin::Closure => "closure-member",
                     // A property of an object literal the handler made, one level deep: `o.x = 1`. Deeper (`o.t.x = 1`)
@@ -802,19 +789,12 @@ impl<'a> Reader<'a> {
                         kind: "param-member",
                         from: None,
                     },
-                    // `const { onSave } = props`: a prop of the component. Only a parameter qualifies: `const { f } = api` of an
-                    // object the file built holds whatever the file put there.
-                    Origin::Closure
-                        if !ctx.inner.contains(&idx)
-                            && self.ident_idx(init).is_some_and(|i| {
-                                matches!(self.decls.get(&i), Some(DeclKind::Param))
-                                    && !self.written_roots.contains(&i)
-                                    && !self.assigned.contains_key(&i)
-                                    && !self.assigned_other.contains(&i)
-                            }) =>
-                    {
-                        local
-                    }
+                    // `const { onSave } = props`: caller-supplied.
+                    Origin::Prop => Callee {
+                        name,
+                        kind: "prop",
+                        from: None,
+                    },
                     _ => unknown(name),
                 },
                 Some(DeclKind::Fn) => local,
@@ -822,7 +802,11 @@ impl<'a> Reader<'a> {
                 // A parameter of a function outside the handler (the component's props, mostly) is a value its caller gives;
                 // a parameter of a function inside it, a loop or catch binding and a pattern with no value are not fixed by
                 // the file.
-                Some(DeclKind::Param) if !ctx.inner.contains(&idx) => local,
+                Some(DeclKind::Param) if !ctx.inner.contains(&idx) => Callee {
+                    name,
+                    kind: "prop",
+                    from: None,
+                },
                 Some(DeclKind::Param)
                 | Some(DeclKind::Other)
                 | Some(DeclKind::Pattern { init: None, .. }) => unknown(name),
@@ -842,6 +826,7 @@ impl<'a> Reader<'a> {
             }
             let kind = match self.origin_of_ref(ridx, ctx, &mut HashSet::new()) {
                 Origin::Param => "param-member",
+                Origin::Prop => "prop-member",
                 Origin::Global => "global-member",
                 _ => "member",
             };
@@ -1198,6 +1183,13 @@ mod tests {
         (f, h)
     }
 
+    fn kinds(h: &HandlerFact) -> Vec<(&str, &str)> {
+        h.callees
+            .iter()
+            .map(|c| (c.name.as_str(), c.kind))
+            .collect()
+    }
+
     fn writes(h: &HandlerFact) -> Vec<(&str, &str)> {
         h.writes
             .iter()
@@ -1519,7 +1511,7 @@ mod tests {
             vec![
                 ("closure", "count"),
                 ("closure-member", "ref.current"),
-                ("closure-member", "props.x"),
+                ("prop-member", "props.x"),
                 ("param", "e"),
             ]
         );
@@ -1600,11 +1592,7 @@ mod tests {
             "const { onSave } = props",
             "() => { a(); onSave() }",
         );
-        assert!(
-            h.callees.iter().all(|c| c.kind == "local"),
-            "{:?}",
-            h.callees
-        );
+        assert_eq!(kinds(&h), vec![("a", "local"), ("onSave", "prop")]);
     }
 
     #[test]
@@ -1687,13 +1675,9 @@ mod tests {
             "{:?}",
             h.callees
         );
-        // A prop destructured from the component's own parameter is local.
+        // A prop destructured from the component's own parameter is caller-supplied: `prop`, never `local`.
         let (_, h) = handler("", "const { onSave } = props", "() => onSave()");
-        assert!(
-            h.callees.iter().all(|c| c.kind == "local"),
-            "{:?}",
-            h.callees
-        );
+        assert_eq!(kinds(&h), vec![("onSave", "prop")]);
     }
 
     #[test]
@@ -1738,10 +1722,56 @@ mod tests {
         assert!(
             h.callees
                 .iter()
-                .any(|c| c.name == "onSave" && c.kind == "unknown"),
+                .any(|c| c.name == "onSave" && c.kind == "prop"),
             "{:?}",
             h.callees
         );
+    }
+
+    #[test]
+    fn a_parameter_of_any_enclosing_function_is_a_prop_never_local() {
+        // A helper's parameter called from a handler written inside it, wired to a global by the same file.
+        let f = facts(
+            "export default function P() {\n  const Btn = (f: any) => <button onClick={() => f('x')}>x</button>\n  return Btn(document.write.bind(document))\n}\n",
+        );
+        assert_eq!(kinds(&f.handlers[0]), vec![("f", "prop")]);
+        // The handler named by the parameter, and a same-file component's destructured prop.
+        let f = facts(
+            "function Btn(f: any) { return <button onClick={f}>x</button> }\nexport default function P() { return Btn(document.write) }\n",
+        );
+        assert_eq!(kinds(&f.handlers[0]), vec![("f", "prop")]);
+        let f = facts(
+            "function Inner({ f }: any) { return <button onClick={() => f(1)}>x</button> }\nexport default function P() { return <Inner f={document.write.bind(document)} /> }\n",
+        );
+        assert_eq!(kinds(&f.handlers[0]), vec![("f", "prop")]);
+        // A call through a member of a prop.
+        let (_, h) = handler("", "", "() => { props.onSave(1); props.api.send(2) }");
+        assert_eq!(
+            kinds(&h),
+            vec![
+                ("props.api.send", "prop-member"),
+                ("props.onSave", "prop-member")
+            ]
+        );
+        // An alias keeps the kind, and a destructured member of one is still caller-supplied.
+        let (_, h) = handler(
+            "",
+            "const g = props.onSave\nconst { a: { b } } = props",
+            "() => { g(1); b(2) }",
+        );
+        assert_eq!(
+            kinds(&h),
+            vec![("b", "prop"), ("props.onSave", "prop-member")]
+        );
+        // A write to a member of a prop is a `prop-member` write, at any depth.
+        let (_, h) = handler("", "", "() => { props.obj.x = 1; props.y++ }");
+        assert_eq!(
+            writes(&h),
+            vec![("prop-member", "props.obj.x"), ("prop-member", "props.y")]
+        );
+        // A component's own `const` is a closure variable, not a prop.
+        let (_, h) = handler("", "const cfg = { a: 1 }", "() => { cfg.a = 2 }");
+        assert_eq!(writes(&h), vec![("closure-member", "cfg.a")]);
     }
 
     #[test]

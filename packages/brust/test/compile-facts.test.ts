@@ -130,3 +130,11 @@ test('F538: a pure setter handler has no writes, reads no parameter and reaches 
   expect(f.handlers[0]).toMatchObject({ writes: [], readsParams: false, globals: [], reaches: [], callees: [{ name: 'setN', kind: 'setter' }] })
   expect(f.functions).toEqual([])
 })
+
+test('F538: a parameter of an enclosing function is a prop callee, never local', async () => {
+  const f = await facts("export default function P() {\n  const Btn = (f: any) => <button onClick={() => f('x')}>x</button>\n  return Btn(document.write.bind(document))\n}\n")
+  expect(f.handlers[0]!.callees).toEqual([{ name: 'f', kind: 'prop' }])
+  const g = await facts("export default function P(props: any) {\n  return <button onClick={() => { props.onSave(1); props.obj.x = 2 }}>x</button>\n}\n")
+  expect(g.handlers[0]!.callees).toEqual([{ name: 'props.onSave', kind: 'prop-member' }])
+  expect(g.handlers[0]!.writes).toMatchObject([{ target: 'prop-member', path: 'props.obj.x' }])
+})

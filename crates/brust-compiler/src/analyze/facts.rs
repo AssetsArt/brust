@@ -103,7 +103,9 @@ pub struct HandlerFact {
 pub struct Callee {
     /// The callee as written: `fetch`, `bump`, `cart.count.set`, `document.body.appendChild`; empty for an `unknown` one.
     pub name: String,
-    /// `import` (an imported binding), `local` (a function bound in the file, or a prop of the component), `setter` (the
+    /// `import` (an imported binding), `local` (a function bound in the file), `prop` (a parameter of an enclosing function, or
+    /// a name destructured from or aliasing one: caller-supplied, never `local`), `prop-member` (a member chain rooted at
+    /// one: `props.onSave`), `setter` (the
     /// setter a `useState` or `useReducer` returned), `global` (an unbound identifier), `global-member` (a member chain
     /// rooted at an unbound identifier, or at a name that aliases one: `document.body.append`, `const { fetch } = window`),
     /// `param-member` (a member chain rooted at a parameter or at a name derived from one: `e.target.remove`), `member` (a
@@ -400,7 +402,6 @@ struct Reader<'a> {
     decls: HashMap<u32, DeclKind>,
     assigned: HashMap<u32, Vec<js_ast::Expr>>,
     assigned_other: HashSet<u32>,
-    written_roots: HashSet<u32>,
     fn_by_loc: HashMap<i32, u32>,
     units: UnitCache,
     fn_facts: BTreeMap<(u32, u32), FnFact>,
@@ -852,7 +853,6 @@ pub fn read(parsed: &Parsed) -> Facts {
             decls: HashMap::new(),
             assigned: HashMap::new(),
             assigned_other: HashSet::new(),
-            written_roots: HashSet::new(),
             fn_by_loc: HashMap::new(),
             units: UnitCache::default(),
             fn_facts: BTreeMap::new(),
