@@ -31,12 +31,15 @@ pub struct L2Config {
     pub build_id: String,
 }
 
-/// A shared-tier key: `"<namespace>:<build_id>:p:" + hex(blake3(prefix ‖ 0 ‖ method ‖ 0 ‖ path ‖ 0 ‖ sorted_query))`.
+/// A shared-tier key: `"<namespace>:<build_id>:<fp8>:p:" + hex(blake3(prefix ‖ 0 ‖ method ‖ 0 ‖ path ‖ 0 ‖ sorted_query))`.
+/// F543: `fp8` is [`fingerprint`] of the runtime values the core injects into a body, so two processes that share the build
+/// but not that config never read each other's bodies. Invalidation names (tags, paths, prefixes) carry no key, so they
+/// reach entries of every fingerprint; entries of an old fingerprint are no longer read and age out by their TTL.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct L2Key(pub String);
 
 impl L2Key {
-    pub fn of(cfg: &L2Config, k: &CacheKey) -> Self {
+    pub fn of(cfg: &L2Config, fp: &str, k: &CacheKey) -> Self {
         let mut h = blake3::Hasher::new();
         for (i, part) in [&k.prefix, &k.method, &k.path, &k.sorted_query]
             .into_iter()
@@ -48,12 +51,33 @@ impl L2Key {
             h.update(part.as_bytes());
         }
         L2Key(format!(
-            "{}:{}:p:{}",
+            "{}:{}:{}:p:{}",
             cfg.namespace,
             cfg.build_id,
+            fp,
             h.finalize().to_hex()
         ))
     }
+}
+
+/// F543: 8 hex chars of blake3 over every runtime value the core writes into a cached body, each length-prefixed: the prebuilt
+/// inline tags (actions prefix and client, base path) as the bytes the core injects, the generator meta, and the base path
+/// that prefixes the css and script URLs. The build id covers what the build wrote; this covers what a process adds.
+pub fn fingerprint(parts: &[Option<&str>]) -> String {
+    let mut h = blake3::Hasher::new();
+    for p in parts {
+        match p {
+            Some(t) => {
+                h.update(&[1]);
+                h.update(&(t.len() as u64).to_le_bytes());
+                h.update(t.as_bytes());
+            }
+            None => {
+                h.update(&[0]);
+            }
+        }
+    }
+    h.finalize().to_hex()[..8].to_string()
 }
 
 /// What a lookup knows about the request.
@@ -370,17 +394,44 @@ mod tests {
     #[test]
     fn l2_key_is_namespaced_and_stable() {
         let c = cfg("ns", "b1");
-        let a = L2Key::of(&c, &key("", "GET", "/a", "x=1"));
-        let hex = a.0.strip_prefix("ns:b1:p:").expect("prefix");
+        let fp = "00000000";
+        let a = L2Key::of(&c, fp, &key("", "GET", "/a", "x=1"));
+        let hex = a.0.strip_prefix("ns:b1:00000000:p:").expect("prefix");
         assert_eq!(hex.len(), 64);
         assert!(hex.bytes().all(|b| b.is_ascii_hexdigit()));
-        assert_eq!(a, L2Key::of(&c, &key("", "GET", "/a", "x=1")));
-        assert_ne!(a, L2Key::of(&c, &key("t1", "GET", "/a", "x=1")));
-        assert_ne!(a, L2Key::of(&c, &key("", "GET", "/a", "x=2")));
+        assert_eq!(a, L2Key::of(&c, fp, &key("", "GET", "/a", "x=1")));
+        assert_ne!(a, L2Key::of(&c, fp, &key("t1", "GET", "/a", "x=1")));
+        assert_ne!(a, L2Key::of(&c, fp, &key("", "GET", "/a", "x=2")));
         // The separators keep field boundaries: ("ab","") != ("a","b").
         assert_ne!(
-            L2Key::of(&c, &key("", "GET", "/ab", "")),
-            L2Key::of(&c, &key("", "GET", "/a", "b"))
+            L2Key::of(&c, fp, &key("", "GET", "/ab", "")),
+            L2Key::of(&c, fp, &key("", "GET", "/a", "b"))
+        );
+    }
+
+    #[test]
+    fn the_fingerprint_follows_every_injected_value() {
+        let c = cfg("ns", "b1");
+        let k = key("", "GET", "/a", "");
+        let tag = "<script>globalThis.__BRUST_ACTION_PREFIX__=\"/x\"</script>";
+        let base = fingerprint(&[Some(tag), None, Some("")]);
+        assert_eq!(base.len(), 8);
+        assert_eq!(base, fingerprint(&[Some(tag), None, Some("")]), "stable");
+        let other = [
+            fingerprint(&[Some("<script>y</script>"), None, Some("")]),
+            fingerprint(&[Some(tag), Some("<meta>"), Some("")]),
+            fingerprint(&[Some(tag), None, Some("/b")]),
+            fingerprint(&[None, None, Some("")]),
+        ];
+        for o in &other {
+            assert_ne!(&base, o);
+            assert_ne!(L2Key::of(&c, &base, &k), L2Key::of(&c, o, &k));
+        }
+        // An absent value is not an empty one, and values do not run together.
+        assert_ne!(fingerprint(&[None]), fingerprint(&[Some("")]));
+        assert_ne!(
+            fingerprint(&[Some("ab"), Some("")]),
+            fingerprint(&[Some("a"), Some("b")])
         );
     }
 

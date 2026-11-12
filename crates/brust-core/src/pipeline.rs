@@ -745,7 +745,7 @@ async fn l2_read<H: Host>(
     since: ReadStamp,
     accept_enc: Option<&str>,
 ) -> L2Read {
-    let key = L2Key::of(l2, k);
+    let key = L2Key::of(l2, &s.l2_fp, k);
     let path = full.split('?').next().unwrap_or(full);
     let probe = L2Probe {
         key: &key,
