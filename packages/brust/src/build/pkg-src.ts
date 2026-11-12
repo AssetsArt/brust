@@ -16,7 +16,7 @@
 // names, i.e. fidelity, not a security boundary: the author controls both files) is REFUSED, with the reason;
 // the compiler then renders its components as React islands of the package export, exactly as before.
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { BuildError } from './errors'
 import { RELATIVE_SPEC } from './esm-resolve'
@@ -61,8 +61,15 @@ const lstatSyncOrNull = (p: string) => {
 // text differs, and then by renaming a finished temp file over it (a reader sees the old file or the new one, never a
 // partial one). The temp files are named `.tmp-*` so nothing treats them as sources.
 const TMP_PREFIX = '.tmp-'
-/** A temp file this old belongs to a killed process. */
-const TMP_STALE_MS = 10 * 60 * 1000
+/**
+ * How long an unreferenced entry of `.brust/pkg-src` is left alone: a temp file this old belongs to a killed process, and a
+ * package directory whose `.used` stamp is this old is not read by any build or dev generation still running. A run that
+ * ends does not know the package set of one that is still compiling (a source edited during a build changes it), so it
+ * removes by age, never by "not in my map". Well above the length of one build.
+ */
+export const PKG_DIR_GRACE_MS = 10 * 60 * 1000
+/** Written (touched) in every package directory a run references, before it compiles: the mark the prune goes by. */
+const USED_STAMP = '.used'
 let tmpCounter = 0
 
 /** `renameSync` over a file another process has open: on Windows that is a sharing violation (EPERM/EBUSY/EACCES) for as long
@@ -91,7 +98,25 @@ function putFile(target: string, text: string): void {
     renameOver(tmp, target)
   } catch (e) {
     rmSync(tmp, { force: true })
-    throw e
+    // A write that fails is the build's failure, never a refusal of the package (that would drop it to an island in this
+    // build only): two builds of one app would then differ with exit 0 (F536).
+    const shown = target.split(sep).join('/')
+    const at = shown.lastIndexOf(PKG_SRC_DIR)
+    throw new BuildError('package-source', `could not write ${at >= 0 ? shown.slice(at) : shown}: ${(e as NodeJS.ErrnoException).code ?? String(e instanceof Error ? e.message : e).split('\n')[0]}`)
+  }
+}
+
+/** Marks `dir` (absolute) as read by a running build: the stamp's mtime is the time of the latest run that referenced it. Best
+ * effort: a stamp that cannot be written only makes the directory prunable sooner, which is what happened before the stamp. */
+function stampUsed(dir: string): void {
+  const stamp = join(dir, USED_STAMP)
+  const now = new Date()
+  try {
+    utimesSync(stamp, now, now)
+  } catch {
+    try {
+      writeFileSync(stamp, '')
+    } catch {}
   }
 }
 
@@ -112,9 +137,11 @@ function pruneStale(dir: string, keep: Set<string>): void {
       try {
         if (readdirSync(p).length === 0) rmSync(p, { recursive: true })
       } catch {}
+    } else if (e.name === USED_STAMP) {
+      continue
     } else if (e.name.startsWith(TMP_PREFIX)) {
       try {
-        if (Date.now() - lstatSync(p).mtimeMs > TMP_STALE_MS) rmSync(p, { force: true })
+        if (Date.now() - lstatSync(p).mtimeMs > PKG_DIR_GRACE_MS) rmSync(p, { force: true })
       } catch {}
     } else if (!keep.has(p)) {
       try {
@@ -475,6 +502,9 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
   const outRel = posix.join(PKG_SRC_DIR, `p-${hash}`)
   const own = resolve(appRoot, PKG_SRC_DIR) + sep
   const written = barrel ? [...files, barrel] : files
+  // Before the first file is written, so before any compile reads this directory: another run's prune must not take it.
+  mkdirSync(resolve(appRoot, outRel), { recursive: true })
+  stampUsed(resolve(appRoot, outRel))
   const targets = written.map((f) => ({ f, target: resolve(appRoot, outRel, f.path) }))
   const escaped = targets.find((t) => !t.target.startsWith(own))
   if (escaped) return { ok: false, reason: `the source ${escaped.f.path} would be written outside ${PKG_SRC_DIR}` }
@@ -563,7 +593,9 @@ export function preparePackageSources(appRoot: string, specs: Iterable<string>):
       try {
         o = byDir.size >= LIMITS.packages ? { ok: false, reason: `more than ${LIMITS.packages} packages` } : writePackage(root, dir, budget)
       } catch (e) {
-        // An unreadable package.json or map is a refusal: a package never fails the build here.
+        // A write that failed (BuildError, from `putFile`) fails the build; an unreadable package.json or map is a refusal:
+        // a package never fails the build for what it contains.
+        if (e instanceof BuildError) throw e
         o = { ok: false, reason: `unreadable: ${String(e instanceof Error ? e.message : e).split('\n')[0]}` }
       }
       byDir.set(dir, o)
@@ -580,21 +612,20 @@ export function preparePackageSources(appRoot: string, specs: Iterable<string>):
   for (const n of recognisedBad) delete out.recognised[n]
   mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
   putFile(join(root, PKG_SRC_DIR, 'index.json'), `${JSON.stringify(out, null, 2)}\n`)
-  // Whatever this build does not reference any more (a dropped dependency, a layout of an older release) is removed last,
-  // so nothing a reader of this build's map needs is touched. `index.json` and another process's `.tmp-*` write in flight stay.
+  // Whatever no run has referenced for PKG_DIR_GRACE_MS (a dropped dependency, a layout of an older release) is removed last.
+  // Not "whatever this map lacks": a build or dev generation still compiling may reference it (the sources it reads
+  // can differ from these by an edit made during the run). `index.json` and a young `.tmp-*` write in flight stay.
   const referenced = new Set(Object.keys(out.dirs).map((d) => basename(d)))
   const pkgSrc = join(root, PKG_SRC_DIR)
   for (const e of readdirSync(pkgSrc, { withFileTypes: true })) {
     if (e.name === 'index.json' || referenced.has(e.name)) continue
     const p = join(pkgSrc, e.name)
-    if (e.name.startsWith(TMP_PREFIX)) {
-      try {
-        if (Date.now() - lstatSync(p).mtimeMs <= TMP_STALE_MS) continue
-      } catch {}
-    }
     try {
+      // The stamp of a package directory; one without (an older layout, a temp file) goes by its own mtime.
+      const used = e.isDirectory() ? (lstatSyncOrNull(join(p, USED_STAMP)) ?? lstatSync(p)) : lstatSync(p)
+      if (Date.now() - used.mtimeMs <= PKG_DIR_GRACE_MS) continue
       rmSync(p, { recursive: true, force: true })
-    } catch {} // a reader holds a file open (Windows): the next build removes it
+    } catch {} // a reader holds a file open (Windows), or it is gone already: the next build removes it
   }
   return out
 }
