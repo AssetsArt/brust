@@ -17,6 +17,7 @@ const fixture = join(import.meta.dir, 'fixtures/csp-static-app')
 const bin = join(import.meta.dir, '../bin/brust')
 const env = { ...process.env, BRUST_PORT: '', BRUST_ADDR: '', BRUST_WORKERS: '', NODE_ENV: 'production' }
 const copies: string[] = []
+const logs = new Map<string, string>()
 
 /** A copy of the fixture inside the package (so `@brust/core` resolves) with `csp` as its [csp] table, built static. */
 function built(name: string, csp: string): string {
@@ -27,6 +28,7 @@ function built(name: string, csp: string): string {
   writeFileSync(join(dir, 'brust.toml'), `[server]\nbase_path = "/site"\n\n${csp}`)
   const b = Bun.spawnSync([process.execPath, bin, 'build', 'routes.tsx', '--target', 'static'], { cwd: dir, env, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build --target static (${name}) failed:\n${b.stderr.toString()}`)
+  logs.set(dir, b.stdout.toString() + b.stderr.toString())
   return dir
 }
 
@@ -65,7 +67,9 @@ const sha = (text: string) => `'sha256-${createHash('sha256').update(text).diges
 let enforce = ''
 let reportOnly = ''
 let off = ''
+let hosted = ''
 beforeAll(() => {
+  hosted = built('host', '[csp]\nenabled = true\nconnect_src = ["wss://{host}", "https://api.example"]\n')
   enforce = built('enforce', '[csp]\nenabled = true\nframe_ancestors = ["\'none\'"]\nreport_uri = "/csp-report"\n')
   reportOnly = built('report-only', '[csp]\nenabled = true\nmode = "report-only"\n')
   off = built('off', '')
@@ -117,6 +121,16 @@ test('report-only: no meta (it cannot be one), the whole policy in the /* rule a
 test('no [csp]: no meta and no policy rule', () => {
   for (const f of htmlFiles(off)) expect([f, read(off, f).includes('Content-Security-Policy')]).toEqual([f, false])
   expect(read(off, '_headers')).not.toContain('Content-Security-Policy')
+})
+
+test('F544: a {host} source is left out of a static page (no request to take the host from), with a build warning', () => {
+  expect(logs.get(hosted)).toContain('warning ssg-csp-host csp.connect_src wss://{host}: a static page has no request to take the host from')
+  for (const f of htmlFiles(hosted)) {
+    const meta = metaOf(read(hosted, f))!
+    expect([f, meta.split('; ').find((d) => d.startsWith('connect-src'))]).toEqual([f, "connect-src 'self' https://api.example"])
+    expect(meta).not.toContain('{host}')
+    expect(meta).not.toContain('127.0.0.1')
+  }
 })
 
 // ---- the pure helpers ----

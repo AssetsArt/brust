@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { FlatRoute } from '../routes'
+import { cspHostSources, loadConfig } from '../config'
 import type { StaticCsp } from '../native'
 import { layoutAssets, withCspHeader } from './cf-assets'
 import { BuildError } from './errors'
@@ -272,6 +273,10 @@ export async function writeStatic(
   const anyCsp = rendered.some((r) => r.headers['content-security-policy'] !== undefined || r.headers['content-security-policy-report-only'] !== undefined)
   const csp = anyCsp ? pageCsp(rendered, o.cspForStatic ?? (await import('../native')).cspForStatic) : null
   for (const w of csp?.warnings ?? []) warn(w)
+  // F544: a static page has no request to take {host} from; the render dropped those sources.
+  if (csp)
+    for (const src of cspHostSources((await loadConfig(o.appRoot)).csp))
+      warn(`[brust] warning ssg-csp-host csp.${src}: a static page has no request to take the host from; the source is left out of its policy`)
   rendered.forEach((r, i) => {
     const page: PlannedPage = o.plan.pages[i]!
     const where = `GET ${page.path} (route ${page.routeId} ${page.pattern})`

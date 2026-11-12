@@ -36,7 +36,7 @@ fn start() {
 }
 
 fn boot() -> Result<(), String> {
-    let parsed = config::parse_all(&bridge::config())?;
+    let parsed = config::parse_with_csp_mode(&bridge::config(), bridge::csp_mode().as_deref())?;
     let (cfg, stats, epoch_cfg) = (parsed.core, parsed.stats, parsed.epoch);
     let loaded = Manifest::from_parts(&bridge::manifest(), &bridge::templates())
         .map_err(|e| format!("manifest: {e}"))?;
@@ -127,7 +127,8 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> worker::Result<Respons
         }
     };
     let (mut parts, bytes) = resp.into_parts();
-    core.finish(origin.as_ref(), &mut parts.headers);
+    let host = core.csp_needs_host().then_some(authority);
+    core.finish(origin.as_ref(), host, &mut parts.headers);
     let web = match parts.extensions.get::<ReplyId>().copied() {
         Some(id) => match core.host.take(id) {
             Some(js_resp) => respond::rewrap(js_resp, &parts, is_head),

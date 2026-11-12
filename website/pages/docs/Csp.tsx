@@ -12,7 +12,7 @@ import type { TocItem } from '../../lib/nav'
 
 export interface CspData {
   toc: TocItem[]
-  blocks: Record<'on' | 'policy' | 'full' | 'styles', CodeBlockData>
+  blocks: Record<'on' | 'policy' | 'full' | 'styles' | 'none' | 'host' | 'dev', CodeBlockData>
 }
 
 const ON = `# brust.toml
@@ -20,7 +20,7 @@ const ON = `# brust.toml
 enabled = true`
 
 const POLICY = `Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-…'; style-src-elem 'self';
-  style-src-attr 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'`
+  style-src-attr 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'`
 
 const FULL = `# brust.toml (every key optional)
 [csp]
@@ -32,7 +32,31 @@ connect_src = ["wss://live.example.com"]
 img_src = ["data:", "https://images.example.com"]
 font_src = ["https://fonts.gstatic.com"]
 frame_ancestors = ["'none'"]
-report_uri = "/csp-report"`
+report_uri = "/csp-report"
+form_action = ["https://pay.example.com"]
+frame_src = ["https://www.youtube-nocookie.com"]
+media_src = ["https://media.example.com"]
+worker_src = ["blob:"]
+manifest_src = []
+object_src = []                          # empty = 'none'
+default_src = "self"                     # or "none"
+base_uri = "self"                        # or "none"`
+
+const NONE = `# brust.toml: nothing is allowed unless named
+[csp]
+enabled = true
+default_src = "none"`
+
+const HOST = `# brust.toml: one app serving many host names, each page's socket on its own host
+[csp]
+enabled = true
+connect_src = ["wss://{host}"]`
+
+const DEV = `# brust.toml
+[csp]
+enabled = true
+dev = true                 # send it under brust dev too
+dev_mode = "enforce"       # default "report-only" under brust dev`
 
 const STYLES = `# brust.toml: an app that writes <style> inline (for example with dangerouslySetInnerHTML)
 [csp]
@@ -45,10 +69,14 @@ export async function cspLoader(): Promise<CspData> {
       { id: 'turn-on', title: 'Turning it on' },
       { id: 'policy', title: 'The policy brust sends' },
       { id: 'keys', title: 'Adding sources' },
+      { id: 'none', title: "default-src 'none'" },
+      { id: 'host', title: 'The request host' },
       { id: 'inline-styles', title: 'Inline styles' },
       { id: 'inline-scripts', title: 'Inline scripts' },
       { id: 'report-only', title: 'Report-only' },
       { id: 'your-own', title: 'Your own header' },
+      { id: 'switch', title: 'Switching it per deploy' },
+      { id: 'dev', title: 'Under brust dev' },
       { id: 'where', title: 'Where it applies' },
       { id: 'static', title: 'Static sites' },
     ],
@@ -57,6 +85,9 @@ export async function cspLoader(): Promise<CspData> {
       policy: codeBlock({ lang: 'text', file: 'response header', code: POLICY }),
       full: codeBlock({ lang: 'text', file: 'brust.toml', code: FULL }),
       styles: codeBlock({ lang: 'text', file: 'brust.toml', code: STYLES }),
+      none: codeBlock({ lang: 'text', file: 'brust.toml', code: NONE }),
+      host: codeBlock({ lang: 'text', file: 'brust.toml', code: HOST }),
+      dev: codeBlock({ lang: 'text', file: 'brust.toml', code: DEV }),
     },
   }
 }
@@ -116,12 +147,33 @@ export default function Csp({ blocks }: CspData) {
       <h2 id="keys">Adding sources</h2>
       <CodeBlock code={blocks.full.code} lang={blocks.full.lang} file={blocks.full.file} html={blocks.full.html} />
       <p>
-        Each list adds sources to its directive, after <code>&apos;self&apos;</code>. <code>style_src</code> goes into <code>style-src-elem</code>. <code>img_src</code>, <code>font_src</code> and <code>frame_ancestors</code> are sent only when you set them.
-        Without <code>frame_ancestors</code>, framing is not restricted, as it is without <code>[csp]</code>.
+        Each list adds sources to its directive, after <code>&apos;self&apos;</code>. <code>style_src</code> goes into <code>style-src-elem</code>. <code>img_src</code>, <code>font_src</code>, <code>frame_src</code>, <code>media_src</code>,{' '}
+        <code>worker_src</code>, <code>manifest_src</code> and <code>frame_ancestors</code> are sent only when you set them. Without <code>frame_ancestors</code>, framing is not restricted, as it is without <code>[csp]</code>.
+      </p>
+      <p>
+        <code>form-action</code> does not fall back to <code>default-src</code>, so brust always sends <code>form-action &apos;self&apos;</code>, plus your <code>form_action</code> list: a form can post to your own app (actions included) and to the origins you name.{' '}
+        <code>object_src</code> replaces <code>&apos;none&apos;</code> when you set it. <code>base_uri</code> is <code>&quot;self&quot;</code> or <code>&quot;none&quot;</code>.
       </p>
       <p>
         One entry is one source: a host (<code>https://cdn.example.com</code>), a scheme (<code>data:</code>) or a quoted keyword (<code>&apos;self&apos;</code>, <code>&apos;none&apos;</code>, <code>&apos;unsafe-inline&apos;</code>,{' '}
         <code>&apos;nonce-…&apos;</code>, <code>&apos;sha256-…&apos;</code>). An entry with <code>;</code>, <code>,</code>, a line break, a non-ASCII character or an unbalanced quote is refused, so no entry can end the directive and start another.
+      </p>
+
+      <h2 id="none">default-src &apos;none&apos;</h2>
+      <CodeBlock code={blocks.none.code} lang={blocks.none.lang} file={blocks.none.file} html={blocks.none.html} />
+      <p>
+        With <code>default_src = &quot;none&quot;</code> nothing falls back to your own origin. brust then names what it loads itself: <code>script-src</code> and <code>style-src-elem</code> as above, <code>connect-src &apos;self&apos;</code> (page fetches
+        of navigation and prefetch, actions, your WebSockets), <code>img-src &apos;self&apos;</code> (images a navigation preloads, and those brust-built CSS serves) and <code>font-src &apos;self&apos;</code> (fonts brust-built CSS serves). It loads no
+        frames, media, workers or manifests, so those stay closed until you list them; then only what you list is allowed (no <code>&apos;self&apos;</code> is added).
+      </p>
+
+      <h2 id="host">The request host</h2>
+      <CodeBlock code={blocks.host.code} lang={blocks.host.lang} file={blocks.host.file} html={blocks.host.html} />
+      <p>
+        A source may hold <code>{'{host}'}</code>. brust replaces it with the host the request was sent to (with its port), as each response goes out, so one app serving many host names allows each page its own host. The <code>Host</code> header is
+        written by the client, so it is used only when it is a plain host name or IP address with an optional port. Anything else, and every source that holds <code>{'{host}'}</code> is left out of that response&rsquo;s policy: it is never copied
+        into the header. <code>{'{host}'}</code> is refused in <code>script_src</code>: a script source taken from the request would let any host name that reaches your server serve script. Static pages and the Cloudflare <code>public/</code> rule have no
+        request, so the build leaves those sources out and prints a warning.
       </p>
 
       <h2 id="inline-styles">Inline styles</h2>
@@ -153,8 +205,22 @@ export default function Csp({ blocks }: CspData) {
 
       <h2 id="your-own">Your own header</h2>
       <p>
-        A loader that sets its own <code>Content-Security-Policy</code> header (in <code>res.headers</code>) keeps it: brust adds its header only to a response that does not have one. The header is not part of the cached page, so a page served from the
-        cache gets the same header as a fresh render.
+        A loader that sets its own <code>Content-Security-Policy</code> or <code>Content-Security-Policy-Report-Only</code> header (in <code>res.headers</code>) keeps it, and brust adds neither of its own to that response. The header is not part
+        of the cached page, so a page served from the cache gets the same header as a fresh render.
+      </p>
+
+      <h2 id="switch">Switching it per deploy</h2>
+      <p>
+        The environment variable <code>BRUST_CSP_MODE</code>, read when the server starts, overrides <code>[csp]</code> without editing <code>brust.toml</code>: <code>off</code> sends no policy; <code>report-only</code> or <code>enforce</code> sends
+        it in that mode, from your <code>[csp]</code> table even when <code>enabled</code> is not true (or the default policy when there is no table). Any other value stops the server at startup. On Cloudflare it is a variable of the Worker
+        (<code>vars</code> or a dashboard variable), read when the Worker starts. It is the switch to use when a policy breaks a page in production.
+      </p>
+
+      <h2 id="dev">Under brust dev</h2>
+      <CodeBlock code={blocks.dev.code} lang={blocks.dev.lang} file={blocks.dev.file} html={blocks.dev.html} />
+      <p>
+        <code>brust dev</code> sends no policy unless <code>dev = true</code>. Then it sends yours in <code>dev_mode</code> (<code>report-only</code> by default), with one addition its overlay needs: <code>style-src-elem &apos;unsafe-inline&apos;</code>{' '}
+        for the error overlay&rsquo;s styles. The dev client, the devtools and their WebSocket are same-origin, which <code>&apos;self&apos;</code> already allows. <code>brust start</code> never gets the addition.
       </p>
 
       <h2 id="where">Where it applies</h2>
@@ -170,7 +236,7 @@ export default function Csp({ blocks }: CspData) {
           <code>--target static</code>: see <a href="#static">Static sites</a>.
         </li>
         <li>
-          <code>brust dev</code> sends none: its overlay and devtools add <code>&lt;style&gt;</code> elements a strict policy would block. Check your policy with <code>brust start</code>.
+          <code>brust dev</code> sends none unless <code>dev = true</code>: see <a href="#dev">Under brust dev</a>.
         </li>
       </ul>
 

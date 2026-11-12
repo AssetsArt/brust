@@ -14,10 +14,54 @@ pub enum CspMode {
     ReportOnly,
 }
 
+/// F544: `default_src` / `base_uri`: `'self'` (the default) or `'none'`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelfOrNone {
+    #[default]
+    SelfOrigin,
+    None,
+}
+
+impl SelfOrNone {
+    /// `"self"` or `"none"` (the config spelling); `name` names the key in the error.
+    pub fn parse(v: Option<&str>, name: &str) -> Result<Self, String> {
+        match v {
+            None | Some("self") => Ok(SelfOrNone::SelfOrigin),
+            Some("none") => Ok(SelfOrNone::None),
+            Some(o) => Err(format!("{name} must be \"self\" or \"none\" (got {o:?})")),
+        }
+    }
+
+    fn keyword(self) -> &'static str {
+        match self {
+            SelfOrNone::SelfOrigin => "'self'",
+            SelfOrNone::None => "'none'",
+        }
+    }
+}
+
+/// The request-host placeholder (F544): `wss://{host}` is the request's own authority, expanded per response.
+pub const HOST: &str = "{host}";
+
 /// `[csp]` in `brust.toml`. Present = on. Each list adds sources to the directive brust composes; see [`compose`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CspConfig {
     pub mode: CspMode,
+    /// F544: `default-src`; with `None` brust names every directive its own runtime needs.
+    pub default_src: SelfOrNone,
+    /// F544: `base-uri`.
+    pub base_uri: SelfOrNone,
+    /// F544: `form-action 'self'` plus these (it does not fall back to `default-src`).
+    pub form_action: Vec<String>,
+    /// F544: sent only when set (with `'self'` first under `default_src = 'self'`).
+    pub frame_src: Vec<String>,
+    pub media_src: Vec<String>,
+    pub worker_src: Vec<String>,
+    pub manifest_src: Vec<String>,
+    /// F544: `object-src` sources; empty = `'none'`.
+    pub object_src: Vec<String>,
+    /// F544: a static render (F541): `{host}` sources are dropped, there is no request to take the host from.
+    pub drop_host: bool,
     /// Extra `script-src` sources. Sources that void the hashes ([`voids_hashes`]) are refused unless `script_src_unsafe`.
     pub script_src: Vec<String>,
     /// Opt-in for the sources [`voids_hashes`] names in `script_src`.
@@ -35,13 +79,19 @@ pub struct CspConfig {
 
 impl CspConfig {
     pub fn validate(&self) -> Result<(), String> {
-        let lists: [(&str, &[String]); 6] = [
+        let lists: [(&str, &[String]); 12] = [
             ("script_src", &self.script_src),
             ("style_src", &self.style_src),
             ("connect_src", &self.connect_src),
             ("img_src", &self.img_src),
             ("font_src", &self.font_src),
             ("frame_ancestors", &self.frame_ancestors),
+            ("form_action", &self.form_action),
+            ("frame_src", &self.frame_src),
+            ("media_src", &self.media_src),
+            ("worker_src", &self.worker_src),
+            ("manifest_src", &self.manifest_src),
+            ("object_src", &self.object_src),
         ];
         for (name, list) in lists {
             for s in list {
@@ -50,6 +100,13 @@ impl CspConfig {
         }
         if let Some(u) = &self.report_uri {
             source(u).map_err(|e| format!("report_uri: {e}"))?;
+        }
+        // F544: a per-request host as a script source would let any vhost pointed at this server serve script.
+        if let Some(s) = self.script_src.iter().find(|s| s.contains(HOST)) {
+            return Err(format!(
+                "script_src: {s} uses {HOST}, which is refused here: a script source taken from the request's Host would \
+                 let any host name that reaches this server serve script; name the hosts"
+            ));
         }
         // Not unlocked by script_src_unsafe: it does not weaken the policy, it breaks every page.
         if let Some(s) = self
@@ -166,11 +223,14 @@ fn base64(b: &[u8]) -> String {
     o
 }
 
-/// The policy: `default-src 'self'`, scripts from `'self'` plus brust's hashes, style elements from `'self'`, style
-/// attributes allowed (the compiler prints `style=""` and `x-bind-style` sets it; an attribute cannot run script),
-/// no plugins, no `<base>` elsewhere. `connect_origin` is the actions client's cross-origin `base_url`.
+/// The policy: `default-src` (`'self'`, or `'none'` with every directive brust's runtime needs named), scripts from
+/// `'self'` plus brust's hashes, style elements from `'self'`, style attributes allowed (the compiler prints `style=""` and
+/// `x-bind-style` sets it; an attribute cannot run script), forms posting to `'self'`, no plugins, `<base>` limited.
+/// `connect_origin` is the actions client's cross-origin `base_url`. Sources may still hold `{host}` ([`HOST`]):
+/// [`Resolved`] expands or drops them per response.
 pub fn compose(cfg: &CspConfig, hashes: &[String], connect_origin: Option<&str>) -> String {
-    let mut d: Vec<String> = vec!["default-src 'self'".into()];
+    let none = cfg.default_src == SelfOrNone::None;
+    let mut d: Vec<String> = vec![format!("default-src {}", cfg.default_src.keyword())];
     let list = |name: &str, base: &[&str], extra: &[String]| {
         let mut v = vec![name.to_string()];
         v.extend(base.iter().map(|s| s.to_string()));
@@ -184,7 +244,7 @@ pub fn compose(cfg: &CspConfig, hashes: &[String], connect_origin: Option<&str>)
     d.push("style-src-attr 'unsafe-inline'".into());
     // Fallback for browsers without -elem/-attr (Safari < 15.4): CSP3 browsers ignore `style-src` when both are present,
     // so the policy above is unchanged for them; older ones keep style attributes instead of losing them to
-    // `default-src 'self'`. Styles only: scripts stay strict.
+    // `default-src`. Styles only: scripts stay strict.
     let extra: Vec<String> = cfg
         .style_src
         .iter()
@@ -192,19 +252,38 @@ pub fn compose(cfg: &CspConfig, hashes: &[String], connect_origin: Option<&str>)
         .cloned()
         .collect();
     d.push(list("style-src", &["'self'", "'unsafe-inline'"], &extra));
+    // F544: under `default-src 'none'` brust names what its own runtime loads: navigation and action fetches
+    // (connect), the images a navigation preloads and the fonts and images brust-built CSS serves from client/.
     let mut connect = vec!["'self'"];
     connect.extend(connect_origin);
-    if connect.len() > 1 || !cfg.connect_src.is_empty() {
+    if none || connect.len() > 1 || !cfg.connect_src.is_empty() {
         d.push(list("connect-src", &connect, &cfg.connect_src));
     }
-    if !cfg.img_src.is_empty() {
+    if none || !cfg.img_src.is_empty() {
         d.push(list("img-src", &["'self'"], &cfg.img_src));
     }
-    if !cfg.font_src.is_empty() {
+    if none || !cfg.font_src.is_empty() {
         d.push(list("font-src", &["'self'"], &cfg.font_src));
     }
-    d.push("object-src 'none'".into());
-    d.push("base-uri 'self'".into());
+    // F544: what the app opens up itself; under `default-src 'self'` its own origin stays allowed.
+    let own: &[&str] = if none { &[] } else { &["'self'"] };
+    for (name, extra) in [
+        ("frame-src", &cfg.frame_src),
+        ("media-src", &cfg.media_src),
+        ("worker-src", &cfg.worker_src),
+        ("manifest-src", &cfg.manifest_src),
+    ] {
+        if !extra.is_empty() {
+            d.push(list(name, own, extra));
+        }
+    }
+    if cfg.object_src.is_empty() {
+        d.push("object-src 'none'".into());
+    } else {
+        d.push(list("object-src", &[], &cfg.object_src));
+    }
+    d.push(format!("base-uri {}", cfg.base_uri.keyword()));
+    d.push(list("form-action", &["'self'"], &cfg.form_action));
     if !cfg.frame_ancestors.is_empty() {
         d.push(list("frame-ancestors", &[], &cfg.frame_ancestors));
     }
@@ -212,6 +291,65 @@ pub fn compose(cfg: &CspConfig, hashes: &[String], connect_origin: Option<&str>)
         d.push(format!("report-uri {}", u.trim()));
     }
     d.join("; ")
+}
+
+/// F544: `host` (the request's authority) when it is a plain `hostname[:port]` or `[ipv6][:port]`, the only form a
+/// `{host}` source is ever expanded with; anything else (the Host header is the client's to write) is `None`.
+pub fn safe_host(host: &str) -> Option<&str> {
+    let (name, port) = if let Some(rest) = host.strip_prefix('[') {
+        let (ip, after) = rest.split_once(']')?;
+        if ip.is_empty()
+            || !ip
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.')
+        {
+            return None;
+        }
+        (None, after)
+    } else {
+        match host.rfind(':') {
+            Some(i) => (Some(&host[..i]), &host[i..]),
+            None => (Some(host), ""),
+        }
+    };
+    let port_ok = port.is_empty()
+        || port
+            .strip_prefix(':')
+            .is_some_and(|p| (1..=5).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()));
+    let name_ok = name.is_none_or(|n| {
+        !n.is_empty()
+            && n.len() <= 253
+            && n.split('.').all(|l| {
+                !l.is_empty()
+                    && l.len() <= 63
+                    && !l.starts_with('-')
+                    && !l.ends_with('-')
+                    && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            })
+    });
+    (port_ok && name_ok).then_some(host)
+}
+
+/// `value` with each `{host}` source expanded with `host`, or dropped when `host` is `None` (unsafe, or no request).
+/// A directive left with no source keeps its name: an empty list allows nothing.
+pub fn expand_host(value: &str, host: Option<&str>) -> String {
+    value
+        .split("; ")
+        .map(|d| {
+            d.split(' ')
+                .enumerate()
+                .filter_map(|(i, t)| {
+                    if i == 0 || !t.contains(HOST) {
+                        Some(t.to_string())
+                    } else {
+                        host.map(|h| t.replace(HOST, h))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// F541: the header (name, value) a server with this `[csp]`, base path and actions sends, composed exactly as
@@ -272,11 +410,14 @@ pub fn split_for_meta(name: &str, value: &str) -> StaticPolicy {
     }
 }
 
-/// The prebuilt header: its name for the mode and its value.
+/// The prebuilt header: its name for the mode and its value; with a `{host}` source, the template it is expanded from
+/// per response (F544).
 #[derive(Clone, Debug)]
 pub(crate) struct Resolved {
     name: HeaderName,
     value: HeaderValue,
+    /// The composed policy when a source holds `{host}`: `value` is then the policy with those sources dropped.
+    template: Option<String>,
 }
 
 impl Resolved {
@@ -286,25 +427,46 @@ impl Resolved {
         connect_origin: Option<&str>,
     ) -> Result<Self, String> {
         let hashes = tags.map(script_hashes).unwrap_or_default();
-        let value = HeaderValue::from_str(&compose(cfg, &hashes, connect_origin))
+        let composed = compose(cfg, &hashes, connect_origin);
+        let template = (composed.contains(HOST) && !cfg.drop_host).then(|| composed.clone());
+        let value = HeaderValue::from_str(&expand_host(&composed, None))
             .map_err(|e| format!("not a header value: {e}"))?;
         let name = match cfg.mode {
             CspMode::Enforce => http::header::CONTENT_SECURITY_POLICY,
             CspMode::ReportOnly => http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY,
         };
-        Ok(Resolved { name, value })
+        Ok(Resolved {
+            name,
+            value,
+            template,
+        })
     }
 
-    /// Stamps an HTML response, unless it already carries this header (a loader's own policy wins).
-    pub(crate) fn stamp(&self, h: &mut HeaderMap) {
+    /// The policy has a `{host}` source: [`stamp`](Self::stamp) wants the request's authority.
+    pub(crate) fn needs_host(&self) -> bool {
+        self.template.is_some()
+    }
+
+    /// Stamps an HTML response, unless it already carries a policy of either kind (a loader's own wins; F544: an enforced
+    /// one also keeps brust's report-only one off). `host` is the request's authority: a `{host}` source is expanded with
+    /// it when it is a plain host ([`safe_host`]), dropped otherwise.
+    pub(crate) fn stamp(&self, h: &mut HeaderMap, host: Option<&str>) {
         let html = h
             .get(http::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|t| t.trim_start().to_ascii_lowercase().starts_with("text/html"));
-        if html {
-            h.entry(self.name.clone())
-                .or_insert_with(|| self.value.clone());
+        if !html
+            || h.contains_key(http::header::CONTENT_SECURITY_POLICY)
+            || h.contains_key(http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY)
+        {
+            return;
         }
+        let value = match (&self.template, host.and_then(safe_host)) {
+            (Some(t), Some(host)) => HeaderValue::from_str(&expand_host(t, Some(host)))
+                .unwrap_or_else(|_| self.value.clone()),
+            _ => self.value.clone(),
+        };
+        h.insert(self.name.clone(), value);
     }
 
     #[cfg(test)]
@@ -357,7 +519,7 @@ mod tests {
         assert_eq!(
             compose(&cfg(), &["'sha256-x'".into()], None),
             "default-src 'self'; script-src 'self' 'sha256-x'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; \
-             style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
+             style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'"
         );
     }
 
@@ -379,7 +541,7 @@ mod tests {
              style-src-attr 'unsafe-inline'; style-src 'self' 'unsafe-inline'; \
              connect-src 'self' https://api.example wss://ws.example; \
              img-src 'self' data:; font-src 'self' https://fonts.example; object-src 'none'; base-uri 'self'; \
-             frame-ancestors 'none'; report-uri /csp-report"
+             form-action 'self'; frame-ancestors 'none'; report-uri /csp-report"
         );
     }
 
@@ -597,13 +759,13 @@ mod tests {
             http::header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
         );
-        r.stamp(&mut h);
+        r.stamp(&mut h, None);
         assert!(h.get(http::header::CONTENT_SECURITY_POLICY).is_none());
         h.insert(
             http::header::CONTENT_TYPE,
             HeaderValue::from_static("text/html; charset=utf-8"),
         );
-        r.stamp(&mut h);
+        r.stamp(&mut h, None);
         assert_eq!(
             h.get(http::header::CONTENT_SECURITY_POLICY).unwrap(),
             r.value()
@@ -617,7 +779,7 @@ mod tests {
             http::header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("default-src 'none'"),
         );
-        r.stamp(&mut own);
+        r.stamp(&mut own, None);
         assert_eq!(
             own.get_all(http::header::CONTENT_SECURITY_POLICY)
                 .iter()
@@ -735,6 +897,301 @@ mod tests {
         );
     }
 
+    fn dir(p: &str, name: &str) -> Option<String> {
+        p.split("; ")
+            .find(|d| d.split(' ').next() == Some(name))
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn form_action_is_always_sent_with_its_extras() {
+        assert_eq!(
+            dir(&compose(&cfg(), &[], None), "form-action").unwrap(),
+            "form-action 'self'"
+        );
+        let c = CspConfig {
+            form_action: vec!["https://pay.example".into()],
+            ..cfg()
+        };
+        assert_eq!(
+            dir(&compose(&c, &[], None), "form-action").unwrap(),
+            "form-action 'self' https://pay.example"
+        );
+    }
+
+    #[test]
+    fn default_src_none_names_every_directive_brusts_runtime_needs() {
+        let c = CspConfig {
+            default_src: SelfOrNone::None,
+            ..cfg()
+        };
+        let p = compose(&c, &["'sha256-x'".into()], Some("https://api.example"));
+        assert!(p.starts_with("default-src 'none'; "), "{p}");
+        for (name, want) in [
+            ("script-src", "script-src 'self' 'sha256-x'"),
+            ("style-src-elem", "style-src-elem 'self'"),
+            ("style-src-attr", "style-src-attr 'unsafe-inline'"),
+            ("connect-src", "connect-src 'self' https://api.example"),
+            ("img-src", "img-src 'self'"),
+            ("font-src", "font-src 'self'"),
+            ("form-action", "form-action 'self'"),
+            ("object-src", "object-src 'none'"),
+            ("base-uri", "base-uri 'self'"),
+        ] {
+            assert_eq!(dir(&p, name).as_deref(), Some(want), "{name} in {p}");
+        }
+        // nothing brust loads needs these: not sent unless the app lists them
+        for name in ["frame-src", "media-src", "worker-src", "manifest-src"] {
+            assert_eq!(dir(&p, name), None, "{name} in {p}");
+        }
+        // under 'self' the runtime directives stay implied by default-src
+        let s = compose(&cfg(), &[], None);
+        for name in ["connect-src", "img-src", "font-src"] {
+            assert_eq!(dir(&s, name), None, "{name} in {s}");
+        }
+    }
+
+    #[test]
+    fn new_lists_keep_self_under_default_self_and_base_uri_and_object_src_override() {
+        let lists = CspConfig {
+            frame_src: vec!["https://v.example".into()],
+            media_src: vec!["https://m.example".into()],
+            worker_src: vec!["blob:".into()],
+            manifest_src: vec!["https://cdn.example".into()],
+            object_src: vec!["https://o.example".into()],
+            base_uri: SelfOrNone::None,
+            ..cfg()
+        };
+        let p = compose(&lists, &[], None);
+        assert_eq!(
+            dir(&p, "frame-src").unwrap(),
+            "frame-src 'self' https://v.example"
+        );
+        assert_eq!(
+            dir(&p, "media-src").unwrap(),
+            "media-src 'self' https://m.example"
+        );
+        assert_eq!(dir(&p, "worker-src").unwrap(), "worker-src 'self' blob:");
+        assert_eq!(
+            dir(&p, "manifest-src").unwrap(),
+            "manifest-src 'self' https://cdn.example"
+        );
+        assert_eq!(
+            dir(&p, "object-src").unwrap(),
+            "object-src https://o.example"
+        );
+        assert_eq!(dir(&p, "base-uri").unwrap(), "base-uri 'none'");
+        let none = compose(
+            &CspConfig {
+                default_src: SelfOrNone::None,
+                ..lists
+            },
+            &[],
+            None,
+        );
+        assert_eq!(
+            dir(&none, "frame-src").unwrap(),
+            "frame-src https://v.example"
+        );
+        // every new list is validated like the others
+        assert!(
+            CspConfig {
+                worker_src: vec!["a;b".into()],
+                ..cfg()
+            }
+            .validate()
+            .unwrap_err()
+            .starts_with("worker_src:")
+        );
+        assert!(
+            SelfOrNone::parse(Some("some"), "csp: default_src")
+                .unwrap_err()
+                .contains("default_src")
+        );
+    }
+
+    #[test]
+    fn the_host_grammar() {
+        for good in [
+            "example.com",
+            "a-b.example.com:8443",
+            "localhost",
+            "127.0.0.1:3000",
+            "[::1]",
+            "[2001:db8::1]:443",
+            "xn--bcher-kva.example",
+        ] {
+            assert_eq!(safe_host(good), Some(good), "{good}");
+        }
+        for bad in [
+            "",
+            "a b.example",
+            "a'.example",
+            "example.com;script-src *",
+            "example.com, evil",
+            "exa\"mple",
+            "bücher.example",
+            "-a.example",
+            "a-.example",
+            "a..example",
+            "example.com:",
+            "example.com:123456",
+            "example.com:80a",
+            "[::1",
+            "[]",
+            "[::1]x",
+            "evil.example\r\nset-cookie: a=b",
+            "user@example.com",
+        ] {
+            assert_eq!(safe_host(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_host_source_is_expanded_with_a_safe_host_and_dropped_otherwise() {
+        let c = CspConfig {
+            connect_src: vec!["wss://{host}".into(), "https://api.example".into()],
+            frame_src: vec!["https://{host}/embed".into()],
+            ..cfg()
+        };
+        let r = Resolved::new(&c, None, None).unwrap();
+        assert!(r.needs_host());
+        // the prebuilt value (no request, or a bad host) has the {host} sources dropped, never echoed
+        assert!(
+            !r.value().contains("{host}")
+                && r.value()
+                    .contains("connect-src 'self' https://api.example;"),
+            "{}",
+            r.value()
+        );
+        let html = || {
+            let mut h = HeaderMap::new();
+            h.insert(
+                http::header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html"),
+            );
+            h
+        };
+        let mut h = html();
+        r.stamp(&mut h, Some("shop.example:8443"));
+        let v = h[http::header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            v.contains("connect-src 'self' wss://shop.example:8443 https://api.example;"),
+            "{v}"
+        );
+        assert!(
+            v.contains("frame-src 'self' https://shop.example:8443/embed"),
+            "{v}"
+        );
+        // an attacker's Host (header injection, a second directive, a quote): dropped, the rest of the policy kept
+        for evil in [
+            "evil.example; script-src *",
+            "evil.example\r\nx: y",
+            "'unsafe-inline'",
+            "a b",
+            "",
+        ] {
+            let mut h = html();
+            r.stamp(&mut h, Some(evil));
+            let v = h[http::header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+            assert_eq!(v, r.value(), "{evil:?}");
+            assert!(!v.contains("evil") && !v.contains("*"), "{v}");
+        }
+        // no request authority: dropped
+        let mut h = html();
+        r.stamp(&mut h, None);
+        assert_eq!(h[http::header::CONTENT_SECURITY_POLICY], r.value());
+        // a static render drops them for good: no template, nothing to expand
+        let s = Resolved::new(
+            &CspConfig {
+                drop_host: true,
+                ..c
+            },
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(!s.needs_host());
+        // a directive whose only extra was {host} keeps its name and 'self'
+        assert_eq!(
+            expand_host(
+                "default-src 'none'; frame-src https://{host}; img-src 'self'",
+                None
+            ),
+            "default-src 'none'; frame-src; img-src 'self'"
+        );
+        // no {host} anywhere: prebuilt, the request is never looked at
+        assert!(!Resolved::new(&cfg(), None, None).unwrap().needs_host());
+    }
+
+    #[test]
+    fn host_is_refused_in_script_src_and_allowed_elsewhere() {
+        let e = CspConfig {
+            script_src: vec!["https://{host}".into()],
+            script_src_unsafe: true,
+            ..cfg()
+        }
+        .validate()
+        .unwrap_err();
+        assert!(e.contains("{host}") && e.contains("script_src"), "{e}");
+        for (k, c) in [
+            (
+                "connect",
+                CspConfig {
+                    connect_src: vec!["wss://{host}".into()],
+                    ..cfg()
+                },
+            ),
+            (
+                "img",
+                CspConfig {
+                    img_src: vec!["https://{host}".into()],
+                    ..cfg()
+                },
+            ),
+            (
+                "form",
+                CspConfig {
+                    form_action: vec!["https://{host}".into()],
+                    ..cfg()
+                },
+            ),
+            (
+                "style",
+                CspConfig {
+                    style_src: vec!["https://{host}".into()],
+                    ..cfg()
+                },
+            ),
+        ] {
+            assert!(c.validate().is_ok(), "{k}");
+        }
+    }
+
+    #[test]
+    fn a_response_with_either_policy_gets_neither_from_brust() {
+        for mode in [CspMode::Enforce, CspMode::ReportOnly] {
+            let r = Resolved::new(&CspConfig { mode, ..cfg() }, None, None).unwrap();
+            for own in [
+                http::header::CONTENT_SECURITY_POLICY,
+                http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY,
+            ] {
+                let mut h = HeaderMap::new();
+                h.insert(
+                    http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/html"),
+                );
+                h.insert(own.clone(), HeaderValue::from_static("default-src 'none'"));
+                r.stamp(&mut h, None);
+                assert_eq!(h.len(), 2, "{mode:?} over {own}");
+                assert_eq!(h[&own], "default-src 'none'");
+            }
+        }
+    }
+
     #[test]
     fn report_only_uses_its_own_header() {
         let r = Resolved::new(
@@ -751,7 +1208,7 @@ mod tests {
             http::header::CONTENT_TYPE,
             HeaderValue::from_static("text/html"),
         );
-        r.stamp(&mut h);
+        r.stamp(&mut h, None);
         assert!(h.get(http::header::CONTENT_SECURITY_POLICY).is_none());
         assert!(
             h.get(http::header::CONTENT_SECURITY_POLICY_REPORT_ONLY)

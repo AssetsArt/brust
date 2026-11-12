@@ -8,8 +8,28 @@ export interface CfConfigJson {
   stats: boolean
   edgeCache: 'off'
   cors?: unknown
-  /** F539 `[csp]` (optional under abi 1, like `cache`): Rust `CfCsp`, `reportOnly` for `mode = "report-only"`. */
-  csp?: { reportOnly: boolean; scriptSrc?: string[]; scriptSrcUnsafe?: boolean; styleSrc?: string[]; connectSrc?: string[]; imgSrc?: string[]; fontSrc?: string[]; frameAncestors?: string[]; reportUri?: string }
+  /** F539 `[csp]` (optional under abi 1, like `cache`): Rust `CfCsp`, `reportOnly` for `mode = "report-only"`. F544: present
+   * whenever brust.toml has the table, `enabled` false when it is off (the Worker's `BRUST_CSP_MODE` binding may turn it on). */
+  csp?: {
+    enabled: boolean
+    reportOnly: boolean
+    scriptSrc?: string[]
+    scriptSrcUnsafe?: boolean
+    styleSrc?: string[]
+    connectSrc?: string[]
+    imgSrc?: string[]
+    fontSrc?: string[]
+    frameAncestors?: string[]
+    reportUri?: string
+    defaultSrc?: 'self' | 'none'
+    baseUri?: 'self' | 'none'
+    formAction?: string[]
+    frameSrc?: string[]
+    mediaSrc?: string[]
+    workerSrc?: string[]
+    manifestSrc?: string[]
+    objectSrc?: string[]
+  }
   /** F475: `stream` + `maxStreamBytes` only when the app lists streamed routes; the idle/total timeouts and `maxStreams` are the platform's on Workers. */
   actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes: number; crossSite: 'reject' | 'allow'; stream?: string[]; maxStreamBytes?: number }
   /** The cache adapter (optional under abi 1, cache adapters R13). */
@@ -54,6 +74,7 @@ export function cfEntrySource(i: CfEntryInput): string {
     `import M from ${q(i.manifestPath)}`,
     `import T from ${q(i.templatesPath)}`,
     `import { fetchInScope, flattenRoutes, jsonCall, makeHandlers, noActions } from "@brust/core/server-handlers"`,
+    'import { env as ENV } from "cloudflare:workers"',
     ...(actions ? ['import { mountActions } from "@brust/core/server-handlers/actions"'] : []),
     pages
       ? 'const h = makeHandlers({ leaves: flattenRoutes(R.routes ?? R.default).leaves, jobs: J, manifest: M, stores: JM.stores ?? {} })'
@@ -82,5 +103,7 @@ export function cfEntrySource(i: CfEntryInput): string {
       : ['export { install } from "@brust/core/server-handlers"']),
     ...(i.doClass ? ['export { BrustCacheDO } from "@brust/cache-cloudflare/do"'] : []),
     `export const CONFIG = ${q(JSON.stringify(i.config))}`,
+    // F544: the Worker's BRUST_CSP_MODE binding (off | report-only | enforce); the core applies it to CONFIG.csp at boot.
+    'export const CSP_MODE = ENV?.BRUST_CSP_MODE',
   ].join('\n')}\n`
 }

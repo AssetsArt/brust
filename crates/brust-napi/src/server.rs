@@ -131,11 +131,23 @@ pub struct NapiCspOptions {
     pub font_src: Option<Vec<String>>,
     pub frame_ancestors: Option<Vec<String>>,
     pub report_uri: Option<String>,
+    /// F544: `"self"` (default) or `"none"`.
+    pub default_src: Option<String>,
+    /// F544: `"self"` (default) or `"none"`.
+    pub base_uri: Option<String>,
+    pub form_action: Option<Vec<String>>,
+    pub frame_src: Option<Vec<String>>,
+    pub media_src: Option<Vec<String>>,
+    pub worker_src: Option<Vec<String>>,
+    pub manifest_src: Option<Vec<String>>,
+    pub object_src: Option<Vec<String>>,
+    /// F544: a static render: `{host}` sources are dropped.
+    pub drop_host: Option<bool>,
 }
 
 /// Field for field; absent lists are empty.
 fn csp_config(c: NapiCspOptions) -> Result<brust_core::csp::CspConfig, String> {
-    use brust_core::csp::{CspConfig, CspMode};
+    use brust_core::csp::{CspConfig, CspMode, SelfOrNone};
     Ok(CspConfig {
         mode: match c.mode.as_deref() {
             None | Some("enforce") => CspMode::Enforce,
@@ -154,6 +166,15 @@ fn csp_config(c: NapiCspOptions) -> Result<brust_core::csp::CspConfig, String> {
         font_src: c.font_src.unwrap_or_default(),
         frame_ancestors: c.frame_ancestors.unwrap_or_default(),
         report_uri: c.report_uri,
+        default_src: SelfOrNone::parse(c.default_src.as_deref(), "csp: default_src")?,
+        base_uri: SelfOrNone::parse(c.base_uri.as_deref(), "csp: base_uri")?,
+        form_action: c.form_action.unwrap_or_default(),
+        frame_src: c.frame_src.unwrap_or_default(),
+        media_src: c.media_src.unwrap_or_default(),
+        worker_src: c.worker_src.unwrap_or_default(),
+        manifest_src: c.manifest_src.unwrap_or_default(),
+        object_src: c.object_src.unwrap_or_default(),
+        drop_host: c.drop_host.unwrap_or(false),
     })
 }
 
