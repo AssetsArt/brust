@@ -41,7 +41,7 @@ export const routes = defineRoutes([
       // /store-b writes only `late`: the live cart keeps its client value (F533: a navigation sets only loader-written keys)
       { path: '/store-b', Component: StoreB, loader: () => { late.v.set(7); return {} } },
       // F533: each loader writes item.id; a native page and a React island read id and the client-only count
-      ...['1', '2', '3'].map((id) => ({ path: `/i/${id}`, Component: ItemPage, loader: () => { item.id.set(id); return { at: id } } })),
+      ...['1', '2', '3'].map((id) => ({ path: `/i/${id}`, Component: ItemPage, loader: () => { item.id.set(id); item.meta.set({ id }); return { at: id } } })),
       { path: '/long', Component: Long },
       // an island that reads a store, seeded 1 then 2 (F462)
       { path: '/mood-a', Component: Mood, loader: () => { mood.v.set(1); return {} } },

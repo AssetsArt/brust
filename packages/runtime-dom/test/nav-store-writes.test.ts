@@ -7,7 +7,7 @@ import { defineBehavior, mount, unmount } from '../src'
 import { boot } from '../src/nav/nav'
 import { signal } from '../src/signal'
 import { defineStore } from '../src/store/define-store'
-import { _resetStores, applyWrittenKeys } from '../src/store/registry'
+import { type StoreInstanceRecord, _resetStores, applyWrittenKeys, ssrSnapshotOf } from '../src/store/registry'
 
 const L = (id: string, hash: string, inner: string) => `<!--brust-l:${id}:${hash}-->${inner}<!--/brust-l:${id}-->`
 const tagHtml = (name: string, state: object) => `<script type="application/json" data-brust-store="${name}">${JSON.stringify(state)}</script>`
@@ -100,6 +100,40 @@ test('~w never reaches the island hydration snapshot (ssrSnapshotOf / useStore s
   expect(ssr(s)).toEqual({ id: '2', count: 0 }) // the new page's server truth, which the island markup was rendered from
   next.remove()
   expect(ssr(s)).toEqual({ id: '2', count: 0 }) // no tag left: rec.ssr carries the written key
+})
+
+test('F534: an object-valued written key is the SAME object in the island server snapshot and on the live signal', () => {
+  const name = fresh()
+  const s = defineStore(name, () => ({ obj: signal<{ v: number }>({ v: 0 }), list: signal<number[]>([]), n: signal(0) }))
+  const first = tag(name, { obj: { v: 1 }, list: [1], n: 0 })
+  expect(s.obj().v).toBe(1)
+  s.n.set(5)
+  const next = tag(name, { obj: { v: 2 }, list: [2], n: 0, '~w': ['obj', 'list'] })
+  first.remove()
+  applyWrittenKeys([next])
+  // as the swap does: the tag applied is the one nav fetched, the tag left in the page the fetched document's own copy
+  next.replaceWith(next.cloneNode(true))
+  const snap = ssr(s)
+  expect(snap.obj).toBe(s.obj()) // one parse: identity, not just JSON equality
+  expect(snap.list).toBe(s.list())
+  expect(snap).toEqual({ obj: { v: 2 }, list: [2], n: 0 }) // unwritten n: the tag's server truth, as before
+  expect(ssr(s)).toBe(snap) // identity-stable for React
+  expect(s.n()).toBe(5)
+})
+
+test('F534: the identity holds across runtime copies (an island chunk reads the snapshot through its own registry)', async () => {
+  const name = fresh()
+  const s = defineStore(name, () => ({ obj: signal<{ v: number }>({ v: 0 }) }))
+  const first = tag(name, { obj: { v: 1 } })
+  s.obj()
+  const next = tag(name, { obj: { v: 2 }, '~w': ['obj'] })
+  first.remove()
+  applyWrittenKeys([next]) // the page's copy (nav calls it through globalThis)
+  const copy = '../src/store/registry.ts?f534-copy' // a query makes a distinct module instance; a variable keeps tsc off it
+  const other = (await import(copy)) as typeof import('../src/store/registry')
+  expect(other.ssrSnapshotOf).not.toBe(ssrSnapshotOf) // a distinct module instance
+  const rec = (globalThis as unknown as Record<symbol, Record<string, StoreInstanceRecord>>)[Symbol.for('brust.stores')]![name]!
+  expect(other.ssrSnapshotOf(name, rec)!.obj).toBe(s.obj())
 })
 
 test('the built-in navigation store is untouched: its tag never lists written keys', () => {
