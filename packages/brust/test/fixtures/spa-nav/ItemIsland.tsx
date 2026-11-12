@@ -11,6 +11,11 @@ export default function ItemIsland() {
     const w = window as unknown as Record<string, string[]>
     w.__itemIds = [...(w.__itemIds ?? []), `unmount island:${item.snapshot().id}`]
   }, [])
+  // F534: runs once per page the island hydrates on; a second run would mean hydration saw a different `meta` object
+  useEffect(() => {
+    const w = window as unknown as Record<string, string[]>
+    w.__metaRuns = [...(w.__metaRuns ?? []), it.meta.id]
+  }, [it.meta])
   return (
     <output id="item-island">
       {it.id}:{it.count}

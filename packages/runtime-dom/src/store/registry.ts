@@ -17,6 +17,10 @@ export interface StoreInstanceRecord {
   /** Browser only: the seed tag `ssr` was read from (`null` when the page carried none). */
   ssrSeed?: Element | null
   handle?: { serialize(): Record<string, unknown> }
+  /** Browser only (F534): the island hydration snapshot of a store tag, keyed by the tag's text: a navigation applies
+   * the tags it fetched, and the swap then puts the fetched document's own (equal) tags in the page. On the record, not
+   * in a module map, so every runtime copy (an island chunk's included) reads the one a navigation wrote. */
+  tagSnap?: [string | null, Record<string, unknown>]
   /** Server only (F533): the keys set since the record was created (a seed's hydrate excluded); a loader response sends them as `~w`. */
   written?: Set<string>
 }
@@ -98,8 +102,6 @@ export function resolveRecord(
   return rec
 }
 
-const tagSnapshots = new WeakMap<Element, Record<string, unknown>>()
-
 /**
  * The snapshot an island hydrating NOW must render from: the seed tag of the document it came from. A live store keeps
  * `rec.ssr` from the first page (§5.5 of the SPA design), so an island on a page navigated to would otherwise hydrate
@@ -110,9 +112,9 @@ export function ssrSnapshotOf(name: string, rec: StoreInstanceRecord): Record<st
   if (!base || typeof document === 'undefined') return base
   const el = seedScript(name)
   if (!el || el === rec.ssrSeed) return base
-  let snap = tagSnapshots.get(el)
-  if (!snap) tagSnapshots.set(el, (snap = { ...base, ...readTag(el)[0] }))
-  return snap
+  let t = rec.tagSnap
+  if (t?.[0] !== el.textContent) rec.tagSnap = t = [el.textContent, { ...base, ...readTag(el)[0] }]
+  return t[1]
 }
 
 /**
@@ -133,7 +135,9 @@ export function applyWrittenKeys(tags: readonly Element[]): void {
         const v = inst[k]
         if (k in state && isSignal(v)) v.set((fresh[k] = state[k]))
       }
-      if (rec.ssr) rec.ssr = { ...rec.ssr, ...fresh }
+      // F534: an island hydrating on the new page renders from this tag. Its snapshot is built from this one parse, so
+      // for every written key it holds the object the signal now holds (a second parse would re-render with a new one).
+      if (rec.ssr) rec.tagSnap = [el.textContent, { ...(rec.ssr = { ...rec.ssr, ...fresh }), ...state }]
     }
   })
 }

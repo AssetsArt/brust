@@ -301,6 +301,26 @@ test('F533: the keys the new page\'s loader wrote replace a live store\'s, the r
   await close()
 })
 
+test('F534: an island effect on an object-valued written key runs once per navigation (link, back, forward)', async () => {
+  const { page, errors, close } = await open('/i/1')
+  const runs = async (n: number) => {
+    await page.waitForFunction((n) => ((window as unknown as { __metaRuns?: string[] }).__metaRuns ?? []).length >= n, n)
+    await page.waitForTimeout(150) // a hydrate-then-rerender second run lands within a few ms; give it room to show
+    return page.evaluate(() => (window as unknown as { __metaRuns: string[] }).__metaRuns)
+  }
+  await settle(page)
+  expect(await runs(1)).toEqual(['1'])
+  await nav(page, () => page.click('#to-i2'))
+  expect(await runs(2)).toEqual(['1', '2'])
+  await nav(page, () => page.goBack())
+  expect(await runs(3)).toEqual(['1', '2', '1'])
+  await nav(page, () => page.goForward())
+  expect(await runs(4)).toEqual(['1', '2', '1', '2'])
+  expect(await page.evaluate(() => window.__mark)).toBe(1) // never a full load
+  expect(errors).toEqual([])
+  await close()
+})
+
 test('F462: an old-page island hydrating while the next page\'s modules load renders its own page\'s seed (no #418)', async () => {
   const ctx = await browser.newContext()
   const page = await ctx.newPage()

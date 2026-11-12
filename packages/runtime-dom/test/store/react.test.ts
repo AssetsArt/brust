@@ -8,7 +8,7 @@ import { hydrateRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server.node'
 import { computed, signal } from '../../src/signal'
 import { defineStore } from '../../src/store/define-store'
-import { __setServerResolver, _resetStores, applyStoreSnapshot } from '../../src/store/registry'
+import { __setServerResolver, _resetStores, applyStoreSnapshot, applyWrittenKeys } from '../../src/store/registry'
 import { useStore } from '../../src/store/react'
 
 afterEach(() => {
@@ -125,4 +125,35 @@ test('an island on a page swapped in later hydrates against that page\'s seed ta
   // The same tag read again is the same snapshot; a page without a tag falls back to the first one.
   document.body.innerHTML = ''
   expect(ssr()).toBe(first)
+})
+
+test('F534: an island hydrating after a navigation runs an effect on an object-valued written key once (forward, back, forward)', async () => {
+  const s = defineStore('rt-nav-identity', () => ({ item: signal<{ id: number }>({ id: 0 }) }))
+  const tag = (id: number) =>
+    `<script type="application/json" data-brust-store="rt-nav-identity">${JSON.stringify({ item: { id }, '~w': ['item'] })}</script>`
+  document.body.innerHTML = tag(1)
+  expect(s.item().id).toBe(1) // page 1: the store is live
+  const seen: unknown[] = []
+  function Island() {
+    const { item } = useStore(s)
+    React.useEffect(() => {
+      seen.push(item)
+    }, [item])
+    return React.createElement('b', null, String(item.id))
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 50))
+  // Each navigation: the new page's body and tag replace the old, the written key is applied, the island hydrates.
+  for (const [i, id] of [2, 1, 2].entries()) {
+    document.body.innerHTML = `<div id="host"><b>${id}</b></div>${tag(id)}`
+    applyWrittenKeys([document.querySelector('script[data-brust-store]')!])
+    const host = document.getElementById('host') as HTMLElement
+    const errors: unknown[] = []
+    const root = hydrateRoot(host, React.createElement(Island), { onRecoverableError: (e) => errors.push(e) })
+    await until(() => seen.length > i)
+    await settle()
+    expect(errors).toEqual([])
+    expect(seen.length).toBe(i + 1) // one effect run per navigation, not hydrate-then-rerender
+    expect(seen[i]).toBe(s.item()) // the hydration value IS the live object
+    root.unmount()
+  }
 })
