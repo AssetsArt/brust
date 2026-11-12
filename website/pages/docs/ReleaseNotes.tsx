@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-43', title: '2.0.0-alpha.43' },
       { id: 'alpha-42', title: '2.0.0-alpha.42' },
       { id: 'alpha-41', title: '2.0.0-alpha.41' },
       { id: 'alpha-40', title: '2.0.0-alpha.40' },
@@ -65,6 +66,34 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-43">2.0.0-alpha.43 · 12 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.42: #479–#480 (ledger F535, F536) */}
+      <p>This version makes the compiler faster on apps with long component chains and stops concurrent builds of one app from breaking each other.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #480 (F536); packages/brust/src/build/pkg-src.ts; packages/brust/test/pkg-src.test.ts; packages/brust/test/build-concurrent.test.ts */}
+        <li>
+          <strong>Running <code>brust build</code> and <code>brust dev</code> (or two builds) of one app at the same time no longer breaks either of them (#480).</strong> Before, each run emptied and rewrote <code>.brust/pkg-src</code>, so a second run could see a package source in one place and not in another, and the build failed with <code>component-compile-divergent</code> or an <code>ENOENT</code>. Now a package source is rewritten only when its text changed, through a temporary file renamed over it, so a reader sees the old file or the new one and never a partial one. A package directory that no build references any more is removed only after it has gone unused for 10 minutes. The generated output is the same as before.
+        </li>
+        {/* source: PR #480 (F536); packages/brust/src/build/pkg-src.ts */}
+        <li>
+          <strong>A package source that cannot be written now fails the build and names the file (#480).</strong> Before, a failed write was treated like an unusable package, so the build carried on and that package&rsquo;s components were rendered with React without a message. Now the build stops with a <code>BuildError</code> that names the file and the error code.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #479 (F535); crates/brust-compiler/src/parse/mod.rs; crates/brust-compiler/tests/compile_perf.rs */}
+        <li>
+          <strong>The compile step is faster on apps with many components that import each other (#479).</strong> Within one compile each module is now parsed once, and the check for whether an imported module can hold an element is remembered instead of repeated. On a large app we measured the compile phase going from about 10 s to about 1.8 s with byte-identical output; your result depends on how your components import each other, and a small app saw no real change. There is no API or output change and nothing to rebuild.
+        </li>
+        {/* source: PR #479 (F535); crates/brust-compiler/src/analyze/modules.rs */}
+        <li>
+          <strong>Two components of one file that render each other now stop at an explicit guard (#479).</strong> Before, the compiler kept cloning that chain until the parser ran out of stack. Now a call site that is already being cloned keeps the shared component. The output is the same as before.
+        </li>
+      </ul>
 
       <h2 id="alpha-42">2.0.0-alpha.42 · 12 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.41: #476 (ledger F533) */}
