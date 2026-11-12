@@ -686,16 +686,28 @@ fn to_json(v: &Value) -> Result<serde_json::Value, Error> {
     })
 }
 
-/// JS `String.prototype.slice` over characters (negative indices count from the end).
-fn str_slice(s: Value, start: i64, end: Option<i64>) -> String {
-    let chars: Vec<char> = paint(&s).chars().collect();
-    let len = chars.len() as i64;
-    let clamp = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
-    let (a, b) = (clamp(start), clamp(end.unwrap_or(len)));
-    if a >= b {
-        return String::new();
+/// JS `slice`: `Array.prototype.slice` on a list (a list comes back, so `length`, `for` and `join` keep working),
+/// `String.prototype.slice` over characters on a string. Negative indices count from the end. F537: a list used to be
+/// printed and its text sliced. Any other value keeps that behaviour.
+fn str_slice(s: Value, start: i64, end: Option<i64>) -> Value {
+    fn bounds(len: usize, start: i64, end: Option<i64>) -> Option<(usize, usize)> {
+        let len = len as i64;
+        let clamp = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
+        let (a, b) = (clamp(start), clamp(end.unwrap_or(len)));
+        (a < b).then_some((a as usize, b as usize))
     }
-    chars[a as usize..b as usize].iter().collect()
+    if matches!(s.kind(), ValueKind::Seq | ValueKind::Iterable) {
+        let items: Vec<Value> = s.try_iter().map(|it| it.collect()).unwrap_or_default();
+        return Value::from(match bounds(items.len(), start, end) {
+            Some((a, b)) => items[a..b].to_vec(),
+            None => Vec::new(),
+        });
+    }
+    let chars: Vec<char> = paint(&s).chars().collect();
+    Value::from(match bounds(chars.len(), start, end) {
+        Some((a, b)) => chars[a..b].iter().collect::<String>(),
+        None => String::new(),
+    })
 }
 
 /// JS `includes` on a string (substring) or a list (strict equality).
@@ -1685,6 +1697,29 @@ mod tests {
         let ctx = minijinja::context! { s => "Hello", xs => vec!["a", "b"], o => minijinja::context!{ a => 1 } };
         assert_eq!(render("{{ s | str_slice(1, -1) }}", ctx.clone()), "ell");
         assert_eq!(render("{{ s | str_slice(-2) }}", ctx.clone()), "lo");
+        // F537: a list slices as a list.
+        let l = minijinja::context! { xs => vec!["a", "b", "c"], none => Value::from(()) };
+        for (e, want) in [
+            ("xs | str_slice(0, 1) | join('')", "a"),
+            ("xs | str_slice(1) | join('')", "bc"),
+            ("xs | str_slice(-2) | join('')", "bc"),
+            ("xs | str_slice(5, 1) | join('')", ""),
+            ("xs | str_slice(2, 1) | join('')", ""),
+            ("xs | str_slice(1, 99) | join('')", "bc"),
+            ("xs | str_slice(-99, 2) | join('')", "ab"),
+            ("xs | str_slice(1) | length", "2"),
+            ("xs | str_slice(3) | length", "0"),
+            ("none | str_slice(0, 1)", ""),
+        ] {
+            assert_eq!(render(&format!("{{{{ {e} }}}}"), l.clone()), want, "{e}");
+        }
+        assert_eq!(
+            render(
+                "{% for x in xs | str_slice(0, 2) %}<{{ x }}>{% endfor %}",
+                l
+            ),
+            "<a><b>"
+        );
         assert_eq!(
             render("{% if s | includes('ell') %}y{% endif %}", ctx.clone()),
             "y"
