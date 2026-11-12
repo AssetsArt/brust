@@ -543,6 +543,9 @@ function checkCsp(c: unknown, where: string, file: string | null, snake: boolean
   const hosted = out.scriptSrc?.find((s) => s.includes(CSP_HOST))
   if (hosted !== undefined)
     throw fail(`${where}.${name('scriptSrc')}: ${hosted} uses ${CSP_HOST}, which is refused here: a script source taken from the request's Host would let any host name that reaches this server serve script; name the hosts`)
+  // F544: plugins stay 'none' or named; a per-request host is not a plugin source.
+  const plugin = out.objectSrc?.find((s) => s.includes(CSP_HOST))
+  if (plugin !== undefined) throw fail(`${where}.${name('objectSrc')}: ${plugin} uses ${CSP_HOST}, which is refused here: plugin sources stay 'none' or named hosts`)
   // Not unlocked by scriptSrcUnsafe: it does not weaken the policy, it breaks every page.
   const dynamic = out.scriptSrc?.find((s) => s.trim().toLowerCase() === "'strict-dynamic'")
   if (dynamic !== undefined)

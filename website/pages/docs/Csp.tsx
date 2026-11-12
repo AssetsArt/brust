@@ -172,7 +172,7 @@ export default function Csp({ blocks }: CspData) {
       <p>
         A source may hold <code>{'{host}'}</code>. brust replaces it with the host the request was sent to (with its port), as each response goes out, so one app serving many host names allows each page its own host. The <code>Host</code> header is
         written by the client, so it is used only when it is a plain host name or IP address with an optional port. Anything else, and every source that holds <code>{'{host}'}</code> is left out of that response&rsquo;s policy: it is never copied
-        into the header. <code>{'{host}'}</code> is refused in <code>script_src</code>: a script source taken from the request would let any host name that reaches your server serve script. Static pages and the Cloudflare <code>public/</code> rule have no
+        into the header. <code>{'{host}'}</code> is refused in <code>script_src</code> (a script source taken from the request would let any host name that reaches your server serve script) and in <code>object_src</code> (plugins stay <code>&apos;none&apos;</code> or named hosts). Static pages and the Cloudflare <code>public/</code> rule have no
         request, so the build leaves those sources out and prints a warning. A response whose policy has a <code>{'{host}'}</code> source carries <code>Vary: Host</code>, so a cache in front of brust keeps one copy per host.
       </p>
 

@@ -161,8 +161,9 @@ test('F544 keys: default_src / base_uri (self | none), form_action and the new l
   expect(await err('[csp]\nenabled = true\ndrop_host = true\n')).toContain('csp.drop_host is not a csp option')
 })
 
-test('{host} is refused in script_src (even with script_src_unsafe) and allowed in every other list', async () => {
+test('{host} is refused in script_src (even with script_src_unsafe) and object_src, and allowed in every other list', async () => {
   expect(await err('[csp]\nenabled = true\nscript_src = ["https://{host}"]\nscript_src_unsafe = true\n')).toContain('uses {host}, which is refused here')
+  expect(await err('[csp]\nenabled = true\nobject_src = ["https://{host}"]\n')).toContain("csp.object_src: https://{host} uses {host}, which is refused here: plugin sources stay 'none' or named hosts")
   for (const k of ['connect_src', 'img_src', 'style_src', 'form_action', 'frame_src', 'worker_src'])
     expect((await loadConfig(tmpApp(`[csp]\nenabled = true\n${k} = ["https://{host}"]\n`))).csp).toBeDefined()
 })

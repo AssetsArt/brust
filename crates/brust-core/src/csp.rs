@@ -108,6 +108,12 @@ impl CspConfig {
                  let any host name that reaches this server serve script; name the hosts"
             ));
         }
+        // F544: plugins stay 'none' or named; a per-request host is not a plugin source.
+        if let Some(s) = self.object_src.iter().find(|s| s.contains(HOST)) {
+            return Err(format!(
+                "object_src: {s} uses {HOST}, which is refused here: plugin sources stay 'none' or named hosts"
+            ));
+        }
         // Not unlocked by script_src_unsafe: it does not weaken the policy, it breaks every page.
         if let Some(s) = self
             .script_src
@@ -1183,7 +1189,14 @@ mod tests {
     }
 
     #[test]
-    fn host_is_refused_in_script_src_and_allowed_elsewhere() {
+    fn host_is_refused_in_script_and_object_src_and_allowed_elsewhere() {
+        let e = CspConfig {
+            object_src: vec!["https://{host}".into()],
+            ..cfg()
+        }
+        .validate()
+        .unwrap_err();
+        assert!(e.starts_with("object_src:") && e.contains("{host}"), "{e}");
         let e = CspConfig {
             script_src: vec!["https://{host}".into()],
             script_src_unsafe: true,
