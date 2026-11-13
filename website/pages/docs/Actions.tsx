@@ -291,6 +291,12 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         <li>Under <code>brust dev</code> an upload of any allowed size passes through the dev server as it arrives.</li>
       </ul>
 
+      <h3 id="compression">Compression</h3>
+      {/* source: crates/brust-core/src/actions.rs (gzip_reply, F547); crates/brust-core/src/compress.rs (accepts_gzip, is_compressible) */}
+      <p>
+        A reply of 1 KiB or more with a text, JSON, JavaScript, XML or SVG content type is gzip-compressed for a client that accepts gzip, as pages are. Such a reply carries <code>Vary: Accept-Encoding</code> whether or not the client accepts gzip. A strong <code>ETag</code> is dropped from a compressed reply because the bytes change; a weak one stays. A reply that already has a <code>Content-Encoding</code> is left as it is. Compression can leak a secret when one reply holds both a secret token (a CSRF token, say) and input the request reflected back: an attacker who controls the reflected part can learn the token from the compressed size. The cross-site guard refuses a cross-site <code>POST</code> from an origin not listed in <code>[cors]</code>, so the replies most exposed are those of <code>GET</code> actions (which pass the guard) and of actions on a server with <code>cross_site = "allow"</code>. Set <code>Cache-Control: no-transform</code> on such a reply to opt out.
+      </p>
+
       <Step n={6} id="separate" title="Actions on their own origin" />
       {/* source: docs/actions.md §11 (L16): pages and actions as two deployments on two origins */}
       <p>

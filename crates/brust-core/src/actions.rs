@@ -106,7 +106,7 @@ pub(crate) async fn handle<H: Host>(
     }
     let failed = r.is_err();
     let resp = match r {
-        Ok(r) => reply_to_response(r),
+        Ok(r) => reply_to_response(r, header_str(rq.headers, "accept-encoding").as_deref()),
         Err(e @ (CallError::NoWorkers | CallError::Timeout)) => body::error_503(&e.to_string()),
         Err(e @ CallError::StreamsFull) => body::resp(
             503,
@@ -274,17 +274,89 @@ fn b64(b: &[u8]) -> String {
     out
 }
 
-/// The host's reply as a response: a `Fetch` through [`response_from_fetch`], a `Built` as is.
-fn reply_to_response(r: ActionReply) -> Response<Bytes> {
+/// The host's reply as a response: a `Fetch` through [`response_from_fetch`] (then [`gzip_reply`] for a client that
+/// takes gzip), a `Built` as is. An `Unread` reply belongs to a streamed call and is never compressed (F547).
+fn reply_to_response(r: ActionReply, accept_encoding: Option<&str>) -> Response<Bytes> {
     match r {
-        ActionReply::Fetch(f) => response_from_fetch(f),
+        ActionReply::Fetch(f) => gzip_reply(response_from_fetch(f), accept_encoding),
         ActionReply::Unread(f) => closing(response_from_fetch(f)),
         ActionReply::Built(r) => r,
     }
 }
 
+/// F547: a buffered action reply at least this long is gzip-eligible; below it the CPU outweighs the saving.
+const ACTION_GZIP_MIN: usize = 1024;
+
+/// F547: gzip a buffered reply for a client that accepts it, by the page rules (`crate::compress`, the page level).
+/// A reply is eligible when its status is not 101/204/206/304, it is at least [`ACTION_GZIP_MIN`] long, has a
+/// compressible `Content-Type`, no `Content-Encoding`/`Content-Range`, and no `Cache-Control: no-transform` (the app's
+/// opt-out, documented for a reply that mixes a secret with reflected input: BREACH). An eligible reply carries
+/// `Vary: Accept-Encoding` (merged into an existing `Vary`) whatever the client offered, so a shared cache keys on it
+/// as it does for pages. For a client that accepts gzip it is also compressed (`Content-Encoding: gzip`), and a strong
+/// `ETag` is dropped (the bytes changed; a weak one still names the same representation). When gzip is not smaller the
+/// body is left as the app made it.
+fn gzip_reply(mut r: Response<Bytes>, accept_encoding: Option<&str>) -> Response<Bytes> {
+    use http::header::{CACHE_CONTROL, CONTENT_ENCODING, CONTENT_RANGE, CONTENT_TYPE, ETAG, VARY};
+    if r.body().len() < ACTION_GZIP_MIN || matches!(r.status().as_u16(), 101 | 204 | 206 | 304) {
+        return r;
+    }
+    let h = r.headers();
+    let compressible = h
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(crate::compress::is_compressible);
+    let no_transform = h.get_all(CACHE_CONTROL).iter().any(|v| {
+        v.to_str().is_ok_and(|v| {
+            v.split(',')
+                .any(|d| d.trim().eq_ignore_ascii_case("no-transform"))
+        })
+    });
+    if !compressible
+        || no_transform
+        || h.contains_key(CONTENT_ENCODING)
+        || h.contains_key(CONTENT_RANGE)
+    {
+        return r;
+    }
+    let h = r.headers_mut();
+    // One merged field: `Vary: *` stands as is, an existing `Accept-Encoding` is not repeated.
+    let mut vary: Vec<String> = h
+        .get_all(VARY)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if !vary
+        .iter()
+        .any(|t| t == "*" || t.eq_ignore_ascii_case("accept-encoding"))
+    {
+        vary.push("Accept-Encoding".to_owned());
+    }
+    if let Ok(v) = HeaderValue::from_str(&vary.join(", ")) {
+        h.insert(VARY, v);
+    }
+    if !crate::compress::accepts_gzip(accept_encoding) {
+        return r;
+    }
+    let Some(gz) = crate::compress::gzip(r.body(), crate::pipeline::PAGE_GZIP_LEVEL) else {
+        return r;
+    };
+    let h = r.headers_mut();
+    h.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+    if h.get(ETAG)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| !v.starts_with("W/"))
+    {
+        h.remove(ETAG);
+    }
+    *r.body_mut() = Bytes::from(gz);
+    r
+}
+
 /// R9: the worker's answer as a response — status in 200..=599, framing headers dropped, every other valid pair
-/// appended in order (repeated `Set-Cookie` survive). No gzip, never L1.
+/// appended in order (repeated `Set-Cookie` survive). Never L1; gzip is [`gzip_reply`]'s (F547).
 fn response_from_fetch(f: FetchResponse) -> Response<Bytes> {
     if f.status == 101 {
         return upgrade_from_fetch(f);
@@ -640,16 +712,264 @@ mod tests {
         built
             .headers_mut()
             .insert("x-a", HeaderValue::from_static("1"));
-        let r = reply_to_response(ActionReply::Built(built));
+        let r = reply_to_response(ActionReply::Built(built), None);
         assert_eq!(r.status(), 201);
         assert_eq!(r.headers().get("x-a").unwrap(), "1");
         assert_eq!(r.body(), &Bytes::from_static(b"made"));
-        let r = reply_to_response(ActionReply::Fetch(FetchResponse {
-            status: 99,
-            headers: vec![],
-            body: Bytes::new(),
-            ws: None,
-        }));
+        let r = reply_to_response(
+            ActionReply::Fetch(FetchResponse {
+                status: 99,
+                headers: vec![],
+                body: Bytes::new(),
+                ws: None,
+            }),
+            None,
+        );
         assert_eq!(r.status(), 500);
+    }
+
+    // F547: gzip_reply, one test per condition.
+    fn js(n: usize) -> Bytes {
+        Bytes::from("const a = 1;\n".repeat(n))
+    }
+
+    fn reply(status: u16, h: &[(&str, &str)], body: Bytes) -> Response<Bytes> {
+        response_from_fetch(FetchResponse {
+            status,
+            headers: h.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect(),
+            body,
+            ws: None,
+        })
+    }
+
+    const JS: (&str, &str) = ("content-type", "application/javascript; charset=utf-8");
+
+    #[cfg(feature = "gzip")]
+    fn unzip(b: &[u8]) -> Vec<u8> {
+        use std::io::Read;
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(b)
+            .read_to_end(&mut out)
+            .unwrap();
+        out
+    }
+
+    #[cfg(feature = "gzip")]
+    #[test]
+    fn gzip_reply_compresses_an_eligible_reply() {
+        let raw = js(2000);
+        let r = gzip_reply(
+            reply(
+                200,
+                &[JS, ("etag", "\"v1\""), ("set-cookie", "a=1")],
+                raw.clone(),
+            ),
+            Some("br, gzip"),
+        );
+        assert_eq!(r.headers().get("content-encoding").unwrap(), "gzip");
+        assert_eq!(r.headers().get("vary").unwrap(), "Accept-Encoding");
+        assert!(
+            r.headers().get("etag").is_none(),
+            "a strong ETag names the identity bytes"
+        );
+        assert_eq!(r.headers().get("set-cookie").unwrap(), "a=1");
+        assert!(r.body().len() < raw.len());
+        assert_eq!(unzip(r.body()), raw.to_vec());
+    }
+
+    #[cfg(feature = "gzip")]
+    #[test]
+    fn gzip_reply_keeps_a_weak_etag_and_merges_vary() {
+        let r = gzip_reply(
+            reply(
+                200,
+                &[
+                    JS,
+                    ("etag", "W/\"v1\""),
+                    ("vary", "Origin"),
+                    ("vary", "Cookie"),
+                ],
+                js(2000),
+            ),
+            Some("gzip"),
+        );
+        assert_eq!(r.headers().get("etag").unwrap(), "W/\"v1\"");
+        let v: Vec<_> = r.headers().get_all("vary").iter().collect();
+        assert_eq!(v, ["Origin, Cookie, Accept-Encoding"]);
+        // already varying on it, or on everything: not repeated, not narrowed.
+        for have in ["accept-encoding", "*"] {
+            let r = gzip_reply(reply(200, &[JS, ("vary", have)], js(2000)), Some("gzip"));
+            assert_eq!(
+                r.headers().get_all("vary").iter().collect::<Vec<_>>(),
+                [have]
+            );
+            assert_eq!(r.headers().get("content-encoding").unwrap(), "gzip");
+        }
+    }
+
+    #[cfg(feature = "gzip")]
+    #[test]
+    fn gzip_reply_applies_to_json_and_text_and_any_error_status() {
+        for (ct, status) in [
+            ("application/json", 200),
+            ("text/html; charset=utf-8", 422),
+            ("text/plain", 500),
+        ] {
+            let r = gzip_reply(
+                reply(status, &[("content-type", ct)], js(2000)),
+                Some("gzip"),
+            );
+            assert_eq!(r.status().as_u16(), status);
+            assert_eq!(r.headers().get("content-encoding").unwrap(), "gzip", "{ct}");
+        }
+    }
+
+    #[test]
+    fn gzip_reply_leaves_an_ineligible_reply_alone() {
+        let big = js(2000);
+        let untouched = |r: Response<Bytes>, ae: Option<&str>, why: &str| {
+            let (status, body) = (r.status(), r.body().clone());
+            let h = r.headers().clone();
+            let out = gzip_reply(r, ae);
+            assert_eq!(out.status(), status, "{why}");
+            assert_eq!(out.body(), &body, "{why}");
+            assert_eq!(out.headers(), &h, "{why}");
+        };
+        let g = Some("gzip");
+        untouched(reply(200, &[JS], js(10)), g, "under 1024 bytes");
+        untouched(
+            reply(200, &[("content-type", "image/png")], big.clone()),
+            g,
+            "not compressible",
+        );
+        untouched(reply(200, &[], big.clone()), g, "no content type");
+        untouched(
+            reply(200, &[JS, ("content-encoding", "br")], big.clone()),
+            g,
+            "already encoded",
+        );
+        untouched(
+            reply(200, &[JS, ("content-range", "bytes 0-9/99")], big.clone()),
+            g,
+            "a range",
+        );
+        untouched(reply(206, &[JS], big.clone()), g, "206");
+        untouched(reply(304, &[JS], big.clone()), g, "304");
+        untouched(reply(204, &[JS], big.clone()), g, "204");
+        for cc in [
+            "no-transform",
+            "private, No-Transform",
+            "max-age=0,no-transform",
+        ] {
+            untouched(reply(200, &[JS, ("cache-control", cc)], big.clone()), g, cc);
+        }
+        // `no-transform` in a second Cache-Control line counts too; a lookalike directive does not.
+        untouched(
+            reply(
+                200,
+                &[
+                    JS,
+                    ("cache-control", "no-store"),
+                    ("cache-control", "no-transform"),
+                ],
+                big.clone(),
+            ),
+            g,
+            "second line",
+        );
+    }
+
+    #[cfg(feature = "gzip")]
+    #[test]
+    fn gzip_reply_ignores_a_lookalike_cache_control_directive() {
+        let r = gzip_reply(
+            reply(
+                200,
+                &[JS, ("cache-control", "no-transform-ish, no-store")],
+                js(2000),
+            ),
+            Some("gzip"),
+        );
+        assert_eq!(r.headers().get("content-encoding").unwrap(), "gzip");
+    }
+
+    #[test]
+    fn gzip_reply_leaves_incompressible_bytes_identity() {
+        // pseudo-random bytes: gzip is not smaller, so the reply is left as the app made it.
+        let mut x = 0x9e37_79b9_u32;
+        let noise: Vec<u8> = (0..4096)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                (x >> 11) as u8
+            })
+            .collect();
+        let r = gzip_reply(
+            reply(200, &[("content-type", "text/plain")], Bytes::from(noise)),
+            Some("gzip"),
+        );
+        assert!(r.headers().get("content-encoding").is_none());
+        // still eligible, so a cache keys on Accept-Encoding.
+        assert_eq!(r.headers().get("vary").unwrap(), "Accept-Encoding");
+    }
+
+    #[test]
+    fn gzip_reply_varies_on_every_eligible_reply_whatever_the_client_offered() {
+        let big = js(2000);
+        for ae in [None, Some("identity"), Some("br"), Some("gzip;q=0")] {
+            let r = gzip_reply(
+                reply(
+                    200,
+                    &[JS, ("vary", "Origin"), ("etag", "\"v1\"")],
+                    big.clone(),
+                ),
+                ae,
+            );
+            assert!(!r.headers().contains_key("content-encoding"), "{ae:?}");
+            assert_eq!(
+                r.headers().get_all("vary").iter().collect::<Vec<_>>(),
+                ["Origin, Accept-Encoding"],
+                "{ae:?}"
+            );
+            assert_eq!(
+                r.headers().get("etag").unwrap(),
+                "\"v1\"",
+                "the identity bytes keep their ETag"
+            );
+            assert_eq!(r.body(), &big, "{ae:?}");
+        }
+        // an ineligible reply (short, no-transform, encoded, not compressible) gets no Vary.
+        for r in [
+            reply(200, &[JS], js(10)),
+            reply(200, &[JS, ("cache-control", "no-transform")], big.clone()),
+            reply(200, &[JS, ("content-encoding", "br")], big.clone()),
+            reply(200, &[("content-type", "image/png")], big.clone()),
+        ] {
+            assert!(!gzip_reply(r, None).headers().contains_key("vary"));
+        }
+    }
+
+    #[test]
+    fn reply_to_response_gzips_a_fetch_only() {
+        let fetch = || FetchResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: js(2000),
+            ws: None,
+        };
+        let gz = cfg!(feature = "gzip");
+        let r = reply_to_response(ActionReply::Fetch(fetch()), Some("gzip"));
+        assert_eq!(r.headers().contains_key("content-encoding"), gz);
+        // an unread (streamed) reply and a built one are never compressed.
+        let r = reply_to_response(ActionReply::Unread(fetch()), Some("gzip"));
+        assert!(!r.headers().contains_key("content-encoding"));
+        assert_eq!(r.headers().get("connection").unwrap(), "close");
+        let mut built = Response::new(js(2000));
+        built
+            .headers_mut()
+            .insert("content-type", HeaderValue::from_static("application/json"));
+        let r = reply_to_response(ActionReply::Built(built), Some("gzip"));
+        assert!(!r.headers().contains_key("content-encoding"));
     }
 }
