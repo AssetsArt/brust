@@ -3,7 +3,7 @@
 // macros, and a macro import is refused (`runtime-macro`) before the compiler and any bundle. Each case's macro would
 // create a directory: it must not exist afterwards.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runBuild } from '../src/build'
@@ -71,11 +71,55 @@ test('the client bundle never runs a macro either (Bun.build macros: false)', as
   expect(existsSync(mark)).toBe(false)
 })
 
-test('guard: every Bun.Transpiler and Bun.build under src/compile disables macros', () => {
-  const dir = join(import.meta.dir, '../src/compile')
-  for (const f of readdirSync(dir).filter((f) => f.endsWith('.ts'))) {
-    const text = readFileSync(join(dir, f), 'utf8')
-    for (const m of text.matchAll(/new Bun\.Transpiler\(([^)]*)\)/g)) expect(`${f}: ${m[1]}`).toContain('macro: false')
-    for (const m of text.matchAll(/Bun\.build\(\{/g)) expect(`${f}: ${text.slice(m.index!, m.index! + 400)}`).toContain('macros: false')
+test('a re-export with a macro attribute is refused and runs nothing', async () => {
+  const mark = join(marks, 'reexport')
+  const r = await compile(
+    `export { mk } from '../m.ts' with { type: 'macro' }\nimport { mk as run } from '../m.ts' with { type: 'macro' }\nconst x = run(${JSON.stringify(mark)})\nexport default function C() { return <b>{x}</b> }\n`,
+  )
+  expect(rules(r)).toEqual(['runtime-macro'])
+  expect(existsSync(mark)).toBe(false)
+  // the re-export alone (nothing calls it): refused the same way
+  const only = await compile(`export { mk } from '../m.ts' with { type: 'macro' }\nexport default function C() { return <b>x</b> }\n`)
+  expect(rules(only)).toEqual(['runtime-macro'])
+})
+
+test('a dynamic import() with attributes is refused and runs nothing', async () => {
+  const mark = join(marks, 'dynamic')
+  for (const attrs of [`{ with: { type: 'macro' } }`, `{ with: { type: 'json' } }`, `{ assert: { type: 'macro' } }`]) {
+    const r = await compile(
+      `export default function C() { return <b onClick={async () => { const m = await import('../m.ts', ${attrs}); m.mk(${JSON.stringify(mark)}) }}>x</b> }\n`,
+    )
+    expect(r.ok).toBe(false)
+    expect(rules(r)).toContain('runtime-import')
+    expect(existsSync(mark)).toBe(false)
   }
+})
+
+/** Every .ts file under `dir`, recursively. */
+function tsFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((f) => {
+    const p = join(dir, f)
+    return statSync(p).isDirectory() ? tsFiles(p) : p.endsWith('.ts') ? [p] : []
+  })
+}
+
+test('guard: every Bun.Transpiler and Bun.build under src/compile (recursively) disables macros', () => {
+  const files = tsFiles(join(import.meta.dir, '../src/compile'))
+  expect(files.length).toBeGreaterThan(0)
+  let transpilers = 0
+  let builds = 0
+  for (const f of files) {
+    const text = readFileSync(f, 'utf8')
+    for (const m of text.matchAll(/new Bun\.Transpiler\(([^)]*)\)/g)) {
+      transpilers++
+      expect(`${f}: ${m[1]}`).toContain('macro: false')
+    }
+    // every call, whatever its argument looks like (an object literal, a variable, a spread)
+    for (const m of text.matchAll(/Bun\.build\(/g)) {
+      builds++
+      expect(`${f}: ${text.slice(m.index!, m.index! + 400)}`).toContain('macros: false')
+    }
+  }
+  expect(transpilers).toBeGreaterThanOrEqual(2)
+  expect(builds).toBeGreaterThanOrEqual(1)
 })

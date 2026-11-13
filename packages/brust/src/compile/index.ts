@@ -280,20 +280,24 @@ function macroAt(source: string): { line: number; col: number } {
  * compiler and before any bundle.
  */
 function checkMacros(source: string): Diagnostic[] {
+  let disabled = false
   try {
     sourceScanner().scan(source)
-    return []
   } catch (e) {
-    if (!/Macros are disabled/i.test(String(e))) return [] // a source that does not parse: the compiler reports that
-    return [
-      err(
-        'runtime-macro',
-        'imports with `{ type: "macro" }`: a macro runs its code on the server when the source is parsed; a runtime component never runs code at compile time',
-        'remove the macro import; compute the value in the page loader and pass it as a prop',
-        macroAt(source),
-      ),
-    ]
+    disabled = /Macros are disabled/i.test(String(e))
   }
+  // The scan says so for a macro import it reaches; the text catches one it does not (a re-export, a source the scan gives
+  // up on before it). Either way nothing ran, and the import is refused here.
+  const at = macroAt(source)
+  if (!disabled && at.line === 0) return [] // no macro (a source that does not parse: the compiler reports that)
+  return [
+    err(
+      'runtime-macro',
+      'imports with `{ type: "macro" }`: a macro runs its code on the server when the source is parsed; a runtime component never runs code at compile time',
+      'remove the macro import; compute the value in the page loader and pass it as a prop',
+      at,
+    ),
+  ]
 }
 
 /** F550 (ruling 3): an import attribute (`with { … }` / `assert { … }`) changes how the import is loaded; a runtime
