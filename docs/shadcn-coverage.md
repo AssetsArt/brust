@@ -145,7 +145,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | dialog | measured | react | 1 | 27 (10) | 102 | 1 | context-island, external-component, island-children, island-prop, nested-instance, slot-native, spread-props | built |
 | direction | measured | static | 1 | 3 (1) | 71 | 1 | context-value | built |
 | drawer | measured | static | 1 | 20 (16) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
-| dropdown-menu | measured | static | 1 | 18 (15) | 118 | 1 | external-component, island-children, island-prop, spread-props | built |
+| dropdown-menu | measured | static | 1 | 18 (15) | 119 | 1 | external-component, island-children, island-prop, spread-props | built |
 | empty | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
 | field | measured | static | 0 | 10 (0) | 5 | 0 | — | built |
 | form | measured | react | 1 | 5 (4) | 101 | 1 | child-component, external-component, hook-unsupported, island-children, island-prop, spread-props | built |
@@ -166,7 +166,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | popover | measured | static | 1 | 9 (7) | 110 | 1 | external-component, island-children, island-prop, spread-props | built |
 | progress | measured | static | 0 | 5 (0) | 0 | 1 | — | built |
 | radio-group | measured | static | 1 | 9 (5) | 99 | 1 | external-component, island-prop, spread-props | built |
-| resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
+| resizable | measured | static | 1 | 7 (6) | 105 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 93 | 1 | external-component, island-prop, spread-props | built |
 | select | measured | react | 1 | 26 (20) | 118 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | separator | measured | static | 0 | 4 (0) | 0 | 2 | — | built |
@@ -178,11 +178,11 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | spinner | measured | static | 0 | 2 (0) | 0 | 1 | external-component, spread-props | built |
 | switch | measured | static | 0 | 13 (0) | 11 | 0 | — | built |
 | table | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
-| tabs | measured | static | 1 | 10 (8) | 112 | 1 | context-state, external-component, island-prop, spread-props | built |
+| tabs | measured | static | 1 | 10 (8) | 113 | 1 | context-state, external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | toggle | measured | static | 0 | 4 (0) | 6 | 0 | — | built |
 | toggle-group | measured | static | 1 | 5 (4) | 94 | 1 | external-component, island-prop, jsx-const-child, spread-props | built |
-| tooltip | measured | static | 1 | 12 (10) | 106 | 1 | external-component, island-children, island-prop, spread-props | built |
+| tooltip | measured | static | 1 | 12 (10) | 107 | 1 | external-component, island-children, island-prop, spread-props | built |
 
 ## App components that block
 

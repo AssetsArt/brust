@@ -63,6 +63,10 @@ pub struct PassState {
     pub self_calls: Vec<u32>,
     /// F523: what the children pass found that keeps a call to itself from being a template macro (with where).
     pub self_refusals: Vec<(u32, String)>,
+    /// F548 (R4, narrowed): per-row islands the children pass made client-only (`nested-instance` sites), each with its
+    /// `island-client-only` warning and the `nested-instance` finding it replaced. `run_passes` keeps them client-only
+    /// only when the component renders itself or holds a `<Dynamic>`; otherwise the finding comes back (React, SSR'd).
+    pub client_only_sites: Vec<(crate::ir::Diagnostic, crate::ir::Diagnostic)>,
     /// F523: children of this component the server feeds per instance (a job or `useId`), by name and location.
     pub fed_children: Vec<(u32, String)>,
     /// F523: call sites of a component that holds a recursive macro (`ComponentIR::holds_recursion`) in a list row the
@@ -123,6 +127,37 @@ impl PassState {
 /// F214 / F309), the component is read once more from the same structural IR with those call sites specialised: the
 /// child is cloned for the call site with the content spliced in, so the content's directives are the clone's own. Only
 /// those call sites change; a clone that cannot be made keeps the refusal (and says why).
+/// F548: the island call at `loc` is server-rendered again (its node's tier as the child's own).
+fn unstamp_client_only(n: &mut crate::ir::Node, loc: u32) {
+    use crate::ir::{Node, Tier};
+    match n {
+        Node::Component {
+            loc: at,
+            tier: Tier::React { client_only, .. },
+            children,
+            ..
+        } => {
+            if *at == loc {
+                *client_only = false;
+            }
+            children
+                .iter_mut()
+                .for_each(|c| unstamp_client_only(c, loc));
+        }
+        Node::Component { children, .. }
+        | Node::Element { children, .. }
+        | Node::Fragment(children) => children
+            .iter_mut()
+            .for_each(|c| unstamp_client_only(c, loc)),
+        Node::If { then, else_, .. } => then
+            .iter_mut()
+            .chain(else_.iter_mut())
+            .for_each(|c| unstamp_client_only(c, loc)),
+        Node::For { body, .. } => body.iter_mut().for_each(|c| unstamp_client_only(c, loc)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
+    }
+}
+
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     crate::stats::passes_ran(&ir.id);
     let saved = has_slot_content(&ir.template).then(|| ir.clone());
@@ -213,6 +248,16 @@ fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<
     // F230: a read of an export another app module writes (the load-time write F219 missed).
     crate::analyze::load_writes::check(ir, &st, ctx);
     projection::projection(ir, &st);
+    // F548 (R4, narrowed by the lead): a per-row island is client-only only in a component that renders itself (a macro
+    // cannot render it per instance) or that holds a `<Dynamic>` (it cannot become React: `dynamic-in-react`). Anywhere
+    // else the island keeps today's rule: the `nested-instance` finding makes this component a React island, SSR'd.
+    if !st.client_only_sites.is_empty() && st.self_calls.is_empty() && !ir.dynamic {
+        for (warning, finding) in std::mem::take(&mut st.client_only_sites) {
+            ir.diagnostics.retain(|d| d != &warning);
+            unstamp_client_only(&mut ir.template, finding.loc);
+            ir.diagnostics.push(finding);
+        }
+    }
     tier::tier(ir, &mut st, ctx);
     // F523: a component that calls itself is a template macro only if the final tier is static and nothing per instance
     // remains; otherwise it falls back here (and a caller that would put a macro in a client row does too).

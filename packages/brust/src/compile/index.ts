@@ -31,6 +31,8 @@ export interface RuntimeArtifact {
   features: string[]
   /** Store NAMES it reads; each is one an exposed module defines (`runtime.stores` of the manifest). */
   stores: string[]
+  /** F548: the ids of the build's `[build] islands` it places (client-only hosts the browser mounts); absent when none. */
+  islands?: string[]
 }
 
 /** The compiler's finding shape (`NapiDiagnostic`), plus the runtime-component rules of this module. */
@@ -186,12 +188,14 @@ interface Context {
   serverOnly: string[]
   sourceRoots: string[]
   aliasesJson: string | undefined
+  /** F548: `runtime.islands`, the build's listed islands: component id → `path#Export`. */
+  islands: Record<string, string>
 }
 
 interface Manifest {
   base_path?: string
   assets: { runtime: string; features: Record<string, string>; build?: string }
-  runtime?: { exposed?: Record<string, string>; stores?: Record<string, string> }
+  runtime?: { exposed?: Record<string, string>; stores?: Record<string, string>; islands?: Record<string, string> }
 }
 
 const contexts = new Map<string, { stamp: string; ctx: Context }>()
@@ -229,6 +233,7 @@ async function contextOf(appRoot: string, dist: string): Promise<Context> {
     serverOnly: cfg.serverOnly,
     sourceRoots: cfg.sourceRoots,
     aliasesJson: aliases.length > 0 ? JSON.stringify(aliases) : undefined,
+    islands: m.runtime?.islands ?? {},
   }
   contexts.set(key, { stamp, ctx })
   return ctx
@@ -366,6 +371,24 @@ const fromNapi = (d: { class: string; rule: string; message: string; line: numbe
 
 type Ir = Record<string, any> // biome-ignore lint/suspicious/noExplicitAny: IR JSON, read structurally
 
+/** F548 (R3): a member that is one of the build's `[build] islands`, compiled client-only: the browser mounts it from the
+ * build's own chunk, nothing of it is in the artifact. */
+const listedIsland = (ir: Ir, ctx: Context): boolean => ir.tier?.React?.client_only === true && typeof ctx.islands[ir.id] === 'string'
+
+/** F548 (R3): the job of a client-only host of a listed island (never run: the build writes no job for it). */
+const listedIslandJob = (j: { kind: unknown; outputs: string[] }, ctx: Context): boolean =>
+  (j.kind as { Ssr?: { client_only?: boolean } })?.Ssr?.client_only === true && j.outputs.every((o) => Object.keys(ctx.islands).some((id) => o === `_ssr_${id}` || o.startsWith(`_ssr_${id}_`)))
+
+/** F548: the listed islands the tree places, sorted. */
+function placedIslands(tree: CompiledComponent[], ctx: Context): string[] {
+  const out = new Set<string>()
+  for (const c of tree) {
+    const ir = JSON.parse(c.ir) as Ir
+    if (listedIsland(ir, ctx)) out.add(ir.id)
+  }
+  return [...out].sort()
+}
+
 /** R3.4: what this tree needs that a runtime component cannot have. */
 function checkTree(tree: CompiledComponent[], ctx: Context): Diagnostic[] {
   const out: Diagnostic[] = []
@@ -373,6 +396,7 @@ function checkTree(tree: CompiledComponent[], ctx: Context): Diagnostic[] {
   for (const c of tree) {
     const ir = JSON.parse(c.ir) as Ir
     const where = c.source
+    if (listedIsland(ir, ctx)) continue
     if (tierOf(ir as never) === 'react') {
       const t = ir.tier?.React
       const why = c.diagnostics.filter((d) => d.class === 'fallback').map((d) => `${d.rule}: ${d.message}`)
@@ -384,7 +408,7 @@ function checkTree(tree: CompiledComponent[], ctx: Context): Diagnostic[] {
         ),
       )
     }
-    const jobs = (ir.jobs ?? []) as { kind: unknown; inputs: string[]; outputs: string[] }[]
+    const jobs = ((ir.jobs ?? []) as { kind: unknown; inputs: string[]; outputs: string[] }[]).filter((j) => !listedIslandJob(j, ctx))
     if (jobs.length > 0 || (ir.build_eval ?? []).length > 0) {
       const slot = (ir.build_eval ?? [])[0] as { line: number; col: number } | undefined
       const kinds = [...new Set(jobs.map((j) => (typeof j.kind === 'string' ? j.kind.toLowerCase() : 'ssr')))].join(', ')
@@ -443,6 +467,8 @@ export async function compileComponent(opts: CompileOptions): Promise<CompileRes
     sourceRoots: ctx.sourceRoots.length > 0 ? ctx.sourceRoots : undefined,
     // Icons are never rendered here: every lucide icon is judged an island (`runtime-tier`).
     iconSvgs: JSON.stringify({ final: true, svgs: {} }),
+    // F548 (R3): the build's listed islands compile client-only, so placing one is a host, not a server job.
+    clientOnly: Object.values(ctx.islands),
   })
   const rename = (d: Diagnostic) => renameIn(d, virtual, filename)
   // F520: the facts are of the file as written, so their positions are the caller's own.
@@ -472,6 +498,8 @@ export async function compileComponent(opts: CompileOptions): Promise<CompileRes
   if ((stores.length > 0 || (client.code !== null && importsStore((rel) => (rel === chunk ? client.code! : undefined), chunk, ctx.storeFile))) && !features.includes('store')) features.push('store')
   // The root can be a static shell around a native child: the page needs the runtime whenever there is client code.
   const tier = client.code === null ? 'static' : 'native'
-  const artifact: RuntimeArtifact = { v: 1, build: ctx.build, id: root.id, tier, jinja: root.jinja, client: client.code, features, stores }
+  const islands = placedIslands(tree.components, ctx)
+  if (islands.length > 0 && !features.includes('island')) features.push('island')
+  const artifact: RuntimeArtifact = { v: 1, build: ctx.build, id: root.id, tier, jinja: root.jinja, client: client.code, features, stores, ...(islands.length > 0 ? { islands } : {}) }
   return facts ? { ok: true, artifact, diagnostics, facts } : { ok: true, artifact, diagnostics }
 }

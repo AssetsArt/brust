@@ -42,6 +42,9 @@ pub struct RuntimeBlock {
     /// Store name → the exposed module that defines it.
     #[serde(default)]
     pub stores: BTreeMap<String, String>,
+    /// F548 `[build] islands`: component id → `path#Export`, the islands a runtime component may place (client-only).
+    #[serde(default)]
+    pub islands: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -558,6 +561,11 @@ fn walk(
                     component: ch.id.clone(),
                 });
             };
+            // A React child is in `children[]` only as a client-only placement (asset injection, F548: one the build
+            // server-renders elsewhere has its own ssr job); its server render, when there is one, is its parent's job.
+            if child.tier == Tier::React {
+                continue;
+            }
             for j in &child.jobs {
                 // `*` is the child's whole props object: covered by definition.
                 for i in j.inputs.iter().filter(|i| i.as_str() != ALL_PROPS) {

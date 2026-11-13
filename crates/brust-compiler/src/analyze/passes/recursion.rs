@@ -20,11 +20,22 @@ pub fn check(ir: &mut ComponentIR, st: &PassState, _ctx: &PassCtx<'_>) {
     ir.recursion = None;
     if let Some(&loc) = st.self_calls.first() {
         let name = display_name(ir);
+        // F548 (R4): when the only per-instance work left is the React islands it renders, those islands are not
+        // server-rendered (the macro prints their hosts with their props, the browser mounts them) and the component
+        // stays a macro instead of becoming React.
+        if matches!(ir.tier, Tier::Static)
+            && refusal(ir, st, false).is_some()
+            && refusal(ir, st, true).is_none()
+        {
+            islands_client_only(ir);
+        }
         let why = match &ir.tier {
             // Already React for a reason of its own: React renders the recursion itself.
             Tier::React { .. } => None,
-            Tier::Static => refusal(ir, st),
-            Tier::Native | Tier::Pending => Some(refusal(ir, st).unwrap_or_else(|| native_why(ir))),
+            Tier::Static => refusal(ir, st, false),
+            Tier::Native | Tier::Pending => {
+                Some(refusal(ir, st, false).unwrap_or_else(|| native_why(ir)))
+            }
         };
         match why {
             Some(why) => refuse(ir, format!("<{name}> renders itself and {why}"), loc),
@@ -197,7 +208,9 @@ fn visit(n: &Node, f: &mut dyn FnMut(&Expr)) {
 
 /// Why a static component that calls itself is no macro (`None`: it is one). C3: nothing per instance may remain (the
 /// macro body sees its parameters and the render's root context only), and every prop must be nameable as a parameter.
-fn refusal(ir: &ComponentIR, st: &PassState) -> Option<String> {
+/// `islands_ok`: what is refused if the server-rendered islands it holds were client-only. A client-only island's job is
+/// never run, so it is no per-instance work.
+fn refusal(ir: &ComponentIR, st: &PassState, islands_ok: bool) -> Option<String> {
     if ir.specialised || ir.fixed_clone_of.is_some() || ir.rest_clone_of.is_some() {
         return Some(
             "this copy of it is made for one call site, which its calls to itself would not render"
@@ -215,7 +228,10 @@ fn refusal(ir: &ComponentIR, st: &PassState) -> Option<String> {
             "renders <{child}>, which has a job or `useId` the server feeds per instance"
         ));
     }
-    if let Some(j) = ir.jobs.first() {
+    if let Some(j) = ir.jobs.iter().find(|j| match j.kind {
+        JobKind::Ssr { client_only } => !(client_only || islands_ok),
+        JobKind::Precompute => true,
+    }) {
         return Some(match j.kind {
             JobKind::Ssr { .. } => {
                 "holds a React island, which the server renders per instance".into()
@@ -310,6 +326,57 @@ fn native_why(ir: &ComponentIR) -> String {
 }
 
 /// The `tier` of the component nodes at `locs` (the calls to itself).
+/// F548 (R4): every server-rendered island job of `ir` becomes client-only, and so does every React child its template
+/// prints (not inside another island), with an `island-client-only` warning each.
+fn islands_client_only(ir: &mut ComponentIR) {
+    for j in &mut ir.jobs {
+        if let JobKind::Ssr { client_only } = &mut j.kind {
+            *client_only = true;
+        }
+    }
+    let mut leaves = Vec::new();
+    client_only_leaves(&mut ir.template, &mut leaves);
+    let own = display_name(ir);
+    for (name, loc) in leaves {
+        let message = format!(
+            "<{own}> renders itself and holds the React island <{name}>, which the server cannot render per instance: it is not server-rendered, the browser mounts it from its props"
+        );
+        if !ir.diagnostics.iter().any(|d| d.message == message) {
+            ir.diagnostics.push(Diagnostic::warning(
+                "island-client-only",
+                message,
+                loc,
+                "keep it client-only, or render the island outside the recursive component to have it server-rendered",
+            ));
+        }
+    }
+}
+
+fn client_only_leaves(n: &mut Node, out: &mut Vec<(String, u32)>) {
+    match n {
+        Node::Component {
+            loc,
+            name,
+            tier: Tier::React { client_only, .. },
+            ..
+        } => {
+            if !*client_only {
+                *client_only = true;
+                out.push((name.clone(), *loc));
+            }
+        }
+        Node::Component { children, .. }
+        | Node::Element { children, .. }
+        | Node::Fragment(children) => children.iter_mut().for_each(|c| client_only_leaves(c, out)),
+        Node::If { then, else_, .. } => then
+            .iter_mut()
+            .chain(else_.iter_mut())
+            .for_each(|c| client_only_leaves(c, out)),
+        Node::For { body, .. } => body.iter_mut().for_each(|c| client_only_leaves(c, out)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => {}
+    }
+}
+
 fn set_call_tiers(n: &mut Node, locs: &[u32], tier: &Tier) {
     match n {
         Node::Component {

@@ -130,6 +130,9 @@ pub struct AnalyzeOptions {
     /// a page or layout, whose props are request data. A component from one of them never receives lowered JSX: its caller
     /// falls back to React (`revive-host-route-root`).
     pub route_roots: std::collections::HashSet<String>,
+    /// F548 (R3): `path#Export` of the components compiled as client-only islands (the build's `[build] islands`, passed
+    /// by the compile API): a React-tier one is `Tier::React { client_only: true }`, so its caller prints an empty host.
+    pub client_only: std::collections::HashSet<String>,
     /// F153c (R34.61): the package sources the build wrote (`packages/brust/src/build/pkg-src.ts`); empty = a
     /// package import is the React island of its export, as before.
     pub packages: PackageSources,
