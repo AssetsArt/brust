@@ -74,6 +74,9 @@ struct ArtifactWire {
     features: Vec<String>,
     #[serde(default)]
     stores: Vec<String>,
+    /// F548 (R3): the build's listed islands the artifact places (client-only hosts in its jinja).
+    #[serde(default)]
+    islands: Vec<String>,
 }
 
 /// One registered artifact: parsed once (R5.4), in its own environment (R5.6).
@@ -85,6 +88,8 @@ pub struct Artifact {
     /// registers the hydrate function.
     pub island: bool,
     pub features: Vec<String>,
+    /// F548: chunk URLs (base path included) of the build's islands it places.
+    island_chunks: Vec<String>,
     client: Option<Bytes>,
     gzip: OnceLock<Option<Bytes>>,
     digest: blake3::Hash,
@@ -341,6 +346,8 @@ pub struct Registry {
     features: BTreeSet<String>,
     stores: BTreeSet<String>,
     components: BTreeSet<String>,
+    /// F548: the listed islands (`runtime.islands`) that are React components with a chunk: id → chunk URL.
+    islands: BTreeMap<String, String>,
     warm: Mutex<Lru<Arc<Artifact>>>,
     /// F546 (R5): island HTML per (ref, digest, props).
     html: Mutex<HtmlCache>,
@@ -381,6 +388,21 @@ impl Registry {
                 .map(|r| r.stores.keys().cloned().collect())
                 .unwrap_or_default(),
             components: m.components.keys().cloned().collect(),
+            islands: m
+                .runtime
+                .as_ref()
+                .map(|r| {
+                    r.islands
+                        .keys()
+                        .filter_map(|id| {
+                            let c = m.components.get(id)?;
+                            let client = c.client.as_ref()?;
+                            (c.tier == crate::manifest::Tier::React)
+                                .then(|| (id.clone(), format!("{}/_brust/{client}", m.base_path)))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             warm: Mutex::new(Lru::new(cache_entries.unwrap_or(DEFAULT_CACHE_ENTRIES))),
             html: Mutex::new(HtmlCache {
                 lru: Lru::new(cache_entries.unwrap_or(DEFAULT_CACHE_ENTRIES)),
@@ -524,8 +546,24 @@ impl Registry {
             return Err(format!("store {s:?} is not exposed by this build"));
         }
         let mut features = a.features;
-        // F546 (R1): the host hydrates through the island runtime feature.
-        if island && !features.iter().any(|f| f == "island") {
+        // F548 (R3): each placed island is one the build listed and built as a React island with a chunk.
+        let mut island_chunks = Vec::new();
+        for id in &a.islands {
+            match self.islands.get(id) {
+                Some(url) => {
+                    if !island_chunks.contains(url) {
+                        island_chunks.push(url.clone());
+                    }
+                }
+                None => {
+                    return Err(format!(
+                        "island {id:?} is not a React island this build lists in [build] islands"
+                    ));
+                }
+            }
+        }
+        // F546 (R1) / F548: the host hydrates through the island runtime feature.
+        if (island || !island_chunks.is_empty()) && !features.iter().any(|f| f == "island") {
             if !self.features.contains("island") {
                 return Err("runtime feature \"island\" is not in this build".into());
             }
@@ -549,6 +587,7 @@ impl Registry {
             native,
             island,
             features,
+            island_chunks,
             client: a.client.map(Bytes::from),
             gzip: OnceLock::new(),
             digest,
@@ -858,6 +897,13 @@ impl RenderSlots {
             if a.native || a.island {
                 out.native = true;
                 out.chunks.push(self.reg.chunk_url(a));
+            }
+            // F548: the build's island chunks it places, once per page.
+            for url in &a.island_chunks {
+                out.native = true;
+                if !out.chunks.contains(url) {
+                    out.chunks.push(url.clone());
+                }
             }
         }
         out

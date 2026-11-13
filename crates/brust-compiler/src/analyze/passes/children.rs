@@ -7371,20 +7371,30 @@ impl Walker<'_, '_> {
                         "key the list on props only to keep this component native; it renders with React meanwhile",
                     ));
                 }
+                let mut client_only = *client_only;
                 if ok
+                    && !client_only
                     && self.items.last().is_some()
                     && (!self.ctx.is_root || self.loop_sources.len() > 1)
                 {
                     // F53 (R34.97): the server hands an island's job one array indexed by ONE list of the route
-                    // component; a row of an inlined component, or a second list, has no slot key.
-                    ok = false;
-                    self.diagnostics.push(island_err(
-                        "nested-instance",
+                    // component; a row of an inlined component, or a second list, has no slot key. F548 (R4): so this
+                    // island is not server-rendered here: the template prints its host with the row's props and the
+                    // browser mounts it, and this component keeps its tier (it used to become React).
+                    client_only = true;
+                    if let Tier::React { reason, .. } = &child.tier {
+                        *tier = Tier::React {
+                            reason: reason.clone(),
+                            client_only: true,
+                        };
+                    }
+                    self.diagnostics.push(Diagnostic::warning(
+                        "island-client-only",
                         format!(
-                            "the React island <{name}> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot feed per row"
+                            "the React island <{name}> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot render per row: it is not server-rendered here, the browser mounts it from its props"
                         ),
                         *loc,
-                        "map over the list in the route component, or keep this component interactive with React",
+                        "map over the list in the route component to have it server-rendered, or keep it client-only",
                     ));
                 }
                 if ok {
@@ -7399,9 +7409,7 @@ impl Walker<'_, '_> {
                         format!("_ssr_{child_id}_{count}")
                     };
                     self.jobs.push(JobDecl {
-                        kind: JobKind::Ssr {
-                            client_only: *client_only,
-                        },
+                        kind: JobKind::Ssr { client_only },
                         inputs: minimal_paths(inputs),
                         outputs: vec![output],
                         per_item: self.items.last().cloned(),

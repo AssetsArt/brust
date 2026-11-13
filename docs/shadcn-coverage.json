@@ -91,15 +91,6 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:nested-instance",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 5,
-      "analysisOnlyRows": 0,
-      "appComponents": 5,
-      "libraryComponents": 1
-    },
-    {
       "blocker": "fallback:hook-unsupported",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -125,6 +116,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 4,
       "libraryComponents": 14
+    },
+    {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 1
     },
     {
       "blocker": "fallback:control-flow",
@@ -978,7 +978,7 @@
       "islands": 1,
       "components": 18,
       "reactComponents": 15,
-      "jsGzipKb": 118,
+      "jsGzipKb": 119,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1261,7 +1261,7 @@
       "islands": 1,
       "components": 7,
       "reactComponents": 6,
-      "jsGzipKb": 104,
+      "jsGzipKb": 105,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1376,7 +1376,6 @@
         "external-component",
         "island-children",
         "island-prop",
-        "nested-instance",
         "spread-props"
       ]
     },
@@ -1440,7 +1439,7 @@
       "islands": 1,
       "components": 10,
       "reactComponents": 8,
-      "jsGzipKb": 112,
+      "jsGzipKb": 113,
       "workerCalls": 1,
       "codes": [
         "context-state",
@@ -1494,7 +1493,7 @@
       "islands": 1,
       "components": 12,
       "reactComponents": 10,
-      "jsGzipKb": 106,
+      "jsGzipKb": 107,
       "workerCalls": 1,
       "codes": [
         "external-component",

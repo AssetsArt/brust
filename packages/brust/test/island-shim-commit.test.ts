@@ -8,7 +8,9 @@ import type { Compiled } from '../src/build/compile'
 const island = (React: Record<string, unknown>) => ({ id: 'box_1', file: '/app/box.tsx', ir: { tier: { React }, export: 'Box' } }) as unknown as Compiled
 
 test.each([
-  ['hydrateRoot', {}, 'hydrateRoot(host, createElement(__Commit, { done: committed }, createElement(Comp, props)),'],
+  ['hydrateRoot', {}, 'if (host.firstChild) root = hydrateRoot(host, createElement(__Commit, { done: committed }, createElement(Comp, props)),'],
+  // F548: an empty host (a client-only placement of an island the build SSRs elsewhere) mounts instead
+  ['hydrateRoot, empty host', {}, 'else { root = createRoot(host, { identifierPrefix: "box_1" }); root.render(createElement(__Commit, { done: committed }, createElement(Comp, props))) }'],
   ['createRoot', { client_only: true }, 'root.render(createElement(__Commit, { done: committed }, createElement(Comp, props)))'],
 ])('%s: the root renders inside __Commit, which signals from a layout effect', (_api, react, call) => {
   const shim = islandShim(island(react))

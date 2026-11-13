@@ -1,12 +1,7 @@
 {
   "id": "input_22f43551",
   "source": "tests/fixtures/react-child-nested/input.tsx",
-  "tier": {
-    "React": {
-      "reason": "the React island <Reviews> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot feed per row",
-      "client_only": false
-    }
-  },
+  "tier": "Static",
   "props": [
     {
       "name": "props",
@@ -156,7 +151,7 @@
                               "tier": {
                                 "React": {
                                   "reason": "hook useContext is not supported",
-                                  "client_only": false
+                                  "client_only": true
                                 }
                               }
                             }
@@ -181,17 +176,24 @@
     {
       "kind": {
         "Ssr": {
-          "client_only": false
+          "client_only": true
         }
       },
       "inputs": [
-        "*",
-        "__store"
+        "__store",
+        "groups"
       ],
       "outputs": [
-        "_ssr_input_22f43551"
+        "_ssr_reviews_37b0da66"
       ],
-      "per_item": null
+      "per_item": "it",
+      "props": {
+        "__store": "__store",
+        "item": "groups[idx].items[idx]"
+      },
+      "literals": {
+        "limit": 3
+      }
     }
   ],
   "child_links": [],
@@ -215,13 +217,13 @@
   ],
   "diagnostics": [
     {
-      "class": "Fallback",
-      "rule": "nested-instance",
-      "message": "the React island <Reviews> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot feed per row",
+      "class": "Warning",
+      "rule": "island-client-only",
+      "message": "the React island <Reviews> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot render per row: it is not server-rendered here, the browser mounts it from its props",
       "loc": 222,
       "line": 4,
       "col": 81,
-      "remediation": "map over the list in the route component, or keep this component interactive with React"
+      "remediation": "map over the list in the route component to have it server-rendered, or keep it client-only"
     }
   ]
 }

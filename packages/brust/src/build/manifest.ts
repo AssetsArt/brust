@@ -311,6 +311,19 @@ export function jobRecords(c: Compiled, known: (id: string) => boolean): { jobs:
   return { jobs, clientOnly }
 }
 
+/** F548: the client-only islands of the static and native children `c` prints inline (a recursive tree's macro, a
+ * wrapper), at any depth: they are not `children[]` records of `c`, so their islands' assets are linked through `c`. */
+export function inlinedClientOnly(compiled: Map<string, Compiled>, c: Compiled, known: (id: string) => boolean, seen = new Set<string>([c.id])): string[] {
+  const out: string[] = []
+  for (const ref of (c.ir.children ?? []) as { id: string | null }[]) {
+    const child = ref.id ? compiled.get(ref.id) : undefined
+    if (!child || seen.has(child.id) || tierOf(child.ir) === 'react') continue
+    seen.add(child.id)
+    out.push(...jobRecords(child, known).clientOnly, ...inlinedClientOnly(compiled, child, known, seen))
+  }
+  return out
+}
+
 /** `children[]` from `ir.instances` in compiler order (`k` = ordinal per child id, derived by
  * both sides), then one static entry per `client_only` react child (asset injection only). */
 export function childRecords(c: Compiled, clientOnly: string[] = []): ChildRecord[] {
@@ -373,7 +386,8 @@ export function writeManifest(opts: {
   const known = (id: string) => compiled.has(id)
   const components: Record<string, ComponentRecord> = {}
   for (const c of [...compiled.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
-    const { jobs, clientOnly } = jobRecords(c, known)
+    const { jobs, clientOnly: own } = jobRecords(c, known)
+    const clientOnly = [...new Set([...own, ...inlinedClientOnly(compiled, c, known)])]
     components[c.id] = {
       tier: tierOf(c.ir),
       template: `jinja/${c.id}.jinja`,

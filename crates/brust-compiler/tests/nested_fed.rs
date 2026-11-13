@@ -18,6 +18,8 @@ struct Comp {
     tier: Tier,
     unwritten: Vec<String>,
     fallbacks: Vec<String>,
+    /// F548: warning rules (`island-client-only`).
+    warnings: Vec<String>,
 }
 
 /// Compiles `src` as `tests/fixtures/nested-fed/P.tsx` (siblings resolve); every component of the tree.
@@ -50,6 +52,14 @@ fn compile(file: &str, src: Option<&str>) -> Vec<Comp> {
                     .iter()
                     .chain(&l.artifacts.diagnostics)
                     .filter(|d| d.class == DiagClass::Fallback)
+                    .map(|d| d.rule.clone())
+                    .collect(),
+                warnings: l
+                    .ir
+                    .diagnostics
+                    .iter()
+                    .chain(&l.artifacts.diagnostics)
+                    .filter(|d| d.class == DiagClass::Warning)
                     .map(|d| d.rule.clone())
                     .collect(),
             })
@@ -196,31 +206,51 @@ fn children_with_a_job_passed_to_a_component_that_repeats_them_fall_back() {
     );
 }
 
+/// F548 (R4): a React island with per-row props in two lists is not server-rendered there (the server cannot feed its
+/// job per row): its host prints the row's props with nothing inside, the browser mounts it, and the page keeps its tier
+/// (it used to become React with `nested-instance`).
 #[test]
-fn an_island_with_a_per_row_prop_in_two_lists_falls_back() {
-    let t = lower(
+fn an_island_with_a_per_row_prop_in_two_lists_is_client_only() {
+    let (t, _, jinja) = lower_full(
         "import Tip from './Tip'\nexport default function P(props: { rows: { cols: string[] }[] }) { return <div>{props.rows.map((r, i) => <p key={i}>{r.cols.map((c) => <Tip key={c} t={c} />)}</p>)}</div> }",
     );
     let p = named(&t, "p_");
-    assert!(is_react(p), "{:?}", p.tier);
+    assert!(!is_react(p), "{:?}", p.tier);
     assert!(
-        p.fallbacks.contains(&"nested-instance".to_string()),
+        !p.fallbacks.contains(&"nested-instance".to_string()),
         "{:?}",
         p.fallbacks
     );
+    assert!(
+        p.warnings.contains(&"island-client-only".to_string()),
+        "{:?}",
+        p.warnings
+    );
+    let tip = named(&t, "tip_");
+    let host = format!(
+        "data-id=\"{}\" x-props='{{{{ {{\"t\": c}} | json_attr }}}}'></brust-island>",
+        tip.id
+    );
+    assert!(jinja.contains(&host), "{host}\n{jinja}");
+    assert!(!jinja.contains("_ssr_tip"), "{jinja}");
 }
 
 #[test]
-fn an_island_mapped_inside_an_inlined_component_falls_back() {
+fn an_island_mapped_inside_an_inlined_component_is_client_only() {
     let t = lower(
         "import WrapTip from './WrapTip'\nexport default function P(props: { rows: string[] }) { return <WrapTip rows={props.rows} /> }",
     );
     let w = named(&t, "wrapTip_");
-    assert!(is_react(w), "{:?}", w.tier);
+    assert!(!is_react(w), "{:?}", w.tier);
     assert!(
-        w.fallbacks.contains(&"nested-instance".to_string()),
+        !w.fallbacks.contains(&"nested-instance".to_string()),
         "{:?}",
         w.fallbacks
+    );
+    assert!(
+        w.warnings.contains(&"island-client-only".to_string()),
+        "{:?}",
+        w.warnings
     );
 }
 

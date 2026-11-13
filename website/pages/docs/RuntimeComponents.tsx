@@ -11,7 +11,7 @@ import type { TocItem } from '../../lib/nav'
 
 export interface RuntimeComponentsData {
   toc: TocItem[]
-  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest' | 'facts' | 'island', CodeBlockData>
+  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest' | 'facts' | 'island' | 'listed', CodeBlockData>
 }
 
 const EXPOSE = `# brust.toml
@@ -89,6 +89,10 @@ export const components: RuntimeComponents = {
   },
 }`
 
+const LISTED = `[build]
+expose = ["shop/sdk.tsx"]
+islands = ["shop/sdk.tsx#Motion"]   # path#Export: a React component of an exposed module`
+
 const MANIFEST = `"runtime": {
   "exposed": { "shop/sdk.ts": "client/x-sdk-<hex>.js" },
   "stores":  { "cart": "shop/sdk.ts" }
@@ -114,6 +118,7 @@ export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> 
       { id: 'artifact', title: 'The artifact' },
       { id: 'refusals', title: 'What is refused' },
       { id: 'facts', title: 'Facts for a check' },
+      { id: 'listed', title: 'React islands from your build' },
       { id: 'island', title: 'Islands you render yourself' },
       { id: 'limits', title: 'Limits and caching' },
       { id: 'trust', title: 'The trust model' },
@@ -127,6 +132,7 @@ export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> 
       manifest: codeBlock({ lang: 'text', file: 'dist/manifest.json', code: MANIFEST }),
       facts: codeBlock({ lang: 'ts', file: 'routes.tsx', code: FACTS }),
       island: codeBlock({ lang: 'ts', file: 'routes.tsx', code: ISLAND }),
+      listed: codeBlock({ lang: 'text', file: 'brust.toml', code: LISTED }),
     },
   }
 }
@@ -354,6 +360,23 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
       </Note>
 
       {/* source: crates/brust-core/src/components.rs (register: tier island; island_slot; HtmlCache), packages/brust/src/handlers.ts (resolveComponents: renders), tests/server/rc-island.chromium.test.ts (F546) */}
+      {/* source: packages/brust/src/build/config.ts (parseIslands), build/compile.ts (listed islands), compile/index.ts (listedIsland, artifact.islands), crates/brust-core/src/components.rs (register: islands), tests/server/rc-client-islands.chromium.test.ts (F548) */}
+      <h2 id="listed">React islands from your build</h2>
+      <p>
+        A runtime component compiles static or native, so a component that needs React (a hook brust does not lower) is refused in it. To place one anyway, list it in <code>[build] islands</code>: the export of a module that is also in{' '}
+        <code>[build] expose</code>.
+      </p>
+      <CodeBlock code={blocks.listed.code} lang={blocks.listed.lang} file={blocks.listed.file} html={blocks.listed.html} />
+      <ul>
+        <li>The build compiles each listed component as a React island even when no route renders it: it gets its chunk and a manifest entry, and no server job. A listed entry that does not exist or is not a React component fails the build.</li>
+        <li>
+          In a runtime component it is <strong>client-only</strong>: <code>compileComponent</code> prints its host with the props you pass and nothing inside, lists its id in the artifact&apos;s <code>islands</code>, and the page loads the build&apos;s chunk for it
+          (once, however many slots place it). The browser mounts it from its props; it is not server-rendered. Props must be values the template can print as JSON, as for any island.
+        </li>
+        <li>A route of the app that renders the same component still server-renders it; the same chunk hydrates there and mounts here.</li>
+        <li>An artifact that names an island the build does not list is refused at registration. A React component that is not listed is refused by <code>compileComponent</code>, as before.</li>
+      </ul>
+
       <h2 id="island">Islands you render yourself</h2>
       <p>
         An app that renders a component on its own (its own server rendering, its own client code) returns an <strong>island artifact</strong>: <code>tier: &apos;island&apos;</code>, an <code>id</code>, and a <code>client</code> module, with no <code>jinja</code>.

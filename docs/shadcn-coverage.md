@@ -42,10 +42,10 @@ One line per thing that keeps a row or a library component off the static/native
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 17 | 0 | 18 | 59 | `island-children` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 7 | 0 | 8 | 34 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:context-island | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 8 | 0 | `context-island` diagnostic (docs/react-coverage.md) |
-| 7 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 5 | 0 | 5 | 1 | `nested-instance` diagnostic (docs/react-coverage.md) |
-| 8 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 167 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
-| 9 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 17 | `context-state` diagnostic (docs/react-coverage.md) |
-| 10 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 14 | `jsx-expression` diagnostic (docs/react-coverage.md) |
+| 7 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 167 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
+| 8 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 17 | `context-state` diagnostic (docs/react-coverage.md) |
+| 9 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 14 | `jsx-expression` diagnostic (docs/react-coverage.md) |
+| 10 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 1 | `nested-instance` diagnostic (docs/react-coverage.md) |
 | 11 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 26 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 1 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
 | 13 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
@@ -145,7 +145,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | dialog | measured | react | 1 | 27 (10) | 102 | 1 | context-island, external-component, island-children, island-prop, nested-instance, slot-native, spread-props | built |
 | direction | measured | static | 1 | 3 (1) | 71 | 1 | context-value | built |
 | drawer | measured | static | 1 | 20 (16) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
-| dropdown-menu | measured | static | 1 | 18 (15) | 118 | 1 | external-component, island-children, island-prop, spread-props | built |
+| dropdown-menu | measured | static | 1 | 18 (15) | 119 | 1 | external-component, island-children, island-prop, spread-props | built |
 | empty | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
 | field | measured | static | 0 | 10 (0) | 5 | 0 | — | built |
 | form | measured | react | 1 | 5 (4) | 101 | 1 | child-component, external-component, hook-unsupported, island-children, island-prop, spread-props | built |
@@ -166,23 +166,23 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | popover | measured | static | 1 | 9 (7) | 110 | 1 | external-component, island-children, island-prop, spread-props | built |
 | progress | measured | static | 0 | 5 (0) | 0 | 1 | — | built |
 | radio-group | measured | static | 1 | 9 (5) | 99 | 1 | external-component, island-prop, spread-props | built |
-| resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
+| resizable | measured | static | 1 | 7 (6) | 105 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 93 | 1 | external-component, island-prop, spread-props | built |
 | select | measured | react | 1 | 26 (20) | 118 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | separator | measured | static | 0 | 4 (0) | 0 | 2 | — | built |
 | sheet | measured | react | 1 | 23 (9) | 101 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | sidebar | measured | static | 1 | 31 (14) | 118 | 1 | client-function-in-job, context-island, context-state, control-flow, external-component, island-children, island-prop, jsx-const-child, linked-prop-precompute, spread-handler, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
-| slider | measured | static | 1 | 7 (4) | 94 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
+| slider | measured | static | 1 | 7 (4) | 94 | 1 | external-component, island-children, island-prop, spread-props | built |
 | sonner | measured | native | 1 | 4 (2) | 88 | 1 | external-component, hook-unsupported, island-prop, jsx-expression, spread-props | built |
 | spinner | measured | static | 0 | 2 (0) | 0 | 1 | external-component, spread-props | built |
 | switch | measured | static | 0 | 13 (0) | 11 | 0 | — | built |
 | table | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
-| tabs | measured | static | 1 | 10 (8) | 112 | 1 | context-state, external-component, island-prop, spread-props | built |
+| tabs | measured | static | 1 | 10 (8) | 113 | 1 | context-state, external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | toggle | measured | static | 0 | 4 (0) | 6 | 0 | — | built |
 | toggle-group | measured | static | 1 | 5 (4) | 94 | 1 | external-component, island-prop, jsx-const-child, spread-props | built |
-| tooltip | measured | static | 1 | 12 (10) | 106 | 1 | external-component, island-children, island-prop, spread-props | built |
+| tooltip | measured | static | 1 | 12 (10) | 107 | 1 | external-component, island-children, island-prop, spread-props | built |
 
 ## App components that block
 
@@ -313,7 +313,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/sidebar.tsx#sidebarMenuButton | control-flow | 1 |
 | components/ui/sidebar.tsx#sidebarProvider | client-function-in-job, context-state, island-children, jsx-const-child | 1 |
 | components/ui/sidebar.tsx#sidebarTrigger | control-flow, external-component, linked-prop-precompute, spread-handler | 1 |
-| components/ui/slider.tsx#slider | external-component, island-children, island-prop, nested-instance, spread-props | 1 |
+| components/ui/slider.tsx#slider | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/sonner.tsx#toaster | external-component, hook-unsupported, island-prop, jsx-expression, spread-props | 1 |
 | components/ui/spinner.tsx#spinner | external-component, spread-props | 1 |
 | components/ui/tabs.tsx#tabs | island-prop, spread-props | 1 |

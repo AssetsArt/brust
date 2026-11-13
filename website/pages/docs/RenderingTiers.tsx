@@ -175,6 +175,12 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       <Note>
         Falling back to React is never a build failure, and that includes passing a function or a changing value to a React child (<code>island-prop</code>): the component that passes it renders with React. Some things are: server-only code reachable from the browser (<code>server-only-in-client</code>), and a list without keys (<code>list-key</code>).
       </Note>
+      {/* source: crates/brust-compiler/src/analyze/passes/children.rs (nested-instance -> island-client-only), recursion.rs (islands_client_only), tests/server/rc-client-islands.chromium.test.ts (F548) */}
+      <p>
+        A React island with per-row props in nested lists, in the rows of a component inlined into its callers, or inside a component that renders itself (a tree) cannot be server-rendered row by row. Such an island is <strong>client-only</strong> there: the
+        page prints its host with that row&apos;s props and nothing inside, and the browser mounts it. The component around it keeps its tier (before, it became one React island), and the build says so with an <code>island-client-only</code> warning. Map
+        over the list in the route component when you need the island&apos;s HTML from the server.
+      </p>
 
       <h2 id="runtime">What the browser loads</h2>
       {/* source: packages/brust/src/build/features.ts:8-30 (the feature modules and the directive each binds), :41-54 (featuresOf: the set a template needs; an unbound directive is a build error), crates/brust-core/src/render.rs (modulepreload links), runtime-split plan R35.1-R35.3 (L33, PR #201) */}
