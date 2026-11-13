@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-50', title: '2.0.0-alpha.50' },
       { id: 'alpha-49', title: '2.0.0-alpha.49' },
       { id: 'alpha-48', title: '2.0.0-alpha.48' },
       { id: 'alpha-47', title: '2.0.0-alpha.47' },
@@ -72,6 +73,42 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-50">2.0.0-alpha.50 · 13 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.49: #499 (ledger F549), #500 (F548) and #501 (F550) */}
+      <p>This version stops <code>compileComponent</code> from running code in the source it compiles, lets runtime components place React islands that mount in the browser, and adds an opt-in way to keep exposed modules from changing the chunks of unrelated components. If you pass sources you do not fully trust to <code>compileComponent</code>, upgrade.</p>
+
+      <h3>Security</h3>
+      <ul>
+        {/* source: PR #501 (F550); packages/brust/src/compile/index.ts (checkMacros, checkImportAttributes, sourceScanner), packages/brust/src/compile/client.ts; packages/brust/test/compile-no-macros.test.ts */}
+        <li>
+          <strong><code>compileComponent</code> no longer runs code from the source it compiles (#501).</strong> A source that imported a Bun macro (<code>{'import { x } from "…" with { type: "macro" }'}</code>) had that macro function run on the server while the source was scanned or bundled, even when the result was <code>ok: false</code>. Every scan and bundle step on the compile path now runs with macros disabled, and a macro import is refused first, as <code>runtime-macro</code> with its position, before the compiler or any bundle sees the source. Any other import attribute (<code>{'with { type: "json" }'}</code>), on an import, a re-export or a dynamic <code>import()</code>, is refused as <code>runtime-import</code>. You are affected only if your app passes <code>compileComponent</code> a source it does not fully trust. Builds are not affected: they read only your app&rsquo;s own source and installed packages.
+        </li>
+      </ul>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #500 (F548) and the ledger follow-up F551 (the known limit); packages/brust/src/build/config.ts (parseIslands), build/compile.ts, build/manifest.ts (runtime.islands); packages/brust/src/compile/index.ts (listedIsland, artifact.islands); crates/brust-core/src/components.rs (register: islands); tests/server/rc-client-islands.chromium.test.ts; the Runtime components docs page, section React islands from your build */}
+        <li>
+          <strong>A runtime component can place a React island from your build; the browser mounts it (#500).</strong> List the export in <code>[build] islands = [&quot;shop/sdk.tsx#Motion&quot;]</code>, and the module must also be in <code>[build] expose</code>. The build compiles each listed export as an island even when no route renders it, with a chunk and a <code>manifest.runtime.islands</code> entry. A listed entry that does not exist or is not a React component fails the build. <code>compileComponent</code> then prints the island&rsquo;s host with the props you pass and nothing inside, adds its id to the artifact&rsquo;s new <code>islands</code> field, and the page loads the build&rsquo;s chunk once however many slots place it. The island is not server-rendered. An artifact that names an island the build does not list is refused at registration; an unlisted React component is refused as before. <strong>Known limit:</strong> a listed component is bundled into its own island chunk together with its exposed module, so in the browser that module has a second instance next to the exposed <code>x-</code> file. A store defined in it is still one store, because stores register by name; any other module-level state is not shared. The <code>expose-isolated-duplicate</code> warning does not report this.
+        </li>
+        {/* source: PR #499 (F549); packages/brust/src/build/bundle.ts (buildClientChunks, exposedUrlPlugin, duplicatedModules), packages/brust/src/build/config.ts (parseExposeIsolated); packages/brust/test/build-expose-isolated.test.ts; tests/server/expose-isolated.chromium.test.ts; the Runtime components docs page, section When an exposed module makes another component heavier */}
+        <li>
+          <strong><code>[build] expose_isolated = true</code> keeps an exposed module from re-chunking an unrelated component (#499).</strong> By default the exposed files and your built components are one bundle, so a module that both a component and an exposed file import is hoisted into a shared chunk, and the component&rsquo;s own chunk shrinks to a stub that loads it. With <code>expose_isolated</code> the exposed files are built first, on their own, and a component imports each by its URL; the component keeps its own copy of whatever else it shares with them, and each exposed module is still one instance. The price is the copy: a module or package that both sides import runs once on each side, so a module that holds state must be exposed or reached only through an exposed module. The build prints one <code>expose-isolated-duplicate</code> warning that names every module it bundled on both sides, and an <code>expose-isolated-no-expose</code> warning if the flag is set with nothing in <code>[build] expose</code>. It is off by default, and changing it changes the build id.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #500 (F548); crates/brust-compiler/src/analyze/passes/recursion.rs (islands_client_only), passes/children.rs (island-client-only); crates/brust-compiler/tests/recursive_static.rs; tests/server/rc-client-islands.chromium.test.ts; the Rendering tiers docs page, the paragraph on client-only islands */}
+        <li>
+          <strong>In a component that renders itself, or that holds a <code>{'<Dynamic>'}</code> slot, a React island with per-row props is now client-only instead of turning the component into React (#500).</strong> Before, such a leaf made the whole component a React island (rules <code>nested-instance</code> and <code>recursion-unsupported</code>), server-rendered whole. Now the component keeps its static or native tier and the page prints the leaf&rsquo;s host with that row&rsquo;s props and nothing inside; the browser mounts it. The build says so with an <code>island-client-only</code> warning. <strong>The leaf is no longer in the server HTML</strong>: if it must be, render the island outside the recursive component, or map over the list in the route component. Plain nested lists and mutual recursion are unchanged.
+        </li>
+        {/* source: PR #500 (F548); packages/brust/src/build/bundle.ts (islandShim: createRoot for an empty host); packages/brust/test/island-shim-commit.test.ts; docs/shadcn-coverage.md */}
+        <li>
+          <strong>A React island whose host arrives empty now mounts instead of hydrating (#500).</strong> The island shim hydrates a host that has server HTML and mounts one that has none with <code>createRoot</code>; one chunk serves both. A page with a server-rendered island behaves as before. In the shadcn coverage report the measured pages that load an island chunk (dropdown-menu, resizable, tabs, tooltip) grew by 1 KB gzip each.
+        </li>
+      </ul>
 
       <h2 id="alpha-49">2.0.0-alpha.49 · 13 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.48: #496 (ledger F547) and #497 (ledger F546) */}
