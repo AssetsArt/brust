@@ -97,11 +97,11 @@ test('fetch (which decodes) gets the same text', async () => {
   expect(await r.text()).toBe(expected)
 })
 
-test('a client that does not offer gzip gets the identity bytes and the app’s own headers', async () => {
+test('a client that does not offer gzip gets the identity bytes, the strong ETag, and Vary: Accept-Encoding all the same', async () => {
   for (const ae of [undefined, 'identity', 'br', 'gzip;q=0']) {
     const r = await raw('/js', ae)
     expect(r.headers.has('content-encoding')).toBe(false)
-    expect(one(r, 'vary')).toBe('Origin')
+    expect(one(r, 'vary')).toBe('Origin, Accept-Encoding')
     expect(one(r, 'etag')).toBe('"v1"')
     expect(r.body.toString()).toBe(expected)
   }
@@ -112,6 +112,7 @@ test('no-transform, a short body, a type that never compresses and an encoded re
     const r = await raw(path, 'gzip')
     expect(r.status).toBe(200)
     expect(one(r, 'content-encoding') ?? 'identity').not.toBe('gzip')
+    expect(one(r, 'vary') ?? '').not.toContain('Accept-Encoding')
     expect(r.body.toString()).toBe(body)
   }
   expect(one(await raw('/js-nt', 'gzip'), 'cache-control')).toBe('private, no-transform')
