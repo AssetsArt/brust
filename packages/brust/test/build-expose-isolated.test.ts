@@ -42,11 +42,12 @@ const toml = (isolated: boolean | string | null) => `[build]\nexpose = ["shop/sd
 
 const build = async (app: string) => {
   const out = tmp()
-  await runBuild({ appRoot: app, entry: 'routes.tsx', outDir: out, log: () => {} })
+  const logs: string[] = []
+  await runBuild({ appRoot: app, entry: 'routes.tsx', outDir: out, log: (l) => logs.push(l) })
   const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))
   const files = readdirSync(join(out, 'client')).map((f) => ({ f, text: readFileSync(join(out, 'client', f), 'utf8') }))
   const comp = Object.values(manifest.components as Record<string, { client: string | null }>).find((c) => c.client !== null)!
-  return { out, manifest, files, counter: readFileSync(join(out, comp.client!), 'utf8'), counterFile: comp.client!.replace(/^client\//, '') }
+  return { out, logs, manifest, files, counter: readFileSync(join(out, comp.client!), 'utf8'), counterFile: comp.client!.replace(/^client\//, '') }
 }
 const holders = (files: { f: string; text: string }[], needle: string) => files.filter(({ text }) => text.includes(needle)).map(({ f }) => f)
 
@@ -123,4 +124,88 @@ test('expose_isolated must be a boolean', async () => {
   await expect(loadBuildConfig(app)).rejects.toMatchObject({ rule: 'config', message: expect.stringMatching(/build\.expose_isolated must be true or false/) })
   expect((await loadBuildConfig(variant({ 'brust.toml': toml(true) }))).exposeIsolated).toBe(true)
   expect((await loadBuildConfig(variant({ 'brust.toml': toml(null) }))).exposeIsolated).toBe(false)
+})
+
+const warnings = (logs: string[], rule: string) => logs.filter((l) => l.startsWith(`[brust] warning ${rule} `))
+
+test('flag on: ONE warning names each module bundled into both builds (a copy in the browser); flag off and no overlap say nothing', async () => {
+  const on = await build(variant({ 'brust.toml': toml(true) }))
+  const w = warnings(on.logs, 'expose-isolated-duplicate')
+  expect(w).toHaveLength(1)
+  expect(w[0]).toContain('lib/heavy.ts')
+  expect(w[0]).not.toContain('shop/sdk.ts') // the exposed module itself is only in the exposed build
+  expect(w[0]).toMatch(/two copies .*must be reached through an exposed module/)
+  expect(on.logs.filter((l) => /error/i.test(l))).toEqual([]) // a warning, never an error
+  expect(warnings((await build(variant({ 'brust.toml': toml(false) }))).logs, 'expose-isolated-duplicate')).toEqual([])
+  const lone = await build(
+    variant({
+      'brust.toml': toml(true),
+      'lib/heavy.ts': null,
+      'shop/sdk.ts': 'export const count = 1\nexport const bump = () => 1\nexport const cart = { count: () => 0 }\nexport const label = () => ""\nexport const instance = 1\nexport default 1\n',
+      'Counter.tsx': "import { useState } from 'react'\nimport { bump } from './shop/sdk'\nexport default function Counter() {\n  const [n, setN] = useState(0)\n  return <button type=\"button\" onClick={() => { setN(n + 1); bump() }}>native {n}</button>\n}\n",
+    }),
+  )
+  expect(warnings(lone.logs, 'expose-isolated-duplicate')).toEqual([])
+})
+
+test('a package both builds bundle is named by its package (not a path), and brust\'s own packages are not listed', async () => {
+  const dir = variant({ 'brust.toml': toml(true) })
+  // A tiny package in the app\'s node_modules that the component and the exposed module both import.
+  mkdirSync(join(dir, 'node_modules/dupe-pkg'), { recursive: true })
+  writeFileSync(join(dir, 'node_modules/dupe-pkg/package.json'), '{"name":"dupe-pkg","version":"1.0.0","main":"index.js"}')
+  writeFileSync(join(dir, 'node_modules/dupe-pkg/index.js'), 'exports.dupe = (n) => "dupe-pkg-marker-" + n\n')
+  writeFileSync(join(dir, 'lib/heavy.ts'), "import { dupe } from 'dupe-pkg'\nexport const HEAVY = 'heavy-marker-'\nexport const heavy = (n: number) => dupe(n) + HEAVY\n")
+  const w = warnings((await build(dir)).logs, 'expose-isolated-duplicate')
+  expect(w).toHaveLength(1)
+  expect(w[0]).toContain('dupe-pkg')
+  expect(w[0]).not.toContain('node_modules')
+  expect(w[0]).not.toContain('@brust/')
+})
+
+test('expose_isolated = true with no `expose` is a build WARNING (not an error, not silent); with `expose` there is none', async () => {
+  const none = await build(variant({ 'brust.toml': '[build]\nexpose_isolated = true\n' }))
+  const w = warnings(none.logs, 'expose-isolated-no-expose')
+  expect(w).toHaveLength(1)
+  expect(w[0]).toContain('expose_isolated')
+  expect(w[0]).toContain('no effect')
+  expect(warnings((await build(variant({ 'brust.toml': toml(true) }))).logs, 'expose-isolated-no-expose')).toEqual([])
+  expect(warnings((await build(variant({ 'brust.toml': toml(false) }))).logs, 'expose-isolated-no-expose')).toEqual([])
+})
+
+// F362 PR2 (projected lists) with the flag on: the module-projection fixture, with `reader.ts` exposed. `reader.ts` is the
+// second importer of `data_shared.ts`, so the probe sees that data module in the client graph (through the exposed entry)
+// and `p_shared` imports its list as written; `data.ts` has no other importer, so `p_import` keeps its list projected.
+test('projection fallbacks stay correct with the flag on: a list the exposed side also loads is imported as written, an unshared one stays projected', async () => {
+  const dir = join(FX, `.tmp-expose-iso-proj-${process.pid}`)
+  made.push(dir)
+  cpSync(join(FX, 'module-projection'), dir, { recursive: true })
+  const run = async (isolated: boolean) => {
+    writeFileSync(join(dir, 'brust.toml'), `[build]\nexpose = ["reader.ts"]\nexpose_isolated = ${isolated}\n`)
+    return build(dir)
+  }
+  const chunkOf = (r: Awaited<ReturnType<typeof build>>, id: string) => {
+    const c = Object.entries(r.manifest.components as Record<string, { client: string | null }>).find(([k, v]) => k.startsWith(`${id}_`) && v.client !== null)
+    return readFileSync(join(r.out, c![1].client!), 'utf8')
+  }
+  for (const isolated of [false, true]) {
+    const r = await run(isolated)
+    const secret = holders(r.files, 'SECRET_A')
+    const shared = chunkOf(r, 'pShared')
+    // The list a second loader (the exposed `reader.ts`) holds reaches the page as written: in `pShared`'s own chunk when
+    // isolated (its copy), in the one chunk it shares with the exposed entry otherwise.
+    expect(secret.length > 0 && (shared.includes('SECRET_A') || secret.some((f) => shared.includes(`./${f}`))), `isolated=${isolated}`).toBe(true)
+    // An unshared list stays projected: neither its own text nor anything it imports carries the unread `secret`.
+    for (const id of ['pImport', 'pRows']) {
+      const text = chunkOf(r, id)
+      expect(text, `isolated=${isolated} ${id}`).not.toContain('SECRET_A')
+      expect(secret.some((f) => text.includes(`./${f}`)), `isolated=${isolated} ${id} imports a holder`).toBe(false)
+    }
+    // No page script carries the unread `other` export of the data module: it is in no client graph at all.
+    expect(r.files.filter(({ text }) => text.includes('SECRET_OTHER'))).toEqual([])
+  }
+  const on = await run(true)
+  // The price, named in the warning: the exposed `reader.ts` and `p_shared` each hold a copy of the data module.
+  expect(warnings(on.logs, 'expose-isolated-duplicate')[0]).toContain('data_shared.ts')
+  expect(chunkOf(on, 'pShared')).toContain('SECRET_A')
+  expect(holders(on.files, 'SECRET_A')).toContain((on.manifest.runtime.exposed['reader.ts'] as string).replace(/^client\//, ''))
 })

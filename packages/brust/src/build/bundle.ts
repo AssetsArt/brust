@@ -265,6 +265,15 @@ function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
 }
 
 const hex = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 10)
+/** `f` resolved (from the working directory) and with symlinks followed, as the bundler names a module. */
+const realPath = (f: string): string => {
+  try {
+    return realpathSync(f)
+  } catch {
+    return resolve(f)
+  }
+}
+
 export const write = (file: string, text: string) => {
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, text)
@@ -278,6 +287,8 @@ async function browserBuild(
   what: string,
   ctx: BrowserCtx,
   config: Omit<Parameters<typeof Bun.build>[0], 'outdir' | 'target' | 'format' | 'naming'> & { splitting?: boolean },
+  /** F549: given, the build also reports the real path of every module it bundled (the metafile's inputs). */
+  inputs?: Set<string>,
 ): Promise<Map<string, string>> {
   const violations: string[] = []
   const fail = () => new BuildError('server-only-in-client', `${what}: ${violations.join('; ')} (server-only code in a browser bundle)`)
@@ -285,6 +296,7 @@ async function browserBuild(
   try {
     res = await Bun.build({
       ...config,
+      ...(inputs ? { metafile: true } : {}),
       plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir, ctx.basePath), ...(config.plugins ?? [])],
       target: 'browser',
       format: 'esm',
@@ -299,6 +311,7 @@ async function browserBuild(
   }
   if (violations.length > 0) throw fail()
   if (!res.success) throw new BuildError('bundle', `${what}: ${res.logs.map(String).join('\n')}`)
+  if (inputs && res.metafile) for (const k of Object.keys(res.metafile.inputs)) inputs.add(realPath(k))
   const outs = await Promise.all(res.outputs.map(async (o) => ({ o, name: basename(o.path), text: await o.text() })))
   const rename = new Map<string, string>()
   for (const { name, text } of outs) {
@@ -403,30 +416,48 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<Runti
  * made from inside `node_modules` are left alone (an exposed file is app code). Registered before `sourceDirPlugin`,
  * which would resolve the specifier to the file. */
 export function exposedUrlPlugin(urls: ReadonlyMap<string, string>, sourceOf: SourceOf): BunPlugin {
-  const real = (f: string) => {
-    try {
-      return realpathSync(f)
-    } catch {
-      return resolve(f)
-    }
-  }
   const NM = `${sep}node_modules${sep}`
+  // One answer per (importer directory, specifier): a component's chunk repeats the same imports many times over.
+  const memo = new Map<string, string | null>()
   return {
     name: 'brust-exposed-url',
     setup(b) {
       b.onResolve({ filter: /.*/ }, (a) => {
         if (a.importer === '' || a.importer.includes(NM)) return undefined
-        let file: string
-        try {
-          file = real(Bun.resolveSync(a.path, dirname(sourceOf.get(a.importer) ?? a.importer)))
-        } catch {
-          return undefined // a virtual or external specifier: not a file
+        const dir = dirname(sourceOf.get(a.importer) ?? a.importer)
+        const key = `${dir}\0${a.path}`
+        let url = memo.get(key)
+        if (url === undefined) {
+          try {
+            url = urls.get(realPath(Bun.resolveSync(a.path, dir))) ?? null
+          } catch {
+            url = null // a virtual or external specifier: not a file
+          }
+          memo.set(key, url)
         }
-        const url = urls.get(file)
-        return url === undefined ? undefined : { path: url, external: true }
+        return url === null ? undefined : { path: url, external: true }
       })
     },
   }
+}
+
+/** F549: the modules bundled into BOTH the exposed build and the component build of an isolated build: each a copy in
+ * the browser. A path inside `node_modules` is named by its package; a brust package and brust's staged files are not
+ * the app's to act on, so they are left out. */
+export function duplicatedModules(a: ReadonlySet<string>, b: ReadonlySet<string>, appRoot: string, dist: string): string[] {
+  const stage = join(dist, '.stage') + sep
+  const names = new Set<string>()
+  for (const f of a) {
+    if (!b.has(f) || f.startsWith(stage)) continue
+    const nm = f.lastIndexOf(`${sep}node_modules${sep}`)
+    if (nm >= 0) {
+      const parts = f.slice(nm + 14).split(sep)
+      const pkg = parts[0]!.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!
+      if (!pkg.startsWith('@brust/')) names.add(pkg)
+    } else if (inside(appRoot, f)) names.add(relPosix(appRoot, f))
+    else names.add(f)
+  }
+  return [...names]
 }
 
 /** One entry chunk per component with client JS (`<id>-<hex>.js`), split: a module two chunks
@@ -442,6 +473,8 @@ export async function buildClientChunks(
   exposed: ExposedModule[] = [],
   /** F549 `[build] expose_isolated`: the exposed modules are built first, in a bundle of their own, and the component chunks import them by URL instead of sharing a chunk with them. */
   isolated = false,
+  /** Build warnings (`[brust] warning …`). */
+  log: (line: string) => void = () => {},
 ): Promise<{ chunks: Map<string, string>; exposed: Record<string, string> }> {
   const entrypoints: string[] = []
   const shared = new Map<string, string>()
@@ -481,7 +514,8 @@ export async function buildClientChunks(
     // F549: the exposed entries are the only entries of their own build (splitting stays inside it), and the component
     // build below treats each of their files as an external URL, so a module both sides import is copied into the
     // component's chunk, not hoisted into a chunk of its own.
-    const xs = await browserBuild(dist, 'exposed modules', ctx, { entrypoints: wrappers, splitting: true, external: [`${brustRoot(ctx)}/*`], plugins })
+    const exposedInputs = new Set<string>()
+    const xs = await browserBuild(dist, 'exposed modules', ctx, { entrypoints: wrappers, splitting: true, external: [`${brustRoot(ctx)}/*`], plugins }, exposedInputs)
     for (const m of exposed) {
       const f = xs.get(`x-${m.stem}`)
       if (f === undefined) throw new BuildError('expose', `build.expose ${m.rel}: the bundler wrote no entry for it`)
@@ -489,12 +523,17 @@ export async function buildClientChunks(
       urls.set(m.abs, `${brustRoot(ctx)}/${f}`)
     }
     if (entrypoints.length === 0) return { chunks: new Map(), exposed: files }
-    const built = await browserBuild(dist, 'client chunks', ctx, {
-      entrypoints,
-      splitting: true,
-      external: [`${brustRoot(ctx)}/*`],
-      plugins: [exposedUrlPlugin(urls, ctx.sourceOf), ...plugins],
-    })
+    const chunkInputs = new Set<string>()
+    const built = await browserBuild(
+      dist,
+      'client chunks',
+      ctx,
+      { entrypoints, splitting: true, external: [`${brustRoot(ctx)}/*`], plugins: [exposedUrlPlugin(urls, ctx.sourceOf), ...plugins] },
+      chunkInputs,
+    )
+    const twice = duplicatedModules(exposedInputs, chunkInputs, ctx.appRoot, dist)
+    if (twice.length > 0)
+      log(`[brust] warning expose-isolated-duplicate ${namedCapped(twice, 8)}: bundled into both the exposed modules and the component chunks, so the page holds two copies of ${twice.length > 1 ? 'each' : 'it'}. A module holding state (a store, a cache, a singleton) must be reached through an exposed module, or be exposed itself`)
     return { chunks: built, exposed: files }
   }
   entrypoints.push(...wrappers)

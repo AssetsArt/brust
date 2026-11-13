@@ -141,6 +141,7 @@ export async function runBuild(opts: {
 
   // Everything that can fail on the app's own input runs before a byte is written.
   exposedModules(appRoot, expose) // F517: an exposed file with no export is refused here, not after the compile
+  if (exposeIsolated && expose.length === 0) opts.log(`[brust] warning expose-isolated-no-expose [build] expose_isolated = true has no effect: [build] expose lists no module`)
   const { routes, componentFile, componentIssue, appModules, appGraph } = await scanRoutes(entry, appRoot, sourceRoots)
   let leaves: ReturnType<typeof validateRoutes>
   try {
@@ -372,7 +373,7 @@ async function buildInto(
 
   // F517: the modules `[build] expose` shares with runtime components are entries of the native-chunk build.
   const exposedMods = exposedModules(appRoot, o.expose)
-  const client = await buildClientChunks(out, compiled, ctx, runtimeUrls, exposedMods, o.exposeIsolated)
+  const client = await buildClientChunks(out, compiled, ctx, runtimeUrls, exposedMods, o.exposeIsolated, o.log)
   const chunks = new Map([...client.chunks, ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writersFor))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store }, nav: runtime.nav }, chunks })
   // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.

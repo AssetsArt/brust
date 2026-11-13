@@ -179,10 +179,10 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
         </li>
         <li>
           <strong>The price is a copy.</strong> A module or package that both sides import now runs once on each side, so it is in the page twice. A module that holds state (a store, a cache, a singleton) must therefore be exposed, or be reached only through an
-          exposed module; otherwise the two sides each have their own state. A store defined in an exposed module is not affected.
+          exposed module; otherwise the two sides each have their own state. A store defined in an exposed module is not affected. The build prints one warning that names every module it bundled on both sides (a package by its name), so you can check each against this rule.
         </li>
         <li>
-          It is off by default, has no effect without <code>expose</code>, and changes the build id like any change to the built files.
+          It is off by default and changes the build id like any change to the built files. Set without <code>expose</code> it does nothing, and the build warns.
         </li>
       </ul>
       <CodeBlock code={blocks.manifest.code} lang={blocks.manifest.lang} file={blocks.manifest.file} html={blocks.manifest.html} />
