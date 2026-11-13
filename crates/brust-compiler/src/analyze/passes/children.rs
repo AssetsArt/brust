@@ -7388,14 +7388,25 @@ impl Walker<'_, '_> {
                             client_only: true,
                         };
                     }
-                    self.diagnostics.push(Diagnostic::warning(
+                    let warning = Diagnostic::warning(
                         "island-client-only",
                         format!(
                             "the React island <{name}> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot render per row: it is not server-rendered here, the browser mounts it from its props"
                         ),
                         *loc,
                         "map over the list in the route component to have it server-rendered, or keep it client-only",
-                    ));
+                    );
+                    // `run_passes` puts this finding back unless the component renders itself or holds a `<Dynamic>`.
+                    let finding = island_err(
+                        "nested-instance",
+                        format!(
+                            "the React island <{name}> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot feed per row"
+                        ),
+                        *loc,
+                        "map over the list in the route component, or keep this component interactive with React",
+                    );
+                    self.diagnostics.push(warning.clone());
+                    self.st.client_only_sites.push((warning, finding));
                 }
                 if ok {
                     for (src, _) in &self.lists {

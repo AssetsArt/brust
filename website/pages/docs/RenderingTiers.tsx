@@ -177,9 +177,9 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       </Note>
       {/* source: crates/brust-compiler/src/analyze/passes/children.rs (nested-instance -> island-client-only), recursion.rs (islands_client_only), tests/server/rc-client-islands.chromium.test.ts (F548) */}
       <p>
-        A React island with per-row props in nested lists, in the rows of a component inlined into its callers, or inside a component that renders itself (a tree) cannot be server-rendered row by row. Such an island is <strong>client-only</strong> there: the
-        page prints its host with that row&apos;s props and nothing inside, and the browser mounts it. The component around it keeps its tier (before, it became one React island), and the build says so with an <code>island-client-only</code> warning. Map
-        over the list in the route component when you need the island&apos;s HTML from the server.
+        A React island with per-row props in nested lists, or in the rows of a component inlined into its callers, cannot be server-rendered row by row, so the component around it becomes one React island (<code>nested-instance</code>). Two cases cannot
+        do that: a component that renders itself (a tree, compiled to one template macro) and one that holds a <code>{'<Dynamic>'}</code> slot (React cannot render it). There the island is <strong>client-only</strong> instead: the page prints its
+        host with that row&apos;s props and nothing inside, the browser mounts it, the component keeps its tier, and the build says so with an <code>island-client-only</code> warning.
       </p>
 
       <h2 id="runtime">What the browser loads</h2>

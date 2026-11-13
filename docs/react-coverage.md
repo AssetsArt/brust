@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 62 | 40 | 16 | 6 | 0 | 0 | 0 | 0 |
-| B Composition | 245 | 130 | 20 | 95 | 0 | 0 | 0 | 0 |
+| B Composition | 245 | 129 | 20 | 96 | 0 | 0 | 0 | 0 |
 | C Hooks | 242 | 79 | 77 | 86 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 76 | 33 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 658 | 295 | 129 | 230 | 3 | 1 | 0 | 0 |
+| **Total** | 658 | 294 | 129 | 231 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -261,8 +261,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-fed-child-nested-lists | a child with a job of its own inside two nested lists over props | react | react | ssr | ok | 4.5 | fallback:nested-instance | F164 R34.97: the server feeds one list level per instance; nested lists were the nested-instance build error of the manifest, now a fallback |
 | b-fed-child-prop-is-a-job-output | a prop of a child with a job of its own is computed by a call (className={cn(…)}) | static | static | precompute | ok | 0 | — | F164 R34.96 (PR 2b): the value is another job's output, which the single-phase planner cannot bind (was the instance-prop-path build error, then the PR 1 fallback); the child's job now runs INSIDE the page's own job (fused) |
 | b-fed-children-repeated-by-list | children with a job of their own passed to a component that repeats them in a list | react | react | ssr | ok | 4.5 | fallback:nested-instance | F164 R34.97 (review r1 D): slot content is printed once and pasted per row, so a job inside it would repeat; it was the lowering nested-instance error |
-| b-island-per-row-in-two-lists | a React island with a per-row prop inside two lists | static | static | ssr | ok | 4.5 | warning:island-client-only | F164 R34.97 (review r1 E): the server hands an island job one array indexed by ONE list; it was the lowering nested-instance error. F548 R4: the island is client-only there (island-client-only warning: an empty host with the row props, the browser mounts it) and the page stays static; it was React (nested-instance) |
-| b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | 0 | ok | 4.5 | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job; it was the lowering nested-instance error, then the wrapper was the island. F548 R4: the island is client-only in the wrapper rows (island-client-only), the page runs no job |
+| b-island-per-row-in-two-lists | a React island with a per-row prop inside two lists | react | react | ssr | ok | 4.5 | fallback:nested-instance | F164 R34.97 (review r1 E): the server hands an island job one array indexed by ONE list; it was the lowering nested-instance error |
+| b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | ssr | ok | 4.5 | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job, so the wrapper is the island; it was the lowering nested-instance error |
 | b-fed-child-in-static-wrapper | a static wrapper (no job of its own) around a child with a job, used twice with a prop and without | static | static | 0 | ok | 0 | — | F164 R34.96 (static-wrapper case): the caller feeds the wrapper's child (records re-based onto it, numbered in template order); the second use passes no tone, which the server feeds as undefined like React |
 | b-fed-child-through-repeater-chain | a useId child passed through a component that hands its children to a repeater | react | react | ssr | ok | 4.5 | fallback:nested-instance, info:build-eval-instance | F169: the repeat check is transitive, so the same id is not printed in every row |
 | b-ref-nothing-reads | a useRef only handed to a component's ref prop (Radix ToggleGroupItem's ref) | native | native | 0 | ok | 5.1 | — | F329: nothing reads the ref, so the call site drops it and the forwardRef child renders (before: forwardref-ref island) |

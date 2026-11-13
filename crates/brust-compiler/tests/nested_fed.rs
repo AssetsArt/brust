@@ -206,51 +206,31 @@ fn children_with_a_job_passed_to_a_component_that_repeats_them_fall_back() {
     );
 }
 
-/// F548 (R4): a React island with per-row props in two lists is not server-rendered there (the server cannot feed its
-/// job per row): its host prints the row's props with nothing inside, the browser mounts it, and the page keeps its tier
-/// (it used to become React with `nested-instance`).
 #[test]
-fn an_island_with_a_per_row_prop_in_two_lists_is_client_only() {
-    let (t, _, jinja) = lower_full(
+fn an_island_with_a_per_row_prop_in_two_lists_falls_back() {
+    let t = lower(
         "import Tip from './Tip'\nexport default function P(props: { rows: { cols: string[] }[] }) { return <div>{props.rows.map((r, i) => <p key={i}>{r.cols.map((c) => <Tip key={c} t={c} />)}</p>)}</div> }",
     );
     let p = named(&t, "p_");
-    assert!(!is_react(p), "{:?}", p.tier);
+    assert!(is_react(p), "{:?}", p.tier);
     assert!(
-        !p.fallbacks.contains(&"nested-instance".to_string()),
+        p.fallbacks.contains(&"nested-instance".to_string()),
         "{:?}",
         p.fallbacks
     );
-    assert!(
-        p.warnings.contains(&"island-client-only".to_string()),
-        "{:?}",
-        p.warnings
-    );
-    let tip = named(&t, "tip_");
-    let host = format!(
-        "data-id=\"{}\" x-props='{{{{ {{\"t\": c}} | json_attr }}}}'></brust-island>",
-        tip.id
-    );
-    assert!(jinja.contains(&host), "{host}\n{jinja}");
-    assert!(!jinja.contains("_ssr_tip"), "{jinja}");
 }
 
 #[test]
-fn an_island_mapped_inside_an_inlined_component_is_client_only() {
+fn an_island_mapped_inside_an_inlined_component_falls_back() {
     let t = lower(
         "import WrapTip from './WrapTip'\nexport default function P(props: { rows: string[] }) { return <WrapTip rows={props.rows} /> }",
     );
     let w = named(&t, "wrapTip_");
-    assert!(!is_react(w), "{:?}", w.tier);
+    assert!(is_react(w), "{:?}", w.tier);
     assert!(
-        !w.fallbacks.contains(&"nested-instance".to_string()),
+        w.fallbacks.contains(&"nested-instance".to_string()),
         "{:?}",
         w.fallbacks
-    );
-    assert!(
-        w.warnings.contains(&"island-client-only".to_string()),
-        "{:?}",
-        w.warnings
     );
 }
 
@@ -454,4 +434,43 @@ fn a_static_wrapper_with_a_fed_child_still_compiles_next_to_the_native_one() {
         "import W from './Wrapper'\nexport default function P() { return <div><W tone=\"a\" /></div> }",
     );
     assert!(!is_react(named(&t, "p_")), "{:?}", named(&t, "p_").tier);
+}
+
+/// F548 (R4, narrowed): the same island in two lists, in a page that holds a `<Dynamic>` (which a React component cannot
+/// render): the island is client-only there (its host prints the row's props, the browser mounts it) and the page keeps
+/// its tier. Without the `<Dynamic>` it is the fallback above (the page becomes React, the island is SSR'd).
+#[test]
+fn an_island_with_a_per_row_prop_in_two_lists_next_to_a_dynamic_slot_is_client_only() {
+    let (t, _, jinja) = lower_full(
+        "import { Dynamic } from '@brust/core'\nimport Tip from './Tip'\nexport default function P(props: { rows: { cols: string[] }[] }) { return <div><Dynamic component=\"x\" />{props.rows.map((r, i) => <p key={i}>{r.cols.map((c) => <Tip key={c} t={c} />)}</p>)}</div> }",
+    );
+    let p = named(&t, "p_");
+    assert!(!is_react(p), "{:?}", p.tier);
+    assert!(
+        !p.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        p.fallbacks
+    );
+    assert!(
+        p.warnings.contains(&"island-client-only".to_string()),
+        "{:?}",
+        p.warnings
+    );
+    let tip = named(&t, "tip_");
+    assert!(
+        jinja.contains(&format!("data-id=\"{}\" x-props='", tip.id)),
+        "{jinja}"
+    );
+    assert!(!jinja.contains("_ssr_tip"), "{jinja}");
+    // and without it, today's rule: the page is the island, no client-only warning left behind
+    let t = lower(
+        "import Tip from './Tip'\nexport default function P(props: { rows: { cols: string[] }[] }) { return <div>{props.rows.map((r, i) => <p key={i}>{r.cols.map((c) => <Tip key={c} t={c} />)}</p>)}</div> }",
+    );
+    let p = named(&t, "p_");
+    assert!(
+        is_react(p) && !p.warnings.contains(&"island-client-only".to_string()),
+        "{:?} {:?}",
+        p.tier,
+        p.warnings
+    );
 }

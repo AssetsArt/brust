@@ -91,6 +91,15 @@
       "libraryComponents": 0
     },
     {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 5,
+      "analysisOnlyRows": 0,
+      "appComponents": 5,
+      "libraryComponents": 1
+    },
+    {
       "blocker": "fallback:hook-unsupported",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -116,15 +125,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 4,
       "libraryComponents": 14
-    },
-    {
-      "blocker": "fallback:nested-instance",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
-      "analysisOnlyRows": 0,
-      "appComponents": 4,
-      "libraryComponents": 1
     },
     {
       "blocker": "fallback:control-flow",
@@ -1376,6 +1376,7 @@
         "external-component",
         "island-children",
         "island-prop",
+        "nested-instance",
         "spread-props"
       ]
     },
