@@ -265,7 +265,7 @@ export default function Actions({ blocks, candidates }: ActionsData) {
           <code>form_post</code> to the same path stays an action. A <code>GET</code> action shadowed this way is named in a boot warning. The build refuses a route equal to the prefix and a <code>{'{*rest}'}</code> route under it.
         </li>
         <li>
-          Cross-site requests are rejected by default (<code>cross_site = "reject"</code>). Behind a proxy, pass <code>Host</code> through or set <code>X-Forwarded-Host</code>, or same-origin POSTs get a 403.
+          Cross-site requests are rejected by default (<code>cross_site = "reject"</code>). Behind a proxy, pass <code>Host</code> through or set <code>X-Forwarded-Host</code>, or same-origin requests other than <code>GET</code> get a 403.
         </li>
       </ul>
       <Note>
@@ -290,6 +290,12 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         </li>
         <li>Under <code>brust dev</code> an upload of any allowed size passes through the dev server as it arrives.</li>
       </ul>
+
+      <h3 id="compression">Compression</h3>
+      {/* source: crates/brust-core/src/actions.rs (gzip_reply, F547); crates/brust-core/src/compress.rs (accepts_gzip, is_compressible) */}
+      <p>
+        A reply of 1 KiB or more with a text, JSON, JavaScript, XML or SVG content type is gzip-compressed for a client that accepts gzip, as pages are. Such a reply carries <code>Vary: Accept-Encoding</code> whether or not the client accepts gzip. A strong <code>ETag</code> is dropped from a compressed reply because the bytes change; a weak one stays. A reply that already has a <code>Content-Encoding</code> is left as it is. Compression can leak a secret when one reply holds both a secret token (a CSRF token, say) and input the request reflected back: an attacker who controls the reflected part can learn the token from the compressed size. The cross-site guard refuses a cross-site request other than <code>GET</code>, <code>HEAD</code> or <code>OPTIONS</code> from an origin not listed in <code>[cors]</code>, so the replies most exposed are those of <code>GET</code> actions (which pass the guard) and of actions on a server with <code>cross_site = "allow"</code>. Set <code>Cache-Control: no-transform</code> on such a reply to opt out.
+      </p>
 
       <Step n={6} id="separate" title="Actions on their own origin" />
       {/* source: docs/actions.md §11 (L16): pages and actions as two deployments on two origins */}
@@ -370,9 +376,9 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         <li>
           Every cross-origin call is preflighted, GET included: the client sends JSON. Rust answers the preflight of a listed origin with a 204 and the CORS headers. Any other origin gets no CORS headers, and the browser never sends the call.
         </li>
-        {/* source: crates/brust-core/src/actions.rs:112-147 and cors.rs:101-107 (a cross-site POST passes only if its Origin is listed by name; "*" never counts) */}
+        {/* source: crates/brust-core/src/actions.rs:112-147 and cors.rs:101-107 (a cross-site request other than GET, HEAD or OPTIONS passes only if its Origin is listed by name; "*" never counts) */}
         <li>
-          A cross-site POST from an origin not listed by name in <code>[cors] origins</code> is a <code>403 CrossSiteRejected</code>, before the body is read. A wildcard <code>"*"</code> does not count; <code>cross_site = "allow"</code> turns the guard off.
+          A cross-site request other than <code>GET</code>, <code>HEAD</code> or <code>OPTIONS</code> (a <code>POST</code>, say) from an origin not listed by name in <code>[cors] origins</code> is a <code>403 CrossSiteRejected</code>, before the body is read. A wildcard <code>"*"</code> does not count; <code>cross_site = "allow"</code> turns the guard off.
         </li>
         {/* source: crates/brust-core/src/config.rs:46-58 (credentials with a wildcard is a boot error) and docs/actions.md §11 (credentials include needs the exact origin and credentials = true) */}
         <li>

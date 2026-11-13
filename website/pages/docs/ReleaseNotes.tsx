@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-49', title: '2.0.0-alpha.49' },
       { id: 'alpha-48', title: '2.0.0-alpha.48' },
       { id: 'alpha-47', title: '2.0.0-alpha.47' },
       { id: 'alpha-46', title: '2.0.0-alpha.46' },
@@ -71,6 +72,42 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-49">2.0.0-alpha.49 · 13 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.48: #496 (ledger F547) and #497 (ledger F546) */}
+      <p>This version lets an app render its own runtime-component islands, and compresses buffered action replies for clients that accept gzip.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #497 (F546); crates/brust-core/src/components.rs (register, island_slot); packages/brust/src/routes.ts (the island artifact type); the Runtime components docs page, section Islands you render yourself */}
+        <li>
+          <strong>A runtime component can be an island that your app builds and renders itself (#497).</strong> <code>components.resolve</code> may return <code>{'{ v: 1, build, id, tier: "island", client }'}</code> with no <code>jinja</code>. <code>client</code> is your own ES module: it pushes a hydrate function onto <code>globalThis.__brustIslands</code>. The <code>{'<Dynamic>'}</code> slot prints the same <code>&lt;brust-island&gt;</code> host a built React island gets, so hydration, <code>data-hydrated</code>, <code>data-committed</code> and disposal on SPA navigation work as they do for built islands. <code>compileComponent</code> never produces an island artifact; you build it yourself.
+        </li>
+        {/* source: PR #497 (F546); crates/brust-core/src/components.rs (HtmlCache, MAX_SLOT_OUTPUT_BYTES, HTML_CACHE_BYTES); packages/brust/src/handlers.ts (resolveComponents: renders); crates/brust-core/tests/runtime_components.rs */}
+        <li>
+          <strong>The new optional <code>components.render(ref, props, {'{ build, page: { id, total } }'})</code> returns the HTML of an island&rsquo;s slot (#497).</strong> It is placed inside the host as you give it, so escape what you put in it. A page render makes at most one extra worker call, in which <code>render</code> runs once per distinct (ref, props), in parallel; <code>page.id</code> is the same for every call of one page render and <code>page.total</code> is the number of calls in the batch. The HTML is cached per (ref, artifact, props), within <code>[components] cache_entries</code> and 64 MiB, and again in the page cache, so <strong><code>render</code> must depend only on <code>(ref, props)</code></strong>: reading a cookie, the user or the time would hand one visitor&rsquo;s output to the next. Returning <code>null</code> (or having no <code>render</code>) prints an empty host. A throw, an answer over 4 MiB or no answer prints an empty host and keeps that page out of the cache. The HTML of one page counts against <code>[server] max_loader_response_bytes</code>.
+        </li>
+        {/* source: PR #497 (F546); crates/brust-core/src/components.rs (chunk, MAX_CLIENT_BYTES); the Runtime components docs page, section Islands you render yourself */}
+        <li>
+          <strong>The island&rsquo;s <code>client</code> module is served from its own URL, and its <code>id</code> must change whenever its code does (#497).</strong> It is served at <code>/_brust/rc/&lt;build&gt;/&lt;ref&gt;/&lt;id&gt;.js</code>, at most 256 KiB, with <code>Cache-Control: immutable</code> and gzip for clients that accept it. It may import other same-origin modules by absolute path; brust neither bundles nor rewrites them, and <code>[csp]</code> still blocks a cross-origin import. The page gets the island runtime even when it is otherwise all static.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #496 (F547); crates/brust-core/src/actions.rs (gzip_reply); crates/brust-core/src/compress.rs; tests/server/action-gzip.test.ts; the Actions docs page, section Compression */}
+        <li>
+          <strong>Buffered action replies are now gzip-compressed for clients that accept gzip (#496).</strong> A reply is compressed when it is 1 KiB or more, has a text, JSON, JavaScript, XML or SVG content type, has no <code>Content-Encoding</code>, <code>Content-Range</code> or <code>Cache-Control: no-transform</code>, is not a 204, 206 or 304, and gzip makes it smaller. It gets <code>Content-Encoding: gzip</code>; a strong <code>ETag</code> is dropped because the bytes change, and a weak one stays. Every reply that passes the rules except the client&rsquo;s <code>Accept-Encoding</code> carries <code>Vary: Accept-Encoding</code>. Streamed replies, built-in replies and 101 upgrades are not touched. <strong>If one reply holds a secret token (a CSRF token, say) next to input the request reflected back, set <code>Cache-Control: no-transform</code> on it</strong>: compression can let a party who controls the reflected part learn the secret from the size. The replies most exposed are those of <code>GET</code> actions and of servers with <code>cross_site = &quot;allow&quot;</code>.
+        </li>
+        {/* source: PR #497 (F546); crates/brust-core/src/components.rs (register: the same-ref refusal) */}
+        <li>
+          <strong>A runtime component ref that registers again with the same <code>id</code> but different client code is now refused, for every artifact that has a client (#497).</strong> The chunk URL is cached for good, so new code under an old id would be served stale. Change the <code>id</code> whenever the client changes; a content hash works.
+        </li>
+        {/* source: PR #496 (F547) review note; crates/brust-core/src/actions.rs (cross_site_verdict); the Actions docs page, sections Errors and limits and Calling across origins */}
+        <li>
+          <strong>The Actions docs now say what the cross-site guard refuses: every cross-site request other than <code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code> (#496).</strong> They said <code>POST</code>. The behaviour is unchanged.
+        </li>
+      </ul>
 
       <h2 id="alpha-48">2.0.0-alpha.48 · 13 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.47: #493 (ledger F545) */}

@@ -1,0 +1,3 @@
+# F547: an actions prefix; the reply is what the test reads off the wire.
+[actions]
+prefix = "/api"

@@ -941,7 +941,7 @@ const HTML: &str = "text/html; charset=utf-8";
 const PAGE_GZIP_MIN: usize = 16 * 1024;
 /// Page gzip level: 1 — a dynamic page is compressed per request (a cached
 /// one once per entry), and level 6 costs ~4x the time for ~25 % fewer bytes.
-const PAGE_GZIP_LEVEL: u32 = 1;
+pub(crate) const PAGE_GZIP_LEVEL: u32 = 1;
 
 /// The next render's buffer capacity after a document of `len` bytes: the
 /// length plus 1/16 slack and 1 KiB, so a document a few bytes longer than the
