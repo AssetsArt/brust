@@ -3,6 +3,7 @@
 //   server_only = ["lib/server", "@acme/db"]   # import prefixes / app-root-relative paths
 //   source_roots = ["../shared"]                # F256: directories besides the app a relative import may reach (monorepo)
 //   expose = ["shop/sdk.ts"]                    # F517: modules a runtime component imports; each gets its own browser file
+//   expose_isolated = true                      # F549: build them apart, so a built component keeps its own chunk (default false)
 //   islands = ["shop/sdk.tsx#Motion"]           # F548: exports of exposed modules built as islands a runtime component may place (client-only)
 // `server_only` is the app config `serverOnly` of the compiler spec (§8.2): the compiler refuses
 // such an import in client code, and every browser bundle refuses to include it.
@@ -139,6 +140,8 @@ export interface BuildConfig {
   sourceRoots: string[]
   /** `[build] expose` (F517): app modules a runtime component shares with the built app, as `/`-separated paths relative to the app root (`shop/sdk.ts`, or `../shared/sdk.ts` under a source root), sorted. Empty = none. */
   expose: string[]
+  /** `[build] expose_isolated` (F549): the exposed modules are built in their own bundle and a built component imports them by URL, so a module both import is no longer hoisted into a shared chunk (it is copied instead). `false` = one bundle, one instance of everything shared (the default). No effect without `expose`. */
+  exposeIsolated: boolean
   /** `[build] islands` (F548): React components of exposed modules a runtime component may place as client-only
    * islands, `path#Export` (the path as in `expose`), sorted. Empty = none. */
   islands: string[]
@@ -539,10 +542,17 @@ function parseTrailingSlash(file: string, server: unknown): TrailingSlash {
   return r.value
 }
 
+/** F549 `[build] expose_isolated`: a boolean; absent = `false`. */
+export function parseExposeIsolated(file: string, v: unknown): boolean {
+  if (v === undefined) return false
+  if (typeof v !== 'boolean') throw new BuildError('config', `${file}: build.expose_isolated must be true or false`)
+  return v
+}
+
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], islands: [], basePath: '', trailingSlash: 'strict' }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict' }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -557,14 +567,15 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   const cache = await parseCache(file, appRoot, root.cache)
   const cssGlobal = parseCss(file, root.css)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], islands: [], basePath, trailingSlash }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
   const expose = parseExpose(file, appRoot, sourceRoots, (build as Record<string, unknown>).expose)
   const islands = parseIslands(file, appRoot, expose, (build as Record<string, unknown>).islands)
+  const exposeIsolated = parseExposeIsolated(file, (build as Record<string, unknown>).expose_isolated)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, islands, basePath, trailingSlash }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, islands, basePath, trailingSlash }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash }
 }
