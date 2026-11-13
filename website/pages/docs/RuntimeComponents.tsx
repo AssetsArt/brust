@@ -288,7 +288,18 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
           </tr>
           <tr>
             <td><code>runtime-import</code></td>
-            <td>An import that is not an exposed module, <code>react</code> or <code>@brust/core/store/react</code>. A private copy of an app module would split its state.</td>
+            <td>
+              An import that is not an exposed module, <code>react</code> or <code>@brust/core/store/react</code>. A private copy of an app module would split its state. An import with an import attribute (<code>{'with { type: "json" }'}</code>) is
+              refused too: an attribute changes how the module is loaded.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>runtime-macro</code>
+            </td>
+            <td>
+              A macro import (<code>{'with { type: "macro" }'}</code>). A Bun macro runs its code on the server when the source is parsed, so it is refused before anything else looks at the source: compiling never runs code of a runtime component.
+            </td>
           </tr>
           <tr>
             <td><code>runtime-store</code></td>
