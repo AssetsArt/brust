@@ -291,6 +291,12 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         <li>Under <code>brust dev</code> an upload of any allowed size passes through the dev server as it arrives.</li>
       </ul>
 
+      <h3 id="compression">Compression</h3>
+      {/* source: crates/brust-core/src/actions.rs (gzip_reply, F547); crates/brust-core/src/compress.rs (accepts_gzip, is_compressible) */}
+      <p>
+        A reply of 1 KiB or more with a text, JSON, JavaScript, XML or SVG content type is gzip-compressed for a client that accepts gzip, as pages are, and carries <code>Vary: Accept-Encoding</code>; a strong <code>ETag</code> is dropped because the bytes change, a weak one stays. A reply that already has a <code>Content-Encoding</code> is left as it is. A reply that mixes a secret with input it reflects back should set <code>Cache-Control: no-transform</code> to opt out.
+      </p>
+
       <Step n={6} id="separate" title="Actions on their own origin" />
       {/* source: docs/actions.md §11 (L16): pages and actions as two deployments on two origins */}
       <p>
