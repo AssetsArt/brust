@@ -376,6 +376,13 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
           client mounts into, and the page is cached as usual. A throw, or more than 4 MiB of HTML, prints an empty host and the page is not cached.
         </li>
         <li>
+          <strong>
+            <code>render</code> must depend only on <code>(ref, props)</code>.
+          </strong>{' '}
+          Do not read cookies, the user, the time or anything else of the request: the HTML cache and the page cache are shared by every visitor, so what one user&apos;s render returned is what the next user gets. Pass what varies as props, or render that
+          part in the client.
+        </li>
+        <li>
           All the HTML one page asks for comes back in that one worker reply, which is limited by <code>[server] max_loader_response_bytes</code> (default 8 MiB, up to 64 MiB). A page whose batch is bigger loses every island of that batch: empty hosts, and
           the page is not cached. Raise the limit, or keep the per-page HTML small (<code>page.total</code> helps you budget it).
         </li>
