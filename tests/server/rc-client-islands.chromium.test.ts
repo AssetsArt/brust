@@ -4,6 +4,7 @@
 //   chunk is linked once, each host mounts (createRoot) with its props, data-committed is set, it is interactive;
 // - a self-recursive tree whose leaf is a React island: the tree HTML is server-rendered (a template macro), each leaf
 //   host is empty with its row's props, and every leaf mounts in the browser.
+// - an island whose server render is null (an empty host) and whose client renders content: one mount, data-committed.
 // Run alone: `bun test --timeout 180000 tests/server/rc-client-islands.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
@@ -41,6 +42,8 @@ afterAll(async () => {
   if ((await Promise.race([proc?.exited, Bun.sleep(5000).then(() => undefined)])) === undefined) { proc.kill('SIGKILL'); await proc.exited }
   for (const d of ['dist', '.brust']) rmSync(join(app, d), { recursive: true, force: true })
 })
+
+declare global { interface Window { __lateMounts?: number } }
 
 const hosts = (html: string, idPrefix: string) =>
   [...html.matchAll(new RegExp(`<brust-island style="display:contents" data-id="(${idPrefix}_[0-9a-f]{8})" x-props='([^']*)'>(.*?)</brust-island>`, 'g'))].map((m) => ({ id: m[1]!, props: m[2]!.replaceAll('&quot;', '"'), inner: m[3]! }))
@@ -82,6 +85,22 @@ test('a self-recursive tree stays server HTML; its React leaves are client-only 
   expect(await page.locator('[data-testid=leaf]').allTextContents()).toEqual(['A', 'G1', 'G2X'])
   await page.locator('[data-node=g2x] [data-testid=leaf]').click()
   await page.waitForFunction(() => document.querySelector('[data-node=g2x] [data-testid=leaf]')?.getAttribute('data-on') === '1')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('an island whose SSR renders null mounts once on its empty host and commits', async () => {
+  const html = await (await fetch(`${base}/late`)).text()
+  const h = hosts(html, 'late')
+  expect(h.map((x) => [JSON.parse(x.props), x.inner])).toEqual([[{ label: 'hello' }, '']])
+  const { page, errors } = await open('/late')
+  await page.waitForFunction(() => document.querySelector('brust-island[data-committed="1"]') !== null, undefined, { timeout: 15_000 })
+  await page.waitForSelector('[data-testid=late]')
+  expect(await page.textContent('[data-testid=late]')).toBe('hello')
+  await Bun.sleep(300) // a second mount would run the effect again
+  expect(await page.evaluate(() => window.__lateMounts)).toBe(1)
+  expect(await page.locator('[data-testid=late]').count()).toBe(1)
+  expect(await page.evaluate(() => document.querySelectorAll('brust-island[data-hydrated="1"]').length)).toBe(1)
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

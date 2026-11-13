@@ -1,5 +1,6 @@
 import { defineRoutes, type RuntimeComponents } from '@brust/core'
 import { compileComponent } from '@brust/core/compile'
+import LatePage from './LatePage'
 import List from './List'
 import Menu from './Menu'
 import Root from './Root'
@@ -47,6 +48,7 @@ export const routes = defineRoutes([
         Component: List,
         loader: () => ({ items: [{ key: 'r1', label: 'one' }, { key: 'r2', label: 'two' }, { key: 'r3', label: 'three' }] }),
       },
+      { path: '/late', Component: LatePage },
       {
         path: '/menu',
         Component: Menu,
