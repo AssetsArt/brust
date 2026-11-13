@@ -262,16 +262,69 @@ function locate(source: string, spec: string): { line: number; col: number } {
 }
 
 let scanner: InstanceType<typeof Bun.Transpiler> | undefined
+/** F550: the source's scanner. `macro: false` is the only setting that keeps Bun from RUNNING a macro import while it
+ * parses (`macro: {}` does not; the types allow only a map, hence the cast); with it a macro import throws "Macros are disabled" and nothing runs. */
+const sourceScanner = (): InstanceType<typeof Bun.Transpiler> => (scanner ??= new Bun.Transpiler({ loader: 'tsx', macro: false as never }))
+
+/** F550: where the first `with { type: "macro" }` (or `assert`) import attribute is, 1-based; 0:0 when not found. */
+function macroAt(source: string): { line: number; col: number } {
+  const m = /\b(?:with|assert)\s*\{[^}]*\btype\s*:\s*['"]macro['"]/.exec(source)
+  if (!m) return { line: 0, col: 0 }
+  const before = source.slice(0, m.index)
+  return { line: before.split('\n').length, col: m.index - before.lastIndexOf('\n') }
+}
+
+/**
+ * F550 `runtime-macro`: a Bun macro import (`with { type: "macro" }`) runs its code when the source is parsed or bundled,
+ * on the server, before any check. The source is scanned with macros disabled first, and one is refused here, before the
+ * compiler and before any bundle.
+ */
+function checkMacros(source: string): Diagnostic[] {
+  try {
+    sourceScanner().scan(source)
+    return []
+  } catch (e) {
+    if (!/Macros are disabled/i.test(String(e))) return [] // a source that does not parse: the compiler reports that
+    return [
+      err(
+        'runtime-macro',
+        'imports with `{ type: "macro" }`: a macro runs its code on the server when the source is parsed; a runtime component never runs code at compile time',
+        'remove the macro import; compute the value in the page loader and pass it as a prop',
+        macroAt(source),
+      ),
+    ]
+  }
+}
+
+/** F550 (ruling 3): an import attribute (`with { … }` / `assert { … }`) changes how the import is loaded; a runtime
+ * component needs none. Found in the text (`scan` does not report attributes): a match in a string is refused too. */
+function checkImportAttributes(source: string): Diagnostic[] {
+  const out: Diagnostic[] = []
+  const re = /(\bfrom\s*|\bimport\s*)(['"])([^'"\n]*)\2\s*(with|assert)\s*\{|\bimport\s*\(([^)]*?),\s*\{\s*(with|assert)\s*:/g
+  for (let m = re.exec(source); m; m = re.exec(source)) {
+    const before = source.slice(0, m.index)
+    const spec = m[3] ?? m[5]?.trim() ?? ''
+    out.push(
+      err(
+        'runtime-import',
+        `imports ${spec.startsWith("'") || spec.startsWith('"') ? spec : `"${spec}"`} with an import attribute (\`${m[4] ?? m[6]} { … }\`), which changes how it is loaded: a runtime component imports modules plainly`,
+        'remove the import attribute, or the import',
+        { line: before.split('\n').length, col: m.index - before.lastIndexOf('\n') },
+      ),
+    )
+  }
+  return out
+}
+
 /** R3.4 `runtime-import`: every runtime import of the source is an exposed module, `react` or the store bridge. A private copy of an app module would split its state. */
 function checkImports(source: string, filename: string, appRoot: string, ctx: Context): Diagnostic[] {
-  scanner ??= new Bun.Transpiler({ loader: 'tsx' })
   const exposed = exposedByPath(appRoot, ctx.exposed)
   const from = dirname(resolve(appRoot, filename))
-  const out: Diagnostic[] = []
+  const out: Diagnostic[] = checkImportAttributes(source)
   let imports: { path: string }[]
   try {
     // `scan`, not `scanImports`: the latter adds the JSX runtime import the transpiler would insert. Type-only imports are erased by the parser.
-    imports = scanner.scan(source).imports
+    imports = sourceScanner().scan(source).imports
   } catch {
     return out // a source that does not parse: the compiler reports that, with its own position
   }
@@ -371,6 +424,9 @@ export async function compileComponent(opts: CompileOptions): Promise<CompileRes
   const ctx = await contextOf(appRoot, dist)
   const { source } = opts
 
+  // F550: nothing of the source may run. A macro import is refused before the compiler and any bundle see the source.
+  const macros = checkMacros(source)
+  if (macros.length > 0) return { ok: false, diagnostics: macros }
   const importProblems = checkImports(source, filename, appRoot, ctx)
   const virtual = virtualPath(filename, source)
   const tree = compileSource({
