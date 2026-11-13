@@ -451,6 +451,7 @@ mod tests {
                 path_aliases: None,
                 source_roots: None,
                 icon_svgs: None,
+                client_only: None,
             })
         };
         let t = compile("el/Promo-0123456789abcdef.tsx", src);
