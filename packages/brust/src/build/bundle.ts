@@ -397,6 +397,38 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<Runti
   return { core, store: built.get('rt-store')!, features, nav: built.get('nav')! }
 }
 
+/** F549 `[build] expose_isolated`: an import of an exposed file from app code (a staged component chunk, or a module it
+ * pulls in) becomes the URL of that file's own `x-<stem>` entry, external, so the chunk build never sees the module: it
+ * is not hoisted into a chunk shared with the exposed entry, and the exposed entry stays the one instance of it. Imports
+ * made from inside `node_modules` are left alone (an exposed file is app code). Registered before `sourceDirPlugin`,
+ * which would resolve the specifier to the file. */
+export function exposedUrlPlugin(urls: ReadonlyMap<string, string>, sourceOf: SourceOf): BunPlugin {
+  const real = (f: string) => {
+    try {
+      return realpathSync(f)
+    } catch {
+      return resolve(f)
+    }
+  }
+  const NM = `${sep}node_modules${sep}`
+  return {
+    name: 'brust-exposed-url',
+    setup(b) {
+      b.onResolve({ filter: /.*/ }, (a) => {
+        if (a.importer === '' || a.importer.includes(NM)) return undefined
+        let file: string
+        try {
+          file = real(Bun.resolveSync(a.path, dirname(sourceOf.get(a.importer) ?? a.importer)))
+        } catch {
+          return undefined // a virtual or external specifier: not a file
+        }
+        const url = urls.get(file)
+        return url === undefined ? undefined : { path: url, external: true }
+      })
+    },
+  }
+}
+
 /** One entry chunk per component with client JS (`<id>-<hex>.js`), split: a module two chunks
  * import (a store) lands once in a shared `chunk-<hex>.js`, so one page has one instance of it.
  * The runtime import stays the absolute `/_brust/client/runtime-<hex>.js` URL the compiler
@@ -408,6 +440,8 @@ export async function buildClientChunks(
   runtimeUrl: RuntimeUrls,
   /** F517 `[build] expose`: each module is one more entry of this build, so a chunk that imports it and the entry's URL are one module instance. */
   exposed: ExposedModule[] = [],
+  /** F549 `[build] expose_isolated`: the exposed modules are built first, in a bundle of their own, and the component chunks import them by URL instead of sharing a chunk with them. */
+  isolated = false,
 ): Promise<{ chunks: Map<string, string>; exposed: Record<string, string> }> {
   const entrypoints: string[] = []
   const shared = new Map<string, string>()
@@ -434,19 +468,38 @@ export async function buildClientChunks(
   }
   // `x-<stem>.js` re-exports the module under its own names; the bundler puts the module itself in a chunk the component
   // chunks import too (one instance), and names the entry `x-<stem>-<hex10>.js`.
-  for (const m of exposed) {
-    const file = join(dist, '.stage', 'client', `x-${m.stem}.js`)
+  const stageDir = join(dist, '.stage', 'client')
+  const wrappers = exposed.map((m) => {
+    const file = join(stageDir, `x-${m.stem}.js`)
     write(file, wrapperSource(m))
-    entrypoints.push(file)
-  }
-  if (entrypoints.length === 0) return { chunks: new Map(), exposed: {} }
-  const built = await browserBuild(dist, 'client chunks', ctx, {
-    entrypoints,
-    splitting: true,
-    external: [`${brustRoot(ctx)}/*`],
-    plugins: [runtimeAliasPlugin(runtimeUrl), specModulePlugin(join(dist, '.stage', 'client')), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
+    return file
   })
   const files: Record<string, string> = {}
+  const urls = new Map<string, string>()
+  const plugins = [runtimeAliasPlugin(runtimeUrl), specModulePlugin(stageDir), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')]
+  if (isolated && exposed.length > 0) {
+    // F549: the exposed entries are the only entries of their own build (splitting stays inside it), and the component
+    // build below treats each of their files as an external URL, so a module both sides import is copied into the
+    // component's chunk, not hoisted into a chunk of its own.
+    const xs = await browserBuild(dist, 'exposed modules', ctx, { entrypoints: wrappers, splitting: true, external: [`${brustRoot(ctx)}/*`], plugins })
+    for (const m of exposed) {
+      const f = xs.get(`x-${m.stem}`)
+      if (f === undefined) throw new BuildError('expose', `build.expose ${m.rel}: the bundler wrote no entry for it`)
+      files[m.rel] = f
+      urls.set(m.abs, `${brustRoot(ctx)}/${f}`)
+    }
+    if (entrypoints.length === 0) return { chunks: new Map(), exposed: files }
+    const built = await browserBuild(dist, 'client chunks', ctx, {
+      entrypoints,
+      splitting: true,
+      external: [`${brustRoot(ctx)}/*`],
+      plugins: [exposedUrlPlugin(urls, ctx.sourceOf), ...plugins],
+    })
+    return { chunks: built, exposed: files }
+  }
+  entrypoints.push(...wrappers)
+  if (entrypoints.length === 0) return { chunks: new Map(), exposed: {} }
+  const built = await browserBuild(dist, 'client chunks', ctx, { entrypoints, splitting: true, external: [`${brustRoot(ctx)}/*`], plugins })
   for (const m of exposed) {
     const f = built.get(`x-${m.stem}`)
     if (f === undefined) throw new BuildError('expose', `build.expose ${m.rel}: the bundler wrote no entry for it`)

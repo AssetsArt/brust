@@ -1,0 +1,4 @@
+# F549: the exposed module is built apart; the component keeps its own chunk.
+[build]
+expose = ["shop/sdk.ts"]
+expose_isolated = true

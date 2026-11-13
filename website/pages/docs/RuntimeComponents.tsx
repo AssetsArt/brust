@@ -11,12 +11,17 @@ import type { TocItem } from '../../lib/nav'
 
 export interface RuntimeComponentsData {
   toc: TocItem[]
-  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest' | 'facts' | 'island', CodeBlockData>
+  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest' | 'facts' | 'island' | 'isolated', CodeBlockData>
 }
 
 const EXPOSE = `# brust.toml
 [build]
 expose = ["shop/sdk.ts"]`
+
+const ISOLATED = `# brust.toml
+[build]
+expose = ["shop/sdk.ts"]
+expose_isolated = true   # build the exposed files apart; a component keeps its own copy of what it shares with them`
 
 const SOURCE = `// shop/sdk.ts: an app module, built with the app and exposed to runtime components
 import { defineStore, signal } from '@brust/core/store'
@@ -127,6 +132,7 @@ export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> 
       manifest: codeBlock({ lang: 'text', file: 'dist/manifest.json', code: MANIFEST }),
       facts: codeBlock({ lang: 'ts', file: 'routes.tsx', code: FACTS }),
       island: codeBlock({ lang: 'ts', file: 'routes.tsx', code: ISLAND }),
+      isolated: codeBlock({ lang: 'text', file: 'brust.toml', code: ISOLATED }),
     },
   }
 }
@@ -157,6 +163,26 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
         </li>
         <li>
           Changing <code>expose</code> changes the build id, so artifacts compiled for the old build are no longer valid (see <a href="#limits">Limits and caching</a>).
+        </li>
+      </ul>
+      {/* source: packages/brust/src/build/bundle.ts (buildClientChunks, exposedUrlPlugin), packages/brust/src/build/config.ts (parseExposeIsolated), packages/brust/test/build-expose-isolated.test.ts, tests/server/expose-isolated.chromium.test.ts (F549) */}
+      <h3 id="expose-isolated">When an exposed module makes another component heavier</h3>
+      <p>
+        By default the exposed files and your built components are one bundle, so a module that both a component and an exposed file import (a large dependency, say) is hoisted into a shared chunk. The component&rsquo;s own chunk then shrinks to a small stub and
+        every page that loads it also loads that big shared chunk. If exposing one module did that to a component that has nothing to do with runtime components, set <code>expose_isolated</code>:
+      </p>
+      <CodeBlock code={blocks.isolated.code} lang={blocks.isolated.lang} file={blocks.isolated.file} html={blocks.isolated.html} />
+      <ul>
+        <li>
+          The exposed files are built first, on their own, and a built component imports each by its URL. The component keeps its own copy of whatever else it shares with them, and no new shared chunk appears. Each exposed module is still{' '}
+          <strong>one instance</strong>, for the built component and for runtime components alike.
+        </li>
+        <li>
+          <strong>The price is a copy.</strong> A module or package that both sides import now runs once on each side, so it is in the page twice. A module that holds state (a store, a cache, a singleton) must therefore be exposed, or be reached only through an
+          exposed module; otherwise the two sides each have their own state. A store defined in an exposed module is not affected.
+        </li>
+        <li>
+          It is off by default, has no effect without <code>expose</code>, and changes the build id like any change to the built files.
         </li>
       </ul>
       <CodeBlock code={blocks.manifest.code} lang={blocks.manifest.lang} file={blocks.manifest.file} html={blocks.manifest.html} />
