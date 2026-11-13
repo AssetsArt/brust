@@ -26,4 +26,4 @@ export {
   Outlet,
   redirect,
 } from './routes'
-export type { ComponentType, DynamicProps, FlatRoute, HttpErrorOpts, HttpErrorTrigger, LoaderCtx, LoaderReq, Route, RouteCacheConfig, RouteSsgConfig, RuntimeArtifact, RuntimeComponents, Verdict } from './routes'
+export type { ComponentType, DynamicProps, FlatRoute, HttpErrorOpts, HttpErrorTrigger, LoaderCtx, LoaderReq, CompiledArtifact, IslandArtifact, RenderContext, Route, RouteCacheConfig, RouteSsgConfig, RuntimeArtifact, RuntimeComponents, Verdict } from './routes'

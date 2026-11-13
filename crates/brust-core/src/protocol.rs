@@ -312,10 +312,48 @@ pub struct JobResult {
     pub error: Option<String>,
 }
 
-/// F519 `component` call request (R5.2): every cold ref of one render, in one call.
+/// F519 `component` call request (R5.2): every cold ref of one render, in one call. F546 (R4): plus the island
+/// slots of that render that need HTML (`renders`, the page's `page` id), in the same call; both are left out when
+/// there are none, so the request of a page without island slots is the F519 one.
 #[derive(Debug, Serialize)]
 pub struct ComponentRequest<'a> {
     pub refs: &'a [String],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    pub renders: &'a [RenderItem],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<&'a str>,
+}
+
+impl<'a> ComponentRequest<'a> {
+    /// Refs only (no island HTML asked).
+    pub fn refs(refs: &'a [String]) -> Self {
+        ComponentRequest {
+            refs,
+            renders: &[],
+            page: None,
+        }
+    }
+}
+
+/// F546 (R4): one `components.render(ref, props)` the page needs; `key` names the pair in the answer.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderItem {
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub key: String,
+    pub props: serde_json::Value,
+}
+
+/// F546: the answer to one [`RenderItem`]: `html` (`null` = the app renders nothing for it) or what `render` threw.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HtmlResult {
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub key: String,
+    #[serde(default)]
+    pub html: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// F519 `component` call response: `{ results: [{ ref, artifact } | { ref, missing: true } | { ref, error }] }`.
@@ -324,6 +362,9 @@ pub struct ComponentRequest<'a> {
 pub struct ComponentResponse {
     #[serde(default)]
     pub results: Vec<ComponentResult>,
+    /// F546: one answer per render the request asked for whose ref is an island artifact (absent from old workers).
+    #[serde(default)]
+    pub html: Vec<HtmlResult>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

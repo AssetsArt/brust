@@ -11,7 +11,7 @@ import type { TocItem } from '../../lib/nav'
 
 export interface RuntimeComponentsData {
   toc: TocItem[]
-  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest' | 'facts', CodeBlockData>
+  blocks: Record<'expose' | 'source' | 'list' | 'resolver' | 'artifact' | 'manifest' | 'facts' | 'island', CodeBlockData>
 }
 
 const EXPOSE = `# brust.toml
@@ -66,6 +66,29 @@ const ARTIFACT = `interface RuntimeArtifact {
   stores: string[]       // the store names it reads
 }`
 
+const ISLAND = `// The app renders this component itself: \`render\` returns its HTML for the slot's props, \`client\` hydrates it.
+const CLIENT = \`;(globalThis.__brustIslands ||= []).push(['counter_3f9a', (host, props, committed) => {
+  const b = host.querySelector('button')
+  let n = 0
+  const on = () => { b.textContent = props.label + ' ' + ++n }
+  b.addEventListener('click', on)
+  committed()                       // the host gets data-committed and fires brust:island
+  return () => b.removeEventListener('click', on)   // called when the host leaves the page
+}])
+globalThis.__brustIslandReady?.()\`
+
+export const components: RuntimeComponents = {
+  resolve(ref, { build }) {
+    if (ref !== 'counter') return null
+    // id: change it whenever CLIENT changes (a content hash); the chunk URL carries it and is cached for good
+    return { v: 1, build, id: 'counter_3f9a', tier: 'island', client: CLIENT }
+  },
+  render(ref, props, { page }) {
+    // page.id is one page render, page.total the calls of this batch: a per-page budget if you need one
+    return \`<button type="button">\${escapeHtml(String(props.label))} 0</button>\`
+  },
+}`
+
 const MANIFEST = `"runtime": {
   "exposed": { "shop/sdk.ts": "client/x-sdk-<hex>.js" },
   "stores":  { "cart": "shop/sdk.ts" }
@@ -91,6 +114,7 @@ export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> 
       { id: 'artifact', title: 'The artifact' },
       { id: 'refusals', title: 'What is refused' },
       { id: 'facts', title: 'Facts for a check' },
+      { id: 'island', title: 'Islands you render yourself' },
       { id: 'limits', title: 'Limits and caching' },
       { id: 'trust', title: 'The trust model' },
     ],
@@ -102,6 +126,7 @@ export async function runtimeComponentsLoader(): Promise<RuntimeComponentsData> 
       artifact: codeBlock({ lang: 'ts', file: 'RuntimeArtifact', code: ARTIFACT }),
       manifest: codeBlock({ lang: 'text', file: 'dist/manifest.json', code: MANIFEST }),
       facts: codeBlock({ lang: 'ts', file: 'routes.tsx', code: FACTS }),
+      island: codeBlock({ lang: 'ts', file: 'routes.tsx', code: ISLAND }),
     },
   }
 }
@@ -327,6 +352,52 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
         Facts are a report, not a sandbox. They name what the source refers to. They are an input to an allowlist, not a proof of isolation: a computed member such as <code>window[k]</code>, <code>eval</code> or a dynamic <code>import()</code> can reach a name the walk never sees (which is why they are
         listed in <code>risky</code>), and what an imported function does is outside the file. Pair them with a Content-Security-Policy. There is no built-in allow or deny profile; the <code>runtime-import</code> refusal already stops foreign imports.
       </Note>
+
+      {/* source: crates/brust-core/src/components.rs (register: tier island; island_slot; HtmlCache), packages/brust/src/handlers.ts (resolveComponents: renders), tests/server/rc-island.chromium.test.ts (F546) */}
+      <h2 id="island">Islands you render yourself</h2>
+      <p>
+        An app that renders a component on its own (its own server rendering, its own client code) returns an <strong>island artifact</strong>: <code>tier: &apos;island&apos;</code>, an <code>id</code>, and a <code>client</code> module, with no <code>jinja</code>.
+        The slot prints the same host a built React island gets, <code>&lt;brust-island data-id=&quot;&lt;id&gt;&quot; x-props=&apos;&lt;the props&gt;&apos;&gt;</code>, around the HTML your <code>components.render(ref, props, ctx)</code> returns for that
+        slot&apos;s props. The island runtime then hydrates each host once when the browser is idle, calls your hydrate function with <code>(host, props, committed)</code>, sets <code>data-hydrated</code> and, when you call <code>committed()</code>,
+        <code>data-committed</code>, and calls the function it returned when the host leaves the page.
+      </p>
+      <CodeBlock code={blocks.island.code} lang={blocks.island.lang} file={blocks.island.file} html={blocks.island.html} />
+      <ul>
+        <li>
+          <strong>The HTML is trusted.</strong> What <code>render</code> returns is placed inside the host as given, like a loader&apos;s raw HTML: escape what you put in it. The props are written into <code>x-props</code> as data, escaped as for a built
+          island.
+        </li>
+        <li>
+          One page render makes at most one extra worker call: the refs it has not resolved yet and the (ref, props) pairs whose HTML is not cached go together. <code>render</code> is called once per distinct (ref, props) of that page, in parallel, with{' '}
+          <code>ctx = {'{'} build, page: {'{'} id, total {'}'} {'}'}</code>: <code>page.id</code> is the same for every call of one page render, <code>page.total</code> the number of calls in the batch (cached pairs are not called).
+        </li>
+        <li>
+          The server caches the HTML per (ref, artifact, props), bounded by <code>[components] cache_entries</code> and 64 MiB in total; a new artifact for the ref starts afresh. <code>null</code> (or no <code>render</code>) prints an empty host your
+          client mounts into, and the page is cached as usual. A throw, or more than 4 MiB of HTML, prints an empty host and the page is not cached.
+        </li>
+        <li>
+          <strong>
+            <code>render</code> must depend only on <code>(ref, props)</code>.
+          </strong>{' '}
+          Do not read cookies, the user, the time or anything else of the request: the HTML cache and the page cache are shared by every visitor, so what one user&apos;s render returned is what the next user gets. Pass what varies as props, or render that
+          part in the client.
+        </li>
+        <li>
+          All the HTML one page asks for comes back in that one worker reply, which is limited by <code>[server] max_loader_response_bytes</code> (default 8 MiB, up to 64 MiB). A page whose batch is bigger loses every island of that batch: empty hosts, and
+          the page is not cached. Raise the limit, or keep the per-page HTML small (<code>page.total</code> helps you budget it).
+        </li>
+        <li>
+          The client module is served at <code>/_brust/rc/&lt;build&gt;/&lt;ref&gt;/&lt;id&gt;.js</code>, at most 256 KiB, cached for good: <strong>change the id whenever the client changes</strong>. A ref registered again with the same id and other code is
+          refused, and so is one id with two different codes.
+        </li>
+        <li>
+          The module may import other same-origin modules by absolute path (<code>/app/shared.js</code>, with your base path if you have one); brust neither bundles nor rewrites them, and one URL is one module in the browser, so every island on the page
+          shares it. A cross-origin import is not refused by brust, but <code>[csp]</code> (<code>script-src &apos;self&apos;</code>) blocks it. The chunk itself is same-origin and adds nothing inline.
+        </li>
+        <li>
+          <code>compileComponent</code> never produces an island artifact: you build it yourself. The same targets apply: a <code>{'<Dynamic>'}</code> slot renders on the brust server only.
+        </li>
+      </ul>
 
       <h2 id="limits">Limits and caching</h2>
       <ul>

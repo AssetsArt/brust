@@ -505,6 +505,12 @@ pub fn escape_attr(s: &str) -> String {
 /// A leaf serde_json refuses, or a map whose keys repeat as strings, bails
 /// out to the three-pass [`json_attr_slow`], which then decides the exact
 /// error (the first in iteration order) or which member wins.
+/// The `json_attr` filter as a function: the JSON of `v` escaped for a single-quoted attribute, exactly as a built
+/// island's `x-props` (F546: an island artifact's host is written by the server, not by a template).
+pub fn to_json_attr(v: Value) -> Result<String, Error> {
+    json_attr(v)
+}
+
 fn json_attr(v: Value) -> Result<String, Error> {
     let mut out = String::new();
     match write_json_attr(&mut out, &v) {

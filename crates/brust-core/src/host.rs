@@ -263,7 +263,12 @@ pub trait Host: Clock {
             .iter()
             .map(|r| ComponentResult::missing(r))
             .collect();
-        async move { Ok(ComponentResponse { results }) }
+        async move {
+            Ok(ComponentResponse {
+                results,
+                ..Default::default()
+            })
+        }
     }
     /// The whole body, at most `cap` bytes.
     fn read_body(

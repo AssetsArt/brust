@@ -55,16 +55,30 @@ export interface JobsResponse {
   results: JobResult[]
 }
 
-/** F519 (R5.2): every cold `<Dynamic>` ref of one render, in one call. */
+/** F519 (R5.2): every cold `<Dynamic>` ref of one render, in one call. F546 (R4): plus the island slots of that render
+ * that need HTML (`renders`, under the page render's id `page`); absent when there are none. */
 export interface ComponentRequest {
   refs: string[]
+  renders?: RenderItem[]
+  page?: string
+}
+
+/** F546: one `components.render(ref, props)` the page needs; `key` names it in the answer. */
+export interface RenderItem {
+  ref: string
+  key: string
+  props: Record<string, unknown>
 }
 
 /** One answer per ref: the artifact, `missing` (the resolver returned null), or what the resolver threw. */
 export type ComponentResult = { ref: string; artifact: unknown } | { ref: string; missing: true } | { ref: string; error: string }
 
+/** F546: one answer per render whose ref is an island artifact: its HTML (`null` = none) or what `render` threw. */
+export type HtmlResult = { ref: string; key: string; html: string | null } | { ref: string; key: string; error: string }
+
 export interface ComponentResponse {
   results: ComponentResult[]
+  html?: HtmlResult[]
 }
 
 /** The default export of `<dist>/<manifest.jobs_module>` (built by Task 6): component id → job fns. */
@@ -259,22 +273,50 @@ export function slotComponents(manifest: ManifestLike | undefined): string[] {
     .map(([id]) => id)
 }
 
-/** F519 (R5.2): ask `components.resolve` for each ref (in parallel); a throw is that ref's `error`, never the call's. */
+/** F519 (R5.2): ask `components.resolve` for each ref (in parallel); a throw is that ref's `error`, never the call's.
+ * F546 (R4, A3): then `components.render` for every asked pair whose ref is an island artifact — one this call resolved
+ * as `tier: 'island'`, or one it was not asked to resolve (the server only asks renders of a warm ref that is an island)
+ * — in parallel, with `{ build, page: { id, total } }`. */
 export async function resolveComponents(components: RuntimeComponents | undefined, build: string, req: ComponentRequest): Promise<ComponentResponse> {
   const refs = Array.isArray(req?.refs) ? req.refs.filter((r): r is string => typeof r === 'string') : []
   const resolve = components?.resolve
+  const tiers = new Map<string, unknown>()
   const results = await Promise.all(
     refs.map(async (ref): Promise<ComponentResult> => {
       if (typeof resolve !== 'function') return { ref, missing: true }
       try {
         const artifact = await resolve.call(components, ref, { build })
+        if (artifact != null) tiers.set(ref, (artifact as { tier?: unknown }).tier)
         return artifact == null ? { ref, missing: true } : { ref, artifact }
       } catch (e) {
         return { ref, error: String(e) }
       }
     }),
   )
-  return { results }
+  const asked = Array.isArray(req?.renders) ? req.renders : []
+  if (asked.length === 0) return { results }
+  const seen = new Set<string>()
+  const calls = asked.filter((r) => {
+    if (typeof r?.ref !== 'string' || typeof r.key !== 'string' || seen.has(r.key)) return false
+    seen.add(r.key)
+    return refs.includes(r.ref) ? tiers.get(r.ref) === 'island' : true
+  })
+  const page = { id: typeof req.page === 'string' ? req.page : '', total: calls.length }
+  const render = components?.render
+  const html = await Promise.all(
+    calls.map(async ({ ref, key, props }): Promise<HtmlResult> => {
+      if (typeof render !== 'function') return { ref, key, html: null }
+      try {
+        const out = await render.call(components, ref, props && typeof props === 'object' ? props : {}, { build, page: { ...page } })
+        if (out == null) return { ref, key, html: null }
+        if (typeof out !== 'string') return { ref, key, error: `components.render returned ${typeof out}, not a string or null` }
+        return { ref, key, html: out }
+      } catch (e) {
+        return { ref, key, error: String(e) }
+      }
+    }),
+  )
+  return { results, html }
 }
 
 /** `leaves` from `flattenRoutes` (ids must match the manifest's route ids); `jobs` the jobs

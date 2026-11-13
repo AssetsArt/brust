@@ -620,13 +620,23 @@ async fn page<H: Host>(
         && rendered.is_ok()
     {
         let cold = sl.cold();
-        if !cold.is_empty() {
-            let r = s.host.component(&ComponentRequest { refs: &cold }).await;
+        // F546 (R4): the island slots that need HTML ride the same call.
+        let renders = sl.renders();
+        if !cold.is_empty() || !renders.is_empty() {
+            let page = (!renders.is_empty()).then(|| sl.page_id());
+            let r = s
+                .host
+                .component(&ComponentRequest {
+                    refs: &cold,
+                    renders: &renders,
+                    page: page.as_deref(),
+                })
+                .await;
             if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
                 s.worker_calls.incr();
                 meta.bun_calls += 1;
             }
-            sl.resolved(&cold, r);
+            sl.resolved(&cold, &renders, r);
             rendered = render_document(s, route, ri, &ctx, slots.as_ref());
         }
         sl.finish();
