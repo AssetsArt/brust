@@ -43,6 +43,9 @@ export async function bundleClient(tree: CompiledComponent[], ctx: Ctx, o: { app
     writeFileSync(entry, `${lines.join('\n')}\n`)
     const urls = { core: ctx.runtimeUrl, store: ctx.storeUrl }
     const res = await Bun.build({
+      // F550: never run a macro while bundling (an option Bun supports but does not type; a macro import then fails the
+      // build). A failed build is a result (`success: false`, reported below as a problem), not a throw.
+      ...({ macros: false, throw: false } as object),
       entrypoints: [entry],
       target: 'browser',
       format: 'esm',
@@ -75,7 +78,7 @@ export async function bundleClient(tree: CompiledComponent[], ctx: Ctx, o: { app
     if (res.outputs.length !== 1) return { code: null, problems: [problem(`the client module bundled into ${res.outputs.length} files; a runtime component is one module`, 'import shared code from an exposed module')] }
     const code = await res.outputs[0]!.text()
     // The chunk may import exactly the three kinds of URL: the runtime, the rt-store module, an exposed module.
-    scanner ??= new Bun.Transpiler({ loader: 'js' })
+    scanner ??= new Bun.Transpiler({ loader: 'js', macro: false as never }) // F550: never run a macro while scanning
     const allowed = new Set([ctx.runtimeUrl, ctx.storeUrl, ...Object.values(ctx.exposed).map((f) => `${ctx.base}/_brust/${f}`)])
     for (const i of scanner.scanImports(code)) if (!allowed.has(i.path)) problems.push(problem(`the client module imports "${i.path}", which is neither the runtime, the store module nor an exposed module`, 'remove the import'))
     return problems.length > 0 ? { code: null, problems } : { code, problems: [] }
