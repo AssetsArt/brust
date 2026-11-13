@@ -1,0 +1,5 @@
+# F548 fixture: an exposed React component listed in [build] islands, placed by a runtime component as a client-only
+# island; and a self-recursive tree whose leaf is a React island (client-only, the tree stays a template macro).
+[build]
+expose = ["shop/sdk.tsx"]
+islands = ["shop/sdk.tsx#Motion"]

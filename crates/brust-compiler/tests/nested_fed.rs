@@ -18,6 +18,8 @@ struct Comp {
     tier: Tier,
     unwritten: Vec<String>,
     fallbacks: Vec<String>,
+    /// F548: warning rules (`island-client-only`).
+    warnings: Vec<String>,
 }
 
 /// Compiles `src` as `tests/fixtures/nested-fed/P.tsx` (siblings resolve); every component of the tree.
@@ -50,6 +52,14 @@ fn compile(file: &str, src: Option<&str>) -> Vec<Comp> {
                     .iter()
                     .chain(&l.artifacts.diagnostics)
                     .filter(|d| d.class == DiagClass::Fallback)
+                    .map(|d| d.rule.clone())
+                    .collect(),
+                warnings: l
+                    .ir
+                    .diagnostics
+                    .iter()
+                    .chain(&l.artifacts.diagnostics)
+                    .filter(|d| d.class == DiagClass::Warning)
                     .map(|d| d.rule.clone())
                     .collect(),
             })
@@ -424,4 +434,43 @@ fn a_static_wrapper_with_a_fed_child_still_compiles_next_to_the_native_one() {
         "import W from './Wrapper'\nexport default function P() { return <div><W tone=\"a\" /></div> }",
     );
     assert!(!is_react(named(&t, "p_")), "{:?}", named(&t, "p_").tier);
+}
+
+/// F548 (R4, narrowed): the same island in two lists, in a page that holds a `<Dynamic>` (which a React component cannot
+/// render): the island is client-only there (its host prints the row's props, the browser mounts it) and the page keeps
+/// its tier. Without the `<Dynamic>` it is the fallback above (the page becomes React, the island is SSR'd).
+#[test]
+fn an_island_with_a_per_row_prop_in_two_lists_next_to_a_dynamic_slot_is_client_only() {
+    let (t, _, jinja) = lower_full(
+        "import { Dynamic } from '@brust/core'\nimport Tip from './Tip'\nexport default function P(props: { rows: { cols: string[] }[] }) { return <div><Dynamic component=\"x\" />{props.rows.map((r, i) => <p key={i}>{r.cols.map((c) => <Tip key={c} t={c} />)}</p>)}</div> }",
+    );
+    let p = named(&t, "p_");
+    assert!(!is_react(p), "{:?}", p.tier);
+    assert!(
+        !p.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        p.fallbacks
+    );
+    assert!(
+        p.warnings.contains(&"island-client-only".to_string()),
+        "{:?}",
+        p.warnings
+    );
+    let tip = named(&t, "tip_");
+    assert!(
+        jinja.contains(&format!("data-id=\"{}\" x-props='", tip.id)),
+        "{jinja}"
+    );
+    assert!(!jinja.contains("_ssr_tip"), "{jinja}");
+    // and without it, today's rule: the page is the island, no client-only warning left behind
+    let t = lower(
+        "import Tip from './Tip'\nexport default function P(props: { rows: { cols: string[] }[] }) { return <div>{props.rows.map((r, i) => <p key={i}>{r.cols.map((c) => <Tip key={c} t={c} />)}</p>)}</div> }",
+    );
+    let p = named(&t, "p_");
+    assert!(
+        is_react(p) && !p.warnings.contains(&"island-client-only".to_string()),
+        "{:?} {:?}",
+        p.tier,
+        p.warnings
+    );
 }

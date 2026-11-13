@@ -5,7 +5,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, sep } from 'node:path'
 import { nativeOf, relPosix } from './posix'
-import { type CompiledComponent, type CompiledTree, compileTree, scanLoadWrites } from '../../native/index.js'
+import { type CompiledComponent, type CompiledTree, compileSource, compileTree, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
 import { checkAliasAgreement, readPathAliases } from './tsconfig-paths'
@@ -167,6 +167,8 @@ export function compileApp(opts: {
   sourceRoots?: string[]
   /** F230: `scanAppWrites`'s result; absent = no module is refused for a load-time write. */
   loadWrites?: string
+  /** F548 `[build] islands` (`path#Export`): compiled as roots, so each gets its island chunk and manifest entry. */
+  islands?: string[]
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
   const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
@@ -214,6 +216,38 @@ export function compileApp(opts: {
       rootIdOfFile.set(file, rootId)
     }
     routeComponent.set(routeId, rootId)
+  }
+
+  // F548 (R2): each listed island is compiled as the only child of a virtual root that renders it, the way a route
+  // that imports it would compile it (same id, same IR); the root is dropped, the island is kept.
+  for (const [i, entry] of (opts.islands ?? []).entries()) {
+    const at = entry.lastIndexOf('#')
+    const [path, name] = [entry.slice(0, at), entry.slice(at + 1)]
+    const virt = `__brust_island_${i}.tsx`
+    const spec = path.startsWith('../') ? path : `./${path}`
+    const tree = compileSource({
+      path: virt,
+      source: `import { ${name} as BrustListedIsland } from ${JSON.stringify(spec)}\nexport default function BrustIslandRoot() {\n  return <BrustListedIsland />\n}\n`,
+      root: appRoot,
+      runtimeImport: opts.runtimeImport,
+      serverOnly: opts.serverOnly,
+      pathAliases: pathAliasesJson,
+      sourceRoots,
+      iconSvgs: iconSvgsJson,
+    })
+    if (tree.error) throw new BuildError('islands', `[build] islands ${JSON.stringify(entry)}: ${where(path, tree.error)} ${tree.error.message}`)
+    const c = tree.components.slice(1).find((x) => x.source === path && (JSON.parse(x.ir) as ComponentIR).export === name)
+    const ir = c && (JSON.parse(c.ir) as ComponentIR)
+    if (!c || !ir || typeof ir.tier !== 'object' || ir.tier === null || !('React' in ir.tier))
+      throw new BuildError(
+        'islands',
+        `[build] islands ${JSON.stringify(entry)}: ${c ? `${name} compiles to the ${String(ir?.tier).toLowerCase()} tier, not React; a runtime component imports it directly, it needs no island entry` : `${path} has no component export ${name}`}`,
+      )
+    const err = c.diagnostics.find((d) => d.class === 'error')
+    if (err) throw new BuildError(err.rule, `${where(c.source, err)} ${err.message}`)
+    const next: Seen = { role: roleOf(c, false), tree: virt, c }
+    const kept = seen.get(c.id)
+    if (!kept || replaces(kept, next)) seen.set(c.id, next)
   }
 
   // Every tree is in: the kept compile is final. Map order = first sight (`set` keeps a key's place).

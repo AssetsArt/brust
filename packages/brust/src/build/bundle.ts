@@ -784,7 +784,8 @@ export function islandShim(c: Compiled, compiled?: Map<string, Compiled>, routeR
   const tree = `createElement(__Commit, { done: committed }, ${element})`
   const [api, mount] = clientOnly
     ? ['createRoot', `const root = createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }); root.render(${tree}); return () => root.unmount()`]
-    : ['hydrateRoot', `const root = hydrateRoot(host, ${tree}, { identifierPrefix: ${JSON.stringify(c.id)} }); return () => root.unmount()`]
+    : // F548: a host the server left empty (a client-only placement: a runtime component, a row of nested lists) mounts.
+      ['hydrateRoot, createRoot', `let root; if (host.firstChild) root = hydrateRoot(host, ${tree}, { identifierPrefix: ${JSON.stringify(c.id)} }); else { root = createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }); root.render(${tree}) } return () => root.unmount()`]
   let head = ''
   if (nested && compiled) {
     const comps = nested.map((id) => compiled.get(id)).filter((n): n is Compiled => n !== undefined)

@@ -82,6 +82,8 @@ pub(crate) struct CompileInputs {
     /// F518: the text of the root file, when the caller has it and the file does not exist on disk (`compileSource`).
     /// `path` still names the file: it decides the id and how relative imports resolve.
     pub source: Option<String>,
+    /// F548: `path#Export` of the components compiled as client-only islands.
+    pub client_only: Vec<String>,
 }
 
 /// An optional JSON argument; one that does not parse is an error, not an empty value: `path_aliases` and `packages`
@@ -131,6 +133,7 @@ pub(crate) fn compile_tree_impl(
         source_roots,
         load_writes,
         source,
+        client_only,
     } = inputs;
     // F230: the exports another app module writes, scanned once per build (`scan_load_writes`).
     let load_writes = match json_input("loadWrites", load_writes, |s| {
@@ -183,6 +186,7 @@ pub(crate) fn compile_tree_impl(
         packages,
         source_roots,
         load_writes,
+        client_only: client_only.into_iter().collect(),
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -279,6 +283,7 @@ pub fn compile_tree(
             source_roots: source_roots.unwrap_or_default(),
             load_writes,
             source: None,
+            client_only: Vec::new(),
         },
     )
 }
@@ -301,6 +306,9 @@ pub struct CompileSourceOptions {
     pub source_roots: Option<Vec<String>>,
     /// L23 icons the caller rendered, JSON, as for `compileTree`; `{"final":true,"svgs":{}}` judges every icon an island.
     pub icon_svgs: Option<String>,
+    /// F548 (R3): `path#Export` of the build's `[build] islands`: a React-tier one compiles as a client-only island (its
+    /// caller prints an empty host, the browser mounts it).
+    pub client_only: Option<Vec<String>>,
 }
 
 /// `compile_tree` for a root file given as text. Everything else is as `compile_tree`: the same analysis and lowering,
@@ -318,6 +326,7 @@ pub fn compile_source(opts: CompileSourceOptions) -> CompiledTree {
             path_aliases: opts.path_aliases,
             source_roots: opts.source_roots.unwrap_or_default(),
             source: Some(opts.source),
+            client_only: opts.client_only.unwrap_or_default(),
             ..Default::default()
         },
     )
@@ -442,6 +451,7 @@ mod tests {
                 path_aliases: None,
                 source_roots: None,
                 icon_svgs: None,
+                client_only: None,
             })
         };
         let t = compile("el/Promo-0123456789abcdef.tsx", src);

@@ -209,3 +209,41 @@ test('projection fallbacks stay correct with the flag on: a list the exposed sid
   expect(chunkOf(on, 'pShared')).toContain('SECRET_A')
   expect(holders(on.files, 'SECRET_A')).toContain((on.manifest.runtime.exposed['reader.ts'] as string).replace(/^client\//, ''))
 })
+
+// F548 + F549 together: `[build] islands` (an exposed React component built as an island no route renders, placed client-only
+// by a runtime component) with `expose_isolated = true`. The island's own chunk and manifest entry are the same as without the
+// flag, the exposed module is still its own `x-` entry, and `compileComponent` still places the island.
+test('[build] islands and expose_isolated work together: the listed island keeps its chunk and manifest entry, and a runtime component places it', async () => {
+  const { compileComponent } = await import('../src/compile')
+  const build2 = async (isolated: boolean) => {
+    const dir = join(FX, `.tmp-expose-iso-islands-${process.pid}-${isolated}`)
+    made.push(dir)
+    cpSync(join(FX, 'rc-client-islands'), dir, { recursive: true, filter: (p) => !p.includes('/dist') && !p.includes('/.brust') })
+    writeFileSync(join(dir, 'brust.toml'), `[build]\nexpose = ["shop/sdk.tsx"]\nislands = ["shop/sdk.tsx#Motion"]\nexpose_isolated = ${isolated}\n`)
+    const out = tmp()
+    const logs: string[] = []
+    await runBuild({ appRoot: dir, entry: 'routes.tsx', outDir: out, log: (l) => logs.push(l), force: true })
+    return { dir, out, logs, manifest: JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')) }
+  }
+  const off = await build2(false)
+  const on = await build2(true)
+  const id = Object.keys(on.manifest.runtime.islands)[0]!
+  expect(id).toMatch(/^motion_[0-9a-f]{8}$/)
+  // the same manifest entries as without the flag: the island id, its `path#Export`, its React tier and chunk
+  expect(on.manifest.runtime.islands).toEqual(off.manifest.runtime.islands)
+  expect(on.manifest.components[id].tier).toBe('react')
+  expect(on.manifest.components[id].client).toMatch(new RegExp(`^client/react-${id}-[0-9a-f]+\\.js$`))
+  const chunk = readFileSync(join(on.out, on.manifest.components[id].client), 'utf8')
+  expect(chunk).toContain('data-testid') // the island's own code is in its chunk
+  expect(readFileSync(join(on.out, 'jobs.js'), 'utf8')).not.toContain(id)
+  // the exposed module is still one `x-` entry, built apart
+  expect(on.manifest.runtime.exposed['shop/sdk.tsx']).toMatch(/^client\/x-sdk-[0-9a-f]{10}\.js$/)
+  expect(on.logs.filter((l) => /error/i.test(l))).toEqual([])
+  // a runtime component placing the island still compiles against this build, to a client-only host in `artifact.islands`
+  const promo = "import { Motion } from '../shop/sdk'\nexport default function Promo({ label }: { label: string }) {\n  return <section><h3>{label}</h3><Motion label={label} /></section>\n}\n"
+  const r = await compileComponent({ source: promo, filename: 'el/Promo.tsx', appRoot: on.dir, dist: on.out })
+  if (!r.ok) throw new Error(JSON.stringify(r.diagnostics))
+  expect(r.artifact.islands).toEqual([id])
+  expect(r.artifact.features).toContain('island')
+  expect(r.artifact.jinja).toContain(`data-id="${id}"`)
+}, 180_000)

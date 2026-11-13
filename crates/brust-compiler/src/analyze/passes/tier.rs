@@ -79,6 +79,15 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     } else {
         ir.tier = Tier::Native;
     }
+    // F548 (R3): an island listed in `[build] islands` that a runtime component places is never server-rendered: it
+    // mounts in the browser, like a `browser-global` one (the compile API passes the list as `client_only`).
+    if let Tier::React { client_only, .. } = &mut ir.tier
+        && !*client_only
+        && let Some(e) = &ir.export
+        && ctx.opts.client_only.contains(&format!("{}#{e}", ir.source))
+    {
+        *client_only = true;
+    }
     react_jobs(ir);
 }
 

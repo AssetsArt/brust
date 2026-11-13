@@ -195,7 +195,18 @@ fn fixture_with(
 ) -> Fixture {
     let mut files = BTreeMap::new();
     files.insert("jinja/page_p1.jinja".to_string(), PAGE.to_string());
-    let loaded = Manifest::from_parts(&manifest_json(), &files).unwrap();
+    fixture_from(&manifest_json(), files, items, answer, on_call, fail_call)
+}
+
+fn fixture_from(
+    manifest: &str,
+    files: BTreeMap<String, String>,
+    items: Value,
+    answer: Answer,
+    on_call: Box<dyn Fn(&Registry)>,
+    fail_call: bool,
+) -> Fixture {
+    let loaded = Manifest::from_parts(manifest, &files).unwrap();
     let calls = Rc::new(RefCell::new(Vec::new()));
     let asked = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(0));
@@ -1051,4 +1062,75 @@ fn a_page_without_island_renders_sends_the_f519_request() {
     assert_eq!(asked.len(), 1);
     let req = ComponentRequest::refs(&[]);
     assert_eq!(serde_json::to_string(&req).unwrap(), "{\"refs\":[]}");
+}
+
+// ----- F548: a runtime component that places the build's listed islands (client-only hosts) -----
+
+/// The test build plus two React components: `motion_1` listed in `[build] islands`, `other_1` not.
+fn islands_build() -> (String, BTreeMap<String, String>) {
+    let mut m: Value = serde_json::from_str(&manifest_json()).unwrap();
+    m["runtime"]["islands"] =
+        json!({ "motion_1": "shop/sdk.tsx#Motion", "gone_1": "shop/sdk.tsx#Gone" });
+    m["components"]["motion_1"] = json!({ "tier": "react", "template": "jinja/motion_1.jinja", "client": "client/react-motion_1-ab.js" });
+    m["components"]["other_1"] = json!({ "tier": "react", "template": "jinja/other_1.jinja", "client": "client/react-other_1-cd.js" });
+    let mut files = BTreeMap::new();
+    files.insert("jinja/page_p1.jinja".to_string(), PAGE.to_string());
+    files.insert("jinja/motion_1.jinja".to_string(), "<i></i>".to_string());
+    files.insert("jinja/other_1.jinja".to_string(), "<i></i>".to_string());
+    (m.to_string(), files)
+}
+
+fn with_islands(id: &str, islands: Value) -> Value {
+    let mut a = artifact(
+        id,
+        "static",
+        "<div>{{ title | e }}<brust-island style=\"display:contents\" data-id=\"motion_1\" x-props='{{ {\"label\": title} | json_attr }}'></brust-island></div>",
+    );
+    a["islands"] = islands;
+    a
+}
+
+#[test]
+fn an_artifact_may_place_only_listed_react_islands_of_the_build() {
+    let (m, files) = islands_build();
+    let loaded = Manifest::from_parts(&m, &files).unwrap();
+    let reg = Registry::for_manifest(&loaded.manifest, None).unwrap();
+    assert!(
+        reg.register("a", with_islands("id_a", json!(["motion_1"])))
+            .is_ok()
+    );
+    for (what, ids) in [
+        ("not listed", json!(["other_1"])),
+        ("listed but not a component of the build", json!(["gone_1"])),
+        ("unknown", json!(["nope_1"])),
+    ] {
+        let why = reg.register("b", with_islands("id_b", ids)).unwrap_err();
+        assert!(why.contains("[build] islands"), "{what}: {why}");
+    }
+}
+
+#[test]
+fn a_placed_island_brings_the_runtime_the_island_feature_and_its_build_chunk_once() {
+    let (m, files) = islands_build();
+    let f = fixture_from(
+        &m,
+        files,
+        json!([{ "ref": "a", "title": "x" }, { "ref": "a", "title": "y" }]),
+        Box::new(|r| found(r, with_islands("id_a", json!(["motion_1"])))),
+        Box::new(|_| {}),
+        false,
+    );
+    let body = text(&get(&f.core, "/u"));
+    assert_eq!(body.matches("data-id=\"motion_1\"").count(), 2, "{body}");
+    let rt = body.find("/_brust/client/runtime-1.js").expect("runtime");
+    let isl = body
+        .find("/_brust/client/island-1.js")
+        .expect("island feature");
+    let ch = body
+        .find("<script type=\"module\" src=\"/_brust/client/react-motion_1-ab.js\"></script>")
+        .expect("the build's island chunk");
+    assert!(rt < isl && isl < ch, "{body}");
+    assert_eq!(body.matches("react-motion_1-ab.js").count(), 1, "{body}");
+    // a static artifact itself has no chunk of its own
+    assert!(!body.contains("/_brust/rc/"), "{body}");
 }

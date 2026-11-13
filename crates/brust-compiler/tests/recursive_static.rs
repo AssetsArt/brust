@@ -854,3 +854,108 @@ fn an_expression_prop_to_a_stateful_child_still_falls_back() {
         sv.diagnostics
     );
 }
+
+// ----- F548 (R4): a React island leaf of a self-recursive tree is client-only; the tree stays a macro -----
+
+/// The shape a recursive menu takes: an outer component enters a list component that renders itself for a group and a
+/// React island (per-row props) for a leaf.
+const LEAF: &str = "import { useTransition } from 'react'\nexport default function Leaf({ label }: { label: string }) {\n  useTransition()\n  return <button>{label}</button>\n}\n";
+const TREE: &str = "import Leaf from './Leaf'\ntype N = { id: string; label: string; kids?: N[] }\nexport default function Tree({ nodes }: { nodes: N[] }) {\n  return (\n    <ul>\n      {nodes.map((n) => (\n        <li key={n.id}>{n.kids ? <Tree nodes={n.kids} /> : <Leaf label={n.label} />}</li>\n      ))}\n    </ul>\n  )\n}\n";
+const OUTER: &str = "import Tree from './Tree'\nexport default function Outer({ nodes }: { nodes: any[] }) {\n  return <nav><Tree nodes={nodes} /></nav>\n}\n";
+
+fn client_only_jobs(c: &Compiled) -> Vec<bool> {
+    c.ir["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|j| j["kind"]["Ssr"]["client_only"].as_bool())
+        .collect()
+}
+
+/// The `<brust-island data-id="<id>" …>` host of `id` in `jinja` has an empty inner.
+fn empty_host(jinja: &str, id: &str) -> bool {
+    let Some(at) = jinja.find(&format!("data-id=\"{id}\"")) else {
+        return false;
+    };
+    let rest = &jinja[at..];
+    rest.contains("x-props='")
+        && rest[rest.find("'>").unwrap() + 2..].starts_with("</brust-island>")
+}
+
+#[test]
+fn a_react_leaf_of_a_self_recursive_tree_is_client_only_and_the_tree_stays_a_macro() {
+    let page = "import Outer from './Outer'\nexport default function P({ nodes }: { nodes: any[] }) {\n  return <main><Outer nodes={nodes} /></main>\n}\n";
+    let tree = ok(
+        page,
+        &[("Leaf.tsx", LEAF), ("Tree.tsx", TREE), ("Outer.tsx", OUTER)],
+    );
+    let t = one(&tree, "Tree.tsx");
+    assert_eq!(t.ir["tier"], "Static", "{:?}", t.diagnostics);
+    assert!(!t.ir["recursion"].is_null(), "a macro");
+    let jobs = client_only_jobs(t);
+    assert!(!jobs.is_empty() && jobs.iter().all(|c| *c), "{jobs:?}");
+    let warn = t
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "island-client-only")
+        .expect("island-client-only warning");
+    assert_eq!(warn.class, DiagClass::Warning);
+    assert!(warn.message.contains("<Leaf>"), "{}", warn.message);
+    assert!(!tree.iter().any(|c| {
+        c.diagnostics
+            .iter()
+            .any(|d| d.rule == "recursion-unsupported" || d.rule == "nested-instance")
+    }));
+    // the macro prints the leaf's host with its row's props and nothing inside: the browser mounts it
+    let leaf = one(&tree, "Leaf.tsx");
+    assert!(leaf.is_react());
+    // (the leaf's own template is its island host for a server-rendered placement: not the tree's)
+    let host_jinja: String = tree
+        .iter()
+        .filter(|c| c.source != "Leaf.tsx")
+        .map(|c| c.jinja.as_str())
+        .collect();
+    assert!(empty_host(&host_jinja, &leaf.id), "{host_jinja}");
+    assert!(
+        !host_jinja.contains(&format!("_ssr_{}", leaf.id)),
+        "no server render: {host_jinja}"
+    );
+    // the outer and the page are not React either
+    assert!(!one(&tree, "Outer.tsx").is_react());
+    assert!(!one(&tree, "P.tsx").is_react());
+}
+
+#[test]
+fn a_recursive_route_component_holding_the_leaf_is_client_only_too() {
+    // the recursive list is the route component itself (one list): per instance by the recursion alone
+    let tree = ok(TREE, &[("Leaf.tsx", LEAF)]);
+    let t = one(&tree, "P.tsx");
+    assert_eq!(t.ir["tier"], "Static", "{:?}", t.diagnostics);
+    assert!(!t.ir["recursion"].is_null());
+    assert!(t.diagnostics.iter().any(|d| d.rule == "island-client-only"));
+    assert!(client_only_jobs(t).iter().all(|c| *c));
+    assert!(
+        empty_host(&t.jinja, &one(&tree, "Leaf.tsx").id),
+        "{}",
+        t.jinja
+    );
+}
+
+#[test]
+fn mutual_recursion_with_a_react_leaf_is_unchanged() {
+    let a = "import B from './B'\nexport default function A({ nodes }: { nodes: any[] }) {\n  return <ul>{nodes.map((n) => <li key={n.id}><B node={n} /></li>)}</ul>\n}\n";
+    let b = "import A from './A'\nimport Leaf from './Leaf'\nexport default function B({ node }: { node: any }) {\n  return node.kids ? <A nodes={node.kids} /> : <Leaf label={node.label} />\n}\n";
+    let page = "import A from './A'\nexport default function P({ nodes }: { nodes: any[] }) {\n  return <main><A nodes={nodes} /></main>\n}\n";
+    let tree = compile(page, &[("A.tsx", a), ("B.tsx", b), ("Leaf.tsx", LEAF)]).unwrap();
+    assert!(
+        tree.iter().any(|c| c
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == "recursion-unsupported" || d.rule == "import-cycle")),
+        "mutual recursion still says so"
+    );
+    assert!(
+        tree.iter().any(|c| c.source != "Leaf.tsx" && c.is_react()),
+        "the cycle still falls back to React"
+    );
+}

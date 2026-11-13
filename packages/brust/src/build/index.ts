@@ -131,7 +131,7 @@ export async function runBuild(opts: {
   process.env.BRUST_BASE_PATH = built.basePath
   if (opts.actionsOnly)
     return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
-  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, basePath, trailingSlash } = built
+  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash } = built
   // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
   // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
   const remote =
@@ -201,7 +201,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -250,6 +250,8 @@ async function buildInto(
     expose: string[]
     /** `[build] expose_isolated` (F549). */
     exposeIsolated: boolean
+    /** `[build] islands` (F548): `path#Export` of exposed React components built as islands. */
+    islands: string[]
     /** `[server] base_path` (F495), `''` = the root. */
     basePath: string
     /** `[server] trailing_slash` (F506); `strict` = the default (not written). */
@@ -325,6 +327,7 @@ async function buildInto(
     serverOnly: o.serverOnly,
     sourceRoots: o.sourceRoots,
     cssMaps: css.maps,
+    islands: o.islands,
   }
   const firstLog: string[] = []
   let { compiled, routeComponent } = compileApp({ ...compileOpts, log: (l) => firstLog.push(l) })
@@ -385,7 +388,7 @@ async function buildInto(
   }
   // R1.3/R1.4: the exposed modules and the stores they define; the worker's store table holds those modules too, so it can touch and snapshot them.
   const exposedRt = exposedStores(appRoot, exposedMods)
-  if (exposedMods.length > 0) manifest.runtime = { exposed: client.exposed, stores: exposedRt.stores }
+  if (exposedMods.length > 0) manifest.runtime = { exposed: client.exposed, stores: exposedRt.stores, ...listedIslands(appRoot, compiled, o.islands) }
   await buildJobs(out, compiled, ctx.sourceOf, appRoot, [...new Set([...storeModules(manifest), ...exposedRt.storeModules])].sort(), css.maps, routeRoots, reachedJobs(manifest), writers, o.basePath)
   // F495: absent without a base path, so an app at the root writes the manifest it always did.
   if (o.basePath !== '') manifest.base_path = o.basePath
@@ -503,4 +506,16 @@ export function computeBuildId(out: string, manifest: ManifestJson): string {
     }
   }
   return h.digest('hex').slice(0, 16)
+}
+
+/** F548 (R2): `runtime.islands`, the listed islands by component id → `path#Export`; absent when none is listed. */
+function listedIslands(appRoot: string, compiled: Map<string, Compiled>, islands: string[]): { islands?: Record<string, string> } {
+  const out: Record<string, string> = {}
+  for (const entry of islands) {
+    const at = entry.lastIndexOf('#')
+    const [path, name] = [entry.slice(0, at), entry.slice(at + 1)]
+    const c = [...compiled.values()].find((x) => x.ir.export === name && relPosix(appRoot, x.file) === path)
+    if (c) out[c.id] = entry
+  }
+  return Object.keys(out).length > 0 ? { islands: out } : {}
 }
