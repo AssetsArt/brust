@@ -187,7 +187,7 @@ export function Outlet(): null {
 
 /** F519 (R2): a component compiled after the app was built (`compileComponent` of `@brust/core/compile`). Valid for
  * ONE build: store it keyed by (ref, build). JSON-serialisable; treat it as opaque. */
-export interface RuntimeArtifact {
+export interface CompiledArtifact {
   v: 1
   /** The `assets.build` of the build it was compiled for. */
   build: string
@@ -202,10 +202,43 @@ export interface RuntimeArtifact {
   stores: string[]
 }
 
+/** F546: a component the app builds itself. The server prints `<brust-island data-id={id} x-props='…'>` around the HTML
+ * `components.render` returns for the slot's props; `client` hydrates it. No `jinja`. */
+export interface IslandArtifact {
+  v: 1
+  build: string
+  /** The island id (`[A-Za-z0-9_]{1,128}`, the host's `data-id`). It names the chunk URL, which is cached for good:
+   * change it whenever `client` changes (a content hash). */
+  id: string
+  tier: 'island'
+  /** One ES module (at most 256 KiB) that registers the hydrate function:
+   * `(globalThis.__brustIslands ||= []).push([id, (host, props, committed) => dispose]); globalThis.__brustIslandReady?.()`.
+   * It may import same-origin modules by absolute path; brust neither bundles nor rewrites them. */
+  client: string
+  features?: string[]
+  stores?: string[]
+}
+
+/** What `components.resolve` returns: a compiled artifact (`compileComponent`) or an island the app built itself. */
+export type RuntimeArtifact = CompiledArtifact | IslandArtifact
+
+/** F546 A3: the context of a `components.render` call. */
+export interface RenderContext {
+  build: string
+  /** One page render: `id` is the same for every call of that page, `total` = the calls of this batch (cached pairs
+   * are not called and do not count), for a per-page budget. */
+  page: { id: string; total: number }
+}
+
 /** F519 (R5.1): the routes entry's `export const components`. `resolve` returns the artifact a `<Dynamic component={ref}>`
  * renders, or `null` when there is none. Change the ref when the source changes: a ref's chunk URL is cached for good. */
 export interface RuntimeComponents {
   resolve(ref: string, ctx: { build: string }): RuntimeArtifact | null | undefined | Promise<RuntimeArtifact | null | undefined>
+  /** F546: the HTML of an island artifact's slot for these props, placed AS GIVEN inside its host: it is the app's own
+   * trusted output, like a loader's raw HTML. Called once per distinct (ref, props) of a page render that is not
+   * cached; the server caches the answer per (ref, artifact, props). `null` (or no method) = an empty host the client
+   * mounts from scratch; a throw or more than 4 MiB = an empty host and the page is not cached. */
+  render?(ref: string, props: Record<string, unknown>, ctx: RenderContext): string | null | undefined | Promise<string | null | undefined>
 }
 
 /** Props of {@link Dynamic}. */

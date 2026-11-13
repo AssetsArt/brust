@@ -19,20 +19,27 @@ use brust_core::host::{
 use brust_core::manifest::Manifest;
 use brust_core::plan::{PlanSeed, PlannedCall};
 use brust_core::protocol::{
-    ComponentRequest, ComponentResponse, ComponentResult, Headers, JobsRequest, JobsResponse,
-    LoaderRequest, LoaderResponse,
+    ComponentRequest, ComponentResponse, ComponentResult, Headers, HtmlResult, JobsRequest,
+    JobsResponse, LoaderRequest, LoaderResponse, RenderItem,
 };
 use bytes::Bytes;
 use http::HeaderMap;
 use serde_json::{Value, json};
 
 type Answer = Box<dyn Fn(&str) -> ComponentResult>;
+/// F546: the worker's `render` answer for one asked pair (`None`: no answer at all, an old worker).
+type RenderAnswer = Box<dyn Fn(&RenderItem) -> Option<HtmlResult>>;
+/// F546: every `component` call's renders and page id, in order.
+type Asked = Rc<RefCell<Vec<(Vec<RenderItem>, Option<String>)>>>;
 
 /// The scripted worker: the loader answers `items`, the `component` call answers each ref through `answer`.
 struct TestHost {
     clock: ManualClock,
-    items: Value,
-    answer: Answer,
+    items: RefCell<Value>,
+    answer: RefCell<Answer>,
+    render: RefCell<RenderAnswer>,
+    /// F546: every `component` call's renders and page id, in order.
+    asked: Asked,
     /// Every `component` call's refs, in order.
     calls: Rc<RefCell<Vec<Vec<String>>>>,
     loader_calls: Rc<RefCell<u32>>,
@@ -63,7 +70,7 @@ impl Host for TestHost {
         Ok((
             LoaderResponse::Ok {
                 ok: true,
-                data: json!({ "items": self.items.clone() }).into(),
+                data: json!({ "items": self.items.borrow().clone() }).into(),
                 headers: Headers::default(),
                 store: None,
             },
@@ -75,14 +82,20 @@ impl Host for TestHost {
     }
     async fn component(&self, req: &ComponentRequest<'_>) -> Result<ComponentResponse, CallError> {
         self.calls.borrow_mut().push(req.refs.to_vec());
+        self.asked
+            .borrow_mut()
+            .push((req.renders.to_vec(), req.page.map(str::to_string)));
         if let Some(reg) = self.registry.borrow().as_ref() {
             (self.on_call)(reg);
         }
         if self.fail_call {
             return Err(CallError::Rejected("worker gone".into()));
         }
+        let answer = self.answer.borrow();
+        let render = self.render.borrow();
         Ok(ComponentResponse {
-            results: req.refs.iter().map(|r| (self.answer)(r)).collect(),
+            results: req.refs.iter().map(|r| answer(r)).collect(),
+            html: req.renders.iter().filter_map(|i| (*render)(i)).collect(),
         })
     }
     async fn read_body(&self, _body: (), _cap: usize) -> Result<Bytes, ReadErr> {
@@ -120,7 +133,7 @@ fn manifest_json() -> String {
         "version": 3,
         "assets": {
             "runtime": "client/runtime-1.js",
-            "features": { "events": "client/events-1.js", "store": "client/store-1.js" },
+            "features": { "events": "client/events-1.js", "island": "client/island-1.js", "store": "client/store-1.js" },
             "build": BUILD
         },
         "jobs_module": "jobs.js",
@@ -169,6 +182,7 @@ fn titles(r: &str) -> ComponentResult {
 struct Fixture {
     core: Core<TestHost>,
     calls: Rc<RefCell<Vec<Vec<String>>>>,
+    asked: Asked,
     loader_calls: Rc<RefCell<u32>>,
     clock: ManualClock,
 }
@@ -183,13 +197,16 @@ fn fixture_with(
     files.insert("jinja/page_p1.jinja".to_string(), PAGE.to_string());
     let loaded = Manifest::from_parts(&manifest_json(), &files).unwrap();
     let calls = Rc::new(RefCell::new(Vec::new()));
+    let asked = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(0));
     let registry = Rc::new(RefCell::new(None));
     let clock = ManualClock::default();
     let host = TestHost {
         clock: clock.clone(),
-        items,
-        answer,
+        items: RefCell::new(items),
+        answer: RefCell::new(answer),
+        render: RefCell::new(Box::new(echo_render)),
+        asked: Rc::clone(&asked),
         calls: Rc::clone(&calls),
         loader_calls: Rc::clone(&loader_calls),
         registry: Rc::clone(&registry),
@@ -206,6 +223,7 @@ fn fixture_with(
     Fixture {
         core,
         calls,
+        asked,
         loader_calls,
         clock,
     }
@@ -480,8 +498,10 @@ fn the_app_environment_has_no_fuel_cap() {
     let loaded = Manifest::from_parts(&manifest_json(), &files).unwrap();
     let host = TestHost {
         clock: ManualClock::default(),
-        items: json!([]),
-        answer: Box::new(titles),
+        items: RefCell::new(json!([])),
+        answer: RefCell::new(Box::new(titles)),
+        render: RefCell::new(Box::new(echo_render)),
+        asked: Rc::default(),
         calls: Rc::default(),
         loader_calls: Rc::default(),
         registry: Rc::default(),
@@ -708,4 +728,327 @@ fn no_slot_in_the_build_means_no_registry() {
     files.insert("jinja/page_p1.jinja".to_string(), PAGE.to_string());
     let loaded = Manifest::from_parts(&json, &files).unwrap();
     assert!(Registry::for_manifest(&loaded.manifest, None).is_none());
+}
+
+// ----- F546: island artifacts (`tier: "island"`, HTML from `components.render`) -----
+
+/// The default worker `render`: `<p>` + the props' title.
+fn echo_render(i: &RenderItem) -> Option<HtmlResult> {
+    Some(HtmlResult {
+        reference: i.reference.clone(),
+        key: i.key.clone(),
+        html: Some(format!(
+            "<p>{}</p>",
+            i.props["title"]
+                .as_str()
+                .unwrap_or("?")
+                .replace('<', "&lt;")
+        )),
+        error: None,
+    })
+}
+
+fn island_artifact(id: &str, client: &str) -> Value {
+    json!({ "v": 1, "build": BUILD, "id": id, "tier": "island", "client": client })
+}
+
+/// Every ref is an island artifact `isl_<ref>`.
+fn islands(r: &str) -> ComponentResult {
+    found(r, island_artifact(&format!("isl_{r}"), "/* island */"))
+}
+
+fn three() -> Value {
+    json!([
+        { "ref": "a", "title": "one" },
+        { "ref": "a", "title": "two" },
+        { "ref": "a", "title": "one" }
+    ])
+}
+
+#[test]
+fn island_registration_needs_a_client_and_no_jinja() {
+    let reg = registry();
+    assert!(reg.register("i", island_artifact("isl_i", "x")).is_ok());
+    let mut no_client = island_artifact("isl_j", "x");
+    no_client["client"] = Value::Null;
+    assert!(reg.register("j", no_client).is_err());
+    let mut with_jinja = island_artifact("isl_k", "x");
+    with_jinja["jinja"] = json!("<b>x</b>");
+    let why = reg.register("k", with_jinja).unwrap_err();
+    assert!(why.contains("no jinja"), "{why}");
+    let big = island_artifact("isl_l", &"x".repeat(MAX_CLIENT_BYTES + 1));
+    assert!(reg.register("l", big).is_err());
+    // static and native still need their jinja
+    let mut no_jinja = artifact("id_m", "static", "x");
+    no_jinja.as_object_mut().unwrap().remove("jinja");
+    assert!(reg.register("m", no_jinja).is_err());
+    // a build without the island runtime feature cannot hydrate it
+    let json = manifest_json().replace("\"island\":\"client/island-1.js\",", "");
+    let mut files = BTreeMap::new();
+    files.insert("jinja/page_p1.jinja".to_string(), PAGE.to_string());
+    let loaded = Manifest::from_parts(&json, &files).unwrap();
+    let bare = Registry::for_manifest(&loaded.manifest, None).unwrap();
+    let why = bare
+        .register("i", island_artifact("isl_i", "x"))
+        .unwrap_err();
+    assert!(why.contains("island"), "{why}");
+}
+
+#[test]
+fn the_same_ref_and_id_with_new_code_is_refused_a_new_id_is_not() {
+    let reg = registry();
+    assert!(reg.register("a", island_artifact("isl_v1", "v1")).is_ok());
+    assert!(
+        reg.register("a", island_artifact("isl_v1", "v1")).is_ok(),
+        "same code again"
+    );
+    let why = reg
+        .register("a", island_artifact("isl_v1", "v2"))
+        .unwrap_err();
+    assert!(why.contains("change the id"), "{why}");
+    assert!(reg.register("a", island_artifact("isl_v2", "v2")).is_ok());
+    // native artifacts share the immutable chunk URL: same rule
+    let n1 = artifact("id_n", "native", "<i>1</i>");
+    let mut n2 = n1.clone();
+    n2["client"] = json!("export const y = 2");
+    assert!(reg.register("n", n1).is_ok());
+    assert!(reg.register("n", n2).is_err());
+}
+
+/// The `x-props='…'` attribute values of every island host in `body`, in order.
+fn hosts(body: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while let Some(at) = rest.find("<brust-island ") {
+        rest = &rest[at..];
+        let head_end = rest.find('>').unwrap();
+        let head = &rest[..head_end];
+        let id = head
+            .split("data-id=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_string();
+        let props = head
+            .split("x-props='")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches('\'')
+            .to_string();
+        let close = rest.find("</brust-island>").unwrap();
+        out.push((id, props, rest[head_end + 1..close].to_string()));
+        rest = &rest[close..];
+    }
+    out
+}
+
+#[test]
+fn a_cold_island_ref_is_one_call_with_its_renders_then_cached_html_makes_none() {
+    let f = fixture(three(), Box::new(islands));
+    let body = text(&get(&f.core, "/"));
+    assert_eq!(*f.calls.borrow(), vec![vec!["a".to_string()]]);
+    let asked = f.asked.borrow();
+    // one render per distinct (ref, props): "one" twice is asked once
+    assert_eq!(asked[0].0.len(), 2, "{:?}", asked[0].0);
+    assert!(asked[0].1.is_some(), "the page id rides the call");
+    drop(asked);
+    let h = hosts(&body);
+    assert_eq!(
+        h,
+        vec![
+            (
+                "isl_a".into(),
+                "{&quot;title&quot;:&quot;one&quot;}".into(),
+                "<p>one</p>".into()
+            ),
+            (
+                "isl_a".into(),
+                "{&quot;title&quot;:&quot;two&quot;}".into(),
+                "<p>two</p>".into()
+            ),
+            (
+                "isl_a".into(),
+                "{&quot;title&quot;:&quot;one&quot;}".into(),
+                "<p>one</p>".into()
+            ),
+        ],
+        "{body}"
+    );
+    assert!(
+        body.contains("<brust-island style=\"display:contents\" data-id=\"isl_a\" x-props='"),
+        "{body}"
+    );
+    // the island runtime, its feature and the chunk, though the page is static
+    let rt = body.find("/_brust/client/runtime-1.js").expect("runtime");
+    let isl = body
+        .find("/_brust/client/island-1.js")
+        .expect("island feature");
+    let ch = body
+        .find("src=\"/_brust/rc/b1/a/isl_a.js\"")
+        .expect("chunk");
+    assert!(rt < isl && isl < ch, "{body}");
+    // warm ref, cached HTML: a fresh render (uncached route) makes no call at all
+    let body2 = text(&get(&f.core, "/u"));
+    assert_eq!(f.calls.borrow().len(), 1, "{body2}");
+    assert_eq!(hosts(&body2), h);
+    // warm ref, new props: one call carrying only the new render
+    f.core
+        .host
+        .items
+        .replace(json!([{ "ref": "a", "title": "three" }]));
+    let body3 = text(&get(&f.core, "/u"));
+    assert_eq!(f.calls.borrow().len(), 2);
+    assert_eq!(f.calls.borrow()[1], Vec::<String>::new());
+    assert_eq!(f.asked.borrow()[1].0.len(), 1);
+    assert_eq!(hosts(&body3)[0].2, "<p>three</p>");
+}
+
+#[test]
+fn island_props_are_escaped_like_a_built_island() {
+    let f = fixture(
+        json!([{ "ref": "a", "title": "it's </script> & \"q\"" }]),
+        Box::new(islands),
+    );
+    let body = text(&get(&f.core, "/u"));
+    let h = hosts(&body);
+    assert_eq!(h.len(), 1, "{body}");
+    let attr = &h[0].1;
+    assert!(
+        !attr.contains('\'') && !attr.contains('<') && !attr.contains('"'),
+        "{attr}"
+    );
+    assert!(!attr.contains("&\"") && attr.contains("&amp;"), "{attr}");
+}
+
+#[test]
+fn render_failures_keep_the_page_out_null_is_an_empty_host_that_is_stored() {
+    // throws -> empty host, not stored (the next request renders again)
+    let f = fixture(json!([{ "ref": "a", "title": "x" }]), Box::new(islands));
+    *f.core.host.render.borrow_mut() = Box::new(|i| {
+        Some(HtmlResult {
+            reference: i.reference.clone(),
+            key: i.key.clone(),
+            html: None,
+            error: Some("boom".into()),
+        })
+    });
+    let r = get(&f.core, "/");
+    assert_eq!(hosts(&text(&r))[0].2, "");
+    assert_eq!(cache_hdr(&get(&f.core, "/")), "MISS");
+    // null -> empty host, cacheable, and cached as the app's answer
+    let f = fixture(json!([{ "ref": "a", "title": "x" }]), Box::new(islands));
+    *f.core.host.render.borrow_mut() = Box::new(|i| {
+        Some(HtmlResult {
+            reference: i.reference.clone(),
+            key: i.key.clone(),
+            html: None,
+            error: None,
+        })
+    });
+    assert_eq!(hosts(&text(&get(&f.core, "/")))[0].2, "");
+    assert_eq!(cache_hdr(&get(&f.core, "/")), "HIT");
+    assert_eq!(f.core.components.as_ref().unwrap().html_stats().0, 1);
+    // over the slot output cap -> failure
+    let f = fixture(json!([{ "ref": "a", "title": "x" }]), Box::new(islands));
+    *f.core.host.render.borrow_mut() = Box::new(|i| {
+        Some(HtmlResult {
+            reference: i.reference.clone(),
+            key: i.key.clone(),
+            html: Some("x".repeat(brust_core::components::MAX_SLOT_OUTPUT_BYTES + 1)),
+            error: None,
+        })
+    });
+    assert_eq!(hosts(&text(&get(&f.core, "/")))[0].2, "");
+    assert_eq!(cache_hdr(&get(&f.core, "/")), "MISS");
+    // an old worker (no html answers) -> failure, empty host
+    let f = fixture(json!([{ "ref": "a", "title": "x" }]), Box::new(islands));
+    *f.core.host.render.borrow_mut() = Box::new(|_| None);
+    assert_eq!(hosts(&text(&get(&f.core, "/")))[0].2, "");
+    assert_eq!(cache_hdr(&get(&f.core, "/")), "MISS");
+    // the call failing (a warm island asking only renders) -> empty host, failure
+    let f = fixture_with(
+        json!([{ "ref": "a", "title": "x" }]),
+        Box::new(islands),
+        Box::new(|_| {}),
+        true,
+    );
+    f.core
+        .components
+        .as_ref()
+        .unwrap()
+        .register("a", island_artifact("isl_a", "c"))
+        .unwrap();
+    let r = get(&f.core, "/");
+    assert_eq!(
+        hosts(&text(&r)),
+        vec![(
+            "isl_a".into(),
+            "{&quot;title&quot;:&quot;x&quot;}".into(),
+            String::new()
+        )]
+    );
+    assert_eq!(f.calls.borrow().len(), 1);
+    assert_eq!(cache_hdr(&get(&f.core, "/")), "MISS");
+}
+
+#[test]
+fn a_new_artifact_digest_for_the_ref_misses_the_html_cache() {
+    let f = fixture(json!([{ "ref": "a", "title": "x" }]), Box::new(islands));
+    get(&f.core, "/u");
+    assert_eq!(f.calls.borrow().len(), 1);
+    get(&f.core, "/u");
+    assert_eq!(f.calls.borrow().len(), 1, "cached");
+    // the app ships new code under a new id: same props, new digest -> asked again
+    f.core
+        .components
+        .as_ref()
+        .unwrap()
+        .register("a", island_artifact("isl_a2", "new"))
+        .unwrap();
+    let body = text(&get(&f.core, "/u"));
+    assert_eq!(f.calls.borrow().len(), 2);
+    assert_eq!(f.calls.borrow()[1], Vec::<String>::new());
+    assert_eq!(hosts(&body)[0].0, "isl_a2");
+}
+
+#[test]
+fn the_island_html_cache_is_bounded_in_bytes() {
+    let f = fixture(json!([]), Box::new(islands));
+    let reg = f.core.components.as_ref().unwrap();
+    reg.set_html_cap_bytes(40);
+    let items: Vec<Value> = (0..10)
+        .map(|i| json!({ "ref": "a", "title": format!("t{i:02}") }))
+        .collect();
+    f.core.host.items.replace(Value::Array(items));
+    get(&f.core, "/u");
+    let (n, bytes) = reg.html_stats();
+    assert!(bytes <= 40, "{bytes}");
+    assert!(n < 10 && n > 0, "{n}");
+}
+
+#[test]
+fn every_render_of_one_call_shares_one_page_id_and_pages_differ() {
+    let f = fixture(three(), Box::new(islands));
+    get(&f.core, "/u");
+    f.core
+        .host
+        .items
+        .replace(json!([{ "ref": "a", "title": "new" }]));
+    get(&f.core, "/u");
+    let asked = f.asked.borrow();
+    let (p1, p2) = (asked[0].1.clone().unwrap(), asked[1].1.clone().unwrap());
+    assert_ne!(p1, p2);
+}
+
+#[test]
+fn a_page_without_island_renders_sends_the_f519_request() {
+    let f = fixture(two(), Box::new(titles));
+    get(&f.core, "/u");
+    // cold static refs: the renders are asked (the ref might have been an island) but the static page ignores them
+    let asked = f.asked.borrow();
+    assert_eq!(asked.len(), 1);
+    let req = ComponentRequest::refs(&[]);
+    assert_eq!(serde_json::to_string(&req).unwrap(), "{\"refs\":[]}");
 }

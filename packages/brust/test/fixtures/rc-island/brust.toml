@@ -1,0 +1,3 @@
+# F546 fixture: an island artifact the app builds itself, under an enforced CSP.
+[csp]
+enabled = true
