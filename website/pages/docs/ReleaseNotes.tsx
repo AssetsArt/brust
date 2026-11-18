@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-51', title: '2.0.0-alpha.51' },
       { id: 'alpha-50', title: '2.0.0-alpha.50' },
       { id: 'alpha-49', title: '2.0.0-alpha.49' },
       { id: 'alpha-48', title: '2.0.0-alpha.48' },
@@ -73,6 +74,38 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-51">2.0.0-alpha.51 · 18 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.50: #503 (ledger F552, F553) */}
+      <p>This version lets a loader render the route&rsquo;s own page at any error status, such as a 403 page or a 503 maintenance page, and makes a mistyped <code>||</code> in a cache expression say what to write instead.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #503 (F552); packages/brust/src/routes.ts (renderStatus, notFound), packages/brust/src/handlers.ts (verdictJson); crates/brust-core/src/pipeline.rs (Verdict::Render); packages/brust/test/worker.test.ts; tests/server/render-status.chromium.test.ts; the Loaders docs page, section Not found, error pages, redirect, errors */}
+        <li>
+          <strong>A loader can render the route&rsquo;s own page at any status from 400 to 599 with <code>renderStatus(status, data)</code> (#503).</strong> Return it from a loader, as you do <code>notFound()</code>: a 403 page for a visitor without access, a 451, a 503 maintenance page. The page is the route&rsquo;s own, with its layouts; the verdict&rsquo;s <code>data</code> is merged over the parent loaders&rsquo; data, and the loaders&rsquo; response headers and store values apply. It is exported from <code>@brust/core</code> wherever <code>notFound</code> is. A status outside 400–599 throws when the loader calls it: use <code>redirect()</code> for a 3xx, and return the data for a 200. <code>notFound(data)</code> is unchanged and equals <code>renderStatus(404, data)</code>.
+        </li>
+        {/* source: PR #503 (F552); crates/brust-core/src/pipeline.rs (cacheable = false for a render verdict); tests/server/render-status.chromium.test.ts (never stored on a cached route; client navigation swaps the page in like a notFound page) */}
+        <li>
+          <strong>A page rendered by <code>renderStatus</code> is never stored in the page cache, and client navigation shows it like a not-found page (#503).</strong> The loader runs on every request, so a 403 for one visitor is never served to another. When a visitor follows a link to such a page, the browser swaps it in with its status, as it does for <code>notFound()</code>, and does not keep it in the client cache. Use <code>httpError()</code> instead when the answer is a body and not a page, such as a JSON error for an API or a plain-text 429: it renders no template and no layout.
+        </li>
+        {/* source: PR #503 (F552); the PR's --target static note: the build fails with 'ssg-render … status N, want 200 (or a redirect())' */}
+        <li>
+          <strong><code>brust build --target static</code> refuses a page that renders at an error status (#503).</strong> As with <code>notFound()</code> returned from an ordinary route, the build fails with <code>ssg-render</code> and the status it got, because a static file cannot answer at a status other than 200.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #503 (F552); packages/brust/src/handlers.ts (verdictJson decides on render === true, not on status 404) */}
+        <li>
+          <strong>A hand-built verdict is judged by its <code>render</code> field, not by its status (#503).</strong> Before, any verdict with a status other than 404 became a redirect to <code>/</code>, so a verdict such as <code>{'{ status: 403, render: true }'}</code> sent the visitor to the home page instead of showing the page. Now a verdict with <code>render: true</code> renders at its status, and one with a status outside 400–599 is a loader error (500) and never a redirect. Verdicts built with <code>notFound()</code>, <code>renderStatus()</code> and <code>redirect()</code> behave as documented.
+        </li>
+        {/* source: PR #503 (F553); crates/brust-core/src/cache/key_expr.rs (js_operator_hint); website/lib/cache-key.ts; the Caching docs page */}
+        <li>
+          <strong>A cache expression written with <code>||</code> or <code>&amp;&amp;</code> now fails with a message that names the function to write (#503).</strong> <code>{'cookie(a) || query(b)'}</code> used to fail with <code>trailing input at byte N</code>. It now says <code>{"cache expression: '||' is not an operator: write or(a, b)"}</code> (and <code>and(a, b)</code> for <code>&amp;&amp;</code>). No new syntax: several conditions are still written <code>or(a, b)</code> and <code>and(a, b)</code>, and other trailing input keeps the generic message. The Caching page says so, and its playground shows the same text.
+        </li>
+      </ul>
 
       <h2 id="alpha-50">2.0.0-alpha.50 · 13 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.49: #499 (ledger F549), #500 (F548) and #501 (F550) */}
