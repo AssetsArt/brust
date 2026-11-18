@@ -51,9 +51,10 @@ const PAGE = `export default function DetailPage({ name, types, art }) {
   )
 }`
 
-const VERDICTS = `import { httpError, notFound, redirect } from '@brust/core/routes'
+const VERDICTS = `import { httpError, notFound, redirect, renderStatus } from '@brust/core/routes'
 
 return notFound({ name })            // 404, renders this route's page with the data
+return renderStatus(403, { name })   // the same at any 400-599 status
 return redirect('/pokedex', 308)     // Location header, nothing rendered (default 302)
 httpError(429, 'slow down')          // throw-only: any 400-599 status and a body`
 
@@ -88,7 +89,7 @@ export async function loadersLoader(): Promise<LoadersData> {
       { id: 'ctx', title: 'What a loader gets' },
       { id: 'props', title: 'How the data reaches components' },
       { id: 'demo', title: 'Try a lookup' },
-      { id: 'verdicts', title: 'Not found, redirect, errors' },
+      { id: 'verdicts', title: 'Not found, error pages, redirect, errors' },
       { id: 'headers', title: 'Response headers' },
     ],
     blocks: {
@@ -135,12 +136,19 @@ export default function Loaders({ blocks, demo }: LoadersData) {
         For a route param, open <code>/demo/pokemon/eevee</code>: its loader reads <code>params.name</code>, and on a brust server an unknown name such as <code>/demo/pokemon/agumon</code> returns <code>notFound()</code>. This site ships as static files and the route's cache rule reads the query string, so the static build leaves it out (<code>ssg: false</code>); run the docs locally with <code>bun run dev</code> to open it.
       </p>
 
-      <h2 id="verdicts">Not found, redirect, errors</h2>
+      <h2 id="verdicts">Not found, error pages, redirect, errors</h2>
       <CodeBlock code={blocks.verdicts.code} lang={blocks.verdicts.lang} file={blocks.verdicts.file} html={blocks.verdicts.html} />
       <ul>
         <li>The first verdict stops the chain: loaders below it do not run.</li>
         <li>
           <code>notFound(data)</code> renders the route's own page with status 404, its data merged over the parent loaders' data.
+        </li>
+        <li>
+          <code>renderStatus(status, data)</code> does the same at any status from 400 to 599: a 403 page for a visitor without access, a 451, a 503 maintenance page. The layouts, the loaders' data and their response headers are all
+          there, and the page is never stored in the cache. <code>notFound(data)</code> is <code>renderStatus(404, data)</code>. Another status throws when the loader calls it: a 3xx is <code>redirect()</code>, a 200 is the data itself.
+        </li>
+        <li>
+          Use <code>httpError()</code> instead when the answer is a body and not a page: an API-style JSON error, a plain-text 429. It renders no template and no layout.
         </li>
         <li>
           <code>httpError</code> takes a string body (sent as <code>text/plain; charset=utf-8</code>) or an object (sent as <code>application/json; charset=utf-8</code>). The third argument can name another type, <code>{'{ contentType }'}</code>, and add <code>headers</code>; a server-owned name there (see Response headers) is dropped with a warning, in <code>brust dev</code> too. A thrown <code>Error</code> is a 500, with the message in the server log.

@@ -57,6 +57,14 @@ impl Expr {
         let e = p.expr()?;
         p.skip_ws();
         if p.i != p.s.len() {
+            // F553: `a || b` reads like JS; say what this language writes instead.
+            for (op, f) in [("||", "or"), ("&&", "and")] {
+                if p.s[p.i..].starts_with(op.as_bytes()) {
+                    return Err(format!(
+                        "cache expression: '{op}' is not an operator: write {f}(a, b)"
+                    ));
+                }
+            }
             return Err(format!("cache expression: trailing input at byte {}", p.i));
         }
         Ok(e)
@@ -474,6 +482,23 @@ mod tests {
     #[test]
     fn reject_eq_bad_arity() {
         assert!(Expr::parse("eq(a)").is_err());
+    }
+
+    /// F553: `||` / `&&` after an expression name the function to write; other trailing input stays generic.
+    #[test]
+    fn js_operator_hint() {
+        assert_eq!(
+            Expr::parse("cookie(a) || query(b)").unwrap_err(),
+            "cache expression: '||' is not an operator: write or(a, b)"
+        );
+        assert_eq!(
+            Expr::parse("cookie(a)&&query(b)").unwrap_err(),
+            "cache expression: '&&' is not an operator: write and(a, b)"
+        );
+        assert_eq!(
+            Expr::parse("cookie(a) | query(b)").unwrap_err(),
+            "cache expression: trailing input at byte 10"
+        );
     }
 
     /// R9b: on Workers there is no process env, so `env()` refuses to compile the expression.

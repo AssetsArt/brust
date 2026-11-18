@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { assertRoutesInstallable } from '../src/build/route-conflicts'
-import { defineRoutes, flattenRoutes, httpError, isHttpErrorTrigger, isVerdict, notFound, Outlet, redirect } from '../src/routes'
+import { defineRoutes, flattenRoutes, httpError, isHttpErrorTrigger, isVerdict, notFound, Outlet, redirect, renderStatus } from '../src/routes'
 
 const L = () => null,
   H = () => null,
@@ -33,6 +33,15 @@ test('flattenRoutes assigns DFS ids, patterns and chains', () => {
     ['r3', '*', ['r0', 'r3'], true],
   ])
   expect(leaves[1]!.chain.map((r) => r.Component)).toEqual([L, D])
+})
+
+test('F552 renderStatus: a rendering verdict at 400-599; notFound is renderStatus(404)', () => {
+  expect(renderStatus(403, { why: 'x' })).toMatchObject({ status: 403, render: true, data: { why: 'x' } })
+  expect(renderStatus(503)).toMatchObject({ status: 503, render: true, data: {} })
+  expect(isVerdict(renderStatus(451))).toBe(true)
+  expect(notFound({ a: 1 })).toEqual(renderStatus(404, { a: 1 }))
+  for (const bad of [200, 302, 399, 600, 403.5, Number.NaN])
+    expect(() => renderStatus(bad), String(bad)).toThrow(/renderStatus\(status\) must be an integer in 400-599, got .* use redirect\(\) for 3xx and return the data for a 200/)
 })
 
 test('verdicts keep the 0.1.x wire shape', () => {

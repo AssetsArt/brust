@@ -25,5 +25,6 @@ export {
   notFound,
   Outlet,
   redirect,
+  renderStatus,
 } from './routes'
 export type { ComponentType, DynamicProps, FlatRoute, HttpErrorOpts, HttpErrorTrigger, LoaderCtx, LoaderReq, CompiledArtifact, IslandArtifact, RenderContext, Route, RouteCacheConfig, RouteSsgConfig, RuntimeArtifact, RuntimeComponents, Verdict } from './routes'

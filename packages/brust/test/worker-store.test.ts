@@ -3,7 +3,7 @@ import { defineStore, signal } from '@brust/runtime-dom/store'
 import * as serverNavigation from '../src/navigation'
 import { NAVIGATION_MODULE } from '../src/store/builtin'
 import { collectSnapshot, getServerInstance, runInStoreContext } from '../src/store/server-context'
-import { defineRoutes, flattenRoutes, httpError, notFound, redirect } from '../src/routes'
+import { defineRoutes, flattenRoutes, httpError, notFound, redirect, renderStatus } from '../src/routes'
 import { type JobsModule, makeDispatch, makeHandlers, type ManifestLike } from '../src/worker'
 
 const C = () => null
@@ -62,6 +62,17 @@ test('no store touched -> no store key, byte-identical JSON', async () => {
   const r = await h.loader(ctx())
   expect('store' in r).toBe(false)
   expect(JSON.stringify(r)).toBe('{"ok":true,"data":{"a":1,"b":2}}')
+})
+
+test('F552 renderStatus carries the store as notFound does', async () => {
+  const h = makeHandlers({
+    leaves: leaves(() => {
+      rec('cart').value = 5
+      return renderStatus(403, { why: 'x' })
+    }),
+    jobs: {},
+  })
+  expect(await h.loader(ctx())).toEqual({ verdict: 'render', status: 403, data: { why: 'x' }, store: { cart: { value: 5 } } })
 })
 
 test('notFound carries the store; redirect/httpError/error do not', async () => {
