@@ -51,6 +51,10 @@ test('key_expr.rs vectors: everything the parser rejects, with the server messag
     ['header(or(a))', /must be a string literal/],
     ["'abc", /unterminated string literal/],
     ['cookie(a) b', /trailing input at byte 10/],
+    // F553: a JS-style operator names the function to write
+    ['cookie(a) || query(b)', /^cache expression: '\|\|' is not an operator: write or\(a, b\)$/],
+    ['cookie(a)&&query(b)', /^cache expression: '&&' is not an operator: write and\(a, b\)$/],
+    ['cookie(a) | query(b)', /trailing input at byte 10/],
     ['', /expected identifier at byte 0/],
   ]
   for (const [src, msg] of bad) {

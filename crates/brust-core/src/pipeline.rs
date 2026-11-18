@@ -449,14 +449,20 @@ async fn page<H: Host>(
                 tracing::error!(route = %route.id, "loader returned ok: false");
                 return body::error_500();
             }
-            Ok(LoaderResponse::Verdict(Verdict::NotFound {
+            Ok(LoaderResponse::Verdict(Verdict::Render {
+                status: code,
                 data,
                 store: snapshot,
                 headers,
             })) => {
+                // F552: notFound (404) and renderStatus (any 400-599) render the route's page, never stored.
+                if !(400..=599).contains(&code) {
+                    tracing::error!(route = %route.id, status = code, "render verdict status outside 400-599");
+                    return body::error_500();
+                }
                 merge_loader_response(&mut ctx, data, snapshot, &route.id);
                 loader_headers(&route.id, headers, &mut extra);
-                status = 404;
+                status = code;
                 cacheable = false;
             }
             Ok(LoaderResponse::Verdict(Verdict::Redirect {

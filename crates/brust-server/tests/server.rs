@@ -349,6 +349,46 @@ fn not_found_verdict_is_404_with_own_template_and_not_cached() {
     assert_eq!(stats(&s)["l1"]["len"], 0);
 }
 
+/// F552: a `render` verdict (renderStatus) is notFound's page at its own status: the route's template, loader headers
+/// applied, never stored (also a 5xx); a status outside 400-599 is a 500, never a page or a redirect.
+#[test]
+fn render_verdict_renders_the_page_at_its_status_and_is_not_cached() {
+    let page = |status: u16| {
+        json!({"verdict": "render", "status": status, "headers": [["x-why", "denied"]],
+               "data": {"pokemon": {"name": format!("s{status}"), "stats": {}, "moves": []}}})
+    };
+    let f = FakeBun::new(
+        move |req| match req["params"]["name"].as_str() {
+            Some("forbidden") => page(403),
+            Some("legal") => page(451),
+            Some("down") => page(503),
+            Some("ok") => page(200),
+            _ => default_loader(req),
+        },
+        default_jobs,
+    );
+    let s = boot(f.clone());
+    for (path, want) in [
+        ("/pokemon/forbidden", 403),
+        ("/pokemon/legal", 451),
+        ("/pokemon/down", 503),
+    ] {
+        for _ in 0..2 {
+            let (st, h, body) = get(&s, path, &[]);
+            assert_eq!(st, want, "{path}: {body}");
+            assert!(body.contains(&format!("<h1>s{want}</h1>")), "{body}");
+            assert_eq!(h.get("x-why").unwrap(), "denied", "{path}");
+            assert_ne!(cache_hdr(&h), Some("HIT"), "{path}");
+        }
+    }
+    // every request ran the loader: 3 paths x 2
+    assert_eq!(f.counts().0, 6);
+    assert_eq!(stats(&s)["l1"]["len"], 0);
+    let (st, h, _) = get(&s, "/pokemon/ok", &[]);
+    assert_eq!(st, 500);
+    assert!(h.get("location").is_none());
+}
+
 #[test]
 fn redirect_and_http_error_verdicts() {
     let f = FakeBun::new(

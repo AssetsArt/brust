@@ -26,6 +26,8 @@ export type HeaderPairs = [string, string][]
 export type LoaderResponse =
   | { ok: true; data: Record<string, unknown>; headers?: HeaderPairs; store?: StoreSnapshot | null }
   | { verdict: 'notFound'; data: unknown; headers?: HeaderPairs; store?: StoreSnapshot | null }
+  /** F552 `renderStatus(status, data)`: notFound's page at another 400-599 status (a 404 still goes as `notFound`). */
+  | { verdict: 'render'; status: number; data: unknown; headers?: HeaderPairs; store?: StoreSnapshot | null }
   | { verdict: 'redirect'; location: string; status: number; headers?: HeaderPairs }
   | { verdict: 'httpError'; status: number; body: string; contentType: string; headers?: HeaderPairs }
   | { error: string }
@@ -215,12 +217,17 @@ function withHeaders<T extends LoaderResponse>(r: T, h: Headers): T {
   return r
 }
 
-/** `parent`: the data the chain merged before the verdict. A notFound renders the route's
- * template (layouts included), so the layouts' data stays under the verdict's own keys. */
+/** `parent`: the data the chain merged before the verdict. A rendering verdict (`notFound`, `renderStatus`) renders
+ * the route's template (layouts included), so the layouts' data stays under the verdict's own keys. F552: decided on
+ * `render`, not on the status; a rendering verdict outside 400-599 is a loader error (500), never a redirect. */
 function verdictJson(v: Verdict, parent: Record<string, unknown>): LoaderResponse {
-  if (v.status === 404) {
+  if (v.render === true) {
+    const { status } = v
+    if (!Number.isInteger(status) || status < 400 || status > 599)
+      throw new Error(`a rendering verdict needs a status in 400-599, got ${status} (build it with renderStatus())`)
     const own = v.data ?? {}
-    return { verdict: 'notFound', data: typeof own === 'object' && !Array.isArray(own) ? { ...parent, ...own } : own }
+    const data = typeof own === 'object' && own !== null && !Array.isArray(own) ? { ...parent, ...own } : own
+    return status === 404 ? { verdict: 'notFound', data } : { verdict: 'render', status, data }
   }
   return { verdict: 'redirect', location: v.headers?.Location ?? '/', status: v.status }
 }
@@ -367,7 +374,7 @@ export function makeHandlers(opts: {
 
   return {
     // 0.1.x `runNativeChainLoaders`: root → leaf, flat merge (later keys win), first verdict stops
-    // (a notFound keeps what the chain merged so far: verdictJson).
+    // (a notFound / renderStatus keeps what the chain merged so far: verdictJson).
     async loader(req) {
       const leaf = byId.get(req.routeId)
       if (!leaf) return { error: `unknown routeId ${req.routeId}` }
@@ -413,7 +420,7 @@ export function makeHandlers(opts: {
             }
             if (isVerdict(r)) {
               const v = out(verdictJson(r, merged))
-              return 'verdict' in v && v.verdict === 'notFound' ? withStore(v) : v
+              return 'verdict' in v && (v.verdict === 'notFound' || v.verdict === 'render') ? withStore(v) : v
             }
             if (r && typeof r === 'object') Object.assign(merged, r)
           }

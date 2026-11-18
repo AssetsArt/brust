@@ -305,7 +305,7 @@ export function flattenRoutes(routes: Route[]): { nodes: Map<Route, string>; lea
 
 const BRUST_VERDICT = Symbol.for('brust.nativeVerdict')
 
-/** Returned from a loader to control the response. Build it with `notFound()` / `redirect()`. */
+/** Returned from a loader to control the response. Build it with `notFound()` / `renderStatus()` / `redirect()`. */
 export interface Verdict {
   readonly [BRUST_VERDICT]: true
   readonly status: number
@@ -314,9 +314,18 @@ export interface Verdict {
   readonly headers?: Record<string, string>
 }
 
-/** Render the route's own page at HTTP 404 with `data` (default `{}`). Return it from a loader. */
+/** Render the route's own page at HTTP 404 with `data` (default `{}`). Return it from a loader. Same as `renderStatus(404, data)`. */
 export function notFound(data?: unknown): Verdict {
-  return { [BRUST_VERDICT]: true, status: 404, render: true, data: data ?? {} }
+  return renderStatus(404, data)
+}
+
+/** Render the route's own page (layouts included) at a 400-599 `status` with `data` (default `{}`), as `notFound()`
+ * does at 404: a 403 page, a 451, a 503 maintenance page. Never cached. Return it from a loader. A plain body with no
+ * page is `httpError()`. */
+export function renderStatus(status: number, data?: unknown): Verdict {
+  if (!Number.isInteger(status) || status < 400 || status > 599)
+    throw new Error(`renderStatus(status) must be an integer in 400-599, got ${status} — use redirect() for 3xx and return the data for a 200`)
+  return { [BRUST_VERDICT]: true, status, render: true, data: data ?? {} }
 }
 
 /** Redirect without rendering. Return it from a loader. */

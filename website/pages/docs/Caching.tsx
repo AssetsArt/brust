@@ -348,6 +348,10 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
       <p>
         For <code>bypass</code> the rule is the other way round: a non-empty result means skip the cache for that request. A wrong expression is a build error that names the problem.
       </p>
+      {/* source: key_expr.rs Expr::parse (F553: a trailing || or && names the function to write) */}
+      <p>
+        There are no operators: several conditions are <code>or(a, b)</code> or <code>and(a, b)</code>. <code>cookie(a) || query(b)</code> stops the build with <code>'||' is not an operator: write or(a, b)</code>.
+      </p>
 
       <h3 id="examples">Six examples, run for real</h3>
       <p>

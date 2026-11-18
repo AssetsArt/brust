@@ -615,6 +615,8 @@ jobs:
       - run: bun test --timeout 300000 tests/server/generator-meta.chromium.test.ts
       # F464: loader res.headers: two Set-Cookie on a redirect, a layout's no-store (server cache + SPA cache), CSP.
       - run: bun test --timeout 300000 tests/server/loader-headers.chromium.test.ts
+      # F552: renderStatus(403/503) renders the page with its layout at that status (native + React tier), never stored; SPA nav swaps it in.
+      - run: bun test --timeout 300000 tests/server/render-status.chromium.test.ts
       # F470: a loader route under the actions prefix answers GET (cookie + redirect); POST and unrouted GET stay actions.
       - run: bun test --timeout 300000 tests/server/actions-prefix-routes.test.ts
       # F529: WebSockets in an actions app under a base path, 2 workers: echo, guard 401, foreign Origin 403, a topic across workers, max payload 1009, SIGTERM drain 1001.

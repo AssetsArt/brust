@@ -138,7 +138,12 @@ export function parseExpr(src: string, opts: ParseOptions = {}): Expr {
   p.ws()
   const e = p.expr()
   p.ws()
-  if (p.i !== p.s.length) throw new CacheExprError(`cache expression: trailing input at byte ${p.i}`)
+  if (p.i !== p.s.length) {
+    // F553 (key_expr.rs): `a || b` reads like JS; say what this language writes instead.
+    for (const [op, f] of [['||', 'or'], ['&&', 'and']] as const)
+      if (p.s[p.i] === op.charCodeAt(0) && p.s[p.i + 1] === op.charCodeAt(1)) throw new CacheExprError(`cache expression: '${op}' is not an operator: write ${f}(a, b)`)
+    throw new CacheExprError(`cache expression: trailing input at byte ${p.i}`)
+  }
   return e
 }
 

@@ -3,7 +3,7 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setNative } from '../src/native'
-import { defineRoutes, flattenRoutes, httpError, notFound, redirect } from '../src/routes'
+import { defineRoutes, flattenRoutes, httpError, notFound, redirect, renderStatus } from '../src/routes'
 import {
   type JobsModule,
   jobIdOf,
@@ -194,6 +194,32 @@ test('loader: notFound under a layout keeps the parent data (verdict data wins o
   expect(await h.loader(ctx('r1'))).toEqual({ verdict: 'notFound', data: { user: 'ann', title: 'gone', why: 'x' } })
   const bare = makeHandlers({ leaves: leaves({ parent: async () => ({ user: 'ann' }), child: async () => notFound() }), jobs: {} })
   expect(await bare.loader(ctx('r1'))).toEqual({ verdict: 'notFound', data: { user: 'ann' } })
+})
+
+test('F552 loader: renderStatus renders at its status with the parent data merged (never a redirect)', async () => {
+  for (const status of [403, 451, 503]) {
+    const h = makeHandlers({
+      leaves: leaves({ parent: async () => ({ user: 'ann', title: 'parent' }), child: async () => renderStatus(status, { title: 'denied' }) }),
+      jobs: {},
+    })
+    expect(await h.loader(ctx('r1'))).toEqual({ verdict: 'render', status, data: { user: 'ann', title: 'denied' } })
+  }
+  // a 404 stays on the notFound wire
+  const nf = makeHandlers({ leaves: leaves({ child: async () => renderStatus(404, { a: 1 }) }), jobs: {} })
+  expect(await nf.loader(ctx('r1'))).toEqual({ verdict: 'notFound', data: { a: 1 } })
+  // a hand-built verdict: the symbol key + render: true renders (it used to redirect to '/')
+  const raw = { [Symbol.for('brust.nativeVerdict')]: true, status: 403, render: true }
+  const r = makeHandlers({ leaves: leaves({ parent: async () => ({ user: 'ann' }), child: async () => raw }), jobs: {} })
+  expect(await r.loader(ctx('r1'))).toEqual({ verdict: 'render', status: 403, data: { user: 'ann' } })
+})
+
+test('F552 loader: a rendering verdict outside 400-599 is a loader error, not a redirect', async () => {
+  for (const status of [200, 302, 600]) {
+    const raw = { [Symbol.for('brust.nativeVerdict')]: true, status, render: true, data: {} }
+    const h = makeHandlers({ leaves: leaves({ child: async () => raw }), jobs: {} })
+    const out = await h.loader(ctx('r1'))
+    expect(out).toEqual({ error: expect.stringContaining(`a rendering verdict needs a status in 400-599, got ${status}`) })
+  }
 })
 
 // A minimal built app on disk for startWorker: empty manifest + jobs module, no routes.

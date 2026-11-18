@@ -117,8 +117,15 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
             });
         }
         match verdict.as_deref() {
-            Some("notFound") => {
-                return Ok(LoaderResponse::Verdict(Verdict::NotFound {
+            // F552: `notFound` is `render` at 404 (the worker still sends it for 404).
+            Some(tag @ ("notFound" | "render")) => {
+                let status = if tag == "notFound" {
+                    404
+                } else {
+                    status.ok_or_else(|| A::Error::missing_field("status"))?
+                };
+                return Ok(LoaderResponse::Verdict(Verdict::Render {
+                    status,
                     data: data.unwrap_or_default(),
                     store,
                     headers: headers.unwrap_or_default(),
@@ -144,7 +151,7 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
             Some(other) => {
                 return Err(A::Error::unknown_variant(
                     other,
-                    &["notFound", "redirect", "httpError"],
+                    &["notFound", "render", "redirect", "httpError"],
                 ));
             }
             None => {}
@@ -160,6 +167,10 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
 
 fn d302() -> u16 {
     302
+}
+
+fn d404() -> u16 {
+    404
 }
 
 /// The response headers a loader set (F464), in order. On the wire a list of `[name, value]` pairs, so a
@@ -235,7 +246,12 @@ impl<'de> Deserialize<'de> for Headers {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "verdict", rename_all = "camelCase")]
 pub enum Verdict {
-    NotFound {
+    /// `notFound(data)` (wire `notFound`, status 404) or `renderStatus(status, data)` (wire `render`, F552): the
+    /// route's page at `status`. The pipeline re-checks 400-599.
+    #[serde(alias = "notFound")]
+    Render {
+        #[serde(default = "d404")]
+        status: u16,
         #[serde(default)]
         data: Node,
         #[serde(default)]
@@ -576,7 +592,8 @@ mod tests {
     fn not_found_carries_store() {
         assert_eq!(
             loader(json!({"verdict": "notFound", "data": {"a": 1}, "store": {"s": {"k": 2}}})),
-            LoaderResponse::Verdict(Verdict::NotFound {
+            LoaderResponse::Verdict(Verdict::Render {
+                status: 404,
                 data: Node::from(json!({"a": 1})),
                 store: Some(Node::from(json!({"s": {"k": 2}}))),
                 headers: Headers::default()
@@ -584,7 +601,8 @@ mod tests {
         );
         assert_eq!(
             loader(json!({"verdict": "notFound", "data": {"a": 1}})),
-            LoaderResponse::Verdict(Verdict::NotFound {
+            LoaderResponse::Verdict(Verdict::Render {
+                status: 404,
                 data: Node::from(json!({"a": 1})),
                 store: None,
                 headers: Headers::default()
@@ -666,7 +684,8 @@ mod tests {
         );
         assert_eq!(
             loader(json!({"verdict": "notFound", "data": {}, "headers": pairs})),
-            LoaderResponse::Verdict(Verdict::NotFound {
+            LoaderResponse::Verdict(Verdict::Render {
+                status: 404,
                 data: Node::from(json!({})),
                 store: None,
                 headers: h.clone()
@@ -683,11 +702,48 @@ mod tests {
         );
     }
 
+    /// F552: `render` carries its status (required); the pipeline, not the parser, refuses one outside 400-599.
+    #[test]
+    fn loader_render_verdict() {
+        assert_eq!(
+            loader(
+                json!({"verdict": "render", "status": 403, "data": {"a": 1}, "store": {"s": {}}})
+            ),
+            LoaderResponse::Verdict(Verdict::Render {
+                status: 403,
+                data: Node::from(json!({"a": 1})),
+                store: Some(Node::from(json!({"s": {}}))),
+                headers: Headers::default()
+            })
+        );
+        assert_eq!(
+            loader(json!({"verdict": "render", "status": 200, "data": {}})),
+            LoaderResponse::Verdict(Verdict::Render {
+                status: 200,
+                data: Node::from(json!({})),
+                store: None,
+                headers: Headers::default()
+            })
+        );
+        let missing =
+            serde_json::from_value::<LoaderResponse>(json!({"verdict": "render", "data": {}}));
+        assert!(
+            missing
+                .unwrap_err()
+                .to_string()
+                .contains("missing field `status`")
+        );
+        let bad =
+            serde_json::from_value::<LoaderResponse>(json!({"verdict": "render", "status": 70000}));
+        assert!(bad.is_err());
+    }
+
     #[test]
     fn loader_not_found_verdict_with_and_without_data() {
         assert_eq!(
             loader(json!({"verdict": "notFound", "data": {"a": 1}})),
-            LoaderResponse::Verdict(Verdict::NotFound {
+            LoaderResponse::Verdict(Verdict::Render {
+                status: 404,
                 data: Node::from(json!({"a": 1})),
                 store: None,
                 headers: Headers::default()
@@ -695,7 +751,8 @@ mod tests {
         );
         assert_eq!(
             loader(json!({"verdict": "notFound"})),
-            LoaderResponse::Verdict(Verdict::NotFound {
+            LoaderResponse::Verdict(Verdict::Render {
+                status: 404,
                 data: Node::Null,
                 store: None,
                 headers: Headers::default()
