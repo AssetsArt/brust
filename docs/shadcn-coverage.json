@@ -172,15 +172,6 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:body-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 37
-    },
-    {
       "blocker": "fallback:member-tag",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -190,7 +181,7 @@
       "libraryComponents": 20
     },
     {
-      "blocker": "fallback:hook-shape",
+      "blocker": "fallback:key-outside-list",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -199,13 +190,13 @@
       "libraryComponents": 7
     },
     {
-      "blocker": "fallback:key-outside-list",
+      "blocker": "fallback:hook-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 7
+      "libraryComponents": 6
     },
     {
       "blocker": "fallback:ref-shape",
@@ -413,6 +404,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 22
+    },
+    {
+      "blocker": "fallback:body-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 20
     },
     {
       "blocker": "fallback:prop-pattern",
@@ -1066,7 +1066,6 @@
       "jsGzipKb": 88,
       "workerCalls": 1,
       "codes": [
-        "body-shape",
         "external-component",
         "hook-unsupported",
         "island-prop",

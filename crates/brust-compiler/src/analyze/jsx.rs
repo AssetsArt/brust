@@ -2281,7 +2281,7 @@ fn read_list(r: &mut Reader<'_, '_>, e: &js_ast::Expr, call: &js_ast::E::Call) -
             &target,
             &item,
             &captures,
-            &[item.clone()],
+            std::slice::from_ref(&item),
             depth,
         );
     }
