@@ -153,7 +153,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
           </tr>
           <tr>
             <td>
-              <code>useState</code>, <code>useMemo</code>, <code>useCallback</code>, <code>useEffect</code>, <code>useLayoutEffect</code>, <code>useRef</code>, <code>useId</code>, <code>useReducer</code> (a state cell and one stable <code>dispatch</code>; the reducer must be a pure function, written inline or in the same module), <code>memo()</code>, event handlers, <code>useStore</code>, and a custom hook whose body uses only these (the compiler inlines it)
+              <code>useState</code>, <code>useMemo</code>, <code>useCallback</code>, <code>useEffect</code>, <code>useLayoutEffect</code>, <code>useRef</code>, <code>useId</code>, <code>useReducer</code> (a state cell and one stable <code>dispatch</code>; the reducer must be a pure function, written inline or in the same module), <code>memo()</code>, event handlers, <code>useStore</code>, and a custom hook whose body uses only these, in the same module or an imported one (the compiler inlines it)
             </td>
             <td>
               <Tier t="native">native</Tier>
@@ -175,6 +175,19 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       <Note>
         Falling back to React is never a build failure, and that includes passing a function or a changing value to a React child (<code>island-prop</code>): the component that passes it renders with React. Some things are: server-only code reachable from the browser (<code>server-only-in-client</code>), and a list without keys (<code>list-key</code>).
       </Note>
+      {/* source: crates/brust-compiler/src/analyze/passes/helpers.rs (local_arrows, arrows_of); crates/brust-compiler/tests/local_arrow_calls.rs (F560) */}
+      <p>
+        A small function you declare in the component and call in the markup does not cost the tier: for <code>const label = (n: number) =&gt; n + &apos; items&apos;</code>, the call <code>{'{'}label(count){'}'}</code> is compiled as the
+        expression itself. This holds for an arrow whose body is one expression, called with arguments that contain no call. An arrow with a block body, or one that calls a method of an imported object, stays a function, and a value computed per request
+        from it makes the component a React island (<code>client-function-in-job</code>).
+      </p>
+      {/* source: crates/brust-compiler/src/analyze/passes/mod.rs (run_passes, react_request), children.rs (want_react, react_copy), pipeline.rs (an unused copy is left out); crates/brust-compiler/tests/nested_fed.rs (F560 tests) */}
+      <p>
+        The server runs the precomputed values of a component (a class built by a helper, a <code>useId</code>) for the route&apos;s page and layouts and for the components placed directly in them. A component with such a value placed inside
+        another component that has one too is out of that reach. The outer component keeps its tier: at that place the inner one renders as a React island, a copy of it compiled for this purpose, and the build says so with a{' '}
+        <code>nested-fed-child</code> warning on the inner component. Everywhere else the inner component keeps its own tier. Before 2.0.0-alpha.53 the outer component became the island (<code>nested-instance</code>), which it still does when the
+        copy would not help, for example when the inner component is given a function.
+      </p>
       {/* source: crates/brust-compiler/src/analyze/passes/children.rs (nested-instance -> island-client-only), recursion.rs (islands_client_only), tests/server/rc-client-islands.chromium.test.ts (F548) */}
       <p>
         A React island with per-row props in nested lists, or in the rows of a component inlined into its callers, cannot be server-rendered row by row, so the component around it becomes one React island (<code>nested-instance</code>). Two cases cannot
