@@ -397,3 +397,78 @@ fn an_exported_helper_is_carried_without_its_export() {
         );
     }
 }
+
+// ---- review round 1: what a function an inlined hook returns reads is declared in the chunk ----
+
+/// The chunk of `C.tsx` declares every `<name>_<hook>N` it reads.
+#[track_caller]
+fn declares_what_it_reads(files: &[(&str, &str)]) -> String {
+    let (_, _, c) = lower_tree(files);
+    assert!(!c.is_empty(), "no chunk");
+    let mut i = 0;
+    while let Some(at) = c[i..].find("_use") {
+        let start = c[..i + at]
+            .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .map_or(0, |p| p + 1);
+        let end = i
+            + at
+            + c[i + at..]
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .unwrap_or(0);
+        let name = &c[start..end];
+        // declared, or bound as a parameter of a handler's wrapper (`((setX, x) => …)(x.set, x())`)
+        let declared = c.contains(&format!("const {name} "))
+            || [
+                format!("(({name},"),
+                format!("(({name}) =>"),
+                format!(", {name},"),
+                format!(", {name}) =>"),
+            ]
+            .iter()
+            .any(|p| c.contains(p.as_str()));
+        assert!(declared, "`{name}` is read but not declared:\n{c}");
+        i = end.max(i + at + 1);
+    }
+    c
+}
+
+#[test]
+fn a_returned_function_read_by_member_declares_the_parameter_it_reads() {
+    // `q.find` reads the hook's parameter (passed, and defaulted when omitted)
+    for (hook, call) in [
+        (
+            "export function useQ(sel: string) { const [hit, setHit] = useState(''); const find = () => setHit(sel + '!'); return { hit, find } }",
+            "useQ('x')",
+        ),
+        (
+            "export function useQ(sel = 'a, button') { const [hit, setHit] = useState(''); const find = () => setHit(sel + '!'); return { hit, find } }",
+            "useQ()",
+        ),
+    ] {
+        let hook = format!("import {{ useState }} from 'react'\n{hook}\n");
+        let c = format!(
+            "import {{ useQ }} from './q'\nexport default function C() {{ const q = {call}; return <button onClick={{q.find}}>{{q.hit}}</button> }}"
+        );
+        let c = declares_what_it_reads(&[("q.ts", &hook), ("C.tsx", &c)]);
+        assert!(c.contains("const sel_useQ1 "), "{c}");
+    }
+}
+
+#[test]
+fn a_returned_function_declares_the_hook_local_function_and_derived_value_it_reads() {
+    // an arrow default (D3) and a re-export (D2): `toggle` reads `after`
+    let hook = "import { useState } from 'react'\nexport function useTrap(sel = 'a, button', after: () => void = () => {}) { const [open, setOpen] = useState(false); const toggle = () => { setOpen(!open); after() }; return { open, toggle, sel } }\n";
+    let c = "import { useTrap } from './lib/barrel'\nexport default function C() { const t = useTrap(); return <button onClick={t.toggle}>{t.open ? 'on' : 'off'}</button> }";
+    declares_what_it_reads(&[
+        ("lib/useTrap.ts", hook),
+        (
+            "lib/barrel.ts",
+            "import { useTrap } from './useTrap'\nexport { useTrap }\n",
+        ),
+        ("C.tsx", c),
+    ]);
+    // a hook-local arrow and a hook derived value, destructured at the call site
+    let hook = "import { useState } from 'react'\nexport function useSay(name: string) { const [v, setV] = useState(''); const label = name + '!'; const after = () => {}; const say = () => { setV(label); after() }; return { v, say } }\n";
+    let c = "import { useSay } from './s'\nexport default function C({ n }: any) { const { v, say } = useSay(n); return <button onClick={say}>{v}</button> }";
+    declares_what_it_reads(&[("s.ts", hook), ("C.tsx", c)]);
+}
