@@ -196,6 +196,18 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         expression itself. This holds for an arrow whose body is one expression, called with arguments that contain no call. An arrow with a block body, or one that calls a method of an imported object, stays a function, and a value computed per request
         from it makes the component a React island (<code>client-function-in-job</code>).
       </p>
+      {/* source: crates/brust-compiler/src/analyze/module_effects.rs (module_effect, Values::why, receiver_writes, plain_import_read), analyze/passes/mod.rs (module-side-effect);
+          crates/brust-compiler/tests/module_effects.rs (F564: each accepted and refused form); tests/browser/cases/module-table-import.test.ts */}
+      <p>
+        <strong>Module-level code.</strong> The code brust compiles for a component copies the declarations of its module that it reads, not code that runs when the module loads. So a component that reads a value of its own module, or an import,
+        keeps its tier only when that module provably runs nothing at load; otherwise it is a React island and the build says <code>module-side-effect</code>, naming the declaration and its line. Accepted at module scope: imports, types,
+        functions and arrows that change no module value, and <code>const</code>s built from literals, other accepted constants, functions, template strings and operators, regex literals (without the <code>g</code> or <code>y</code> flag),{' '}
+        <code>{'Array.from({ length: 24 }, (_, i) => `${i}:00`)'}</code> (a callback that builds a string or number), package calls, and reads of a table another module of your app exports: <code>{"{ icon: ICON.overview }"}</code> is
+        accepted when <code>ICON</code> is <code>{'export const ICON = { … }'}</code> (an object or array literal, also through a re-export) with no getter, spread or computed key on the way to the value, and nothing changes it. A
+        value read that way is not converted to a string or a number at load (<code>{'`${ICON.overview}`'}</code> is not accepted). Not accepted: a class, a <code>let</code> or <code>var</code> a function changes, a statement that runs at
+        load, a call of your own function at load, a <code>const</code> read before it is declared. A function changes a module value when it assigns one, or calls <code>push</code>, <code>sort</code>, <code>delete</code> and the
+        like on an object the module may own (a module constant, what a function of the module returns, or a local holding one); the same call on the result of an imported function (<code>{'api(id).delete(id)'}</code>) does not.
+      </p>
       {/* source: crates/brust-compiler/src/analyze/passes/mod.rs (run_passes, react_request), children.rs (want_react, react_copy), pipeline.rs (an unused copy is left out); crates/brust-compiler/tests/nested_fed.rs (F560 tests) */}
       <p>
         The server runs the precomputed values of a component (a class built by a helper, a <code>useId</code>) for the route&apos;s page and layouts and for the components placed directly in them. A component with such a value placed inside
