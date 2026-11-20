@@ -39,10 +39,11 @@ test('renders only island refs, once per key, with the page id and the batch tot
     { ref: 'cold_island', key: 'k1', html: '<p>cold_island:1</p>' },
     { ref: 'warm_island', key: 'k4', html: '<p>warm_island:4</p>' },
   ])
-  expect(calls.map((c) => c[2])).toEqual([
+  expect(calls.map((c) => { const { build, page } = c[2] as { build: string; page: unknown }; return { build, page } })).toEqual([
     { build: 'b1', page: { id: 'pg1', total: 2 } },
     { build: 'b1', page: { id: 'pg1', total: 2 } },
   ])
+  expect(calls.every((c) => typeof (c[2] as { notNow?: unknown }).notNow === 'function')).toBe(true)
   expect(peak).toBe(2) // in parallel
 })
 
@@ -73,4 +74,34 @@ test('null or no render method is html null; a throw or a non-string is that pai
 test('a request without renders answers the F519 shape', async () => {
   const r = await resolveComponents({ resolve: () => staticArt }, 'b1', { refs: ['x'] })
   expect(r).toEqual({ results: [{ ref: 'x', artifact: staticArt }] })
+})
+
+// F572: `ctx.notNow()` (sync or through a promise) answers `notNow: true` for that pair only.
+test('ctx.notNow() answers notNow for that pair, sync and async', async () => {
+  const components: RuntimeComponents = {
+    resolve: () => null,
+    render(ref, _props, ctx) {
+      if (ref === 'sync') return ctx.notNow()
+      if (ref === 'async') return Promise.resolve(ctx.notNow())
+      return '<i>ok</i>'
+    },
+  }
+  const r = await resolveComponents(components, 'b1', {
+    refs: [],
+    page: 'p',
+    renders: [
+      { ref: 'sync', key: 'k1', props: {} },
+      { ref: 'async', key: 'k2', props: {} },
+      { ref: 'ok', key: 'k3', props: {} },
+    ],
+  })
+  expect(r.html).toEqual([
+    { ref: 'sync', key: 'k1', notNow: true },
+    { ref: 'async', key: 'k2', notNow: true },
+    { ref: 'ok', key: 'k3', html: '<i>ok</i>' },
+  ])
+  // a look-alike object is not the not-now value: as before, a non-string is an error
+  const fake: RuntimeComponents = { resolve: () => null, render: () => ({ __brustRenderNotNow: true }) as never }
+  const f = await resolveComponents(fake, 'b1', { refs: [], page: 'p', renders: [{ ref: 'x', key: 'k', props: {} }] })
+  expect(f.html).toEqual([{ ref: 'x', key: 'k', error: 'components.render returned object, not a string or null' }])
 })

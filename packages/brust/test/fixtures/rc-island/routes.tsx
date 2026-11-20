@@ -20,6 +20,8 @@ w.__brustIslandReady?.()
 `
 
 let renders = 0
+let laterCalls = 0
+let laterAsyncCalls = 0
 const pages: Record<string, number> = {}
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
@@ -29,7 +31,12 @@ export const components: RuntimeComponents = {
     const a: IslandArtifact = { v: 1, build, id: 'isl_counter_v1', tier: 'island', client: CLIENT }
     return a
   },
-  render(ref, props, { page }) {
+  render(ref, props, { page, notNow }) {
+    // F572: `later` is not ready on its first call (sync) and `later-async` on its first (through a promise)
+    if (props.label === 'later' && ++laterCalls === 1) return notNow()
+    if (props.label === 'later-async' && ++laterAsyncCalls === 1) return Promise.resolve(notNow())
+    if (props.label === 'boom') throw new Error('not ready')
+    if (String(props.label).startsWith('later')) return `<button type="button" data-testid="rc-isl">${esc(String(props.label))} ready</button>`
     renders++
     pages[page.id] = page.total
     return `<button type="button" data-testid="rc-isl">${esc(String(props.label))} 0</button>`
@@ -51,6 +58,12 @@ export const routes = defineRoutes([
           ],
         }),
       },
+      {
+        path: '/later',
+        Component: List,
+        loader: () => ({ items: [{ key: 'l1', ref: 'counter', label: 'later' }, { key: 'l2', ref: 'counter', label: 'later-async' }] }),
+      },
+      { path: '/boom', Component: List, loader: () => ({ items: [{ key: 'b1', ref: 'counter', label: 'boom' }] }) },
       { path: '/other', Component: Other, loader: () => ({ renders, pages: JSON.stringify(pages) }) },
     ],
   },

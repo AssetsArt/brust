@@ -756,6 +756,7 @@ fn echo_render(i: &RenderItem) -> Option<HtmlResult> {
                 .replace('<', "&lt;")
         )),
         error: None,
+        not_now: false,
     })
 }
 
@@ -943,6 +944,7 @@ fn render_failures_keep_the_page_out_null_is_an_empty_host_that_is_stored() {
             key: i.key.clone(),
             html: None,
             error: Some("boom".into()),
+            not_now: false,
         })
     });
     let r = get(&f.core, "/");
@@ -956,6 +958,7 @@ fn render_failures_keep_the_page_out_null_is_an_empty_host_that_is_stored() {
             key: i.key.clone(),
             html: None,
             error: None,
+            not_now: false,
         })
     });
     assert_eq!(hosts(&text(&get(&f.core, "/")))[0].2, "");
@@ -969,6 +972,7 @@ fn render_failures_keep_the_page_out_null_is_an_empty_host_that_is_stored() {
             key: i.key.clone(),
             html: Some("x".repeat(brust_core::components::MAX_SLOT_OUTPUT_BYTES + 1)),
             error: None,
+            not_now: false,
         })
     });
     assert_eq!(hosts(&text(&get(&f.core, "/")))[0].2, "");
@@ -1133,4 +1137,104 @@ fn a_placed_island_brings_the_runtime_the_island_feature_and_its_build_chunk_onc
     assert_eq!(body.matches("react-motion_1-ab.js").count(), 1, "{body}");
     // a static artifact itself has no chunk of its own
     assert!(!body.contains("/_brust/rc/"), "{body}");
+}
+
+// ----- F572: `ctx.notNow()` -----
+
+/// Counts the warn events of a closure (the `[brust] runtime component …` lines).
+fn warns<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+    use std::sync::{Arc as A, Mutex};
+    struct Count(A<Mutex<Vec<String>>>);
+    struct Msg(String);
+    impl tracing::field::Visit for Msg {
+        fn record_debug(&mut self, _: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+            self.0.push_str(&format!("{v:?}"));
+        }
+    }
+    impl tracing::Subscriber for Count {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, e: &tracing::Event<'_>) {
+            if *e.metadata().level() == tracing::Level::WARN {
+                let mut m = Msg(String::new());
+                e.record(&mut m);
+                self.0.lock().unwrap().push(m.0);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+    let seen = A::new(Mutex::new(Vec::new()));
+    let out = tracing::subscriber::with_default(Count(A::clone(&seen)), f);
+    let v = seen.lock().unwrap().clone();
+    (out, v)
+}
+
+fn answer(
+    i: &RenderItem,
+    html: Option<&str>,
+    error: Option<&str>,
+    not_now: bool,
+) -> Option<HtmlResult> {
+    Some(HtmlResult {
+        reference: i.reference.clone(),
+        key: i.key.clone(),
+        html: html.map(str::to_string),
+        error: error.map(str::to_string),
+        not_now,
+    })
+}
+
+#[test]
+fn not_now_is_an_empty_host_nothing_cached_the_page_not_stored_and_no_log() {
+    let f = fixture(json!([{ "ref": "a", "title": "x" }]), Box::new(islands));
+    *f.core.host.render.borrow_mut() = Box::new(|i| answer(i, None, None, true));
+    let (r, w) = warns(|| get(&f.core, "/"));
+    assert_eq!(hosts(&text(&r))[0].2, "", "an empty host");
+    assert!(w.is_empty(), "no warn line: {w:?}");
+    assert_eq!(
+        f.core.components.as_ref().unwrap().html_stats().0,
+        0,
+        "nothing in the island HTML cache"
+    );
+    // not stored: the next request asks render again, which now answers HTML: stored, then a hit
+    *f.core.host.render.borrow_mut() = Box::new(echo_render);
+    let r = get(&f.core, "/");
+    assert_eq!(cache_hdr(&r), "MISS");
+    assert_eq!(hosts(&text(&r))[0].2, "<p>x</p>");
+    assert_eq!(f.core.components.as_ref().unwrap().html_stats().0, 1);
+    assert_eq!(cache_hdr(&get(&f.core, "/")), "HIT");
+}
+
+#[test]
+fn not_now_with_a_result_is_a_worker_bug_taken_as_an_error() {
+    for (html, error) in [(Some("<p>x</p>"), None), (None, Some("boom"))] {
+        let f = fixture(json!([{ "ref": "a", "title": "x" }]), Box::new(islands));
+        *f.core.host.render.borrow_mut() = Box::new(move |i| answer(i, html, error, true));
+        let (r, w) = warns(|| get(&f.core, "/"));
+        assert_eq!(hosts(&text(&r))[0].2, "");
+        assert!(
+            w.iter()
+                .any(|l| l.contains("render answered not now with a result")),
+            "{w:?}"
+        );
+        assert_eq!(f.core.components.as_ref().unwrap().html_stats().0, 0);
+        assert_eq!(cache_hdr(&get(&f.core, "/")), "MISS");
+    }
+}
+
+#[test]
+fn the_not_now_flag_is_camel_case_on_the_wire() {
+    let h: HtmlResult =
+        serde_json::from_value(json!({ "ref": "a", "key": "k", "notNow": true })).unwrap();
+    assert!(h.not_now && h.html.is_none() && h.error.is_none());
+    let h: HtmlResult =
+        serde_json::from_value(json!({ "ref": "a", "key": "k", "html": null })).unwrap();
+    assert!(!h.not_now);
 }

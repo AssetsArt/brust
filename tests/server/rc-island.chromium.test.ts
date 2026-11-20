@@ -14,13 +14,26 @@ const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
 let proc: ReturnType<typeof Bun.spawn>
 let base = ''
 let browser: Browser
+let serverLog = ''
 
 beforeAll(async () => {
   for (const d of ['dist', '.brust']) rmSync(join(app, d), { recursive: true, force: true })
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}`)
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', BRUST_CSP_MODE: '', NODE_ENV: 'production' }
-  proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
+  proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'pipe' })
+  // F572: the server's log lines (a not-now answer must add none); still shown
+  void (async () => {
+    const r = (proc.stderr as ReadableStream<Uint8Array>).getReader()
+    const d = new TextDecoder()
+    for (;;) {
+      const { done, value } = await r.read()
+      if (done) return
+      const t = d.decode(value, { stream: true })
+      serverLog += t
+      process.stderr.write(t)
+    }
+  })()
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
   let out = ''
@@ -95,3 +108,21 @@ test('in Chromium: each host hydrates once with its props, commits, is interacti
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
+
+test('F572: a render that answers ctx.notNow() is an empty host, not cached, asked again next time, and logs nothing', async () => {
+  const hostsOf = (html: string) =>
+    [...html.matchAll(/<brust-island style="display:contents" data-id="isl_counter_v1" x-props='([^']*)'>(.*?)<\/brust-island>/g)].map((m) => m[2])
+  const first = await (await fetch(`${base}/later`)).text()
+  expect(hostsOf(first)).toEqual(['', '']) // sync and async not-now: empty hosts the client mounts
+  const second = await (await fetch(`${base}/later`)).text()
+  expect(hostsOf(second)).toEqual([
+    '<button type="button" data-testid="rc-isl">later ready</button>',
+    '<button type="button" data-testid="rc-isl">later-async ready</button>',
+  ])
+  await Bun.sleep(200) // let the log lines of those requests arrive
+  expect(serverLog).not.toContain('runtime component counter')
+  // the control: a throw does log its line
+  await fetch(`${base}/boom`)
+  await Bun.sleep(200)
+  expect(serverLog).toContain('runtime component counter: render threw: Error: not ready')
+})

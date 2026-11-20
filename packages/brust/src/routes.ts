@@ -222,12 +222,20 @@ export interface IslandArtifact {
 /** What `components.resolve` returns: a compiled artifact (`compileComponent`) or an island the app built itself. */
 export type RuntimeArtifact = CompiledArtifact | IslandArtifact
 
+/** F572: what `ctx.notNow()` returns: `render` answers "no HTML this time, ask again on the next page render". */
+export interface RenderNotNow {
+  readonly __brustRenderNotNow: true
+}
+
 /** F546 A3: the context of a `components.render` call. */
 export interface RenderContext {
   build: string
   /** One page render: `id` is the same for every call of that page, `total` = the calls of this batch (cached pairs
    * are not called and do not count), for a per-page budget. */
   page: { id: string; total: number }
+  /** F572: return this (`return ctx.notNow()`, directly or through a promise) when the HTML is not ready yet: the slot is an
+   * empty host the client mounts, nothing is cached, the page is not stored, no log line; the next page render asks again. */
+  notNow(): RenderNotNow
 }
 
 /** F519 (R5.1): the routes entry's `export const components`. `resolve` returns the artifact a `<Dynamic component={ref}>`
@@ -237,8 +245,13 @@ export interface RuntimeComponents {
   /** F546: the HTML of an island artifact's slot for these props, placed AS GIVEN inside its host: it is the app's own
    * trusted output, like a loader's raw HTML. Called once per distinct (ref, props) of a page render that is not
    * cached; the server caches the answer per (ref, artifact, props). `null` (or no method) = an empty host the client
-   * mounts from scratch; a throw or more than 4 MiB = an empty host and the page is not cached. */
-  render?(ref: string, props: Record<string, unknown>, ctx: RenderContext): string | null | undefined | Promise<string | null | undefined>
+   * mounts from scratch; a throw or more than 4 MiB = an empty host and the page is not cached. `ctx.notNow()` = an empty host,
+   * nothing cached, the page not stored and no log line: asked again on the next page render (F572). */
+  render?(
+    ref: string,
+    props: Record<string, unknown>,
+    ctx: RenderContext,
+  ): string | null | undefined | RenderNotNow | Promise<string | null | undefined | RenderNotNow>
 }
 
 /** Props of {@link Dynamic}. */

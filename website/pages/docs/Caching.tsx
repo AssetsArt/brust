@@ -522,7 +522,8 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
               <td>The ref, the artifact&rsquo;s digest and the canonical props</td>
               <td>No time limit: until evicted, or until the ref has a new artifact</td>
               <td>
-                The HTML <code>render</code> returned, and <code>null</code> too. Not stored: a throw, more than 4 MiB, or no answer; the page is then not stored either
+                The HTML <code>render</code> returned, and <code>null</code> too. Not stored: <code>ctx.notNow()</code>, a throw, more than 4 MiB, or no answer; the
+                page is then not stored either
               </td>
               <td>Does not skip it</td>
               <td>
