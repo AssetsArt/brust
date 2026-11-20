@@ -8,7 +8,7 @@ import type { TocItem } from '../../lib/nav'
 
 export interface ReleaseNotesData {
   toc: TocItem[]
-  blocks: Record<'refusal' | 'tierError', CodeBlockData>
+  blocks: Record<'refusal' | 'tierError' | 'budgetError', CodeBlockData>
 }
 
 // observed: the refusal printed when brust starts a build with manifest version 2 (Dew, task per-instance-jobs)
@@ -16,11 +16,16 @@ export interface ReleaseNotesData {
 const TIER_ERROR =
   '$ brust build\nerror tier components/views/Counter.tsx:4:1 Counter compiles to native; [tiers.max] "components/views/**" allows static\n  state `count` is set (line 4)\n  an event handler (line 6)'
 
+// observed: `brust build` run on a host with an app of two pages, one of 1.2 MB, and [build] template_max_bytes = 1000000 (the id is the hash of that app)
+const BUDGET_ERROR =
+  '$ brust build\nerror template-size page_6879790b.jinja is 1200068 bytes (1.1 MB), over [build] template_max_bytes = 1000000 (Page.tsx)\na template grows with what a page inlines; see https://brust.dev/docs/cli#large-templates'
+
 const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebuild the app with this brust version'
 
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-56', title: '2.0.0-alpha.56' },
       { id: 'alpha-55', title: '2.0.0-alpha.55' },
       { id: 'alpha-54', title: '2.0.0-alpha.54' },
       { id: 'alpha-53', title: '2.0.0-alpha.53' },
@@ -73,7 +78,7 @@ export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
       { id: 'alpha-6', title: '2.0.0-alpha.6' },
       { id: 'earlier', title: 'Earlier versions' },
     ],
-    blocks: { refusal: codeBlock({ lang: 'text', cwd: 'brust start', code: REFUSAL }), tierError: codeBlock({ lang: 'sh', cwd: '~/my-app', code: TIER_ERROR }) },
+    blocks: { refusal: codeBlock({ lang: 'text', cwd: 'brust start', code: REFUSAL }), tierError: codeBlock({ lang: 'sh', cwd: '~/my-app', code: TIER_ERROR }), budgetError: codeBlock({ lang: 'sh', cwd: '~/my-app', code: BUDGET_ERROR }) },
   }
 }
 
@@ -82,6 +87,37 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-56">2.0.0-alpha.56 · 21 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.55: #519 (ledger F572) and #520 (F570, part 1); the two docs sentences of F582 */}
+      <p>This version lets the <code>render</code> of your runtime components answer &ldquo;not now&rdquo; instead of returning <code>null</code> or throwing, and lets you set a size budget for a template so the build fails when one grows past it.</p>
+
+      <h3>Upgrading: what you must change</h3>
+      {/* source: PR #519 (F572); packages/brust/src/routes.ts (RenderContext gains notNow(); RenderNotNow), packages/brust/src/index.ts (RenderContext is exported), packages/brust/src/handlers.ts (a result that is not a string, null or undefined is still an error); PR #520 (F570); packages/brust/src/build/index.ts (a template under the budget, or with no budget, is warned about as before) */}
+      <p>Nothing: an app on the previous version builds and runs unchanged. <code>[build] template_max_bytes</code> is opt-in; with no value, or <code>0</code>, the build prints what it printed before, including the warning for a template over 1 MB. A <code>render</code> that returns a string, <code>null</code> or nothing behaves as before, and any other value is still an error. One TypeScript detail: <code>RenderContext</code> is an exported type and now has a <code>notNow()</code> member, so an object you type as <code>RenderContext</code> yourself, in a test for example, needs it.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #519 (F572); crates/brust-core/src/components.rs (Html::NotNow; island_slot sets the page's not-stored state with no note); packages/brust/src/handlers.ts (resolveComponents: ctx.notNow); crates/brust-core/tests/runtime_components.rs (not_now_*); packages/brust/test/rc-island-render.test.ts; tests/server/rc-island.chromium.test.ts; the Runtime components page, section island, table "What each answer of render does" */}
+        <li>
+          <strong><code>render</code> of <code>components</code> can answer &ldquo;not now&rdquo; with <code>return ctx.notNow()</code> (#519).</strong> Return it, directly or from a promise, when the HTML is not ready yet, for example while your renderer warms up. The slot is an empty host your client mounts into, nothing is stored in the island HTML cache, the page is not stored in the page cache, and the server logs nothing; the next page render calls <code>render</code> for that component again. <code>null</code> is kept with no time limit, and a throw is not kept but logs a <code>render threw</code> line, so neither fits &ldquo;ask me again&rdquo;. Runtime components run on the native server only: the Cloudflare target refuses them at build (<code>dynamic-target</code>), so this does not apply there. See <a href="/docs/runtime-components#island">Runtime components</a>.
+        </li>
+        {/* source: PR #520 (F570); packages/brust/src/build/config.ts (parseTemplateMaxBytes); packages/brust/src/build/index.ts (templateBudgetViolations: checked over every template the build writes, before any is written; dev prints warning template-size); packages/brust/test/build-large-template.test.ts; the CLI docs page, anchor #large-templates, and the Configuration page */}
+        <li>
+          <strong><code>[build] template_max_bytes</code> in <code>brust.toml</code> fails the build when a template is larger than the budget you set (#520).</strong> The value is a number of bytes; absent or <code>0</code> means no budget. A build with a template over it stops with one <code>template-size</code> error that lists every such template, largest first, with its size and the file it came from (below), and writes no <code>dist</code>. A template over the budget is reported by the error only; one under it keeps the 1 MB warning. The budget applies to every template the build writes, for every target. <code>brust dev</code> prints the same lines as <code>warning template-size</code> and keeps running. A negative or fractional value, or one that is not a number, is a <code>config</code> error. See <a href="/docs/cli#large-templates">Large templates</a> and <a href="/docs/configuration#other">Configuration</a>.
+        </li>
+      </ul>
+      {/* source: PR #520 (F570); the error printed by `brust build` for a page of 1.2 MB with template_max_bytes = 1000000, and a second template of 20 KB under the budget: only the first is listed */}
+      <p>With <code>template_max_bytes = 1000000</code>, a page whose template is 1.2 MB stops the build:</p>
+      <CodeBlock code={blocks.budgetError.code} lang={blocks.budgetError.lang} cwd={blocks.budgetError.cwd} html={blocks.budgetError.html} />
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: F582 (the two docs sentences); crates/brust-compiler/src/analyze/passes/server_expr.rs (call: "method arguments must be literals", "join needs a string literal"); crates/brust-core/src/components.rs (the island HTML cache has no remove by key: its entries leave by eviction, by a new artifact digest for the ref, or at a restart); PR #519; the Rendering tiers page, section #expressions, and the Caching page, section #layers */}
+        <li>
+          <strong>Two docs pages say what they left implicit.</strong> <a href="/docs/rendering-tiers#expressions">Rendering tiers</a> now says that the methods the template prints take literal arguments only: <code>s.slice(0, 3)</code> and <code>{"xs.join(', ')"}</code> are printed, and <code>s.slice(0, n)</code> runs as a job. <a href="/docs/caching#layers">Caching</a> says that no call drops one entry of the island HTML cache: an entry leaves when it is evicted, when the ref has a new artifact, or when the server restarts, and <code>ctx.notNow()</code> is the way to avoid storing an answer.
+        </li>
+      </ul>
 
       <h2 id="alpha-55">2.0.0-alpha.55 · 21 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.54: #513 (ledger F562), #514 (F575), #515 (F571, F574), #516 (F577, F581) and #517 (F578, F579, F580 in part) */}

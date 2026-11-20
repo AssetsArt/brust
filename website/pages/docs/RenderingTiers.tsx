@@ -233,6 +233,10 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
           these methods, with literal arguments only: <code>toUpperCase</code>, <code>toLowerCase</code>, <code>trim</code>, <code>slice</code>, <code>startsWith</code>, <code>endsWith</code>, <code>includes</code> and <code>join</code> (the separator is a string literal).
         </li>
       </ul>
+      {/* source: crates/brust-compiler/src/analyze/passes/server_expr.rs (call: "method arguments must be literals" when an argument is not a literal, an array of literals or an object of literals; "join needs a string literal"), crates/brust-compiler/tests/server_expr.rs */}
+      <p>
+        The arguments of those methods must be literals. <code>s.slice(0, 3)</code> and <code>{"xs.join(', ')"}</code> are printed by the template; <code>s.slice(0, n)</code> and <code>xs.join(sep)</code>, with a name or any other expression as an argument, are not, and the call runs as a job.
+      </p>
       <p>
         These run as a job instead, because they are outside the subset: <code>n.toLocaleString()</code>, <code>n.toPrecision(3)</code>, <code>s.padStart(6, &apos;*&apos;)</code>, <code>s.trimEnd()</code> and <code>new Date(x).toISOString()</code>. The output is the same as
         React&rsquo;s; the page costs a worker call.
