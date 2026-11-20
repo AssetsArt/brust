@@ -95,6 +95,12 @@ struct Inline {
     /// Every name the component's module declares (imports included): a global a foreign
     /// hook reads must not be among them, or the inlined code would read that binding.
     root_module: HashSet<String>,
+    /// F560: the component's own module path (root-relative): a store handle a foreign hook's module imports is
+    /// imported by the component, so its specifier is rewritten to be relative to this file.
+    root_path: String,
+    /// F560: the `out.stores` entries whose import specifier is already relative to the component (a hook that
+    /// calls another hook must not rewrite the inner hook's entries again).
+    stores_rebased: HashSet<usize>,
     /// R34.142: addresses of the `useId()` calls that seed a state nothing updates (`drop_inert_id_effects`); the state
     /// is that id.
     inert_id_states: HashSet<usize>,
@@ -300,14 +306,54 @@ fn store_binding(b: &js_ast::Binding) -> Option<StoreBinding> {
     }
 }
 
+/// F560: `useStore(h).key`, one key read off the call (`const lang = useStore(prefs).lang`): the call and the key. It
+/// is `const { key } = useStore(h)` under the name the declaration binds; no optional chain, no computed key.
+fn use_store_member<'c>(
+    value: &'c js_ast::Expr,
+    names: &NameTable<'_>,
+) -> Option<(&'c js_ast::E::Call, String)> {
+    let E::EDot(d) = &value.data else {
+        return None;
+    };
+    if d.optional_chain.is_some() {
+        return None;
+    }
+    let E::ECall(call) = &d.target.data else {
+        return None;
+    };
+    is_use_store(&call.target, names).then(|| {
+        (
+            &**call,
+            String::from_utf8_lossy(d.name.slice()).into_owned(),
+        )
+    })
+}
+
+/// The binding of a `useStore` declaration: the pattern, or for `useStore(h).key` (`member`) that key under the one
+/// name the declaration binds.
+fn store_decl_binding(b: &js_ast::Binding, member: Option<String>) -> Option<StoreBinding> {
+    match (member, b.data) {
+        (None, _) => store_binding(b),
+        (Some(key), B::BIdentifier(id)) => Some(StoreBinding::Fields(vec![(key, id.r#ref)])),
+        (Some(_), _) => None,
+    }
+}
+
 /// A well-formed `useStore(h)` declaration: the handle (with its import) and the binding.
 /// `None` when `read_use_store` reports it instead.
 fn use_store_decl(
     decl: &js_ast::G::Decl,
     names: &NameTable<'_>,
 ) -> Option<(String, (String, String, String), StoreBinding)> {
-    let E::ECall(call) = &decl.value.as_ref()?.data else {
-        return None;
+    let value = decl.value.as_ref()?;
+    let (call, member) = match use_store_member(value, names) {
+        Some((call, key)) => (call, Some(key)),
+        None => {
+            let E::ECall(call) = &value.data else {
+                return None;
+            };
+            (&**call, None)
+        }
     };
     if !is_use_store(&call.target, names) {
         return None;
@@ -316,7 +362,7 @@ fn use_store_decl(
         return None;
     };
     let (handle, import) = store_handle(arg, names)?;
-    Some((handle, import, store_binding(&decl.binding)?))
+    Some((handle, import, store_decl_binding(&decl.binding, member)?))
 }
 
 pub(crate) fn call_addr(call: &js_ast::E::Call) -> usize {
@@ -326,6 +372,27 @@ pub(crate) fn call_addr(call: &js_ast::E::Call) -> usize {
 /// Marks `const [a, setA] = useState(…)` bindings in `names` before any
 /// expression of the body is read, so reads resolve to `State` / `Setter`;
 /// and `useStore(h)` bindings, so reads resolve to `Store` (M3-F D7).
+/// The `useStore(h)` half of [`mark_state_bindings`]: the bindings of the top-level store declarations of `func`.
+fn mark_store_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
+    for stmt in func.body.stmts.slice() {
+        let S::SLocal(local) = &stmt.data else {
+            continue;
+        };
+        for decl in local.decls.iter() {
+            if let Some((handle, _, binding)) = use_store_decl(decl, names) {
+                match binding {
+                    StoreBinding::View(r) => names.mark_store(r, handle, None),
+                    StoreBinding::Fields(fields) => {
+                        for (key, r) in fields {
+                            names.mark_store(r, handle.clone(), Some(key));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
     let mut w = Walk::default();
     w.stmts(func.body.stmts.slice());
@@ -685,6 +752,7 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, m: Module<'_, '_>
     out.inline.root_declared = w.declared.iter().map(|d| r.names.name(*d)).collect();
     if !m.foreign {
         out.inline.root_module = r.names.declared_spellings().collect();
+        out.inline.root_path = m.parsed.path();
     }
     read_props(func, r, &mut out);
     let returned = read_stmts(func.body.stmts.slice(), r, &mut out, m);
@@ -700,6 +768,20 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, m: Module<'_, '_>
     }
     out.handlers.append(&mut r.pending_handlers);
     out.diagnostics.append(&mut r.diagnostics);
+    // F560: a call of the component's own expression arrow inside a derived value is the arrow's expression.
+    if out.react_reason.is_none() {
+        let mut derived = std::mem::take(&mut out.derived);
+        {
+            let mut taken: HashSet<&str> = out.handlers.iter().map(|h| h.name.as_str()).collect();
+            taken.extend(out.refs.iter().map(|r| r.name.as_str()));
+            for s in &out.state {
+                taken.insert(s.name.as_str());
+                taken.extend(s.setter.iter().map(String::as_str));
+            }
+            crate::analyze::passes::helpers::inline_local_calls(&mut derived, &taken);
+        }
+        out.derived = derived;
+    }
     // F289: the same rule one step outside a hook: `const o = { cb: toggle }` in the component, with `toggle` a handler.
     if out.react_reason.is_none()
         && let Some(name) = client_function_in_derived(&out, 0)
@@ -2285,11 +2367,17 @@ fn read_decl(
         return;
     }
     adopt_react_alias(r.names, m, value);
+    // F560: `const lang = useStore(prefs).lang` is the one-key destructuring under another spelling.
+    if let Some((call, key)) = use_store_member(value, r.names) {
+        out.classified_hooks.insert(call_addr(call));
+        let args: Vec<js_ast::Expr> = call.args.to_vec();
+        return read_use_store(r, out, decl, &args, Some(key), vloc);
+    }
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();
         if is_use_store(&call.target, r.names) {
-            return read_use_store(r, out, decl, &args, vloc);
+            return read_use_store(r, out, decl, &args, None, vloc);
         }
         // R34.140: `const getItems = useCollection(scope)` of a recognised `createCollection`
         if let Some(callee) = crate::analyze::names::ident_ref(&call.target)
@@ -2532,6 +2620,7 @@ fn read_use_store(
     out: &mut BodyDecls,
     decl: &js_ast::G::Decl,
     args: &[js_ast::Expr],
+    member: Option<String>,
     vloc: u32,
 ) {
     let [arg] = args else {
@@ -2565,7 +2654,7 @@ fn read_use_store(
             "pass the handle imported from the module that calls defineStore('<name>', …)",
         );
     };
-    let (view, fields) = match store_binding(&decl.binding) {
+    let (view, fields) = match store_decl_binding(&decl.binding, member) {
         Some(StoreBinding::View(id)) => (Some(r.names.name(id)), vec![]),
         Some(StoreBinding::Fields(fields)) => (
             None,
@@ -3037,6 +3126,31 @@ fn exported_fn<'x>(ast: &'x js_ast::Ast<'_>, export: &str) -> Option<&'x js_ast:
     local_fn(ast, &names, local?)
 }
 
+/// F560: `spec`, an import specifier written in the module `from`, as the module `to` would write it. A relative
+/// specifier is re-anchored (both paths are root-relative, `/`-separated); a package or an alias is the same anywhere.
+fn rebase_spec(from: &str, spec: &str, to: &str) -> String {
+    if !crate::analyze::modules::is_relative_spec(spec) {
+        return spec.to_string();
+    }
+    let dir = |p: &str| p.rfind('/').map_or(String::new(), |i| p[..i].to_string());
+    let target = crate::analyze::modules::normalize(&match dir(from) {
+        d if d.is_empty() => spec.to_string(),
+        d => format!("{d}/{spec}"),
+    });
+    let to_dir = dir(to);
+    let (a, b): (Vec<&str>, Vec<&str>) = (
+        to_dir.split('/').filter(|s| !s.is_empty()).collect(),
+        target.split('/').filter(|s| !s.is_empty()).collect(),
+    );
+    let same = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let mut out: Vec<&str> = vec![".."; a.len() - same];
+    out.extend(&b[same..]);
+    if a.len() == same {
+        out.insert(0, ".");
+    }
+    out.join("/")
+}
+
 /// `local` made a name the compiler may emit (R5.1): no leading `_` (reserved for the
 /// compiler's own names), no `$` (invalid in Jinja).
 fn clean_name(local: &str) -> String {
@@ -3242,19 +3356,18 @@ fn read_hook(
             ),
         );
     }
-    if imported
-        && w.calls
-            .iter()
-            .any(|c| matches!(&c.data, E::ECall(call) if is_use_store(&call.target, &hnames)))
-    {
-        return fail(
-            out,
-            "hook-shape",
-            format!(
-                "custom hook {hook} from {path} uses useStore; only a hook declared beside the component may"
-            ),
-        );
-    }
+    // F560: the handles of the hook's `useStore(h)` calls. One that the hook's module imports is imported by the
+    // component too (below); anything else a foreign hook names stays refused as a binding of its module.
+    let store_handles: Vec<js_ast::Ref> = w
+        .calls
+        .iter()
+        .filter_map(|c| match &c.data {
+            E::ECall(call) if is_use_store(&call.target, &hnames) => {
+                call.args.first().and_then(crate::analyze::names::ident_ref)
+            }
+            _ => None,
+        })
+        .collect();
     // Callees of hook calls never reach the output: inlined, read as React hooks, or a fallback.
     let mut helpers: Vec<(js_ast::Ref, js_ast::Stmt, &js_ast::G::Fn)> = Vec::new();
     let mut callees: Vec<js_ast::Ref> = Vec::new();
@@ -3334,6 +3447,41 @@ fn read_hook(
                             IdentKind::Import {
                                 source: spec.to_string(),
                                 imported: spelled.clone(),
+                            },
+                        )),
+                    },
+                ));
+            }
+            continue;
+        }
+        // F560: a store handle the hook's module imports (`import { prefs } from './prefs'`, read by `useStore(prefs)`
+        // in the hook): the component imports the same export under a generated name, by a specifier relative to its
+        // own file. A store module is loaded for every component that reads the store, so nothing new runs.
+        if imported
+            && store_handles.iter().any(|h| hnames.same(*h, *u))
+            && let Some((source, exported)) = hnames.import_of(*u)
+            && exported != "*"
+        {
+            if !import_aliases.iter().any(|(s, _)| hnames.same(*s, *u)) {
+                let source = rebase_spec(&path, source, &out.inline.root_path);
+                let exported = exported.to_string();
+                let mut g = 1;
+                let local = loop {
+                    let l = format!("{}_import{g}", clean_name(&spelled));
+                    if out.inline.taken.insert(l.clone()) {
+                        break l;
+                    }
+                    g += 1;
+                };
+                import_aliases.push((
+                    *u,
+                    Alias {
+                        print: local.clone(),
+                        kind: Some((
+                            local,
+                            IdentKind::Import {
+                                source,
+                                imported: exported,
                             },
                         )),
                     },
@@ -3578,6 +3726,11 @@ fn read_hook(
     for (p, a) in param_aliases.into_iter().chain(import_aliases) {
         hnames.set_alias(p, a);
     }
+    // F560: a store view is marked under its handle's name, and a foreign hook's handle has just been renamed to the
+    // name the component imports it by: mark again, so a read of the view names the same handle as its `StoreUse`.
+    if imported && !store_handles.is_empty() {
+        mark_store_bindings(func, &mut hnames);
+    }
 
     // The call's defaulted arguments are declared before the hook's own (and before the mark below, which points what
     // the hook declares at the call site): `name === undefined ? default : name`, once the aliases above are set.
@@ -3609,6 +3762,7 @@ fn read_hook(
         out.diagnostics.append(&mut hr.diagnostics);
     }
     let start = Marks::of(out);
+    let stores_before = out.stores.len();
     let reason_before = out.react_reason.clone();
     let saved = std::mem::take(&mut out.classified_hooks);
     out.inline.stack.push(key);
@@ -3657,6 +3811,16 @@ fn read_hook(
     };
     out.inline.stack.pop();
     out.classified_hooks = saved;
+    // F560: the stores this foreign hook read name their handle's import as the hook's module wrote it; every later
+    // pass resolves it from the component's file.
+    if imported {
+        for i in stores_before..out.stores.len() {
+            if out.inline.stores_rebased.insert(i) {
+                let source = rebase_spec(&path, &out.stores[i].import.1, &out.inline.root_path);
+                out.stores[i].import.1 = source;
+            }
+        }
+    }
     // the context fields the hook read are this component's own needs (hidden props), with their defaults
     for u in hnames.ctx_uses() {
         for f in &u.fields {

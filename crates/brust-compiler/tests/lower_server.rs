@@ -20,18 +20,43 @@ fn product_card_job() {
 #[test]
 fn helpers_and_nested_lists() {
     let job = lower(
-        "import { fmt } from './money'\nconst RATE = 2\nexport default function L({ items, title: heading }: any) {\n  const scale = (x: number) => x * RATE\n  return <ul title={heading}>{items.map((o: any, oi: number) => <li key={o.id}>{o.rows.map((r: any) => <b key={r}>{fmt(scale(r) + oi)}</b>)}</li>)}</ul>\n}",
+        "import { fmt } from './money'\nconst RATE = 2\nexport default function L({ items, title: heading }: any) {\n  const scale = (x: number) => {\n    return x * RATE\n  }\n  return <ul title={heading}>{items.map((o: any, oi: number) => <li key={o.id}>{o.rows.map((r: any) => <b key={r}>{fmt(scale(r) + oi)}</b>)}</li>)}</ul>\n}",
     )
     .server_ts
     .unwrap();
     assert!(job.contains("\nconst RATE = 2;\n"), "{job}");
-    assert!(job.contains("  const scale = (x) => x * RATE\n"), "{job}");
+    assert!(job.contains("  const scale = ((x) => {"), "{job}");
     assert!(
         job.contains(
             "return { _s1: (items).map((o, oi) => (o.rows).map((r) => fmt(scale(r) + oi))) }"
         ),
         "{job}"
     );
+}
+
+/// F560: a slot-local arrow whose body is one expression is not a function of the job: its calls are that expression,
+/// with the argument in the parameter's place (parenthesised where the operators need it).
+#[test]
+fn a_call_of_an_expression_arrow_is_its_expression_in_the_job() {
+    let job = lower(
+        "import { fmt } from './money'\nconst RATE = 2\nexport default function L({ items, title: heading }: any) {\n  const scale = (x: number) => x * RATE\n  return <ul title={heading}>{items.map((o: any, oi: number) => <li key={o.id}>{o.rows.map((r: any) => <b key={r}>{fmt(scale(r) + oi)}</b>)}</li>)}</ul>\n}",
+    )
+    .server_ts
+    .unwrap();
+    assert!(!job.contains("scale"), "{job}");
+    assert!(
+        job.contains(
+            "return { _s1: (items).map((o, oi) => (o.rows).map((r) => fmt(r * RATE + oi))) }"
+        ),
+        "{job}"
+    );
+    let job = lower(
+        "import { fmt } from './money'\nexport default function L({ a, b }: any) {\n  const twice = (x: number) => x * 2\n  const neg = (x: number) => -x\n  return <p>{fmt(twice(a + b))}{fmt(neg(a - b))}</p>\n}",
+    )
+    .server_ts
+    .unwrap();
+    assert!(job.contains("fmt((a + b) * 2)"), "{job}");
+    assert!(job.contains("fmt(-(a - b))"), "{job}");
 }
 
 /// A renamed prop read by opaque code keeps its local name bound.
