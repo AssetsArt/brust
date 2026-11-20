@@ -8,12 +8,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 70 | 45 | 16 | 9 | 0 | 0 | 0 | 0 |
+| A JSX basics | 71 | 46 | 16 | 9 | 0 | 0 | 0 | 0 |
 | B Composition | 246 | 130 | 20 | 96 | 0 | 0 | 0 | 0 |
 | C Hooks | 247 | 82 | 78 | 87 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 77 | 34 | 16 | 23 | 3 | 1 | 0 | 0 |
-| **Total** | 673 | 304 | 131 | 234 | 3 | 1 | 0 | 0 |
+| **Total** | 674 | 305 | 131 | 234 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -34,6 +34,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-equality-js-semantics | JS == and === across string, number, boolean, null, undefined | static | static | 0 | ok | 0 | — | F428: loose == coerces (1 == "1", null == undefined), === is type-strict (true === 1 is false); === against a string literal is the native == |
 | a-interpolation | prop interpolation | static | static | 0 | ok | 0 | — | spec §3.1 static tier; §6.2 prop read |
 | a-attributes | static and dynamic attributes | static | static | 0 | ok | 0 | — | spec §3.1 static tier; §6.2 attributes |
+| a-attr-zero | attributes whose value is the number 0 | static | static | 0 | ok | 0 | — | F574: 0 is a value, not an empty one: every attribute prints "0" (tests/zero_attrs.rs; served == React in ssr-compare) |
 | a-classname-template | className template literal | static | static | 0 | ok | 0 | — | spec §6.2 template literal |
 | a-style-object | style object from props | static | static | 0 | ok | 0 | — | spec §6.2 style object |
 | a-module-const | module const (literal, array) in render | static | static | 0 | ok | 0 | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
