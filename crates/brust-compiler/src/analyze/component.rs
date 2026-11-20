@@ -551,10 +551,19 @@ fn read_function_as(
         crate::analyze::const_fold::Folder::new(&ir.module_decls, &none, &nested).all()
     };
     let evaluated = crate::analyze::module_effects::fold_env_accepts(&ir.module_decls);
-    ir.module_effect =
-        crate::analyze::module_effects::module_effect(ast, &*reader.names, parsed.text(), &|n| {
-            folded.contains_key(n) || evaluated.contains(n) || ir.plain_fns.iter().any(|p| p == n)
-        });
+    let me_from = parsed.path();
+    let import_read = |src: &str, imp: &str, path: &[crate::analyze::module_effects::ReadSeg]| {
+        opts.is_some_and(|o| {
+            crate::analyze::module_effects::plain_import_read(&me_from, src, imp, path, o)
+        })
+    };
+    ir.module_effect = crate::analyze::module_effects::module_effect(
+        ast,
+        &*reader.names,
+        parsed.text(),
+        &|n| folded.contains_key(n) || evaluated.contains(n) || ir.plain_fns.iter().any(|p| p == n),
+        &import_read,
+    );
     let from = parsed.path();
     // React's element builders (and the namespace or default import that carries them), or an app module that may
     // hold an element; `cache`, the hooks and other React exports return no element.

@@ -3131,16 +3131,32 @@ fn read_radix_use_id(r: &mut Reader<'_, '_>, out: &mut BodyDecls, site: &Site<'_
 fn follow_reexports(opts: &AnalyzeOptions, path: String, imported: String) -> (String, String) {
     let mut seen = Vec::new();
     let mut last = (path.clone(), imported.clone());
-    find_hook_export(opts, path, imported, 0, &mut seen, &mut last).unwrap_or(last)
+    let declared = |ast: &js_ast::Ast<'_>, n: &str| exported_fn(ast, n).is_some();
+    find_export(opts, path, imported, 0, &mut seen, &mut last, &declared).unwrap_or(last)
 }
 
-fn find_hook_export(
+/// F564 D1: the module and export name that DECLARE `imported` of the app module `path` (`declared` says whether a
+/// module declares an export itself), following `export … from`, `import` + `export { }` and `export *`, up to 4 hops;
+/// `None` when no module reached declares it.
+pub(crate) fn follow_export(
+    opts: &AnalyzeOptions,
+    path: String,
+    imported: String,
+    declared: &dyn Fn(&js_ast::Ast<'_>, &str) -> bool,
+) -> Option<(String, String)> {
+    let mut seen = Vec::new();
+    let mut last = (path.clone(), imported.clone());
+    find_export(opts, path, imported, 0, &mut seen, &mut last, declared)
+}
+
+fn find_export(
     opts: &AnalyzeOptions,
     path: String,
     imported: String,
     depth: u8,
     seen: &mut Vec<(String, String)>,
     last: &mut (String, String),
+    declared_here: &dyn Fn(&js_ast::Ast<'_>, &str) -> bool,
 ) -> Option<(String, String)> {
     let here = (path.clone(), imported.clone());
     if depth > 4 || seen.contains(&here) {
@@ -3152,7 +3168,7 @@ fn find_hook_export(
     let parsed = crate::parse::parse_cached(&path, bytes).ok()?;
     // (declared here, the named re-export step, the `export *` modules)
     let (declared, step, stars) = parsed.with_ast(|ast| {
-        if exported_fn(ast, &imported).is_some() {
+        if declared_here(ast, &imported) {
             return (true, None, Vec::new());
         }
         let names = NameTable::for_hook(ast);
@@ -3204,16 +3220,22 @@ fn find_hook_export(
             return None;
         }
         let to = crate::analyze::modules::resolve_module(&path, &spec, opts)?;
-        return find_hook_export(opts, to, original, depth + 1, seen, last);
+        return find_export(opts, to, original, depth + 1, seen, last, declared_here);
     }
     for spec in stars {
         let Some(to) = crate::analyze::modules::resolve_module(&path, &spec, opts) else {
             continue;
         };
         let mut probe = last.clone();
-        if let Some(found) =
-            find_hook_export(opts, to, imported.clone(), depth + 1, seen, &mut probe)
-        {
+        if let Some(found) = find_export(
+            opts,
+            to,
+            imported.clone(),
+            depth + 1,
+            seen,
+            &mut probe,
+            declared_here,
+        ) {
             return Some(found);
         }
     }
