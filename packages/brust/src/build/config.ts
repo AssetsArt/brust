@@ -152,6 +152,8 @@ export interface BuildConfig {
   trailingSlash: TrailingSlash
   /** `[tiers]` (F569): the heaviest tier per path pattern and the tier snapshot; `null` = not written (or `--actions-only`). */
   tiers: TiersConfig | null
+  /** `[build] template_max_bytes` (F570): a template the build writes that is larger than this many bytes fails the build; `0` = no budget (the default). */
+  templateMaxBytes: number
   /** `[dev] watch` (F575): files or directories, as written (relative to the app root), that `brust dev` also reloads for. Watch only: the build ignores it. */
   devWatch: string[]
 }
@@ -562,6 +564,13 @@ export function parseDevWatch(file: string, raw: unknown): string[] {
   return (w as string[]).map((p) => p.trim())
 }
 
+/** F570 `[build] template_max_bytes`: a non-negative integer (bytes); absent or `0` = no budget. */
+export function parseTemplateMaxBytes(file: string, v: unknown): number {
+  if (v === undefined) return 0
+  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) throw new BuildError('config', `${file}: build.template_max_bytes must be a non-negative integer (bytes)`)
+  return v
+}
+
 /** F549 `[build] expose_isolated`: a boolean; absent = `false`. */
 export function parseExposeIsolated(file: string, v: unknown): boolean {
   if (v === undefined) return false
@@ -572,7 +581,7 @@ export function parseExposeIsolated(file: string, v: unknown): boolean {
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict', tiers: null, devWatch: [] }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict', tiers: null, devWatch: [], templateMaxBytes: 0 }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -590,15 +599,16 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   const tiers = o.actionsOnly === true ? null : parseTiers(file, root.tiers)
   const devWatch = parseDevWatch(file, root.dev)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash, tiers, devWatch }
+  const templateMaxBytes = isTable(build) ? parseTemplateMaxBytes(file, build.template_max_bytes) : 0
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash, tiers, devWatch, templateMaxBytes }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
   const expose = parseExpose(file, appRoot, sourceRoots, (build as Record<string, unknown>).expose)
   const islands = parseIslands(file, appRoot, expose, (build as Record<string, unknown>).islands)
   const exposeIsolated = parseExposeIsolated(file, (build as Record<string, unknown>).expose_isolated)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch, templateMaxBytes }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch, templateMaxBytes }
 }

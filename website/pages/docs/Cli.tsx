@@ -104,6 +104,12 @@ export default function Cli({ blocks, panels }: CliData) {
         <code>warning template &lt;name&gt; is &lt;n&gt; MB (&lt;source&gt;)</code> and still succeeds: a template that large slows start-up and holds its memory. It usually comes from a component inlined at many call sites, a very large literal, or deep conditional
         nesting. A long chain of one operator (<code>a &amp;&amp; b &amp;&amp; …</code>, <code>a || b || …</code>, <code>a ?? b ?? …</code>) prints each operand a fixed number of times, so it does not cause it. Split the component, move the large data into a prop or a loader, or keep that component in React.
       </p>
+      {/* source: packages/brust/src/build/index.ts (templateBudgetViolations, the template-size error; BRUST_BUILD_ALL_TEMPLATES writes every component's template and the budget applies to those too), packages/brust/src/build/config.ts (parseTemplateMaxBytes), packages/brust/test/build-large-template.test.ts */}
+      <p>
+        To fail the build instead of warning, set <code>[build] template_max_bytes</code> in <code>brust.toml</code> to the largest template you accept, in bytes (see <a href="/docs/configuration#other">Configuration</a>). A build with a template over it stops with one{' '}
+        <code>template-size</code> error that lists every such template, largest first, with its size and the file it came from; a template over the budget is reported by that error and not by the 1 MB warning. The budget applies to every template the build writes, so it
+        also applies to the extra ones <code>BRUST_BUILD_ALL_TEMPLATES=1</code> writes, which is a debugging aid. It works for every target. <code>brust dev</code> prints the same lines as <code>warning template-size</code> and keeps running.
+      </p>
 
       <h2 id="start">brust start</h2>
       <ul>

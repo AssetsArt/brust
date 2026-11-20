@@ -134,7 +134,7 @@ export async function runBuild(opts: {
   process.env.BRUST_BASE_PATH = built.basePath
   if (opts.actionsOnly)
     return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
-  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers } = built
+  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, templateMaxBytes } = built
   // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
   // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
   const remote =
@@ -206,7 +206,7 @@ export async function runBuild(opts: {
   // F569 (D5): the tier snapshot is written once the whole build succeeded.
   const tierCheck: { done?: TierCheck } = {}
   try {
-    await buildInto(tmp, { tiers, updateTiers: opts.updateTiers === true, tierCheck, target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { tiers, templateMaxBytes, updateTiers: opts.updateTiers === true, tierCheck, target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -231,6 +231,8 @@ async function buildInto(
     dev: boolean
     /** `[tiers]` (F569); `null` = no check. */
     tiers: TiersConfig | null
+    /** `[build] template_max_bytes` (F570): `0` = no budget. */
+    templateMaxBytes: number
     updateTiers: boolean
     /** Receives the tier check, for the snapshot write after the build. */
     tierCheck: { done?: TierCheck }
@@ -403,11 +405,20 @@ async function buildInto(
   // writes every component's template as well, to read what one component compiles to; the server ignores the extras.
   mkdirSync(join(out, 'jinja'), { recursive: true })
   const written = process.env.BRUST_BUILD_ALL_TEMPLATES === '1' ? [...compiled.keys()] : renderedTemplates(manifest)
+  // F570: the budget applies to what is written (so to the switch's extras too); every violation is reported at once,
+  // before any file is written. In dev it is a warning and the session goes on.
+  const over = templateBudgetViolations(written.map((id) => compiled.get(id)!), o.templateMaxBytes, appRoot)
+  if (over.length > 0) {
+    if (!o.dev) throw new BuildError('template-size', over.join('\n'))
+    o.log(over.map((l, i) => (i === 0 ? `[brust] warning template-size ${l}` : l)).join('\n'))
+  }
+  const overIds = new Set(over.length > 0 ? written.filter((id) => exceedsBudget(compiled.get(id)!, o.templateMaxBytes)) : [])
   for (const id of written) {
     const c = compiled.get(id)!
     writeFileSync(join(out, 'jinja', `${id}.jinja`), c.jinja)
-    // F556: a written template is one the server parses at start (or one asked for by the switch above).
-    const w = largeTemplateWarning(c, appRoot)
+    // F556: a written template is one the server parses at start (or one asked for by the switch above). One the
+    // budget reported (F570) is not warned about twice.
+    const w = overIds.has(id) ? undefined : largeTemplateWarning(c, appRoot)
     if (w !== undefined) o.log(w)
   }
   // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.
@@ -526,6 +537,22 @@ export function largeTemplateWarning(c: Pick<Compiled, 'id' | 'file' | 'jinja'>,
   if (bytes <= LARGE_TEMPLATE_BYTES) return undefined
   const mb = (bytes / (1024 * 1024)).toFixed(1)
   return `[brust] warning template ${c.id}.jinja is ${mb} MB (${relPosix(appRoot, c.file)}): a large template slows start-up and uses memory; see https://brust.dev/docs/cli#large-templates`
+}
+
+const exceedsBudget = (c: Pick<Compiled, 'jinja'>, budget: number): boolean => budget > 0 && Buffer.byteLength(c.jinja) > budget
+
+/**
+ * F570 `[build] template_max_bytes`: one line per written template larger than the budget, largest first, then one
+ * closing line; empty when there is no budget (`0`) or nothing is over it.
+ */
+export function templateBudgetViolations(written: Pick<Compiled, 'id' | 'file' | 'jinja'>[], budget: number, appRoot: string): string[] {
+  const over = written
+    .map((c) => ({ c, bytes: Buffer.byteLength(c.jinja) }))
+    .filter((x) => budget > 0 && x.bytes > budget)
+    .sort((a, b) => b.bytes - a.bytes || (a.c.id < b.c.id ? -1 : 1))
+  if (over.length === 0) return []
+  const lines = over.map(({ c, bytes }) => `${c.id}.jinja is ${bytes} bytes (${(bytes / (1024 * 1024)).toFixed(1)} MB), over [build] template_max_bytes = ${budget} (${relPosix(appRoot, c.file)})`)
+  return [...lines, 'a template grows with what a page inlines; see https://brust.dev/docs/cli#large-templates']
 }
 
 /** R7: the first 16 hex chars of sha256 over the manifest (without `cache`), every `jinja/*.jinja`

@@ -356,6 +356,11 @@ export default function Configuration({ blocks }: ConfigurationData) {
       <p>
         <code>[build] source_roots</code> lists directories outside the app, relative to the app root, that its relative imports may reach: in a monorepo, <code>import Button from &quot;../shared/Button&quot;</code> compiles when <code>../shared</code> is listed. Without it brust reads only the app&rsquo;s own directory, and the import fails the build with <code>unresolved-import</code> (&ldquo;it leaves the app root&rdquo;). Each entry must be an existing directory; <code>..</code> chains are normalised. The check is on the path as written, so an import that climbs out of a listed directory (<code>../shared/../secret</code>) is refused as well. Symbolic links are not followed when checking.
       </p>
+      {/* source: packages/brust/src/build/config.ts (parseTemplateMaxBytes), packages/brust/src/build/index.ts (templateBudgetViolations, checked where dist/jinja is written), packages/brust/test/build-large-template.test.ts */}
+      <p>
+        <code>[build] template_max_bytes</code> is a budget, in bytes, for one template the build writes. The default, <code>0</code>, is no budget, and the build only warns about a template over 1 MB. With a budget, a template over it fails the build
+        with one <code>template-size</code> error that lists every such template, largest first. The value must be a non-negative integer. In <code>brust dev</code> the error is a warning. See <a href="/docs/cli#large-templates">Large templates</a>.
+      </p>
       {/* source: packages/brust/src/build/config.ts:554 parseDevWatch (one key, `watch`; unknown keys and non-string entries are a config error at build too) and packages/brust/src/dev/watch.ts:51 devExtraRoots */}
       <p>
         <code>[dev] watch</code> is an array of files or directories, relative to the app root, that <code>brust dev</code> also reloads for (for example <code>watch = [&quot;../../packages/api&quot;]</code>). It only watches: unlike <code>source_roots</code> it does not change what imports may reach, and <code>brust build</code> and <code>brust start</code> ignore it. An unknown key or a non-string entry is a build error; a path that does not exist is a warning in dev. See <a href="/docs/dev-mode#watched">Dev mode</a>.
