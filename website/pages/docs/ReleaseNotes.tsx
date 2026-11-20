@@ -84,7 +84,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <ul>
         {/* source: PR #505 (F556); packages/brust/src/build/index.ts (the 1 MB warning); packages/brust/test/build-large-template.test.ts; the CLI docs page, anchor #large-templates */}
         <li>
-          <strong><code>brust build</code> warns when a template you wrote is over 1 MB (#505).</strong> The line reads <code>warning template &lt;name&gt; is &lt;n&gt; MB (&lt;source&gt;)</code> and says where the template came from. The build still succeeds, and a page under 1 MB prints nothing. A template that large is worth a look: it is often one expression printed many times over. See <a href="/docs/cli#large-templates">Large templates</a> on the CLI page.
+          <strong><code>brust build</code> warns when a template it writes is over 1 MB (#505).</strong> The line reads <code>warning template &lt;name&gt; is &lt;n&gt; MB (&lt;source&gt;)</code> and says where the template came from. The build still succeeds, and a page under 1 MB prints nothing. A template that large is worth a look: it is often one expression printed many times over. See <a href="/docs/cli#large-templates">Large templates</a> on the CLI page.
         </li>
       </ul>
 
@@ -104,7 +104,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <ul>
         {/* source: PR #506 (F558, F559); packages/brust/src/build/index.ts (renderedTemplates, BRUST_BUILD_ALL_TEMPLATES); crates/brust-core (the manifest walk reads the templates of the route chains); the CLI docs page, section Build */}
         <li>
-          <strong>A build writes, and <code>brust start</code> reads and compiles, only the templates of pages and layouts (#506).</strong> A route renders its pages and layouts by name; a component you place in a page is already printed inside that page&rsquo;s template. <code>dist/jinja/</code> and the Cloudflare Worker bundle now hold those templates only, and a component has no <code>dist/jinja/&lt;component&gt;.jinja</code> of its own. If a script of yours reads one of those files, build with <code>BRUST_BUILD_ALL_TEMPLATES=1</code>: it writes every component&rsquo;s template again, to read what one component compiles to, and the server ignores the extra files. Rendered output, the manifest and the request path are unchanged.
+          <strong>A build writes, and <code>brust start</code> reads and compiles, only the templates of pages and layouts (#506).</strong> A route renders its pages and layouts by name; a component you place in a page is already printed inside that page&rsquo;s template. <code>dist/jinja/</code> and the Cloudflare Worker bundle now hold those templates only, and a component that is not a page or layout has no <code>dist/jinja/&lt;component&gt;.jinja</code> of its own. If a script of yours reads one of those files, build with <code>BRUST_BUILD_ALL_TEMPLATES=1</code>: it writes every component&rsquo;s template again, to read what one component compiles to, and the server ignores the extra files. Rendered output, the manifest and the request path are unchanged.
         </li>
         {/* source: PR #506 (F558, F559), table "Numbers": an app build with 148 templates, 33.1 MB of template text, 4 rendered by name; Linux, debug build */}
         <li>
