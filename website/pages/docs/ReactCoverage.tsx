@@ -114,6 +114,26 @@ export default function ReactCoverage({ reference, summary, groups }: ReactCover
         <code>switch</code>, or compute the choice into one value first.
       </p>
 
+      <h2 id="lists">Lists</h2>
+      {/* source: crates/brust-compiler/src/analyze/jsx.rs (read_list: item patterns, row statements, the list-shape reasons);
+          crates/brust-compiler/tests/list_shapes.rs (accepted shapes and each refusal); tests/server/list-shapes.chromium.test.ts (a state list: served == React, clicks per row). */}
+      <p>
+        A list is <code>items.map(callback)</code> or <code>Array.from(items, callback)</code>, where the callback returns JSX with a <code>key</code>. The item may be a name or a flat
+        pattern, <code>{'({ id, name: label }) =>'}</code> or <code>{'([key, , value]) =>'}</code>; the index, when there is one, is a name. The body may be one expression, or a block of{' '}
+        <code>const name = value;</code> and <code>if (cond) return null;</code> statements before one <code>return &lt;li …/&gt;</code>. A row const may read the item, the index, props,
+        state, the consts above it and helper functions.
+      </p>
+      <p>
+        brust does not keep a row const as a variable: each place that reads it reads its value. React computes the value once per row, brust where it is read, so a const read twice calls
+        its helper twice. For a render that is pure and does not throw, the output is the same.
+      </p>
+      <p>
+        Four kinds of callback stay a React island, and the build names them <code>list-shape</code> with the reason: an item pattern with a default value, a nested pattern, a rest
+        element or a computed key, or a pattern as the index; a row binding that is <code>let</code>, <code>var</code> or a pattern, or a const that holds JSX or calls a hook; an
+        early return other than <code>return null</code>; and a row const read where a nested list or a function declares a name its value reads (rename that inner name).{' '}
+        <code>items?.map(…)</code> stays an island too.
+      </p>
+
       {groups.map((g) => (
         <section style={{ display: 'contents' }} key={g.id}>
           <h2 id={g.id}>{g.title}</h2>
