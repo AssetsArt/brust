@@ -2119,7 +2119,7 @@ fn read_list(r: &mut Reader<'_, '_>, e: &js_ast::Expr, call: &js_ast::E::Call) -
             "list-shape",
             format!("the list is not a supported shape: {why}"),
             loc_of(e),
-            "return one JSX expression from a `(item, index?) => …` callback over an array path",
+            LIST_FORMS,
         ));
         None
     };
@@ -2154,29 +2154,66 @@ fn read_list(r: &mut Reader<'_, '_>, e: &js_ast::Expr, call: &js_ast::E::Call) -
     if params.is_empty() || params.len() > 2 || arrow.is_async {
         return None;
     }
-    let mut bindings = Vec::new();
-    for p in params {
-        match p.binding.data {
-            B::BIdentifier(id) if p.default.is_none() => bindings.push(id.r#ref),
+    // F562 D2: the item is a name, or a flat object / array pattern read off a generated item name.
+    let item_pattern = match params[0].binding.data {
+        _ if params[0].default.is_some() => {
+            return shape(r, "the item parameter has a default value", arrow);
+        }
+        B::BIdentifier(_) => None,
+        _ => match item_pattern_problem(&params[0].binding) {
+            Some(why) => return shape(r, why, arrow),
+            None => Some(&params[0].binding),
+        },
+    };
+    let index_ref = match params.get(1) {
+        None => None,
+        Some(p) => match p.binding.data {
+            B::BIdentifier(id) if p.default.is_none() => Some(id.r#ref),
             _ => {
                 return shape(
                     r,
-                    "a `.map` callback parameter is a pattern or has a default",
+                    "the index parameter is a pattern or has a default value",
                     arrow,
                 );
             }
+        },
+    };
+    // F562 D3 / D5: `const name = value;` and `if (cond) return null;` statements, then one `return <jsx>`.
+    let stmts = arrow.body.stmts.slice();
+    let Some((last, prefix)) = stmts.split_last() else {
+        return shape(r, "a `.map` callback returns nothing", arrow);
+    };
+    let body_expr = match &last.data {
+        S::SReturn(ret) => match ret.value {
+            Some(v) if is_list_body(&v) => v,
+            // a single `return <not jsx>` is a plain slot (a `.map` over data)
+            _ if prefix.is_empty() => return None,
+            _ => {
+                return shape(r, "a block body does not end with `return <jsx>`", arrow);
+            }
+        },
+        _ => {
+            return shape(r, "a block body does not end with `return <jsx>`", arrow);
         }
-    }
-    let block = || "a `.map` callback has a block body; return one JSX expression";
-    let [only] = arrow.body.stmts.slice() else {
-        return shape(r, block(), arrow);
     };
-    let S::SReturn(ret) = &only.data else {
-        return shape(r, block(), arrow);
-    };
-    let body_expr = ret.value?;
-    if !is_list_body(&body_expr) {
-        return None;
+    let row_consts: Vec<js_ast::Ref> = prefix
+        .iter()
+        .filter_map(|st| match &st.data {
+            S::SLocal(l) => l
+                .decls
+                .as_slice()
+                .first()
+                .and_then(|d| match d.binding.data {
+                    B::BIdentifier(id) => Some(id.r#ref),
+                    _ => None,
+                }),
+            _ => None,
+        })
+        .collect();
+    for st in prefix {
+        if let Some(why) = row_stmt_problem(r, st, &row_consts[..]) {
+            return shape(r, &why, arrow);
+        }
     }
 
     // `Array.from` iterates any iterable (Set, string, generator); only a props/local path or a
@@ -2199,8 +2236,26 @@ fn read_list(r: &mut Reader<'_, '_>, e: &js_ast::Expr, call: &js_ast::E::Call) -
         },
         _ => first,
     });
-    let item = r.names.name(bindings[0]);
-    let index = bindings.get(1).map(|b| r.names.name(*b));
+
+    // What the row reads is rolled back when a bound name turns out to be captured (D4 (c) / (d)).
+    let (nd, nh, np, nr) = (
+        r.diagnostics.len(),
+        r.pending_handlers.len(),
+        r.provides.len(),
+        r.render_props.len(),
+    );
+    let outer_problem = r.names.bound_problem.borrow_mut().take();
+
+    let mut bindings = Vec::new();
+    let item = match (item_pattern, params[0].binding.data) {
+        (None, B::BIdentifier(id)) => {
+            bindings.push(id.r#ref);
+            r.names.name(id.r#ref)
+        }
+        _ => row_item_name(r),
+    };
+    bindings.extend(index_ref);
+    let index = index_ref.map(|b| r.names.name(b));
     for b in &bindings {
         r.names.mark_loop_binding(*b);
     }
@@ -2208,22 +2263,378 @@ fn read_list(r: &mut Reader<'_, '_>, e: &js_ast::Expr, call: &js_ast::E::Call) -
     if let Some(i) = &index {
         r.loop_scope.push(i.clone());
     }
-    let key = Expr::Raw(list_arm_key(r, &body_expr).unwrap_or(RawExpr {
+    let pushed = 1 + usize::from(index.is_some());
+    let depth = r.loop_scope.len();
+    let mut bound: Vec<js_ast::Ref> = Vec::new();
+    if let Some(pattern) = item_pattern {
+        for (name_ref, access) in item_pattern_names(pattern) {
+            let loc = 0;
+            let target = Box::new(RawExpr {
+                loc,
+                kind: RawKind::Ident {
+                    name: item.clone(),
+                    kind: IdentKind::LoopBinding,
+                },
+            });
+            let (expr, text) = match access {
+                Access::Key(k) if is_js_identifier(&k) => (
+                    RawKind::Member {
+                        target,
+                        name: k.clone(),
+                        optional: false,
+                    },
+                    format!("{item}.{k}"),
+                ),
+                Access::Key(k) => (
+                    RawKind::Index {
+                        target,
+                        index: Box::new(RawExpr {
+                            loc,
+                            kind: RawKind::Lit(crate::ir::Literal::Str(k.clone())),
+                        }),
+                    },
+                    format!("{item}[{}]", serde_json::to_string(&k).unwrap_or_default()),
+                ),
+                Access::At(n) => (
+                    RawKind::Index {
+                        target,
+                        index: Box::new(RawExpr {
+                            loc,
+                            kind: RawKind::Lit(crate::ir::Literal::Num(n as f64)),
+                        }),
+                    },
+                    format!("{item}[{n}]"),
+                ),
+            };
+            r.names.bind_expr(
+                name_ref,
+                crate::analyze::names::Bound {
+                    name: r.names.name(name_ref),
+                    expr: RawExpr { loc, kind: expr },
+                    text,
+                    captures: vec![(item.clone(), IdentKind::LoopBinding)],
+                    reads: vec![item.clone()],
+                    depth,
+                },
+            );
+            bound.push(name_ref);
+        }
+    }
+    // D5: each early `return null` condition, read where it stands.
+    let mut early: Vec<RawExpr> = Vec::new();
+    for st in prefix {
+        match &st.data {
+            S::SLocal(l) => {
+                let d = &l.decls.as_slice()[0];
+                let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) else {
+                    unreachable!("row_stmt_problem accepts identifier consts with a value")
+                };
+                let expr = r.expr(v);
+                let text = format!("({})", r.print(v));
+                let captures = r.expr_captures(v);
+                let mut reads = r.printed_reads(v);
+                raw_reads(&expr, &mut reads);
+                reads.sort();
+                reads.dedup();
+                r.names.bind_expr(
+                    id.r#ref,
+                    crate::analyze::names::Bound {
+                        name: r.names.name(id.r#ref),
+                        expr,
+                        text,
+                        captures,
+                        reads,
+                        depth,
+                    },
+                );
+                bound.push(id.r#ref);
+            }
+            S::SIf(i) => early.push(r.expr(&i.test)),
+            _ => {}
+        }
+    }
+    let mut key = list_arm_key(r, &body_expr).unwrap_or(RawExpr {
         loc: loc_of(&body_expr),
         kind: RawKind::Lit(crate::ir::Literal::Undefined),
-    }));
-    let body = read_list_arms(r, &body_expr);
-    r.loop_scope.truncate(r.loop_scope.len() - bindings.len());
+    });
+    let mut body = read_list_arms(r, &body_expr);
+    // `if (c) return null; … return <jsx>` is `c ? null : <jsx>` (the conditional-arm form), innermost last.
+    for cond in early.into_iter().rev() {
+        let loc = cond.loc;
+        key = RawExpr {
+            loc,
+            kind: RawKind::Cond {
+                test: Box::new(cond.clone()),
+                yes: Box::new(RawExpr {
+                    loc,
+                    kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                }),
+                no: Box::new(key),
+            },
+        };
+        body = vec![Node::If {
+            cond: Expr::Raw(cond),
+            then: Vec::new(),
+            else_: body,
+            and: false,
+        }];
+    }
+    r.loop_scope.truncate(r.loop_scope.len() - pushed);
     for b in &bindings {
         r.names.unmark_loop_binding(*b);
+    }
+    for b in &bound {
+        r.names.unbind_expr(*b);
+    }
+    // A problem with a name an enclosing list bound is that list's to refuse.
+    let mut problem = r.names.bound_problem.borrow_mut().take();
+    if problem.as_ref().is_some_and(|p| p.2 != depth) {
+        let theirs = problem.take();
+        *r.names.bound_problem.borrow_mut() = outer_problem.or(theirs);
+    } else {
+        *r.names.bound_problem.borrow_mut() = outer_problem;
+    }
+    if let Some((_, why, _)) = problem {
+        r.diagnostics.truncate(nd);
+        r.pending_handlers.truncate(nh);
+        r.provides.truncate(np);
+        r.render_props.truncate(nr);
+        return shape(r, &why, arrow);
     }
     Some(Node::For {
         source,
         item,
         index,
-        key,
+        key: Expr::Raw(key),
         body,
     })
+}
+
+/// F562: the accepted forms, named by every `list-shape` refusal.
+const LIST_FORMS: &str = "write the callback as `(item, index?) => <jsx/>` (the item may be a flat `{ a, b: x }` or `[a, , b]` pattern), or as a block of `const name = value;` and `if (cond) return null;` statements before one `return <jsx/>`";
+
+/// How a destructured item name reads off the item.
+enum Access {
+    Key(String),
+    At(usize),
+}
+
+/// F562 D2: what makes an item pattern unsupported: a default, a nested pattern, a rest element, a computed key.
+fn item_pattern_problem(b: &js_ast::Binding) -> Option<&'static str> {
+    use js_ast::flags::Property as P;
+    match b.data {
+        B::BObject(obj) => obj.properties().iter().find_map(|p| {
+            if p.flags.contains(P::IsSpread) {
+                Some("the item pattern has a rest element (`...rest`)")
+            } else if p.flags.contains(P::IsComputed) || !matches!(p.key.data, E::EString(_)) {
+                Some("the item pattern has a computed key")
+            } else if p.default_value.is_some() {
+                Some("the item pattern has a default value")
+            } else if !matches!(p.value.data, B::BIdentifier(_)) {
+                Some("the item pattern has a nested pattern")
+            } else {
+                None
+            }
+        }),
+        B::BArray(arr) => {
+            if arr.has_spread {
+                return Some("the item pattern has a rest element (`...rest`)");
+            }
+            arr.items().iter().find_map(|i| {
+                if i.default_value.is_some() {
+                    Some("the item pattern has a default value")
+                } else if !matches!(i.binding.data, B::BIdentifier(_) | B::BMissing(_)) {
+                    Some("the item pattern has a nested pattern")
+                } else {
+                    None
+                }
+            })
+        }
+        _ => Some("the item parameter is not a name or a pattern"),
+    }
+}
+
+/// The names a (checked) item pattern declares and where each reads.
+fn item_pattern_names(b: &js_ast::Binding) -> Vec<(js_ast::Ref, Access)> {
+    let mut out = Vec::new();
+    match b.data {
+        B::BObject(obj) => {
+            for p in obj.properties() {
+                if let (B::BIdentifier(id), E::EString(k)) = (p.value.data, &p.key.data) {
+                    out.push((id.r#ref, Access::Key(estring(k))));
+                }
+            }
+        }
+        B::BArray(arr) => {
+            for (n, i) in arr.items().iter().enumerate() {
+                if let B::BIdentifier(id) = i.binding.data {
+                    out.push((id.r#ref, Access::At(n)));
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// `s` can follow a `.` in JS (an identifier name; reserved words are valid property names).
+fn is_js_identifier(s: &str) -> bool {
+    let mut c = s.chars();
+    matches!(c.next(), Some(f) if f.is_ascii_alphabetic() || f == '_' || f == '$')
+        && c.all(|x| x.is_ascii_alphanumeric() || x == '_' || x == '$')
+}
+
+/// F562 D2: a generated item name no symbol of the module spells and no other list of the component uses.
+fn row_item_name(r: &mut Reader<'_, '_>) -> String {
+    let mut n = 1;
+    loop {
+        let name = format!("_row{n}");
+        if !r.names.spells(&name)
+            && !r.generated_rows.contains(&name)
+            && !r.loop_scope.contains(&name)
+        {
+            r.generated_rows.push(name.clone());
+            return name;
+        }
+        n += 1;
+    }
+}
+
+/// F562 D3 / D4 / D5: why a statement before the row's `return <jsx>` is not accepted. `consts` are the row's const
+/// bindings in order.
+fn row_stmt_problem(
+    r: &Reader<'_, '_>,
+    st: &js_ast::Stmt,
+    consts: &[js_ast::Ref],
+) -> Option<String> {
+    match &st.data {
+        S::SEmpty(_) => None,
+        S::SLocal(l) => {
+            let decls = l.decls.as_slice();
+            let what = match l.kind {
+                js_ast::S::Kind::KConst => None,
+                js_ast::S::Kind::KLet => Some("`let`"),
+                js_ast::S::Kind::KVar => Some("`var`"),
+                _ => Some("a declaration that is not `const`"),
+            };
+            let first = decls.first().map(|d| match d.binding.data {
+                B::BIdentifier(id) => r.names.name(id.r#ref),
+                _ => String::new(),
+            });
+            if let Some(what) = what {
+                return Some(format!(
+                    "the row binding `{}` is declared with {what}; declare it with `const`",
+                    first.unwrap_or_default()
+                ));
+            }
+            let [d] = decls else {
+                return Some("a row `const` statement declares several names".into());
+            };
+            let B::BIdentifier(id) = d.binding.data else {
+                return Some("a row `const` is a pattern (`const { a } = …`)".into());
+            };
+            let name = r.names.name(id.r#ref);
+            let Some(v) = &d.value else {
+                return Some(format!("the row const `{name}` has no value"));
+            };
+            let mut w = crate::analyze::expr::Walk::default();
+            w.expr(v);
+            if w.calls
+                .iter()
+                .any(|c| matches!(&c.data, E::ECall(c) if c.was_jsx_element))
+            {
+                return Some(format!("the row const `{name}` holds JSX"));
+            }
+            let hook = |n: &[u8]| {
+                n == b"use"
+                    || (n.starts_with(b"use") && n.get(3).is_some_and(u8::is_ascii_uppercase))
+            };
+            if w.calls.iter().any(|c| match &c.data {
+                E::ECall(c) => match &c.target.data {
+                    E::EIdentifier(id) => hook(r.names.name(id.ref_).as_bytes()),
+                    E::EImportIdentifier(id) => hook(r.names.name(id.ref_).as_bytes()),
+                    E::EDot(d) => hook(d.name.slice()),
+                    _ => false,
+                },
+                _ => false,
+            }) {
+                return Some(format!("the row const `{name}` calls a hook"));
+            }
+            // a read of a const declared further down is a TDZ error in React
+            let later = consts
+                .iter()
+                .skip_while(|c| !r.names.same(**c, id.r#ref))
+                .skip(1);
+            if let Some(l) = later
+                .into_iter()
+                .find(|c| w.used.iter().any(|u| r.names.same(*u, **c)))
+            {
+                return Some(format!(
+                    "the row const `{name}` reads `{}`, declared after it",
+                    r.names.name(*l)
+                ));
+            }
+            None
+        }
+        S::SIf(i) => {
+            let nothing = |s: &js_ast::Stmt| match &s.data {
+                S::SReturn(ret) => match &ret.value {
+                    None => true,
+                    Some(v) => matches!(v.data, E::ENull(_) | E::EUndefined(_)),
+                },
+                _ => false,
+            };
+            let returns_nothing = match &i.yes.data {
+                S::SBlock(b) => matches!(b.stmts.slice(), [only] if nothing(only)),
+                _ => nothing(&i.yes),
+            };
+            if i.no.is_none() && returns_nothing {
+                None
+            } else {
+                Some("an early return other than `if (cond) return null;`".into())
+            }
+        }
+        S::SReturn(_) => Some("an early return other than `if (cond) return null;`".into()),
+        _ => Some(
+            "a row statement other than `const name = value;` or `if (cond) return null;`".into(),
+        ),
+    }
+}
+
+/// F562: every name an expression reads in the IR (an identifier's root, what a function or opaque code captures).
+fn raw_reads(e: &RawExpr, out: &mut Vec<String>) {
+    let caps = |c: &[(String, IdentKind)], out: &mut Vec<String>| {
+        for (n, _) in c {
+            out.push(n.split('.').next().unwrap_or(n).to_string());
+        }
+    };
+    match &e.kind {
+        RawKind::Lit(_) | RawKind::Jsx(_) => {}
+        RawKind::Ident { name, .. } => out.push(name.split('.').next().unwrap_or(name).to_string()),
+        RawKind::Member { target, .. } => raw_reads(target, out),
+        RawKind::Index { target, index } => {
+            raw_reads(target, out);
+            raw_reads(index, out);
+        }
+        RawKind::Call { callee, args } => {
+            raw_reads(callee, out);
+            args.iter().for_each(|a| raw_reads(a, out));
+        }
+        RawKind::Binary { left, right, .. } => {
+            raw_reads(left, out);
+            raw_reads(right, out);
+        }
+        RawKind::Unary { value, .. } => raw_reads(value, out),
+        RawKind::Cond { test, yes, no } => {
+            raw_reads(test, out);
+            raw_reads(yes, out);
+            raw_reads(no, out);
+        }
+        RawKind::Template { parts, .. } => parts.iter().for_each(|(p, _)| raw_reads(p, out)),
+        RawKind::Array(items) => items.iter().for_each(|i| raw_reads(i, out)),
+        RawKind::Object(props) => props.iter().for_each(|(_, v)| raw_reads(v, out)),
+        RawKind::Arrow { captures, .. } | RawKind::Opaque { captures, .. } => caps(captures, out),
+    }
 }
 
 /// `typeof children === 'function' ? children(…) : children`, `children` the destructured prop.

@@ -802,7 +802,7 @@ fn island_per_item_inside_an_inlined_child_falls_back_at_analysis() {
 #[test]
 fn outlet_in_react_names_the_construct_that_made_the_layout_react() {
     let ir = analyze(
-        "import { Outlet } from '@brust/core/routes'\nexport default function L({ xs }: any) { return <div>{xs.map((x: any) => { const t = x; return <i key={t}>{t}</i> })}<Outlet/></div> }",
+        "import { Outlet } from '@brust/core/routes'\nexport default function L({ xs }: any) { return <div>{xs.map((x: any) => { let t = x; return <i key={t}>{t}</i> })}<Outlet/></div> }",
     );
     let d = ir
         .diagnostics

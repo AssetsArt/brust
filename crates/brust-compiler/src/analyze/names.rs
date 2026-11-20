@@ -167,6 +167,28 @@ pub struct NameTable<'a> {
     scope_tokens: std::cell::RefCell<HashSet<u32>>,
     /// W1d PR 2: where a scope token was used other than as a `{...token}` JSX spread or a scope argument.
     pub scope_token_escape: std::cell::Cell<Option<u32>>,
+    /// F562 D1: list-row names bound to an expression (a destructured item field, a row `const`), by symbol key.
+    bound: HashMap<u32, Bound>,
+    /// F562 D4: the first read of a bound name that would change meaning once the expression stands in for it
+    /// (location, message, `Bound::depth` of the name): the list that bound it refuses (`list-shape`).
+    pub bound_problem: std::cell::RefCell<Option<(u32, String, usize)>>,
+}
+
+/// F562 D1: what a list-row name stands for. A read of the symbol IS `expr` (resolved by symbol, not by spelling);
+/// code printed as written prints the symbol as `text`.
+#[derive(Clone, Debug)]
+pub struct Bound {
+    /// The name as written (for messages).
+    pub name: String,
+    pub expr: crate::ir::RawExpr,
+    pub text: String,
+    /// What a function or opaque code that reads the name captures instead of it.
+    pub captures: Vec<(String, IdentKind)>,
+    /// Every name the expression reads, in the IR and in `text`: a scope that declares one of them around a read of the
+    /// bound name would change what it reads (D4 (c) / (d)).
+    pub reads: Vec<String>,
+    /// `Reader::loop_scope` length when bound: entries above it are lists nested in the row.
+    pub depth: usize,
 }
 
 /// Every `import` binding of the module: local symbol (`Ref::inner_index`) → (module path,
@@ -527,6 +549,8 @@ impl<'a> NameTable<'a> {
             ctx_scoped: std::cell::RefCell::new(Vec::new()),
             scope_tokens: std::cell::RefCell::new(HashSet::new()),
             scope_token_escape: std::cell::Cell::new(None),
+            bound: HashMap::new(),
+            bound_problem: std::cell::RefCell::new(None),
         };
         table.contexts = crate::analyze::context::scan(&table, ast);
         table.collections = crate::analyze::collection::scan(&table, ast);
@@ -1431,6 +1455,43 @@ impl<'a> NameTable<'a> {
     /// `jsxs_*`, `Fragment_*`): never a capture or a dependency.
     pub fn is_jsx_runtime(&self, r: js_ast::Ref) -> bool {
         self.jsx_runtime.contains(&self.key(r))
+    }
+
+    /// F562 D1: `r` reads as `b.expr` and prints as `b.text` until [`Self::unbind_expr`].
+    pub fn bind_expr(&mut self, r: js_ast::Ref, b: Bound) {
+        let k = self.key(r);
+        self.printed.insert(k, b.text.clone());
+        self.bound.insert(k, b);
+    }
+
+    /// The expression `r` is bound to, if any.
+    pub fn bound(&self, r: js_ast::Ref) -> Option<&Bound> {
+        if self.bound.is_empty() {
+            return None;
+        }
+        self.bound.get(&self.key(r))
+    }
+
+    /// F562 D4: records the first read of a bound name that would change meaning (`bound_problem`).
+    pub fn note_bound_problem(&self, loc: u32, why: String, depth: usize) {
+        let mut p = self.bound_problem.borrow_mut();
+        if p.is_none() {
+            *p = Some((loc, why, depth));
+        }
+    }
+
+    pub fn unbind_expr(&mut self, r: js_ast::Ref) {
+        let k = self.key(r);
+        if self.bound.remove(&k).is_some() {
+            match self.aliases.get(&k) {
+                Some(a) => {
+                    self.printed.insert(k, a.print.clone());
+                }
+                None => {
+                    self.printed.remove(&k);
+                }
+            }
+        }
     }
 
     /// Renames `r` (G3): it prints as `alias.print`, and reads as `alias.kind` when set.
