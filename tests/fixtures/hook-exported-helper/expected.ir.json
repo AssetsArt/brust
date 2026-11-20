@@ -1,0 +1,218 @@
+{
+  "id": "input_b5762443",
+  "source": "tests/fixtures/hook-exported-helper/input.tsx",
+  "tier": "Native",
+  "native_because": [
+    "state `v` is set (line 6)",
+    "an event handler (line 10)"
+  ],
+  "props": [
+    {
+      "name": "initial",
+      "local": "initial",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "v",
+      "setter": "setV",
+      "init": {
+        "Server": {
+          "loc": 284,
+          "kind": {
+            "Ident": {
+              "name": "initial",
+              "kind": "Prop"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "mark_useShout1",
+      "expr": {
+        "ClientOnly": {
+          "js": "\"!\""
+        }
+      }
+    },
+    {
+      "name": "shout_useShout1",
+      "expr": {
+        "ClientOnly": {
+          "js": "function shout_useShout1(x) {\n  return x.toUpperCase();\n}"
+        }
+      }
+    },
+    {
+      "name": "say_useShout1",
+      "expr": {
+        "ClientOnly": {
+          "js": "(x_useShout1) => shout_useShout1(x_useShout1) + mark_useShout1"
+        }
+      }
+    }
+  ],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 370,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 376,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 376,
+                      "kind": {
+                        "Ident": {
+                          "name": "setV",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 381,
+                        "kind": {
+                          "Call": {
+                            "callee": {
+                              "loc": 381,
+                              "kind": {
+                                "Ident": {
+                                  "name": "say_useShout1",
+                                  "kind": "Local"
+                                }
+                              }
+                            },
+                            "args": [
+                              {
+                                "loc": 385,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "v",
+                                    "kind": "State"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setV",
+                "Setter"
+              ],
+              [
+                "say_useShout1",
+                "Local"
+              ],
+              [
+                "v",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 333,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 345,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "go"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "go"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 424,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "out"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 437,
+                    "kind": {
+                      "Ident": {
+                        "name": "v",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [
+    "initial"
+  ],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

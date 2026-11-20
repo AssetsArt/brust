@@ -1025,6 +1025,18 @@ impl<'r, 'a> Reader<'r, 'a> {
     /// arrow it is equivalent to for the IR (body kept as printed source).
     pub fn function_decl(&self, stmt: &js_ast::Stmt, f: &js_ast::G::Fn) -> RawExpr {
         let loc = stmt.loc.start.max(0) as u32;
+        // F579: a hook module's `export function f` is carried into the chunk as an expression (`((function f…))`):
+        // the `export` of its statement is a SyntaxError there.
+        let print_stmt = |s: &js_ast::Stmt| {
+            let src = self.print_stmt(s);
+            match src
+                .strip_prefix("export default ")
+                .or_else(|| src.strip_prefix("export "))
+            {
+                Some(rest) => rest.to_string(),
+                None => src,
+            }
+        };
         let mut params = Vec::new();
         for arg in f.args.slice() {
             match arg.binding.data {
@@ -1042,7 +1054,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             return RawExpr {
                 loc,
                 kind: RawKind::Opaque {
-                    source: self.print_stmt(stmt),
+                    source: print_stmt(stmt),
                     why: if jsx {
                         "contains-jsx"
                     } else {
@@ -1058,7 +1070,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             kind: RawKind::Arrow {
                 params,
                 body: ArrowBody::Block {
-                    source: self.print_stmt(stmt),
+                    source: print_stmt(stmt),
                     captures_only: false,
                 },
                 captures,

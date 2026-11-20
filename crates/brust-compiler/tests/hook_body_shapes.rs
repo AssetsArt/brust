@@ -365,3 +365,35 @@ fn an_arrow_default_does_not_name_a_client_function_in_a_job() {
     );
     println!("arrow default: {:?} {:?}", ir.tier, fallbacks(&ir));
 }
+
+// ---- F579: an exported helper of a hook's module carried into the chunk ----
+
+#[test]
+fn an_exported_helper_is_carried_without_its_export() {
+    for helper in [
+        "export function shout(x: string) { return x.toUpperCase() }",
+        "export async function shout(x: string) { return x.toUpperCase() }",
+        "function shout(x: string) { return x.toUpperCase() }",
+    ] {
+        let hook = format!(
+            "{helper}\nexport function useShout(mark = '!') {{ const say = (x: string) => shout(x) + mark; return say }}\n"
+        );
+        let (_, _, c) = lower_tree(&[
+            ("useShout.ts", &hook),
+            (
+                "C.tsx",
+                "import { useState } from 'react'\nimport { useShout } from './useShout'\nexport default function C({ initial }: any) { const [v, setV] = useState(initial); const say = useShout(); return <button onClick={() => setV(say(v))}>{v}</button> }",
+            ),
+        ]);
+        // a plain helper is carried; an async one is not plain and is imported (B2) instead
+        assert!(
+            c.contains("function shout_useShout1(x)")
+                || c.contains("import { shout as shout_import1 } from \"./useShout\""),
+            "{helper}: {c}"
+        );
+        assert!(
+            !c.contains("export function") && !c.contains("export async"),
+            "{helper}: {c}"
+        );
+    }
+}
