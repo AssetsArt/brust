@@ -3,7 +3,7 @@
 //! client chunks, assets, chain components, child job inputs) is checked here
 //! so a bad manifest fails `start` instead of a request (spec §7).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -273,11 +273,12 @@ pub struct Assets {
     pub build: Option<String>,
 }
 
-/// A validated manifest plus every component's template source, read once.
+/// A validated manifest plus the template source of every component a route renders by name, read once.
 #[derive(Debug)]
 pub struct Loaded {
     pub manifest: Manifest,
-    /// component id → template source.
+    /// component id → template source, for the members of `routes[].chain` only (F558): no other template is ever
+    /// looked up, so none is read.
     pub templates: BTreeMap<String, String>,
     pub dist_dir: PathBuf,
 }
@@ -471,7 +472,8 @@ pub(crate) fn input_root(input: &str) -> &str {
 /// What a file reference in the manifest is, for [`walk`]'s file callback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FileUse {
-    /// `components[id].template`: its source is returned and kept.
+    /// `components[id].template` of a component some route renders by name (it is in a `routes[].chain`): its source
+    /// is returned and kept. No other component's template is asked for (F558).
     Template,
     /// `components[id].client`: only its existence matters.
     Client,
@@ -497,8 +499,8 @@ pub fn is_base_path(p: &str) -> bool {
 }
 
 /// Every reference check of a parsed manifest, in `load`'s order (version, route chains, then per
-/// component: paths, job targets, the template, the client file, the children's job inputs; then
-/// the assets). `file(component, rel, use)` resolves each file reference: `Ok(Some(source))` for a
+/// component: paths, job targets, the template when a route renders it, the client file, the children's job inputs;
+/// then the assets). `file(component, rel, use)` resolves each file reference: `Ok(Some(source))` for a
 /// template keeps it; an `Err` stops the walk.
 fn walk(
     manifest: Manifest,
@@ -534,6 +536,14 @@ fn walk(
             }
         }
     }
+    // F558: a template is looked up by name only for a member of a route's chain (`Renderer::render_chain_marked`);
+    // every other component is printed inside the template of the component that places it. Only the chain members'
+    // sources are read and kept, and only their files have to exist.
+    let rendered: BTreeSet<&str> = manifest
+        .routes
+        .iter()
+        .flat_map(|r| r.chain.iter().map(String::as_str))
+        .collect();
     let mut templates = BTreeMap::new();
     for (id, c) in &manifest.components {
         check_paths(id, c)?;
@@ -548,7 +558,9 @@ fn walk(
                 });
             }
         }
-        if let Some(src) = file(id, &c.template, FileUse::Template)? {
+        if rendered.contains(id.as_str())
+            && let Some(src) = file(id, &c.template, FileUse::Template)?
+        {
             templates.insert(id.clone(), src);
         }
         if let Some(cl) = &c.client {
@@ -653,9 +665,9 @@ impl Manifest {
     }
 
     /// The manifest from memory (M4-CF-3; lane-1 R5): `manifest_json` is `manifest.json`'s text,
-    /// `files` the template sources keyed by `components[id].template`. The same parse, version
-    /// and reference checks as [`Manifest::load`], in its order; a missing template is
-    /// `MissingFile` with the template's rel path. Client and asset files are not checked (on
+    /// `files` the template sources keyed by `components[id].template` (only the members of a route's
+    /// chain are looked up, F558). The same parse, version and reference checks as [`Manifest::load`],
+    /// in its order; a missing template of a chain member is `MissingFile` with the template's rel path. Client and asset files are not checked (on
     /// Workers, Static Assets owns them). `dist_dir` is empty.
     pub fn from_parts(
         manifest_json: &str,
@@ -787,6 +799,71 @@ mod tests {
             (component.as_str(), path),
             ("homePage_b2", PathBuf::from("jinja/homePage_b2.jinja"))
         );
+    }
+
+    /// F558: a template is looked up by name only for a member of a route's chain, so only those are read and kept;
+    /// the template of a component that is printed inside its parent is neither read nor required.
+    #[test]
+    fn only_the_templates_a_route_renders_are_read() {
+        let (m, mut files) = parts();
+        let chains: std::collections::BTreeSet<String> = m["routes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|r| r["chain"].as_array().unwrap().iter())
+            .map(|c| c.as_str().unwrap().to_string())
+            .collect();
+        let all = m["components"].as_object().unwrap();
+        assert!(
+            all.contains_key("moveCard_d4") && !chains.contains("moveCard_d4"),
+            "the fixture has a component no route renders by name"
+        );
+        let l = Manifest::from_parts(&m.to_string(), &files).unwrap();
+        assert_eq!(
+            l.templates.keys().cloned().collect::<Vec<_>>(),
+            chains.iter().cloned().collect::<Vec<_>>()
+        );
+        let on_disk = Manifest::load(&dist()).unwrap();
+        assert_eq!(on_disk.templates, l.templates);
+
+        // Its file may be absent: nothing reads it.
+        files.remove("jinja/moveCard_d4.jinja");
+        files.remove("jinja/teamBuilder_h8.jinja");
+        let l = Manifest::from_parts(&m.to_string(), &files).unwrap();
+        assert_eq!(l.templates.len(), chains.len());
+        assert!(l.manifest.components.contains_key("moveCard_d4"));
+    }
+
+    /// F558: `load` does not need the file of a template no route renders; a chain member's file is still required.
+    #[test]
+    fn load_needs_only_the_rendered_template_files() {
+        let tmp = std::env::temp_dir().join(format!("brust-f558-{}", std::process::id()));
+        let (m, files) = parts();
+        let copy = |skip: &str| {
+            let d = tmp.join(skip.replace('/', "_"));
+            for sub in ["jinja", "client"] {
+                std::fs::create_dir_all(d.join(sub)).unwrap();
+            }
+            std::fs::write(d.join("manifest.json"), m.to_string()).unwrap();
+            for (rel, src) in &files {
+                if rel != skip {
+                    std::fs::write(d.join(rel), src).unwrap();
+                }
+            }
+            for e in std::fs::read_dir(dist().join("client")).unwrap() {
+                let e = e.unwrap();
+                std::fs::copy(e.path(), d.join("client").join(e.file_name())).unwrap();
+            }
+            d
+        };
+        let l = Manifest::load(&copy("jinja/moveCard_d4.jinja")).unwrap();
+        assert!(!l.templates.contains_key("moveCard_d4"));
+        let e = Manifest::load(&copy("jinja/homePage_b2.jinja")).unwrap_err();
+        let ManifestError::MissingFile { component, .. } = e else {
+            panic!("want MissingFile, got {e:?}");
+        };
+        assert_eq!(component, "homePage_b2");
+        std::fs::remove_dir_all(&tmp).unwrap();
     }
 
     #[test]

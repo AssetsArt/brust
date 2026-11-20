@@ -49,7 +49,7 @@ const SCRIPTS = JSON.stringify({ scripts: templatePkg.scripts, devDependencies: 
 // stylesheet) and :5-6 (a route links the CSS its layout and page import, in <head>); docs/css.md:70 (no JS bundle has CSS).
 const DIST = `dist/
 ├── manifest.json      every route and component, with its tier
-├── jinja/<id>.jinja   the compiled template of each component
+├── jinja/<id>.jinja   the compiled template of each page and layout
 ├── client/*.js        native chunks and React islands, content-hashed
 ├── client/*.css       app.css and the Tailwind utilities you use, minified, hashed
 ├── jobs.js            the server code: loaders and jobs

@@ -91,8 +91,9 @@ pub struct Renderer {
 impl Renderer {
     /// Builds the environment (`brust_jinja::register`) and compiles every
     /// template. minijinja parses at add time, so a syntax error is returned
-    /// here (boot), naming the template and line.
-    pub fn from_templates(templates: &BTreeMap<String, String>) -> Result<Self, RenderError> {
+    /// here (boot), naming the template and line. Takes the sources by value: each one is kept for the life
+    /// of the process, and a borrowed map would need a second copy of every source (F558).
+    pub fn from_templates(templates: BTreeMap<String, String>) -> Result<Self, RenderError> {
         let mut env = Environment::new();
         // One parse at boot: no loader is installed, and auto-reload stays
         // off so a template never re-parses (the M3 dev server owns reload).
@@ -102,10 +103,10 @@ impl Renderer {
         for (id, src) in templates {
             // M3-P P7 (R4): borrowed templates — minijinja 3 reads `borrowed_templates` without a lock;
             // owned ones go through a global Mutex + Arc clone on every get_template. Leaked once per Renderer.
-            let name: &'static str = Box::leak(id.clone().into_boxed_str());
-            let source: &'static str = Box::leak(src.clone().into_boxed_str());
+            let name: &'static str = Box::leak(id.into_boxed_str());
+            let source: &'static str = Box::leak(src.into_boxed_str());
             env.add_template(name, source)
-                .map_err(|e| render_err(id, &e))?;
+                .map_err(|e| render_err(name, &e))?;
         }
         Ok(Renderer { env })
     }
@@ -1211,7 +1212,7 @@ mod tests {
                    {{ (s | safe) | length }}|{{ __outlet | safe }}|{{ (__outlet | safe) | e }}";
         let ctx = json!({"s": "<b>&", "n": 7, "f": 1.5, "z": null, "b": true,
                          "l": [1, "<a>"], "m": {"k": "v"}});
-        let ours = Renderer::from_templates(&templates(&[("T", src)])).unwrap();
+        let ours = Renderer::from_templates(templates(&[("T", src)])).unwrap();
         let mut builtin = Environment::new();
         brust_jinja::register(&mut builtin);
         builtin.add_template("T", src).unwrap();
@@ -1241,7 +1242,7 @@ mod tests {
     // Adds the overlay semantics of `render_chain`.
     #[test]
     fn jinja_round_trip() {
-        let r = Renderer::from_templates(&templates(&[
+        let r = Renderer::from_templates(templates(&[
             ("HelloPage", "<div><h1>Hello, {{ name }}</h1></div>"),
             (
                 "ListNav",
@@ -1272,7 +1273,7 @@ mod tests {
             "Throws".to_string(),
             "{% if bad %}{{ (none | render_error) | e }}{% else %}ok{% endif %}".to_string(),
         );
-        let t = Renderer::from_templates(&templates).unwrap();
+        let t = Renderer::from_templates(templates).unwrap();
         assert_eq!(t.render("Throws", &json!({"bad": false})).unwrap(), "ok");
         match t.render("Throws", &json!({"bad": true})) {
             Err(RenderError::Render { msg, .. }) => {
@@ -1315,7 +1316,7 @@ mod tests {
     /// __outlet > _props > own > children > ids > base, undefined skipped, union enumerated.
     #[test]
     fn scope_lookup_order_matches_the_merge_dict() {
-        let r = Renderer::from_templates(&templates(&[(
+        let r = Renderer::from_templates(templates(&[(
             "T",
             "{{ __outlet | safe }}|{{ _props.x }}|{{ k }}|{{ _id0 }}|{{ only_base }}|{{ gone is defined }}|{% for n in self %}{{ n }},{% endfor %}",
         )]))
@@ -1387,7 +1388,7 @@ mod tests {
     #[test]
     fn scope_sees_the_context_as_rendered_not_as_later_mutated() {
         use brust_jinja::ctx::Node;
-        let r = Renderer::from_templates(&templates(&[("T", "{{ a.b }}")])).unwrap();
+        let r = Renderer::from_templates(templates(&[("T", "{{ a.b }}")])).unwrap();
         let mut ctx: Node = serde_json::from_str(r#"{"a":{"b":1}}"#).unwrap();
         let base = ctx.to_value();
         ctx.get_mut_path(&["a"])
@@ -1409,7 +1410,7 @@ mod tests {
 
     #[test]
     fn render_chain_into_clears_and_never_depends_on_capacity() {
-        let r = Renderer::from_templates(&templates(&[
+        let r = Renderer::from_templates(templates(&[
             ("L", "<html><body>{{ __outlet | safe }}</body></html>"),
             ("P", "{% for i in range(n) %}<p>{{ i }}</p>{% endfor %}"),
         ]))
@@ -1674,7 +1675,7 @@ mod tests {
 
     /// `(root, inner, leaf)` templates: the root and the inner layout each write their own markup around `__outlet`.
     fn three_levels(root_body: &str) -> Renderer {
-        Renderer::from_templates(&templates(&[
+        Renderer::from_templates(templates(&[
             (
                 "root",
                 &format!(
@@ -1767,7 +1768,7 @@ mod tests {
         assert_ne!(root_a, root_c);
         assert_eq!(hash_of(&a, "mid"), hash_of(&c, "mid"));
         // ... also in the body outside the head, and in an inner level.
-        let r2 = Renderer::from_templates(&templates(&[
+        let r2 = Renderer::from_templates(templates(&[
             (
                 "root",
                 "<html><head></head><body>{{ __outlet | safe }}</body></html>",
@@ -1799,7 +1800,7 @@ mod tests {
     fn a_child_moved_inside_its_parent_changes_the_hash() {
         // The same bytes around the child, the child in a different spot: not the same markup.
         let hash = |t: &str| {
-            let r = Renderer::from_templates(&templates(&[("mid", t), ("leaf", "L")])).unwrap();
+            let r = Renderer::from_templates(templates(&[("mid", t), ("leaf", "L")])).unwrap();
             let mut o = String::new();
             r.render_chain_marked(
                 &["mid".into(), "leaf".into()],
@@ -1836,7 +1837,7 @@ mod tests {
 
     #[test]
     fn a_react_level_and_every_level_below_it_get_no_marker() {
-        let r = Renderer::from_templates(&templates(&[
+        let r = Renderer::from_templates(templates(&[
             ("root", "<html><body>{{ __outlet | safe }}</body></html>"),
             ("isl", "<brust-island>{{ __outlet | safe }}</brust-island>"),
             ("leaf", "<p>x</p>"),
@@ -1882,7 +1883,7 @@ mod tests {
         for ok in ["appLayout_a1", "routes/[slug]/page", "a-b", "a.b:c"] {
             assert!(marker_safe(ok), "{ok:?}");
         }
-        let r = Renderer::from_templates(&templates(&[
+        let r = Renderer::from_templates(templates(&[
             ("root", "<html>{{ __outlet | safe }}</html>"),
             ("a--b", "<i></i>"),
         ]))
