@@ -40,6 +40,8 @@ pub struct Reader<'r, 'a> {
     /// async: it is read as the function it is (its source kept, `async` included), as a sync one is. Any other async
     /// arrow stays opaque. Taken by `arrow`.
     pub async_const_arrow: bool,
+    /// F562 D2: the item names generated for lists with a destructured item (`_row1`, …), never reused in a component.
+    pub generated_rows: Vec<String>,
 }
 
 /// A context local read in code printed as written (F304): the fields it reads, or its whole value.
@@ -64,7 +66,35 @@ impl<'r, 'a> Reader<'r, 'a> {
             render_props: Vec::new(),
             verbatim_unused: false,
             hoisted_calls: std::collections::HashMap::new(),
+            generated_rows: Vec::new(),
         }
+    }
+
+    /// F562: what code printed as written captures when it reads `e` (bound names expanded).
+    pub fn expr_captures(&self, e: &js_ast::Expr) -> Vec<(String, IdentKind)> {
+        let mut w = Walk::default();
+        w.expr(e);
+        self.captured(w).0
+    }
+
+    /// F562: every name `e` reads as printed (a bound name contributes what its expression reads); names `e` declares
+    /// itself (a callback's parameters) are not reads.
+    pub fn printed_reads(&self, e: &js_ast::Expr) -> Vec<String> {
+        let mut w = Walk::default();
+        w.expr(e);
+        let mut out: Vec<String> = Vec::new();
+        for r in w.used.iter().copied() {
+            if self.names.is_jsx_runtime(r) || w.declared.iter().any(|d| self.names.same(*d, r)) {
+                continue;
+            }
+            match self.names.bound(r) {
+                Some(b) => out.extend(b.reads.iter().cloned()),
+                None => out.push(self.names.name(r)),
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
     }
 
     pub fn print(&self, e: &js_ast::Expr) -> String {
@@ -223,6 +253,8 @@ impl<'r, 'a> Reader<'r, 'a> {
             E::EBoolean(b) | E::EBranchBoolean(b) => RawKind::Lit(Literal::Bool(b.value)),
             E::ENull(_) => RawKind::Lit(Literal::Null),
             E::EUndefined(_) => RawKind::Lit(Literal::Undefined),
+            // F562 D1: a list-row name bound to an expression reads as that expression.
+            E::EIdentifier(id) if let Some(v) = self.bound_read(id.ref_, loc) => return v,
             // The bare rest object is only a spread source (`jsx.rs`); as a value it is not read.
             E::EIdentifier(id) if self.names.is_rest(id.ref_) => {
                 if self.names.rest_escape.get().is_none() {
@@ -590,6 +622,32 @@ impl<'r, 'a> Reader<'r, 'a> {
         })
     }
 
+    /// F562 D1: the expression a list-row name is bound to, at the read's location. D4 (c): a list nested in the row
+    /// whose item or index is spelled like a name the expression reads would capture that name (the IR names
+    /// identifiers by spelling from here on): recorded, and the row's list refuses.
+    fn bound_read(&self, r: js_ast::Ref, loc: u32) -> Option<RawExpr> {
+        let b = self.names.bound(r)?;
+        if let Some(shadow) = self
+            .loop_scope
+            .get(b.depth..)
+            .unwrap_or(&[])
+            .iter()
+            .find(|n| b.reads.contains(n))
+        {
+            self.names.note_bound_problem(
+                loc,
+                format!(
+                    "the row const `{}` is read inside a nested list whose `{shadow}` hides the `{shadow}` its value reads",
+                    b.name
+                ),
+                b.depth,
+            );
+        }
+        let mut v = b.expr.clone();
+        crate::analyze::hooks::relocate(&mut v, loc);
+        Some(v)
+    }
+
     fn ident(&self, r: js_ast::Ref) -> RawKind {
         let (name, kind) = self.names.kind_of(r);
         RawKind::Ident { name, kind }
@@ -787,7 +845,9 @@ impl<'r, 'a> Reader<'r, 'a> {
             // Seen by the dependency pass as a global no build-time slot may read.
             out.push(("import.meta".to_string(), IdentKind::Global));
         }
-        for r in w.used {
+        // F562: what bound names stand for (deduplicated against each other and the plain reads)
+        let mut from_bound: Vec<(String, IdentKind)> = Vec::new();
+        for r in w.used.iter().copied() {
             if self.names.is_jsx_runtime(r)
                 || w.declared.iter().any(|d| self.names.same(*d, r))
                 || seen.iter().any(|s| self.names.same(*s, r))
@@ -795,6 +855,37 @@ impl<'r, 'a> Reader<'r, 'a> {
                 continue;
             }
             seen.push(r);
+            if let Some(b) = self.names.bound(r) {
+                // D4 (d): printed as written, the name is the expression's text, and a name this code declares around
+                // it would capture what the text reads.
+                if let Some(d) = w
+                    .declared
+                    .iter()
+                    .map(|d| self.names.name(*d))
+                    .find(|d| b.reads.contains(d))
+                {
+                    let at = w
+                        .used_at
+                        .iter()
+                        .find(|(x, _)| self.names.same(*x, r))
+                        .map_or(0, |(_, l)| (*l).max(0) as u32);
+                    self.names.note_bound_problem(
+                        at,
+                        format!(
+                            "the row const `{}` is read in code that declares `{d}`, a name its value reads",
+                            b.name
+                        ),
+                        b.depth,
+                    );
+                }
+                for c in &b.captures {
+                    if !out.contains(c) {
+                        out.push(c.clone());
+                        from_bound.push(c.clone());
+                    }
+                }
+                continue;
+            }
             // F304: a context local read as `c.f` is captured as the hidden props of those fields
             if ctx_ok && let Some(c) = ctx_uses.iter().find(|c| self.names.same(c.r, r)) {
                 if c.whole {
@@ -808,7 +899,10 @@ impl<'r, 'a> Reader<'r, 'a> {
                 }
                 continue;
             }
-            out.push(self.names.kind_of(r));
+            let c = self.names.kind_of(r);
+            if !from_bound.contains(&c) {
+                out.push(c);
+            }
         }
         (out, jsx)
     }

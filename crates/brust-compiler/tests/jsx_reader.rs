@@ -520,10 +520,12 @@ fn an_element_arm_without_a_key_is_a_list_key_error_at_that_arm() {
 fn unsupported_list_shapes_say_why() {
     for (src, why) in [
         (
-            "xs.map((x: any) => { const y = x.id; return <i key={y}>y</i> })",
-            "block body",
+            // F562: a block of `const` / `if (…) return null` before one `return <jsx>` is a list now; `let` is not
+            "xs.map((x: any) => { let y = x.id; return <i key={y}>y</i> })",
+            "`let`",
         ),
-        ("xs.map(({ id }: any) => <i key={id}>y</i>)", "pattern"),
+        // F562: a flat item pattern is a list now; a default in it is not
+        ("xs.map(({ id = 1 }: any) => <i key={id}>y</i>)", "default"),
         ("xs?.map((x: any) => <i key={x.id}>y</i>)", "?.map"),
         (
             "Array.from(new Set(xs), (x: any) => <i key={x}>y</i>)",

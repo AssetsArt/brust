@@ -8,12 +8,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 62 | 40 | 16 | 6 | 0 | 0 | 0 | 0 |
+| A JSX basics | 70 | 45 | 16 | 9 | 0 | 0 | 0 | 0 |
 | B Composition | 246 | 130 | 20 | 96 | 0 | 0 | 0 | 0 |
 | C Hooks | 247 | 82 | 78 | 87 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 77 | 33 | 16 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 665 | 298 | 131 | 232 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 77 | 34 | 16 | 23 | 3 | 1 | 0 | 0 |
+| **Total** | 673 | 304 | 131 | 234 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -45,6 +45,14 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-fragment | fragment root | static | static | 0 | ok | 0 | — | static fragment root: no <brust-host>, no warning (gaps L8) |
 | a-list-keys | keyed list from a prop | static | static | 0 | ok | 0 | — | spec §6.2 keyed list |
 | a-nested-list | nested keyed lists | static | static | 0 | ok | 0 | — | table rows |
+| a-list-param-object | .map with a destructured item (`({ id, name: n }) =>`) | static | static | 0 | ok | 0 | — | F562 D2: the item is a generated name, each pattern name reads off it |
+| a-list-param-array | .map with an array item pattern (`([k, , v]) =>`) | static | static | 0 | ok | 0 | — | F562 D2: array pattern positions (a hole skips one) |
+| a-list-block-const | .map with a block body of row consts (`const t = …; return <li/>`) | static | static | 0 | ok | 0 | — | F562 D3: each const reads as its initialiser where it is read |
+| a-list-block-const-helper | a row const that calls an imported helper, read twice | static | static | precompute | ok | 0 | — | F562 D6: one job slot per read, each calling the helper |
+| a-list-block-early-null | .map with `if (cond) return null;` before the row | static | static | 0 | ok | 0 | — | F562 D5: the conditional-arm form (`cond ? null : <li/>`) |
+| a-list-param-default | a default in the item pattern stays React | react | react | ssr | ok | 4.5 | fallback:list-shape | F562 D2: list-shape names the default value |
+| a-list-block-const-jsx | a row const holding JSX stays React | react | react | ssr | ok | 4.5 | fallback:list-shape | F562 D4 (a): list-shape names the const |
+| a-list-block-const-shadow | a row const read inside a nested list whose item hides a name it reads stays React | react | react | ssr | ok | 4.5 | fallback:list-shape | F562 D4 (c): the inner `r` would capture the `r` of `r.t` |
 | a-cond-attribute | conditional attribute via ternary | static | static | 0 | ok | 0 | — | spec §6.2 conditional attribute |
 | a-array-from | Array.from range list | static | static | precompute | ok | 0 | — | spec §6.2: the Array.from(xs, fn) callback form is a keyed list like .map (F40) |
 | a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | 0 | — | spec §6.2: N literal ≤ 1024 |
@@ -681,7 +689,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-name-text-helper | a handler named like a paint helper (`const __text = () => …`) | native | native | 0 | ok | 5.1 | — | F233: the helper is declared under another name; before, the chunk declared `__text` twice (a SyntaxError) |
 | e-job-prop-local-assign | a body local named like a prop the job reads off `props` (`const style = Object.assign({}, props.style, …)`) | native | native | precompute | ok | 5.1 | — | F257: the job destructures the prop under another name (`style: style1`); it declared `style` twice |
 | e-job-prop-local-spread | the same through an object spread (`const style = { ...props.style, … }`) | native | native | precompute | ok | 5.1 | — | F257: the B5 spelling of the same shape |
-| e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | 4.5 | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
+| e-list-block-body | .map with a block body of a row const | static | static | 0 | ok | 0 | — | L6 pinned list-shape here; F562 D3 reads a block of row consts before one return |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | 4.5 | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | 4.5 | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
 | e-precompute-props | props-only value outside the template subset | static | static | precompute | ok | 0 | — | spec §6.4 precompute |
