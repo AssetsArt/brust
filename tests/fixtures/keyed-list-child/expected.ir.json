@@ -4,7 +4,7 @@
   "tier": "Native",
   "native_because": [
     "state `selected` is set (line 4)",
-    "a prop is linked to a child"
+    "a prop is linked to a child (line 8)"
   ],
   "props": [
     {

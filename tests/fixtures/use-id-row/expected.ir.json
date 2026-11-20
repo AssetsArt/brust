@@ -3,7 +3,7 @@
   "source": "tests/fixtures/use-id-row/input.tsx",
   "tier": "Native",
   "native_because": [
-    "a prop is linked to a child"
+    "a prop is linked to a child (line 6)"
   ],
   "props": [
     {
