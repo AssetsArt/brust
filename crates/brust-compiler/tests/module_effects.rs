@@ -165,38 +165,23 @@ fn the_finding_names_the_declaration_its_line_and_what_was_not_proven() {
 }
 
 #[test]
-fn a_local_rooted_at_a_module_binding_writes_it_a_followed_module_function_does_not() {
-    // addition 1: a local declared or assigned from a module binding is that binding
+fn a_local_const_is_judged_by_its_value_and_no_module_function_is_followed() {
     for (decls, why) in [
         (
             "const LIST = ['a']\nexport function add(x: string) { const l = LIST; l.push(x) }",
             "this module's function `add` (line 3) may change a module binding: `l.push(…)`",
         ),
         (
-            "const LIST = ['a']\nexport function add(x: string) { let l: string[] = []; l = LIST; l.push(x) }",
-            "this module's function `add` (line 3) may change a module binding: `l.push(…)`",
-        ),
-        // addition 2: a module function that returns this module's object stays a write
-        (
             "const LIST = ['a']\nconst get = () => LIST\nexport function add(x: string) { get().push(x) }",
             "this module's function `add` (line 4) may change a module binding: `get(…).push(…)`",
         ),
+        // AMENDMENT 3: function following is withdrawn; a call of this module's function is a write
+        (
+            "const LIST = ['a']\nconst wrap = (id: string) => api(id)\nexport function rm(id: string) { wrap(id).delete(id) }",
+            "this module's function `rm` (line 4) may change a module binding: `wrap(…).delete(…)`",
+        ),
     ] {
         refused(&reading(decls), "module-side-effect", why);
-    }
-    // addition 2: a module arrow whose every return is rooted at an import is followed one level
-    for decls in [
-        "const LIST = ['a']\nconst wrap = (id: string) => api(id)\nexport function rm(id: string) { wrap(id).delete(id) }",
-        "const LIST = ['a']\nfunction wrap(id: string) { if (!id) return api('x'); return api(id) }\nexport function rm(id: string) { const r = wrap(id); r.delete(id) }",
-    ] {
-        let ir = reading(decls);
-        assert!(
-            fallbacks(&ir)
-                .iter()
-                .all(|(r, _)| r != "module-side-effect"),
-            "{decls}\n{:?}",
-            ir.diagnostics
-        );
     }
 }
 
@@ -563,4 +548,81 @@ fn review_round_1_a_returned_local_alias_and_a_shadowed_star_export_are_refused(
         "import { ICON } from './a'",
         "const O = { icon: ICON.overview }",
     ));
+}
+
+// ---- AMENDMENT 3: every review probe refused, the grammar's accepted forms, the module-wide guard ----
+
+#[test]
+fn every_review_probe_is_a_write() {
+    for decls in [
+        // f1, f1c
+        "const LIST = ['a']\nfunction getList() { const l = LIST; return l }\nexport function add(x: string) { getList().push(x) }",
+        "const LIST = ['a']\nfunction getList() { return LIST }\nexport function add(x: string) { getList().push(x) }",
+        // g1, g4: a literal reached through an index
+        "const LIST = ['a']\nconst B = ['b']\nexport function add(kind: 'a' | 'b', x: string) { ({ a: LIST, b: B })[kind].push(x) }",
+        "const LIST = ['a']\nconst B = ['b']\nexport function add(i: number, x: string) { [LIST, B][i].push(x) }",
+        // by reading: a copy's element is the same object
+        "const LIST = ['a']\nconst LISTS = [LIST]\nexport function add(x: string) { LISTS.slice()[0].push(x) }",
+        "const LIST = ['a']\nconst LISTS = [LIST]\nexport function add(x: string) { [...LISTS][0].push(x) }",
+        "const LIST = ['a']\nconst LISTS = [LIST]\nexport function add(x: string) { LISTS.map((l) => l)[0].push(x) }",
+        // g2, g3: a followed function's default parameter / loop binding
+        "const LIST = ['a']\nfunction getList(l = LIST) { return l }\nexport function add(x: string) { getList().push(x) }",
+        "const LIST = ['a']\nfunction getList() { for (const l of [LIST]) return l; return [] }\nexport function add(x: string) { getList().push(x) }",
+        // a destructured local returned
+        "const LIST = ['a']\nfunction getList() { const { l } = { l: LIST }; return l }\nexport function add(x: string) { getList().push(x) }",
+        // a local const holding a literal with the module object, reached through it
+        "const LIST = ['a']\nexport function add(x: string) { const o = { l: LIST }; o.l.push(x) }",
+        // an import handed this module's object may hand it back
+        "const LIST = ['a']\nexport function rm() { api(LIST as any).delete('a') }",
+        "const LIST = ['a']\nexport function rm() { const l = LIST; api(l as any).delete('a') }",
+    ] {
+        refused(
+            &reading(decls),
+            "module-side-effect",
+            "may change a module binding",
+        );
+    }
+}
+
+#[test]
+fn the_grammar_accepts_import_and_global_roots_and_top_level_copies() {
+    for decls in [
+        "const LIST = ['a']\nexport function rm(id: string) { api(id).delete(id) }",
+        "const LIST = ['a']\nexport function rm(c: boolean, id: string) { (c ? actions.a : actions.b)({ id }).delete(id) }",
+        "const LIST = ['a']\nexport function last() { return [...LIST].reverse()[0] }",
+        "const LIST = ['a']\nexport function m(k: string) { new Map(actions.a(k) as any).set(k, 1) }",
+        "const LIST = ['a']\nexport function m(k: string) { const r = api(k); r.delete(k) }",
+        "const LIST = ['a']\nexport function m() { const s = document.createElement('script'); s.src = '/x'; return s }",
+    ] {
+        let ir = reading(decls);
+        assert!(
+            fallbacks(&ir)
+                .iter()
+                .all(|(r, _)| r != "module-side-effect"),
+            "{decls}\n{:?}",
+            ir.diagnostics
+        );
+    }
+}
+
+#[test]
+fn a_module_that_hands_its_object_to_an_import_has_no_clean_import_call_results() {
+    // the guard: elsewhere in the module, LIST is handed to an import (a registry could hand it back)
+    let guarded = "const LIST = ['a']\nexport function reg() { actions.a(LIST) }\nexport function rm(id: string) { api(id).delete(id) }";
+    refused(
+        &reading(guarded),
+        "module-side-effect",
+        "may change a module binding: `api(…).delete(…)`",
+    );
+    // without the hand-off the same call is clean
+    let ir = reading(
+        "const LIST = ['a']\nexport function reg() { actions.a('x') }\nexport function rm(id: string) { api(id).delete(id) }",
+    );
+    assert!(
+        fallbacks(&ir)
+            .iter()
+            .all(|(r, _)| r != "module-side-effect"),
+        "{:?}",
+        ir.diagnostics
+    );
 }

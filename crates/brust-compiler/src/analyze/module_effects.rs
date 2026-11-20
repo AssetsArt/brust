@@ -60,10 +60,6 @@ pub fn module_effect(
     // Every module binding, and the code of each function the module declares (a declaration or a function value).
     let mut module: HashSet<u32> = HashSet::new();
     let mut walks: Vec<(u32, Walk)> = Vec::new();
-    // F564 D2 (lead ruling 17fbc5e3, addition 2): the return values of each module function whose body the rule can
-    // read (`None`: a loop, a `try`, a `switch` or a label in it).
-    let mut returns: std::collections::HashMap<u32, Option<Vec<js_ast::Expr>>> =
-        std::collections::HashMap::new();
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
             match &stmt.data {
@@ -73,7 +69,6 @@ pub fn module_effect(
                         let mut w = Walk::default();
                         w.stmt(stmt);
                         walks.push((key(n.ref_), w));
-                        returns.insert(key(n.ref_), returns_of(f.func.body.stmts.slice()));
                     }
                 }
                 S::SClass(c) => {
@@ -92,12 +87,6 @@ pub fn module_effect(
                             let mut fw = Walk::default();
                             fw.expr(v);
                             walks.push((key(id.r#ref), fw));
-                            let body = match &v.data {
-                                E::EArrow(a) => returns_of(a.body.stmts.slice()),
-                                E::EFunction(f) => returns_of(f.func.body.stmts.slice()),
-                                _ => None,
-                            };
-                            returns.insert(key(id.r#ref), body);
                         }
                     }
                 }
@@ -179,132 +168,6 @@ pub fn module_effect(
     }
     // F564 D2: a binding taken from package code (`const useXContext = createXContext(…)[0]`) is package code: what
     // calling it returns is the package's object, as for an import.
-    // … and a `const` holding a primitive literal (`const NAME = 'Slider'`) is no object anything could change.
-    let mut primitive_consts: HashSet<u32> = HashSet::new();
-    for part in ast.parts.iter() {
-        for stmt in part.stmts.slice() {
-            if let S::SLocal(l) = &stmt.data
-                && matches!(l.kind, js_ast::S::Kind::KConst)
-            {
-                for d in l.decls.iter() {
-                    if let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
-                        && matches!(
-                            v.data,
-                            E::EString(_)
-                                | E::ENumber(_)
-                                | E::EBigInt(_)
-                                | E::EBoolean(_)
-                                | E::ENull(_)
-                                | E::EUndefined(_)
-                        )
-                    {
-                        primitive_consts.insert(key(id.r#ref));
-                    }
-                }
-            }
-        }
-    }
-    let own_module = |r: js_ast::Ref| {
-        let k = key(r);
-        module.contains(&k) && !foreign.contains(&k) && !primitive_consts.contains(&k)
-    };
-    // F564 D2 (lead ruling 17fbc5e3): the receiver rule of a function's code. A local the code declares or assigns from
-    // a value that reads this module's binding (`const l = LIST`, `l = getList()`), through aliases, counts as one
-    // (addition 1); a module function whose every return is rooted only at imports, globals or fresh values is followed
-    // one level (addition 2).
-    // Locals rooted at this module (addition 1): a `const` declared, or a local assigned, from a value the receiver rule
-    // roots at this module or a literal that holds one (`const l = LIST`, `const l = getList()`, `l = a ?? LIST`,
-    // `const o = { l: LIST }`). A value stored INTO a local's member (`s.src = URL`, `r[i] ^= gfMul(…)`) does not make the
-    // local the module's object. `follow`: the module functions whose call results are not this module's objects.
-    let taint = |w: &Walk, follow: &dyn Fn(js_ast::Ref) -> bool| -> HashSet<u32> {
-        let mut tainted: HashSet<u32> = HashSet::new();
-        loop {
-            let before = tainted.len();
-            let own_so_far = |r: js_ast::Ref| own_module(r) || tainted.contains(&key(r));
-            let mut add: Vec<u32> = Vec::new();
-            for (b, v) in w.const_values.iter().chain(w.reassigned.iter()) {
-                if !tainted.contains(&key(*b))
-                    && !module.contains(&key(*b))
-                    && (receiver_writes(v, &own_so_far, follow) || holds_own(v, &own_so_far, 0))
-                {
-                    add.push(key(*b));
-                }
-            }
-            tainted.extend(add);
-            if tainted.len() == before {
-                break;
-            }
-        }
-        tainted
-    };
-    // Addition 2 (Mellow F1): every return is judged with the function's OWN locals rooted (`const l = LIST; return l`
-    // is LIST), and no further function is followed.
-    let followable = |r: js_ast::Ref| -> bool {
-        let Some(Some(rets)) = returns.get(&key(r)) else {
-            return false;
-        };
-        let Some((_, w)) = walks.iter().find(|(k, _)| *k == key(r)) else {
-            return false;
-        };
-        let local = taint(w, &|_| false);
-        let own = |x: js_ast::Ref| own_module(x) || local.contains(&key(x));
-        rets.iter()
-            .all(|e| !receiver_writes(e, &own, &|_| false) && !holds_own(e, &own, 0))
-    };
-    let tainted_of = |w: &Walk| -> HashSet<u32> { taint(w, &followable) };
-    let mutating_write = |w: &Walk| -> Option<js_ast::Expr> {
-        let tainted = tainted_of(w);
-        let own = |r: js_ast::Ref| own_module(r) || tainted.contains(&key(r));
-        w.calls.iter().find_map(|c| {
-            let E::ECall(call) = &c.data else {
-                return None;
-            };
-            match &call.target.data {
-                E::EDot(d)
-                    if MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
-                        && receiver_writes(&d.target, &own, &followable) =>
-                {
-                    Some(call.target)
-                }
-                _ => None,
-            }
-        })
-    };
-    // A function WRITES a module binding when its code assigns or writes through one, calls a mutating method on one (a
-    // fresh copy excepted), writes through a root it cannot name (`get().a = …`, `this.a = …`), or calls or names a
-    // function that writes. A least fixpoint.
-    let writes = |w: &Walk, writers: &HashSet<u32>| {
-        // a write through a local holding this module's object counts (addition 1); assigning the local itself does not
-        let tainted = tainted_of(w);
-        let through = w
-            .member_written
-            .iter()
-            .chain(w.member_writes.iter().map(|(r, _)| r));
-        w.opaque_write
-            || w.assigned.iter().any(|r| module.contains(&key(*r)))
-            || through
-                .into_iter()
-                .any(|r| module.contains(&key(*r)) || tainted.contains(&key(*r)))
-            || w.used.iter().any(|r| writers.contains(&key(*r)))
-            || mutating_write(w).is_some()
-    };
-    let mut writers: HashSet<u32> = HashSet::new();
-    loop {
-        let before = writers.len();
-        for (k, w) in &walks {
-            if !writers.contains(k) && writes(w, &writers) {
-                writers.insert(*k);
-            }
-        }
-        if writers.len() == before {
-            break;
-        }
-    }
-    let function_ok = |k: u32| !writers.contains(&k);
-    let package_rooted = |e: &js_ast::Expr| {
-        package_rooted(e)
-            || matches!(&e.data, E::EIdentifier(id) if foreign.contains(&key(id.ref_)))
-    };
     // A module binding package code may be handed: a function, a value taken from package code, or a primitive const.
     // Any other (an array or object the module owns) could be changed by the package (`register(xs)`).
     let mut handable: HashSet<u32> = walks.iter().map(|(k, _)| *k).collect();
@@ -367,35 +230,124 @@ pub fn module_effect(
         let k = key(r);
         objects.contains(&k) || object_readers.contains(&k) || app_import(r)
     };
-    fn hands_module_object(
-        a: &js_ast::Expr,
-        gives_object: &dyn Fn(js_ast::Ref) -> bool,
-        depth: u8,
-    ) -> bool {
-        if depth > 16 {
-            return true;
+    let hands = |a: &js_ast::Expr| hands_module_object(a, &gives_object, 0);
+    // F564 D2, AMENDMENT 3 (closed grammar).
+
+    // Roots whose objects are not this module's: an import, a global, a binding taken from package code (the package's
+    // object, as an import's; `const [P, useCtx] = createCtx(…)`).
+    let outside = |r: js_ast::Ref| {
+        let k = key(r);
+        if module.contains(&k) {
+            return foreign.contains(&k);
         }
-        let go = |x: &js_ast::Expr| hands_module_object(x, gives_object, depth + 1);
-        match &a.data {
-            E::EArray(arr) => arr.items.iter().any(|x| match &x.data {
-                E::ESpread(sp) => go(&sp.value),
-                _ => go(x),
-            }),
-            E::EObject(o) => o
-                .properties
-                .iter()
-                .any(|p| p.value.as_ref().is_some_and(&go)),
-            E::ESpread(sp) => go(&sp.value),
-            // A function handed on hands whatever module object its code reads.
-            E::EArrow(_) | E::EFunction(_) => {
-                let mut w = Walk::default();
-                w.expr(a);
-                w.used.iter().any(|r| gives_object(*r))
+        names.import_of(r).is_some() || matches!(names.kind_of(r).1, crate::ir::IdentKind::Global)
+    };
+    // Module-wide guard: a call anywhere in the module that hands one of its bindings to an import-, global- or
+    // package-rooted callee (a registry could hand it back) makes no import-rooted call result clean in this module.
+    let guard = {
+        let mut all = Walk::default();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                all.stmt(stmt);
             }
-            _ => chain_root(a).is_some_and(gives_object),
+        }
+        // function locals only: a module binding stands for itself
+        let inits: std::collections::HashMap<u32, js_ast::Expr> = all
+            .const_values
+            .iter()
+            .filter(|(r, _)| !module.contains(&key(*r)))
+            .map(|(r, v)| (key(*r), *v))
+            .collect();
+        let g = Grammar {
+            key: &key,
+            own: &gives_object,
+            outside: &outside,
+            inits: &inits,
+            guard: false,
+        };
+        all.calls.iter().any(|c| {
+            let E::ECall(call) = &c.data else {
+                return false;
+            };
+            chain_root(&call.target).is_some_and(&outside)
+                && call.args.iter().any(|a| g.hands(a, 0))
+        })
+    };
+    // A mutating-name call whose receiver may be this module's object (as on base), unless the grammar proves it clean.
+    let mutating_write = |w: &Walk| -> Option<js_ast::Expr> {
+        let inits: std::collections::HashMap<u32, js_ast::Expr> =
+            w.const_values.iter().map(|(r, v)| (key(*r), *v)).collect();
+        let g = Grammar {
+            key: &key,
+            own: &gives_object,
+            outside: &outside,
+            inits: &inits,
+            guard,
+        };
+        w.calls.iter().find_map(|c| {
+            let E::ECall(call) = &c.data else {
+                return None;
+            };
+            match &call.target.data {
+                E::EDot(d)
+                    if MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+                        && g.receiver_writes(&d.target, &|r| module.contains(&key(r))) =>
+                {
+                    Some(call.target)
+                }
+                _ => None,
+            }
+        })
+    };
+    // A function-local const whose value the grammar does not prove clean or fresh: a member write through it may write
+    // a module object (`const l = LIST; l[0] = x`).
+    let local_bad = |w: &Walk, r: js_ast::Ref| {
+        let inits: std::collections::HashMap<u32, js_ast::Expr> =
+            w.const_values.iter().map(|(r, v)| (key(*r), *v)).collect();
+        let g = Grammar {
+            key: &key,
+            own: &gives_object,
+            outside: &outside,
+            inits: &inits,
+            guard,
+        };
+        inits
+            .get(&key(r))
+            .is_some_and(|v| !crate::analyze::plain_fn::fresh(v) && !g.clean(v, 0))
+    };
+    // A function WRITES a module binding when its code assigns or writes through one, calls a mutating method on one (a
+    // fresh copy excepted), writes through a root it cannot name (`get().a = …`, `this.a = …`), or calls or names a
+    // function that writes. A least fixpoint.
+    let writes = |w: &Walk, writers: &HashSet<u32>| {
+        let through = w
+            .member_written
+            .iter()
+            .chain(w.member_writes.iter().map(|(r, _)| r));
+        w.opaque_write
+            || w.assigned.iter().any(|r| module.contains(&key(*r)))
+            || through
+                .into_iter()
+                .any(|r| module.contains(&key(*r)) || local_bad(w, *r))
+            || w.used.iter().any(|r| writers.contains(&key(*r)))
+            || mutating_write(w).is_some()
+    };
+    let mut writers: HashSet<u32> = HashSet::new();
+    loop {
+        let before = writers.len();
+        for (k, w) in &walks {
+            if !writers.contains(k) && writes(w, &writers) {
+                writers.insert(*k);
+            }
+        }
+        if writers.len() == before {
+            break;
         }
     }
-    let hands = |a: &js_ast::Expr| hands_module_object(a, &gives_object, 0);
+    let function_ok = |k: u32| !writers.contains(&k);
+    let package_rooted = |e: &js_ast::Expr| {
+        package_rooted(e)
+            || matches!(&e.data, E::EIdentifier(id) if foreign.contains(&key(id.ref_)))
+    };
     let code_writes = |w: &Walk| writes(w, &writers);
     // F564: where each lexical module binding is declared; reading one at load before that throws (TDZ).
     let mut declared_at: std::collections::HashMap<u32, i32> = std::collections::HashMap::new();
@@ -453,7 +405,6 @@ pub fn module_effect(
     let at = |s: &js_ast::Stmt| s.loc.start.max(0) as u32;
     // F564 D3: what a writing function writes, said for the diagnostic.
     let written = |w: &Walk| -> String {
-        let tainted = tainted_of(w);
         let named = w
             .assigned
             .iter()
@@ -462,7 +413,7 @@ pub fn module_effect(
                 w.member_written
                     .iter()
                     .chain(w.member_writes.iter().map(|(r, _)| r))
-                    .find(|r| module.contains(&key(**r)) || tainted.contains(&key(**r)))
+                    .find(|r| module.contains(&key(**r)) || local_bad(w, **r))
             });
         if let Some(r) = named {
             return if module.contains(&key(*r)) {
@@ -712,57 +663,73 @@ pub fn fold_env_accepts(decls: &[crate::ir::ModuleDecl]) -> HashSet<String> {
         .collect()
 }
 
-/// F564 D2 (as narrowed by the challenge on it): whether a mutating method called on `recv` may change a binding of this
-/// module. The receiver is rooted through members, indexes, call targets and both arms of a conditional or a logical
-/// operator; a literal (`[...X]` included), a copying method or `new` of a global constructor is a fresh value. It is a
-/// write when any root is a binding of this module (its own code can hand out its objects: `getList().push(x)`,
-/// `(c ? A : B).push(x)`) or cannot be named (`this`, an opaque expression). Roots that are imports, globals or locals of
-/// the function are not this module's objects, unless an argument of a call on the chain hands one in.
-fn receiver_writes(
-    recv: &js_ast::Expr,
-    module: &dyn Fn(js_ast::Ref) -> bool,
-    follow: &dyn Fn(js_ast::Ref) -> bool,
+fn hands_module_object(
+    a: &js_ast::Expr,
+    gives_object: &dyn Fn(js_ast::Ref) -> bool,
+    depth: u8,
 ) -> bool {
-    fn walk(
-        e: &js_ast::Expr,
-        module: &dyn Fn(js_ast::Ref) -> bool,
-        follow: &dyn Fn(js_ast::Ref) -> bool,
-        depth: u8,
-    ) -> bool {
-        if depth > 16 {
-            return true;
+    if depth > 16 {
+        return true;
+    }
+    let go = |x: &js_ast::Expr| hands_module_object(x, gives_object, depth + 1);
+    match &a.data {
+        E::EArray(arr) => arr.items.iter().any(|x| match &x.data {
+            E::ESpread(sp) => go(&sp.value),
+            _ => go(x),
+        }),
+        E::EObject(o) => o
+            .properties
+            .iter()
+            .any(|p| p.value.as_ref().is_some_and(&go)),
+        E::ESpread(sp) => go(&sp.value),
+        // A function handed on hands whatever module object its code reads.
+        E::EArrow(_) | E::EFunction(_) => {
+            let mut w = Walk::default();
+            w.expr(a);
+            w.used.iter().any(|r| gives_object(*r))
         }
-        let go = |x: &js_ast::Expr| walk(x, module, follow, depth + 1);
-        // An argument handed to a call on the chain: does it name a binding of this module?
-        // An argument that may hand this module's object to the callee (which may return it): the object itself, a literal
-        // holding it, or a function whose code reads one. A primitive computed from module values hands nothing.
-        let hands = |a: &js_ast::Expr| match &a.data {
-            E::EArrow(_) | E::EFunction(_) => {
-                let mut w = Walk::default();
-                w.expr(a);
-                w.used.iter().any(|r| module(*r))
-            }
-            _ => {
-                crate::analyze::expr::alias_roots(a).into_iter().any(module)
-                    || holds_own(a, module, 0)
-            }
-        };
-        // a literal or a copying method's result (`slice`, `map`, `concat`): a fresh object, whatever it was built from
-        if crate::analyze::plain_fn::fresh(e) {
+        _ => chain_root(a).is_some_and(gives_object),
+    }
+}
+
+/// F564 D2, AMENDMENT 3: the closed grammar of receivers whose object is not this module's.
+struct Grammar<'a> {
+    key: &'a dyn Fn(js_ast::Ref) -> u32,
+    /// A binding that gives this module's object when handed (`gives_object`: a module array or object, a function
+    /// reading one, an app import).
+    own: &'a dyn Fn(js_ast::Ref) -> bool,
+    /// An import, a global or a binding taken from package code.
+    outside: &'a dyn Fn(js_ast::Ref) -> bool,
+    /// The function's local `const`s and their values.
+    inits: &'a std::collections::HashMap<u32, js_ast::Expr>,
+    /// The module-wide guard: no import-rooted call result is clean.
+    guard: bool,
+}
+
+impl Grammar<'_> {
+    /// `clean(e)`: an import / global / package-made identifier; a member or any index of clean; a call of a clean
+    /// callee handed no binding of this module (and, under the guard, not rooted at an import); `?:`, `||`, `??`, `&&`
+    /// of clean arms; `new C(…)` of an import or a global handed no binding of this module. A local `const` stands for
+    /// its value. Nothing else.
+    fn clean(&self, e: &js_ast::Expr, depth: u8) -> bool {
+        if depth > 16 {
             return false;
         }
+        let go = |x: &js_ast::Expr| self.clean(x, depth + 1);
         match &e.data {
+            E::EImportIdentifier(_) => true,
+            E::EIdentifier(id) => match self.inits.get(&(self.key)(id.ref_)) {
+                Some(v) => go(v),
+                None => (self.outside)(id.ref_),
+            },
             E::EDot(d) => go(&d.target),
             E::EIndex(i) => go(&i.target),
-            // a module function whose returns are proven not to be this module's objects (`follow`, one level)
             E::ECall(c) => {
-                c.args.iter().any(hands)
-                    || match &c.target.data {
-                        E::EIdentifier(id) if module(id.ref_) && follow(id.ref_) => false,
-                        _ => go(&c.target),
-                    }
+                !c.args.iter().any(|a| self.hands(a, depth + 1))
+                    && go(&c.target)
+                    && !(self.guard && chain_root(&c.target).is_some_and(|r| (self.outside)(r)))
             }
-            E::EIf(i) => go(&i.yes) || go(&i.no),
+            E::EIf(i) => go(&i.yes) && go(&i.no),
             E::EBinary(b)
                 if matches!(
                     b.op,
@@ -771,123 +738,68 @@ fn receiver_writes(
                         | js_ast::OpCode::BinNullishCoalescing
                 ) =>
             {
-                go(&b.left) || go(&b.right)
+                go(&b.left) && go(&b.right)
             }
-            // `new` of a global or an imported class is a fresh object, unless it is handed this module's object
             E::ENew(n) => {
-                // `new Map()`, `new window.Image()`, `new Poller(…)`: the constructor's root is a global or an import
-                chain_root(&n.target).is_none_or(&module) || n.args.iter().any(hands)
+                let ctor = matches!(&n.target.data, E::EImportIdentifier(_))
+                    || chain_root(&n.target).is_some_and(|r| {
+                        !self.inits.contains_key(&(self.key)(r)) && (self.outside)(r)
+                    });
+                ctor && !n.args.iter().any(|a| self.hands(a, depth + 1))
             }
-            E::EIdentifier(id) => module(id.ref_),
-            E::EImportIdentifier(_) => false,
-            // a primitive or a fresh closure is no module object (`const n = 'none'`, `() => …`)
-            E::EString(_)
-            | E::ENumber(_)
-            | E::EBigInt(_)
-            | E::EBoolean(_)
-            | E::ENull(_)
-            | E::EUndefined(_)
-            | E::EArrow(_)
-            | E::EFunction(_) => false,
-            E::ETemplate(t) => t.tag.is_some(),
-            E::EUnary(u) => !matches!(
-                u.op,
-                js_ast::OpCode::UnNot
-                    | js_ast::OpCode::UnNeg
-                    | js_ast::OpCode::UnPos
-                    | js_ast::OpCode::UnTypeof
-                    | js_ast::OpCode::UnVoid
-                    | js_ast::OpCode::UnCpl
-            ),
-            E::EBinary(b) => !matches!(
-                b.op,
-                js_ast::OpCode::BinAdd
-                    | js_ast::OpCode::BinSub
-                    | js_ast::OpCode::BinMul
-                    | js_ast::OpCode::BinDiv
-                    | js_ast::OpCode::BinRem
-                    | js_ast::OpCode::BinLt
-                    | js_ast::OpCode::BinLe
-                    | js_ast::OpCode::BinGt
-                    | js_ast::OpCode::BinGe
-                    | js_ast::OpCode::BinStrictEq
-                    | js_ast::OpCode::BinStrictNe
-                    | js_ast::OpCode::BinLooseEq
-                    | js_ast::OpCode::BinLooseNe
-            ),
-            _ => true,
-        }
-    }
-    walk(recv, module, follow, 0)
-}
-
-/// F564 D2 addition 1: an object or array literal that holds an object of this module (`{ l: LIST }`, `[A, B]`): a
-/// receiver reached through it (`o.l.push(x)`) is that object.
-fn holds_own(e: &js_ast::Expr, own: &dyn Fn(js_ast::Ref) -> bool, depth: u8) -> bool {
-    if depth > 16 {
-        return true;
-    }
-    let held = |x: &js_ast::Expr| {
-        crate::analyze::expr::alias_roots(x).into_iter().any(own) || holds_own(x, own, depth + 1)
-    };
-    match &e.data {
-        E::EObject(o) => o
-            .properties
-            .iter()
-            .any(|p| p.value.as_ref().is_some_and(held)),
-        E::EArray(a) => a.items.iter().any(|x| match &x.data {
-            E::ESpread(sp) => held(&sp.value),
-            _ => held(x),
-        }),
-        _ => false,
-    }
-}
-
-/// F564 D2 addition 2: the values a function body returns (every `return` in it, through blocks, branches, loops,
-/// `try` and `switch`, not in a nested function); `None` for a statement the rule does not read (`with`, a class).
-fn returns_of(stmts: &[js_ast::Stmt]) -> Option<Vec<js_ast::Expr>> {
-    fn go(s: &js_ast::Stmt, out: &mut Vec<js_ast::Expr>) -> bool {
-        match &s.data {
-            S::SReturn(r) => {
-                out.extend(r.value);
-                true
-            }
-            S::SBlock(b) => b.stmts.slice().iter().all(|x| go(x, out)),
-            S::SIf(i) => go(&i.yes, out) && i.no.as_ref().is_none_or(|n| go(n, out)),
-            S::SFor(f) => go(&f.body, out),
-            S::SForIn(f) => go(&f.body, out),
-            S::SForOf(f) => go(&f.body, out),
-            S::SWhile(w) => go(&w.body, out),
-            S::SDoWhile(w) => go(&w.body, out),
-            S::SLabel(l) => go(&l.stmt, out),
-            S::STry(t) => {
-                t.body.slice().iter().all(|x| go(x, out))
-                    && t.catch
-                        .as_ref()
-                        .is_none_or(|c| c.body.slice().iter().all(|x| go(x, out)))
-                    && t.finally
-                        .as_ref()
-                        .is_none_or(|f| f.stmts.slice().iter().all(|x| go(x, out)))
-            }
-            S::SSwitch(sw) => sw
-                .cases
-                .slice()
-                .iter()
-                .all(|c| c.body.slice().iter().all(|x| go(x, out))),
-            S::SBreak(_) | S::SContinue(_) => true,
-            S::SLocal(_)
-            | S::SExpr(_)
-            | S::SThrow(_)
-            | S::SEmpty(_)
-            | S::SComment(_)
-            | S::SDirective(_)
-            | S::SFunction(_)
-            | S::STypeScript(_) => true,
             _ => false,
         }
     }
-    let mut out = Vec::new();
-    stmts.iter().all(|s| go(s, &mut out)).then_some(out)
+
+    /// The existing `hands` (an argument that hands this module's object: the object, a literal holding it, a function
+    /// reading one), with a local `const` standing for its value.
+    fn hands(&self, a: &js_ast::Expr, depth: u8) -> bool {
+        if depth > 16 {
+            return true;
+        }
+        let gives = |r: js_ast::Ref| match self.inits.get(&(self.key)(r)) {
+            Some(v) => self.hands(v, depth + 1),
+            None => (self.own)(r),
+        };
+        hands_module_object(a, &gives, 0)
+    }
+
+    /// Whether a mutating method called on `recv` may change this module's object (AMENDMENT 3). Not a write: the
+    /// receiver ITSELF fresh (a literal, a copying method's result: top level only), a clean receiver, a local `const`
+    /// whose value is clean or fresh, or (base's behaviour, the open gap) a receiver rooted at a local that is not a
+    /// `const` with a value (a parameter, a `let`, a loop / catch binding, a destructured name). Everything else is a
+    /// write: a root that is this module's binding, a local `const` not proven, an import / global / package root the
+    /// grammar did not prove clean, `this` or an opaque expression.
+    fn receiver_writes(&self, recv: &js_ast::Expr, module: &dyn Fn(js_ast::Ref) -> bool) -> bool {
+        if crate::analyze::plain_fn::fresh(recv) || self.clean(recv, 0) {
+            return false;
+        }
+        if let E::EIdentifier(id) = &recv.data
+            && let Some(v) = self.inits.get(&(self.key)(id.ref_))
+        {
+            return !crate::analyze::plain_fn::fresh(v);
+        }
+        match root_through_calls(recv) {
+            None => true,
+            Some(r) => module(r) || self.inits.contains_key(&(self.key)(r)) || (self.outside)(r),
+        }
+    }
+}
+
+/// Base's receiver root: the name a chain starts from, through members, indexes and calls; `None` for `this`, a
+/// literal or anything else.
+fn root_through_calls(e: &js_ast::Expr) -> Option<js_ast::Ref> {
+    let mut e = e;
+    loop {
+        match &e.data {
+            E::EDot(d) => e = &d.target,
+            E::EIndex(i) => e = &i.target,
+            E::ECall(c) => e = &c.target,
+            E::EIdentifier(id) => return Some(id.ref_),
+            E::EImportIdentifier(id) => return Some(id.ref_),
+            _ => return None,
+        }
+    }
 }
 
 /// The invariant-based acceptance (lead ruling b0dff21e): a value that holds no code writing a module binding.
