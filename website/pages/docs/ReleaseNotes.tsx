@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-52', title: '2.0.0-alpha.52' },
       { id: 'alpha-51', title: '2.0.0-alpha.51' },
       { id: 'alpha-50', title: '2.0.0-alpha.50' },
       { id: 'alpha-49', title: '2.0.0-alpha.49' },
@@ -74,6 +75,42 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-52">2.0.0-alpha.52 · 20 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.51: #505 (ledger F555, F556, F557) and #506 (F558, F559); the docs fix F565 */}
+      <p>This version makes a long <code>&amp;&amp;</code>, <code>||</code>, <code>??</code> or <code>?.</code> chain compile to a template that grows with the chain instead of doubling at every operand, warns when a template is huge, and makes <code>brust start</code> load only the templates a route renders, which cuts its memory and start-up time.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #505 (F556); packages/brust/src/build/index.ts (the 1 MB warning); packages/brust/test/build-large-template.test.ts; the CLI docs page, anchor #large-templates */}
+        <li>
+          <strong><code>brust build</code> warns when a template you wrote is over 1 MB (#505).</strong> The line reads <code>warning template &lt;name&gt; is &lt;n&gt; MB (&lt;source&gt;)</code> and says where the template came from. The build still succeeds, and a page under 1 MB prints nothing. A template that large is worth a look: it is often one expression printed many times over. See <a href="/docs/cli#large-templates">Large templates</a> on the CLI page.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #505 (F555); crates/brust-compiler/src/lower/server_expr.rs, lower/template.rs (Printer::test); crates/brust-compiler/tests/logical_chain.rs; size table in the PR body */}
+        <li>
+          <strong>A chain of <code>&amp;&amp;</code>, <code>||</code> or <code>??</code> no longer doubles (or triples) the template text at every operand (#505).</strong> The compiler printed the left side of each operator more than once, so 16 operands of <code>&amp;&amp;</code> became one condition of 1,769,795 bytes, and <code>??</code> grew by a factor of three per operand. A real app with such a chain in a component placed in many pages produced templates of megabytes each, and <code>brust start</code> used gigabytes of memory to load them. Each operand is now printed once or a fixed number of times: the same 16-operand <code>&amp;&amp;</code> or <code>||</code> chain is 959 bytes, a <code>??</code> chain 1,541 bytes. The rendered HTML is unchanged.
+        </li>
+        {/* source: PR #505 (F557); crates/brust-compiler/src/lower/server_expr.rs (optional member / index path under one guard); crates/brust-compiler/tests/logical_chain.rs (16-deep optional path) */}
+        <li>
+          <strong>An optional chain such as <code>a?.b?.c</code> no longer triples the template text at every <code>?.</code> (#505).</strong> Each optional link printed its target three times. The path is now printed once under one guard that covers every optional link, as JavaScript short-circuits the whole chain. The rendered HTML is unchanged.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #506 (F558, F559); packages/brust/src/build/index.ts (renderedTemplates, BRUST_BUILD_ALL_TEMPLATES); crates/brust-core (the manifest walk reads the templates of the route chains); the CLI docs page, section Build */}
+        <li>
+          <strong>A build writes, and <code>brust start</code> reads and compiles, only the templates of pages and layouts (#506).</strong> A route renders its pages and layouts by name; a component you place in a page is already printed inside that page&rsquo;s template. <code>dist/jinja/</code> and the Cloudflare Worker bundle now hold those templates only, and a component has no <code>dist/jinja/&lt;component&gt;.jinja</code> of its own. If a script of yours reads one of those files, build with <code>BRUST_BUILD_ALL_TEMPLATES=1</code>: it writes every component&rsquo;s template again, to read what one component compiles to, and the server ignores the extra files. Rendered output, the manifest and the request path are unchanged.
+        </li>
+        {/* source: PR #506 (F558, F559), table "Numbers": an app build with 148 templates, 33.1 MB of template text, 4 rendered by name; Linux, debug build */}
+        <li>
+          <strong>On an app with 148 components, the template side of start-up fell from 145 MB to 44 MB resident and from about 1 second to 0.2 seconds (#506).</strong> Of its 33.1 MB of template text, 4 templates (6.6 MB) are rendered by name, and <code>dist/jinja</code> went from 33.1 MB to 6.6 MB. These were measured on Linux with a debug build.
+        </li>
+      </ul>
 
       <h2 id="alpha-51">2.0.0-alpha.51 · 18 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.50: #503 (ledger F552, F553) */}

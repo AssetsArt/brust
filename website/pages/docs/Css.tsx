@@ -118,7 +118,7 @@ export async function cssLoader(): Promise<CssData> {
       head: codeBlock({ lang: 'text', file: 'the rendered <head>', code: HEAD }),
       mod: codeBlock({ lang: 'tsx', file: 'Card.tsx', code: MOD }),
       modSrc: codeBlock({ lang: 'text', file: 'Card.module.css', code: MOD_SRC }),
-      compiled: codeBlock({ lang: 'text', file: 'dist/jinja/card.jinja', code: COMPILED }),
+      compiled: codeBlock({ lang: 'text', file: 'the part of the page template that Card prints', code: COMPILED }),
       install: codeBlock({ lang: 'sh', cwd: '~/my-app', code: INSTALL }),
       entry: codeBlock({ lang: 'text', file: 'app.css', code: ENTRY }),
       layout: codeBlock({ lang: 'tsx', file: 'Layout.tsx', code: LAYOUT }),
@@ -222,7 +222,7 @@ export default function Css({ blocks }: CssData) {
       {/* source: docs/css.md:65 (v2 @34232c7 (PR #177)): styles.x and styles['x'] in a static or native template fold into the literal class, so the component keeps needs_worker false and no job; an unknown class is a build error with file, line and column (rule css-module-class); only a property read of a default import of a relative *.module.css folds */}
       <p>
         In a static or native template, <code>styles.card</code> and <code>styles['card']</code> are replaced by the literal class string when the page is compiled. The component keeps <code>needs_worker: false</code> and the build plans no job for it, so the worker is
-        not called for a string the build already knew.
+        not called for a string the build already knew. The block below is the part of the page&rsquo;s template that the component prints: a component placed in a page is printed inside that page&rsquo;s template and a normal build writes no file of its own for it. Build with <code>BRUST_BUILD_ALL_TEMPLATES=1</code> to also write <code>dist/jinja/card.jinja</code> and read it.
       </p>
       <CodeBlock code={blocks.compiled.code} lang={blocks.compiled.lang} file={blocks.compiled.file} html={blocks.compiled.html} />
       {/* source: crates/brust-compiler/tests/css_module_fold.rs:34 (a known class folds and leaves no job) and :85 (bracket access, a conditional and a template literal fold) — v2 @34232c7 (PR #177); observed: the same conditional on a native page keeps both arms as literals, the template literal becomes a concatenation of literals (packages/brust/test/css-module-fold.test.ts) */}
