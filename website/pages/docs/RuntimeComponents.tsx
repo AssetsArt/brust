@@ -431,9 +431,12 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
           One page render makes at most one extra worker call: the refs it has not resolved yet and the (ref, props) pairs whose HTML is not cached go together. <code>render</code> is called once per distinct (ref, props) of that page, in parallel, with{' '}
           <code>ctx = {'{'} build, page: {'{'} id, total {'}'} {'}'}</code>: <code>page.id</code> is the same for every call of one page render, <code>page.total</code> the number of calls in the batch (cached pairs are not called).
         </li>
+        {/* source: crates/brust-core/src/components.rs:236-278 (HtmlCache, html_key: no ttl; `None` is cached), :823-889 (a throw, over MAX_SLOT_OUTPUT_BYTES or no answer is Html::Failed and not stored; the warn line, once per (ref, reason), in finish), crates/brust-core/src/pipeline.rs:334-372 and :608-626 (a bypass skips L1 and L2 only; the slots render on every miss) */}
         <li>
-          The server caches the HTML per (ref, artifact, props), bounded by <code>[components] cache_entries</code> and 64 MiB in total; a new artifact for the ref starts afresh. <code>null</code> (or no <code>render</code>) prints an empty host your
-          client mounts into, and the page is cached as usual. A throw, or more than 4 MiB of HTML, prints an empty host and the page is not cached.
+          The server caches the HTML per (ref, artifact, props), bounded by <code>[components] cache_entries</code> and 64 MiB in total; a new artifact for the ref starts afresh. There is no time limit: an entry stays until it is evicted or the ref has a new
+          artifact, and a route&rsquo;s <code>bypass</code> does not skip this cache. <code>null</code> (or no <code>render</code>) prints an empty host your client mounts into, and the page is cached as usual; the <code>null</code> is kept too, so return it
+          only for an answer that stays right until the artifact changes. A throw, or more than 4 MiB of HTML, prints an empty host and the page is not cached; the server logs <code>[brust] runtime component &lt;ref&gt;: render threw: &lt;error&gt;</code> once for each ref and reason. All the cache layers are in{' '}
+          <a href="/docs/caching#layers">Every cache layer</a>.
         </li>
         <li>
           <strong>
