@@ -58,6 +58,7 @@ Rules:
 - Write for app authors. Use no internal task names, agent names or F-numbers in the visible text (they belong in the source comments). Prefer "renders with React" to "falls back".
 - In JSX, escape `{` as `{'{'}` and `}` as `{'}'}`, and apostrophes as `&rsquo;`. Use real arrows (`→`) and en dashes for ranges (`#247–#251`).
 - Use the date of the tag (today), formatted `D Month YYYY`.
+- Never put a `<CodeBlock>` inside a `<li>`: it makes the page wider than a phone (`website/test/overflow.test.ts`, a Chromium test that only PR CI runs). Put the block after the list, introduced by one sentence.
 
 ## 4. Check, then open the PR
 
