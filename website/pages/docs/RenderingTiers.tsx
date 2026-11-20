@@ -21,7 +21,7 @@ interface Shipped {
 
 export interface RenderingTiersData {
   toc: TocItem[]
-  blocks: Record<'warning' | 'manifest' | 'committed', CodeBlockData>
+  blocks: Record<'warning' | 'manifest' | 'committed' | 'assert' | 'tierError' | 'snapshot', CodeBlockData>
   tiers: { card: Shipped; catch: Shipped; search: Shipped }
   cards: { no: string; name: string; art: string; types: string[] }[]
   catchMon: { no: string; name: string; type: string; art: string; shinyArt: string }
@@ -60,6 +60,18 @@ export async function renderingTiersLoader(): Promise<RenderingTiersData> {
       committed: codeBlock({
         lang: 'ts',
         code: "function ready(island: Element, run: () => void) {\n  // committed before this code ran: the attribute says so, the event will not come again\n  if (island.getAttribute('data-committed') === '1') return run()\n  island.addEventListener('brust:island', run, { once: true })\n}\n\ndocument.addEventListener('brust:island', (e) => {\n  const { id, phase } = (e as CustomEvent<{ id: string; phase: 'committed' }>).detail\n  console.log(id, phase, e.target) // e.target is the <brust-island> host\n})",
+      }),
+      // observed: packages/brust/test/fixtures/tiers built with this [tiers.max] (packages/brust/test/tiers.test.ts asserts the same text)
+      assert: codeBlock({ lang: 'toml', file: 'brust.toml', code: '[tiers]\nsnapshot = "tiers.json"\n\n[tiers.max]\n"components/views/**" = "static"\n"components/widgets/Map.tsx#default" = "react"' }),
+      tierError: codeBlock({
+        lang: 'sh',
+        cwd: '~/my-app',
+        code: '$ brust build\nerror tier components/views/Counter.tsx:4:1 Counter compiles to native; [tiers.max] "components/views/**" allows static\n  state `count` is set (line 4)\n  an event handler (line 6)',
+      }),
+      snapshot: codeBlock({
+        lang: 'json',
+        file: 'tiers.json',
+        code: '{\n  "version": 1,\n  "components": {\n    "components/views/Badge.tsx#Badge": "static",\n    "components/views/Counter.tsx#default": "native",\n    "components/widgets/Map.tsx#default": "react"\n  }\n}',
       }),
       manifest: codeBlock({ lang: 'json', file: 'dist/manifest.json', code: '"pokemonSearch_<hash>": {\n  "tier": "react",\n  "client": "client/react-pokemonSearch_<hash>-<hash>.js",\n  "jobs": [{ "kind": "ssr", … }]\n}' }),
     },
@@ -232,6 +244,42 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         The full answer is in <code>dist/manifest.json</code>: each component has a <code>tier</code>, the <code>client</code> chunk it ships (<code>null</code> when nothing ships) and its server <code>jobs</code>.
       </p>
       <CodeBlock code={blocks.manifest.code} lang={blocks.manifest.lang} file={blocks.manifest.file} html={blocks.manifest.html} />
+
+      {/* source: packages/brust/src/build/tiers.ts (checkTiers: [tiers.max] over every app component, clones and React copies under their component; reportTiers: one error rule `tier`), crates/brust-compiler/src/analyze/passes/tier.rs native_because (the native lines, at most 8) */}
+      <h3 id="assert">Assert a tier</h3>
+      <p>
+        A warning is easy to miss, and a component&rsquo;s tier can change with an ordinary edit. To make the build fail instead, say in <code>brust.toml</code> how heavy each part of the app may get (the keys are in{' '}
+        <a href="/docs/configuration#tiers">Configuration</a>):
+      </p>
+      <CodeBlock code={blocks.assert.code} lang={blocks.assert.lang} file={blocks.assert.file} html={blocks.assert.html} />
+      <p>
+        A component that compiles heavier than its pattern allows stops <code>brust build</code> with one <code>tier</code> error that lists every such component. Each starts with the file, line and name, then the reasons:
+        for <code>react</code>, every fallback rule with its message and the fix; for <code>native</code> where <code>static</code> is required, what makes it interactive (state that is set, an event handler, an effect, a
+        ref, a store read), with lines.
+      </p>
+      <CodeBlock code={blocks.tierError.code} lang={blocks.tierError.lang} cwd={blocks.tierError.cwd} html={blocks.tierError.html} />
+      <p>
+        The compiler may make a copy of a component for some call sites (a React copy where the server cannot render it inside its parent). A copy is checked against its component&rsquo;s pattern, and the error says which
+        component places it. <code>brust dev</code> prints these as <code>warning tier</code> lines and keeps running.
+      </p>
+      {/* source: packages/brust/src/build/tiers.ts (checkTiers: the snapshot; writeTierSnapshot runs after the build succeeded; never in dev), packages/brust/test/tiers.test.ts (written, unchanged, heavier, lighter, --update-tiers) */}
+      <h3 id="snapshot">Keep a tier snapshot</h3>
+      <p>
+        <code>[tiers] snapshot</code> names a file that records every component&rsquo;s tier. Commit it. The first build writes it (<code>tiers: wrote tiers.json (… components)</code>); every later build compares:
+      </p>
+      <ul>
+        <li>a component heavier than the file records fails the build, with the same reasons as above (<code>… compiles to native; tiers.json records static</code>);</li>
+        <li>
+          a lighter, new or removed component prints one line (<code>tiers: components/views/Card.tsx#default native -&gt; static</code>), and the file is left as it is;
+        </li>
+        <li>
+          when the change is wanted, <code>brust build --update-tiers</code> rewrites the file and prints each difference; review it like any other diff.
+        </li>
+      </ul>
+      <CodeBlock code={blocks.snapshot.code} lang={blocks.snapshot.lang} file={blocks.snapshot.file} html={blocks.snapshot.html} />
+      <p>
+        The snapshot holds the components of your app, keyed <code>path#Export</code>, not the copies the compiler makes. <code>brust dev</code> never writes it.
+      </p>
     </>
   )
 }
