@@ -14,7 +14,7 @@
 //! enclosing lists).
 use super::common::{Facts, raw_of, store_jinja};
 use super::names::Seeds;
-use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja};
+use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja, to_jinja_test};
 use super::{LowerCtx, Member, MemberDef, Paint};
 use crate::analyze::passes::children::REST_INPUT;
 use crate::ir::{
@@ -671,6 +671,11 @@ impl<'a, 'c> Printer<'a, 'c> {
         if self.blank {
             return UNDEFINED.into();
         }
+        self.with_jinja_ctx(|ctx| to_jinja(&ServerExpr(e.clone()), ctx))
+    }
+
+    /// The identifier context the template prints a server expression in.
+    fn with_jinja_ctx<T>(&self, f: impl FnOnce(&JinjaCtx<'_>) -> T) -> T {
         let names = self.names();
         // F427: an index is a proven number only where it is the innermost binding of its name (an inner loop's item or
         // index of the same name shadows it).
@@ -687,14 +692,24 @@ impl<'a, 'c> Printer<'a, 'c> {
                 seen.push(i);
             }
         }
-        to_jinja(
-            &ServerExpr(e.clone()),
-            &JinjaCtx {
-                loop_indexes: &indexes,
-                props_prefix: None,
-                names: &names,
-            },
-        )
+        f(&JinjaCtx {
+            loop_indexes: &indexes,
+            props_prefix: None,
+            names: &names,
+        })
+    }
+
+    /// F555: a placed value as an `{% if %}` test of its JS truthiness. A server `&&` / `||` / `!` prints as jinja's
+    /// short-circuit `and` / `or` / `not` (each operand once); anything else is `(value) | truthy`. Every test the
+    /// template prints (a branch, an else-if arm, a boolean attribute) goes through here.
+    fn test(&self, e: &Expr) -> String {
+        if !self.blank
+            && let Expr::Server(s) = e
+            && let Some(t) = self.with_jinja_ctx(|ctx| to_jinja_test(s, ctx))
+        {
+            return t;
+        }
+        format!("({}) | truthy", self.value(e))
     }
 
     /// A placed value as a jinja expression.
@@ -1543,7 +1558,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             open.push_str(&format!("{{{{ ({v}) | style_attr }}}}"));
         } else {
             if !(self.skip_value_print && html == "value") {
-                open.push_str(&dynamic_attr(&html, &v, tag));
+                let t =
+                    matches!(attr_kind_of(&html, tag), AttrKind::Boolean).then(|| self.test(value));
+                open.push_str(&dynamic_attr(&html, &v, tag, t.as_deref()));
             }
         }
         if model.is_some() && (html == "value" || html == "checked") {
@@ -2061,7 +2078,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         if html == "style" {
             open.push_str(&format!("{{{{ ({v}) | style_attr }}}}"));
         } else {
-            open.push_str(&dynamic_attr(&html, v, tag));
+            open.push_str(&dynamic_attr(&html, v, tag, None));
         }
     }
 
@@ -2093,10 +2110,10 @@ impl<'a, 'c> Printer<'a, 'c> {
             Expr::Raw(r) => Some(r),
             _ => None,
         };
-        let c = self.value(cond);
+        let c = self.test(cond);
         match self.reactive(raw, cond) {
             None => {
-                self.out.push_str(&format!("{{% if ({c}) | truthy %}}"));
+                self.out.push_str(&format!("{{% if {c} %}}"));
                 self.nodes(then, st);
                 if !else_.is_empty() {
                     self.out.push_str("{% else %}");
@@ -2163,7 +2180,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     self.twice(|p, hidden| p.branch(else_, se, &no_d, hidden))
                 };
                 self.out.push_str(&format!(
-                    "{{% if ({c}) | truthy %}}{then_on}{else_off}{{% else %}}{then_off}{else_on}{{% endif %}}"
+                    "{{% if {c} %}}{then_on}{else_off}{{% else %}}{then_off}{else_on}{{% endif %}}"
                 ));
             }
         }
@@ -2179,11 +2196,11 @@ impl<'a, 'c> Printer<'a, 'c> {
         let sel = self.jinja_free(format!("{first}_arm"));
         let mut out = format!("{{% set {sel} = -1 %}}");
         for (i, l) in links.iter().enumerate() {
-            let c = self.value(l.cond);
+            let c = self.test(l.cond);
             let test = if i == 0 {
-                format!("({c}) | truthy")
+                c
             } else {
-                format!("{sel} < 0 and (({c}) | truthy)")
+                format!("{sel} < 0 and ({c})")
             };
             out.push_str(&format!(
                 "{{% if {test} %}}{{% set {sel} = {i} %}}{{% endif %}}"
@@ -3892,7 +3909,8 @@ fn attr_kind_of(html: &str, tag: &str) -> AttrKind {
 /// prints when truthy; `aria-*`, `data-*` and the other "booleanish string" attributes print `"true"`/`"false"`; `download`
 /// and `capture` print `""` for `true`; any other attribute omits a boolean. A custom element (a tag with `-`) is React's pass-through rule for every
 /// attribute: `true` is `""`, `false` omits it, anything else is its string (F213). A URL attribute also needs a safe scheme (the runtime's rule).
-fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
+/// `test`: the value as an `{% if %}` test ([`Printer::test`]), for a boolean attribute; `None`: `(v) | truthy`.
+fn dynamic_attr(html: &str, v: &str, tag: &str, test: Option<&str>) -> String {
     let mut url = if is_url_attr(html) {
         format!(" and ({v} | url_ok)")
     } else {
@@ -3903,7 +3921,10 @@ fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
         url.push_str(&format!(" and ({v} | attr_str) != \"\""));
     }
     match attr_kind_of(html, tag) {
-        AttrKind::Boolean => format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"),
+        AttrKind::Boolean => match test {
+            Some(t) => format!("{{% if {t} %}} {html}{{% endif %}}"),
+            None => format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"),
+        },
         AttrKind::Overloaded => format!(
             "{{% if ({v}) | bool_true %}} {html}=\"\"{{% elif ({v}) | present{url} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
         ),

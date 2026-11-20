@@ -372,7 +372,11 @@ async function buildInto(
   }
 
   mkdirSync(join(out, 'jinja'), { recursive: true })
-  for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
+  for (const c of compiled.values()) {
+    writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
+    const w = largeTemplateWarning(c, appRoot)
+    if (w !== undefined) o.log(w)
+  }
 
   // F517: the modules `[build] expose` shares with runtime components are entries of the native-chunk build.
   const exposedMods = exposedModules(appRoot, o.expose)
@@ -484,6 +488,17 @@ async function cacheRecord(out: string, manifest: ManifestJson, c: CacheBuildCon
     epochIntervalMs: c.epochIntervalMs,
     buildId: computeBuildId(out, manifest),
   }
+}
+
+/** F556: a template file past this size slows `brust start` (each one is parsed when it loads) and holds its memory. */
+export const LARGE_TEMPLATE_BYTES = 1024 * 1024
+
+/** F556: the warning for one emitted template larger than {@link LARGE_TEMPLATE_BYTES}; undefined under it. */
+export function largeTemplateWarning(c: Pick<Compiled, 'id' | 'file' | 'jinja'>, appRoot: string): string | undefined {
+  const bytes = Buffer.byteLength(c.jinja)
+  if (bytes <= LARGE_TEMPLATE_BYTES) return undefined
+  const mb = (bytes / (1024 * 1024)).toFixed(1)
+  return `[brust] warning template ${c.id}.jinja is ${mb} MB (${relPosix(appRoot, c.file)}): a large template slows start-up and uses memory; see https://brust.dev/docs/cli#large-templates`
 }
 
 /** R7: the first 16 hex chars of sha256 over the manifest (without `cache`), every `jinja/*.jinja`
