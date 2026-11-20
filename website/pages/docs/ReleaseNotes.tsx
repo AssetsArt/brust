@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-53', title: '2.0.0-alpha.53' },
       { id: 'alpha-52', title: '2.0.0-alpha.52' },
       { id: 'alpha-51', title: '2.0.0-alpha.51' },
       { id: 'alpha-50', title: '2.0.0-alpha.50' },
@@ -75,6 +76,34 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-53">2.0.0-alpha.53 · 21 November 2026</h2>
+      {/* source: the pull request merged after v2.0.0-alpha.52: #508 (ledger F560) */}
+      <p>This version lets more of a normally written React app compile without React: a custom hook in another module can read a store, a small arrow you declare in the component costs no tier, and a component with a precomputed value placed inside another one no longer turns the outer component into an island. No source change is needed.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #508 (F560); crates/brust-compiler/src/analyze/hooks.rs (read_hook, rebase_spec); crates/brust-compiler/tests/store.rs; scripts/battery/rows.ts c-custom-hook-import-store, c-custom-hook-store-own-module; the Store docs page */}
+        <li>
+          <strong>A custom hook in another module may read a store and the components that call it stay native (#508).</strong> The hook&rsquo;s module must import the store handle: <code>{"import { team } from '../team'"}</code> and <code>{'const max = useStore(team).max; return max'}</code> in <code>lib/use-max.ts</code>. Before, every component that called such a hook was a React island (<code>hook-shape</code>). A hook whose module declares the store itself is still React: define the store in a module of its own and import it. So is <code>return useStore(team).max</code>, which is a hook call inside an expression: bind it to a name first. See <a href="/docs/store">Store</a>.
+        </li>
+        {/* source: PR #508 (F560); crates/brust-compiler/src/analyze/hooks.rs (use_store_member); scripts/battery/rows.ts e-store-member; the Store docs page */}
+        <li>
+          <strong>One store field can be read as <code>const max = useStore(team).max</code> (#508).</strong> It was a React island (<code>hook-unsupported</code>) and is now read natively, like the whole view or a destructuring. An optional chain (<code>?.</code>) or a computed key is still not read.
+        </li>
+        {/* source: PR #508 (F560); crates/brust-compiler/src/analyze/passes/helpers.rs (local_arrows, arrows_of); crates/brust-compiler/tests/local_arrow_calls.rs; scripts/battery/rows.ts c-local-arrow-call, c-local-arrow-call-in-list, c-local-arrow-call-row-shadows; the Rendering tiers docs page */}
+        <li>
+          <strong>A small arrow function declared in the component costs no tier when you call it in the markup (#508).</strong> For <code>{"const fmt = (x: number) => x + ' ' + props.unit"}</code>, the call <code>{'{fmt(props.a)}'}</code>, in the markup, in a state initialiser or in a derived value, is compiled as the arrow&rsquo;s expression. Before, the component was a React island (<code>client-function-in-job</code>). The arrow stays a function, and the component stays React where it matters, for an arrow with a block body, a call with an argument that contains a call, an arrow that calls a method of an imported object or of a store handle, and a call in the rows of a list whose item or index is spelled like a name the arrow reads.
+        </li>
+        {/* source: PR #508 (F560); crates/brust-compiler/src/analyze/passes/mod.rs (react_request), children.rs (want_react, react_copy), pipeline.rs; crates/brust-compiler/tests/nested_fed.rs; tests/server/nested-fed.test.ts, nested-fed-copy.chromium.test.ts; scripts/battery/rows.ts b-fed-child-in-fed-component; the Rendering tiers docs page */}
+        <li>
+          <strong>A component with a precomputed value, placed inside another component that has one too, now keeps the outer component&rsquo;s tier (#508).</strong> A precomputed value is a class built by a helper or a <code>useId</code>. At that place the inner component renders as a React island, a copy compiled for that place, and the build prints a <code>nested-fed-child</code> warning on the inner component; the copy is listed in <code>dist/manifest.json</code> with the id <code>{'<id>_r'}</code>. Everywhere else the inner component keeps its own tier. Before, the outer component became the island (<code>nested-instance</code>); it still does when the copy would not help. Both the warning and the <code>_r</code> entries are expected after you upgrade. See <a href="/docs/rendering-tiers#hooks">Rendering tiers</a>.
+        </li>
+        {/* source: PR #508 (F560), table "Measured": a 521-component app, brust build --dev, tiers by file and name */}
+        <li>
+          <strong>On an app of 521 components, 60 components moved to a lighter tier and none to a heavier one (#508).</strong> Measured with <code>brust build --dev</code>: React 406 → 348, native 26 → 86, static 89 → 95. Two of the 348 React entries are the new copies.
+        </li>
+      </ul>
 
       <h2 id="alpha-52">2.0.0-alpha.52 · 20 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.51: #505 (ledger F555, F556, F557) and #506 (F558, F559); the docs fix F565 */}
