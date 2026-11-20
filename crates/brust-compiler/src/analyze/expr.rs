@@ -1263,6 +1263,8 @@ pub struct Walk {
     /// F564 D2 (addition 1): `(binding, initialiser)` of each `const name = value` the walk declares, so a receiver rooted
     /// at the local can be rooted through what it holds.
     pub const_values: Vec<(js_ast::Ref, js_ast::Expr)>,
+    /// F564 D2: `(binding, value)` of each assignment to a plain identifier (`l = LIST`, `x ??= y`).
+    pub reassigned: Vec<(js_ast::Ref, js_ast::Expr)>,
     /// Depth of nested functions at the point being walked (crate-visible: F230's shallow walks build a `Walk` too).
     pub(crate) depth: u32,
 }
@@ -1546,6 +1548,9 @@ impl Walk {
                     }
                     for r in alias_roots(&b.right) {
                         self.aliases.push((t, r));
+                    }
+                    if let E::EIdentifier(id) = &b.left.data {
+                        self.reassigned.push((id.ref_, b.right));
                     }
                 }
             }

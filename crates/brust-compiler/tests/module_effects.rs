@@ -59,7 +59,7 @@ fn refused(ir: &ComponentIR, rule: &str, why: &str) {
     assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
 }
 
-const API: &str = "export const api = (id: string) => new Map([[id, 1]])\nexport const actions = { a: (x: any) => new Set([x]), b: (x: any) => new Set([x]) }\n";
+const API: &str = "export class Box { constructor(public n: number) {} }\nexport const api = (id: string) => new Map([[id, 1]])\nexport const actions = { a: (x: any) => new Set([x]), b: (x: any) => new Set([x]) }\n";
 
 /// A component in `C.tsx` that reads an import (so the module is judged), after `decls`.
 fn reading(decls: &str) -> ComponentIR {
@@ -474,5 +474,26 @@ fn a_local_that_holds_values_from_module_code_is_not_the_module_object() {
         ),
     ] {
         refused(&reading(decls), "module-side-effect", why);
+    }
+}
+
+#[test]
+fn values_stored_into_a_local_or_computed_from_module_tables_are_not_module_objects() {
+    for decls in [
+        // a copy taken with arguments computed from module tables
+        "const LIST = ['a']\nconst SIZES = [2, 3]\nexport function cut(data: number[], v: number) { const n = SIZES[v]; const part = data.slice(0, Math.floor(n / 2)); part.push(0); return part }",
+        // a module string stored into a fresh element's member
+        "const LIST = ['a']\nconst URL = '/x.js'\nexport function load() { const s = document.createElement('script'); s.src = URL; s.async = true; return s }",
+        // an instance of an imported class kept in a holder, then cleared
+        "import { Box } from './api'\nconst LIST = ['a']\nexport function keep(holder: { current: unknown }) { const b = new Box(LIST.length); holder.current = b; holder.current = null }",
+    ] {
+        let ir = reading(decls);
+        assert!(
+            fallbacks(&ir)
+                .iter()
+                .all(|(r, _)| r != "module-side-effect"),
+            "{decls}\n{:?}",
+            ir.diagnostics
+        );
     }
 }

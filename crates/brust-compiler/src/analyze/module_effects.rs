@@ -119,25 +119,21 @@ pub fn module_effect(
             })
     };
     let tainted_of = |w: &Walk| -> HashSet<u32> {
-        // Locals rooted at this module (addition 1): a `const` whose initialiser the receiver rule roots at this module
-        // (`const l = LIST`, `const l = getList()`), and any local that is an alias of one (`l = LIST`, `x = a ?? LIST`,
-        // `o.k = LIST`: what holds the object may hand it out). A local that only HOLDS a value computed from module code
-        // (`r[i] = gfMul(…)`) is not the module's object.
+        // Locals rooted at this module (addition 1): a `const` declared, or a local assigned, from a value the receiver
+        // rule roots at this module or a literal that holds one (`const l = LIST`, `const l = getList()`, `l = a ?? LIST`,
+        // `const o = { l: LIST }`). A value stored INTO a local's member (`s.src = URL`, `r[i] ^= gfMul(…)`) does not make
+        // the local the module's object.
         let mut tainted: HashSet<u32> = HashSet::new();
         loop {
             let before = tainted.len();
             let own_so_far = |r: js_ast::Ref| module.contains(&key(r)) || tainted.contains(&key(r));
             let mut add: Vec<u32> = Vec::new();
-            for (b, v) in &w.const_values {
+            for (b, v) in w.const_values.iter().chain(w.reassigned.iter()) {
                 if !tainted.contains(&key(*b))
+                    && !module.contains(&key(*b))
                     && (receiver_writes(v, &own_so_far, &followable)
                         || holds_own(v, &own_so_far, 0))
                 {
-                    add.push(key(*b));
-                }
-            }
-            for (b, r) in &w.aliases {
-                if !tainted.contains(&key(*b)) && own_so_far(*r) && !module.contains(&key(*b)) {
                     add.push(key(*b));
                 }
             }
@@ -702,17 +698,22 @@ fn receiver_writes(
         }
         let go = |x: &js_ast::Expr| walk(x, module, follow, depth + 1);
         // An argument handed to a call on the chain: does it name a binding of this module?
-        let hands = |a: &js_ast::Expr| {
-            let mut w = Walk::default();
-            w.expr(a);
-            w.used.iter().any(|r| module(*r))
+        // An argument that may hand this module's object to the callee (which may return it): the object itself, a literal
+        // holding it, or a function whose code reads one. A primitive computed from module values hands nothing.
+        let hands = |a: &js_ast::Expr| match &a.data {
+            E::EArrow(_) | E::EFunction(_) => {
+                let mut w = Walk::default();
+                w.expr(a);
+                w.used.iter().any(|r| module(*r))
+            }
+            _ => {
+                crate::analyze::expr::alias_roots(a).into_iter().any(module)
+                    || holds_own(a, module, 0)
+            }
         };
+        // a literal or a copying method's result (`slice`, `map`, `concat`): a fresh object, whatever it was built from
         if crate::analyze::plain_fn::fresh(e) {
-            return match &e.data {
-                // a copying method: the copy is fresh, its source is only read
-                E::ECall(c) => c.args.iter().any(hands),
-                _ => false,
-            };
+            return false;
         }
         match &e.data {
             E::EDot(d) => go(&d.target),
@@ -736,8 +737,10 @@ fn receiver_writes(
             {
                 go(&b.left) || go(&b.right)
             }
+            // `new` of a global or an imported class is a fresh object, unless it is handed this module's object
             E::ENew(n) => {
-                !matches!(&n.target.data, E::EIdentifier(id) if !module(id.ref_))
+                !matches!(&n.target.data, E::EImportIdentifier(_))
+                    && !matches!(&n.target.data, E::EIdentifier(id) if !module(id.ref_))
                     || n.args.iter().any(hands)
             }
             E::EIdentifier(id) => module(id.ref_),
