@@ -52,7 +52,7 @@
       "measuredRows": 30,
       "analysisOnlyRows": 0,
       "appComponents": 112,
-      "libraryComponents": 203
+      "libraryComponents": 204
     },
     {
       "blocker": "fallback:island-prop",
@@ -79,7 +79,7 @@
       "measuredRows": 7,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 34
+      "libraryComponents": 33
     },
     {
       "blocker": "fallback:context-island",
@@ -181,6 +181,15 @@
       "libraryComponents": 37
     },
     {
+      "blocker": "fallback:member-tag",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 20
+    },
+    {
       "blocker": "fallback:hook-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -218,15 +227,6 @@
     },
     {
       "blocker": "fallback:context-value",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 1
-    },
-    {
-      "blocker": "fallback:list-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -415,22 +415,13 @@
       "libraryComponents": 22
     },
     {
-      "blocker": "fallback:member-tag",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 20
-    },
-    {
       "blocker": "fallback:prop-pattern",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 18
+      "libraryComponents": 17
     },
     {
       "blocker": "fallback:let-var",
@@ -836,7 +827,7 @@
         "external-component",
         "hook-shape",
         "jsx-const-child",
-        "list-shape",
+        "member-tag",
         "use-id-in-render"
       ]
     },
