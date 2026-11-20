@@ -61,13 +61,15 @@ export async function renderingTiersLoader(): Promise<RenderingTiersData> {
         lang: 'ts',
         code: "function ready(island: Element, run: () => void) {\n  // committed before this code ran: the attribute says so, the event will not come again\n  if (island.getAttribute('data-committed') === '1') return run()\n  island.addEventListener('brust:island', run, { once: true })\n}\n\ndocument.addEventListener('brust:island', (e) => {\n  const { id, phase } = (e as CustomEvent<{ id: string; phase: 'committed' }>).detail\n  console.log(id, phase, e.target) // e.target is the <brust-island> host\n})",
       }),
-      // observed: packages/brust/test/fixtures/tiers built with this [tiers.max] (packages/brust/test/tiers.test.ts asserts the same text)
+      // illustrative: the [tiers] keys and the patterns follow packages/brust/test/tiers.test.ts (fixture packages/brust/test/fixtures/tiers); the file components/widgets/Map.tsx is an example, the fixture has components/widgets/Wide.tsx
       assert: codeBlock({ lang: 'toml', file: 'brust.toml', code: '[tiers]\nsnapshot = "tiers.json"\n\n[tiers.max]\n"components/views/**" = "static"\n"components/widgets/Map.tsx#default" = "react"' }),
+      // observed: the error packages/brust/test/tiers.test.ts asserts on the fixture's components/views/Counter.tsx with "components/views/**" = "static"
       tierError: codeBlock({
         lang: 'sh',
         cwd: '~/my-app',
         code: '$ brust build\nerror tier components/views/Counter.tsx:4:1 Counter compiles to native; [tiers.max] "components/views/**" allows static\n  state `count` is set (line 4)\n  an event handler (line 6)',
       }),
+      // illustrative: the shape of the file (version 1, sorted path#Export keys); components/widgets/Map.tsx is an example, not a file of the test fixture
       snapshot: codeBlock({
         lang: 'json',
         file: 'tiers.json',
