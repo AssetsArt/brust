@@ -87,7 +87,7 @@ fn a_ref_names_the_ref() {
     let ir = analyze(&format!(
         "{IMPORTS}export default function C() {{\n  const el = useRef(null)\n  return <p ref={{el}}>x</p>\n}}\n"
     ));
-    assert_eq!(native(&ir), ["a ref `el`"]);
+    assert_eq!(native(&ir), ["a ref `el` (line 4)"]);
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn several_causes_keep_the_fixed_order() {
             "state `n` is set (line 5)",
             "an event handler (line 6)",
             "an effect (line 4)",
-            "a ref `el`",
+            "a ref `el` (line 6)",
         ]
     );
 }
@@ -113,10 +113,41 @@ fn an_expression_that_depends_on_state() {
         "{IMPORTS}export default function C() {{\n  const [n, setN] = useState(0)\n  return <button onClick={{() => setN(n + 1)}}>{{[n, n].map((x) => x * 2).join(',')}}</button>\n}}\n"
     ));
     let why = native(&ir);
+    // F581: the line of the element that holds the expression.
     assert!(
-        why.iter().any(|w| w == "an expression depends on state"),
+        why.iter()
+            .any(|w| w == "an expression depends on state (line 4)"),
         "{why:?}"
     );
+}
+
+#[test]
+fn a_prop_linked_to_a_child_names_the_call_site() {
+    let ir = analyze_tree(&[
+        (
+            "C.tsx",
+            "import { useState } from 'react'\nimport Child from './Child'\nexport default function C() {\n  const [n, setN] = useState(0)\n  return (\n    <div onClick={() => setN(n + 1)}>\n      <Child n={n} />\n    </div>\n  )\n}\n",
+        ),
+        (
+            "Child.tsx",
+            "export default function Child({ n }: { n: number }) {\n  return <b>{n}</b>\n}\n",
+        ),
+    ]);
+    let why = native(&ir);
+    assert!(
+        why.iter()
+            .any(|w| w == "a prop is linked to a child (line 7)"),
+        "{why:?}"
+    );
+}
+
+#[test]
+fn a_ref_only_component_has_a_line_for_its_header() {
+    // F581: with no state or handler, the first cause with a line is the ref's.
+    let ir = analyze(&format!(
+        "{IMPORTS}export default function C() {{\n\n  const el = useRef(null)\n  return <p ref={{el}}>x</p>\n}}\n"
+    ));
+    assert_eq!(native(&ir), ["a ref `el` (line 5)"]);
 }
 
 #[test]

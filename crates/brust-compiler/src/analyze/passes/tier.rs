@@ -186,13 +186,21 @@ fn native_because(ir: &ComponentIR, st: &PassState, ctx: &PassCtx<'_>) -> Vec<St
         out.push(format!("an effect{}", at(Some(e.body.loc))));
     }
     for r in &ir.refs {
-        out.push(format!("a ref `{}`", r.name));
+        let loc = expr_loc(&r.init).or_else(|| ref_loc(&ir.template, &r.name));
+        out.push(format!("a ref `{}`{}", r.name, at(loc)));
     }
-    if !ir.child_links.is_empty() {
-        out.push("a prop is linked to a child".to_string());
+    // F581: the line of the child's call site, found through the link id the template node carries.
+    if let Some(link) = ir.child_links.first() {
+        out.push(format!(
+            "a prop is linked to a child{}",
+            at(component_loc(&ir.template, link.id))
+        ));
     }
     if has_state_dependent(ir) {
-        out.push("an expression depends on state".to_string());
+        out.push(format!(
+            "an expression depends on state{}",
+            at(state_dependent_loc(ir))
+        ));
     }
     for s in &ir.stores {
         if let Some(r) = &s.resolved {
@@ -231,64 +239,128 @@ fn dynamic_loc(n: &Node) -> Option<u32> {
     }
 }
 
-fn has_state_dependent(ir: &ComponentIR) -> bool {
-    let sd = |e: &Expr| {
-        matches!(
-            e,
-            Expr::Precomputed {
-                state_dependent: true,
-                ..
-            }
-        )
-    };
-    ir.derived.iter().any(|d| sd(&d.expr)) || ir.state.iter().any(|s| sd(&s.init)) || {
-        let mut found = false;
-        visit_exprs(&ir.template, &mut |e| found |= sd(e));
-        found
-    }
+fn is_state_dependent(e: &Expr) -> bool {
+    matches!(
+        e,
+        Expr::Precomputed {
+            state_dependent: true,
+            ..
+        }
+    )
 }
 
-fn visit_exprs(n: &Node, f: &mut impl FnMut(&Expr)) {
+fn has_state_dependent(ir: &ComponentIR) -> bool {
+    ir.derived.iter().any(|d| is_state_dependent(&d.expr))
+        || ir.state.iter().any(|s| is_state_dependent(&s.init))
+        || {
+            let mut found = false;
+            visit_exprs(&ir.template, None, &mut |e, _| {
+                found |= is_state_dependent(e)
+            });
+            found
+        }
+}
+
+/// F581: where the first state-dependent expression of the template sits: the line of the element or component that
+/// holds it (a precomputed value keeps no position of its own, and the IR gets no new field for it). `None` when there
+/// is none in the template (a derived value or a state initialiser has no position either).
+fn state_dependent_loc(ir: &ComponentIR) -> Option<u32> {
+    let mut at = None;
+    visit_exprs(&ir.template, None, &mut |e, loc| {
+        if at.is_none() && is_state_dependent(e) {
+            at = loc;
+        }
+    });
+    at
+}
+
+/// F581: the first node of the template (itself, then its children in order) that `f` answers for.
+fn find_node<T>(n: &Node, f: &impl Fn(&Node) -> Option<T>) -> Option<T> {
+    f(n).or_else(|| match n {
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().find_map(|c| find_node(c, f)),
+        Node::If { then, else_, .. } => then.iter().chain(else_).find_map(|c| find_node(c, f)),
+        Node::For { body, .. } => body.iter().find_map(|c| find_node(c, f)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => None,
+    })
+}
+
+/// F581: the `loc` of the `Node::Component` that carries link `id` (a `ChildLink` of the component).
+fn component_loc(n: &Node, id: u32) -> Option<u32> {
+    find_node(n, &|n| match n {
+        Node::Component { loc, link, .. } if *link == Some(id) => Some(*loc),
+        _ => None,
+    })
+}
+
+/// F581: the `loc` of the element that binds `ref={name}` (the declaration of a ref keeps no position of its own).
+fn ref_loc(n: &Node, name: &str) -> Option<u32> {
+    find_node(n, &|n| match n {
+        Node::Element { loc, attrs, .. }
+            if attrs
+                .iter()
+                .any(|a| matches!(a, Attr::Ref { name: r } if r == name)) =>
+        {
+            Some(*loc)
+        }
+        _ => None,
+    })
+}
+
+/// Every expression of the template with the `loc` of the nearest enclosing element or component.
+fn visit_exprs(n: &Node, at: Option<u32>, f: &mut impl FnMut(&Expr, Option<u32>)) {
     match n {
         Node::Element {
-            attrs, children, ..
+            loc,
+            attrs,
+            children,
+            ..
         } => {
+            let at = Some(*loc);
             for a in attrs {
                 if let Attr::Dynamic { value, .. }
                 | Attr::Spread(value)
                 | Attr::InnerHtml { value } = a
                 {
-                    f(value);
+                    f(value, at);
                 }
             }
-            children.iter().for_each(|c| visit_exprs(c, f));
+            children.iter().for_each(|c| visit_exprs(c, at, f));
         }
-        Node::Slot(e) => f(e),
+        Node::Slot(e) => f(e, at),
         Node::If {
             cond, then, else_, ..
         } => {
-            f(cond);
-            then.iter().chain(else_).for_each(|c| visit_exprs(c, f));
+            f(cond, at);
+            then.iter().chain(else_).for_each(|c| visit_exprs(c, at, f));
         }
         Node::For {
             source, key, body, ..
         } => {
-            f(source);
-            f(key);
-            body.iter().for_each(|c| visit_exprs(c, f));
+            f(source, at);
+            f(key, at);
+            body.iter().for_each(|c| visit_exprs(c, at, f));
         }
         Node::Component {
-            props, children, ..
+            loc,
+            props,
+            children,
+            ..
         } => {
-            props.iter().for_each(|(_, v)| f(v));
-            children.iter().for_each(|c| visit_exprs(c, f));
+            let at = Some(*loc);
+            props.iter().for_each(|(_, v)| f(v, at));
+            children.iter().for_each(|c| visit_exprs(c, at, f));
         }
-        Node::Fragment(cs) => cs.iter().for_each(|c| visit_exprs(c, f)),
+        Node::Fragment(cs) => cs.iter().for_each(|c| visit_exprs(c, at, f)),
         Node::Dynamic {
-            component, props, ..
+            loc,
+            component,
+            props,
+            ..
         } => {
-            f(component);
-            f(props);
+            f(component, Some(*loc));
+            f(props, Some(*loc));
         }
         Node::Text(_) | Node::Outlet => {}
     }
