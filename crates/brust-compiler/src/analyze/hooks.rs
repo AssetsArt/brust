@@ -3171,6 +3171,11 @@ fn find_export(
         if declared_here(ast, &imported) {
             return (true, None, Vec::new());
         }
+        // F564 (Mellow F2): a name this module exports itself shadows every `export *`; when `declared_here` does not
+        // accept that local export, the search ends here.
+        if exports_locally(ast, &imported) {
+            return (false, None, Vec::new());
+        }
         let names = NameTable::for_hook(ast);
         let records = ast.import_records.as_slice();
         let spec_of = |i: u32| {
@@ -3240,6 +3245,50 @@ fn find_export(
         }
     }
     None
+}
+
+/// Whether `ast` exports `export` from its own scope: an exported declaration (`export const|let|var|function|class`), an
+/// `export default …` for `default`, or an `export { local as export }` of a binding that is not an import.
+fn exports_locally(ast: &js_ast::Ast<'_>, export: &str) -> bool {
+    let names = NameTable::for_hook(ast);
+    let mut w = crate::analyze::expr::Walk::default();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            let hit = match &stmt.data {
+                S::SLocal(l) if l.is_export => l.decls.iter().any(|d| {
+                    w.declared.clear();
+                    w.declare_binding(&d.binding);
+                    w.declared.iter().any(|r| names.name(*r) == export)
+                }),
+                S::SFunction(f) => {
+                    f.func.flags.contains(js_ast::flags::Function::IsExport)
+                        && f.func
+                            .name
+                            .as_ref()
+                            .is_some_and(|n| names.name(n.ref_) == export)
+                }
+                S::SClass(c) => {
+                    c.is_export
+                        && c.class
+                            .class_name
+                            .as_ref()
+                            .is_some_and(|n| names.name(n.ref_) == export)
+                }
+                S::SEnum(e) => e.is_export && names.name(e.name.ref_) == export,
+                S::SNamespace(n) => n.is_export && names.name(n.name.ref_) == export,
+                S::SExportDefault(_) => export == "default",
+                S::SExportClause(c) => c.items.slice().iter().any(|item| {
+                    item.alias.slice() == export.as_bytes()
+                        && names.import_of(item.name.ref_).is_none()
+                }),
+                _ => false,
+            };
+            if hit {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// The module-level `function` declaring `target`.

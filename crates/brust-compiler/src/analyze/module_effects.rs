@@ -212,20 +212,11 @@ pub fn module_effect(
     // a value that reads this module's binding (`const l = LIST`, `l = getList()`), through aliases, counts as one
     // (addition 1); a module function whose every return is rooted only at imports, globals or fresh values is followed
     // one level (addition 2).
-    let followable = |r: js_ast::Ref| -> bool {
-        returns
-            .get(&key(r))
-            .and_then(|b| b.as_ref())
-            .is_some_and(|rets| {
-                rets.iter()
-                    .all(|e| !receiver_writes(e, &own_module, &|_| false))
-            })
-    };
-    let tainted_of = |w: &Walk| -> HashSet<u32> {
-        // Locals rooted at this module (addition 1): a `const` declared, or a local assigned, from a value the receiver
-        // rule roots at this module or a literal that holds one (`const l = LIST`, `const l = getList()`, `l = a ?? LIST`,
-        // `const o = { l: LIST }`). A value stored INTO a local's member (`s.src = URL`, `r[i] ^= gfMul(…)`) does not make
-        // the local the module's object.
+    // Locals rooted at this module (addition 1): a `const` declared, or a local assigned, from a value the receiver rule
+    // roots at this module or a literal that holds one (`const l = LIST`, `const l = getList()`, `l = a ?? LIST`,
+    // `const o = { l: LIST }`). A value stored INTO a local's member (`s.src = URL`, `r[i] ^= gfMul(…)`) does not make the
+    // local the module's object. `follow`: the module functions whose call results are not this module's objects.
+    let taint = |w: &Walk, follow: &dyn Fn(js_ast::Ref) -> bool| -> HashSet<u32> {
         let mut tainted: HashSet<u32> = HashSet::new();
         loop {
             let before = tainted.len();
@@ -234,8 +225,7 @@ pub fn module_effect(
             for (b, v) in w.const_values.iter().chain(w.reassigned.iter()) {
                 if !tainted.contains(&key(*b))
                     && !module.contains(&key(*b))
-                    && (receiver_writes(v, &own_so_far, &followable)
-                        || holds_own(v, &own_so_far, 0))
+                    && (receiver_writes(v, &own_so_far, follow) || holds_own(v, &own_so_far, 0))
                 {
                     add.push(key(*b));
                 }
@@ -247,6 +237,21 @@ pub fn module_effect(
         }
         tainted
     };
+    // Addition 2 (Mellow F1): every return is judged with the function's OWN locals rooted (`const l = LIST; return l`
+    // is LIST), and no further function is followed.
+    let followable = |r: js_ast::Ref| -> bool {
+        let Some(Some(rets)) = returns.get(&key(r)) else {
+            return false;
+        };
+        let Some((_, w)) = walks.iter().find(|(k, _)| *k == key(r)) else {
+            return false;
+        };
+        let local = taint(w, &|_| false);
+        let own = |x: js_ast::Ref| own_module(x) || local.contains(&key(x));
+        rets.iter()
+            .all(|e| !receiver_writes(e, &own, &|_| false) && !holds_own(e, &own, 0))
+    };
+    let tainted_of = |w: &Walk| -> HashSet<u32> { taint(w, &followable) };
     let mutating_write = |w: &Walk| -> Option<js_ast::Expr> {
         let tainted = tainted_of(w);
         let own = |r: js_ast::Ref| own_module(r) || tainted.contains(&key(r));

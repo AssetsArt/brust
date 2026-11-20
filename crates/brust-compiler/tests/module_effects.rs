@@ -524,3 +524,43 @@ fn an_instance_of_a_global_member_class_is_fresh() {
         ir.diagnostics
     );
 }
+
+#[test]
+fn review_round_1_a_returned_local_alias_and_a_shadowed_star_export_are_refused() {
+    // F1: a module function returning a LOCAL alias of a module object is not followed
+    for decls in [
+        "const LIST = ['a']\nfunction getList() { const l = LIST; return l }\nexport function add(x: string) { getList().push(x) }",
+        "const LIST = ['a']\nfunction getList() { let l: string[] = []; l = LIST; return l }\nexport function add(x: string) { getList().push(x) }",
+        "const LIST = ['a']\nfunction getBox() { return { l: LIST } }\nexport function add(x: string) { getBox().l.push(x) }",
+    ] {
+        refused(
+            &reading(decls),
+            "module-side-effect",
+            "this module's function `add` (line 4) may change a module binding",
+        );
+    }
+    // F2: a module's own export of the name shadows `export *`
+    let a = "function make() { let n = 0; return { get overview() { n++; return 'x' + n } } }\nexport const ICON = make()\nexport * from './b'\n";
+    let b = "export const ICON = { overview: 'o' }\n";
+    let ir = with_icons(
+        ICONS,
+        &[("a.ts", a), ("b.ts", b)],
+        "import { ICON } from './a'",
+        "const O = { icon: ICON.overview }",
+    );
+    refused(
+        &ir,
+        "module-side-effect",
+        "it reads `ICON.overview`, an imported value brust cannot prove is a plain object",
+    );
+    // … and a name the module does not declare still follows `export *`
+    clean(&with_icons(
+        ICONS,
+        &[
+            ("a.ts", "export const OTHER = 1\nexport * from './b'\n"),
+            ("b.ts", b),
+        ],
+        "import { ICON } from './a'",
+        "const O = { icon: ICON.overview }",
+    ));
+}
