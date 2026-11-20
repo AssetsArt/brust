@@ -2,6 +2,12 @@
   "id": "input_cabc2a77",
   "source": "tests/fixtures/reactive-list-child/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `n` is set (line 10)",
+    "an event handler (line 14)",
+    "a prop is linked to a child",
+    "an expression depends on state"
+  ],
   "props": [
     {
       "name": "props",

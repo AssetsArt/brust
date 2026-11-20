@@ -287,6 +287,11 @@ pub struct ComponentIR {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rest_childless: bool,
     pub tier: Tier,
+    /// F569 (D4): why a `Native` component is not static, one line each in a fixed order with the source line when the
+    /// IR has a position ("state `open` is set (line 12)"); at most 8, then "… and N more". Empty for any other tier.
+    /// The build prints it when `[tiers.max]` allows `static` only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_because: Vec<String>,
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
     /// key in `props`. Read only as `rest.k` (an ordinary prop read) or spread in JSX, where it is
@@ -620,6 +625,7 @@ impl ComponentIR {
             rest_clone_of: None,
             rest_childless: false,
             tier: Tier::Pending,
+            native_because: Vec::new(),
             props: vec![],
             props_rest: None,
             props_whole: None,

@@ -2,6 +2,9 @@
   "id": "input_04b8b787",
   "source": "tests/fixtures/use-id-row/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "a prop is linked to a child"
+  ],
   "props": [
     {
       "name": "props",

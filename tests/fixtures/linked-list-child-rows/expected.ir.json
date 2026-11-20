@@ -2,6 +2,11 @@
   "id": "input_e25c1d06",
   "source": "tests/fixtures/linked-list-child-rows/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `items` is set (line 6)",
+    "an event handler (line 9)",
+    "a prop is linked to a child"
+  ],
   "props": [],
   "state": [
     {

@@ -2,6 +2,12 @@
   "id": "input_403bf43c",
   "source": "tests/fixtures/paint-rules/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `on` is set (line 4)",
+    "an event handler (line 10)",
+    "an effect (line 6)",
+    "a ref `ref`"
+  ],
   "props": [
     {
       "name": "size",

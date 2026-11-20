@@ -2,6 +2,10 @@
   "id": "input_9eb001a4",
   "source": "tests/fixtures/list-cond-element-state/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `linked` is set (line 6)",
+    "an event handler (line 9)"
+  ],
   "props": [
     {
       "name": "items",

@@ -2,6 +2,10 @@
   "id": "input_0df7be4d",
   "source": "tests/fixtures/inner-html/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `on` is set (line 5)",
+    "an event handler (line 8)"
+  ],
   "props": [],
   "state": [
     {

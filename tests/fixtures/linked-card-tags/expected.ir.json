@@ -2,6 +2,11 @@
   "id": "input_dcfff534",
   "source": "tests/fixtures/linked-card-tags/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `items` is set (line 6)",
+    "an event handler (line 9)",
+    "a prop is linked to a child"
+  ],
   "props": [],
   "repeats_children": true,
   "state": [

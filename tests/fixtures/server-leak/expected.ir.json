@@ -2,6 +2,10 @@
   "id": "input_8803b8a9",
   "source": "tests/fixtures/server-leak/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `text` is set (line 5)",
+    "an event handler (line 8)"
+  ],
   "props": [
     {
       "name": "path",

@@ -2,6 +2,11 @@
   "id": "input_a93faba9",
   "source": "tests/fixtures/nested-list/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `scale` is set (line 7)",
+    "an event handler (line 9)",
+    "an expression depends on state"
+  ],
   "props": [
     {
       "name": "rows",

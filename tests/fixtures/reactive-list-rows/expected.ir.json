@@ -2,6 +2,10 @@
   "id": "input_ba5f4ec9",
   "source": "tests/fixtures/reactive-list-rows/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `picked` is set (line 6)",
+    "an event handler (line 10)"
+  ],
   "props": [
     {
       "name": "props",

@@ -2,6 +2,10 @@
   "id": "input_6ccbd0c8",
   "source": "tests/fixtures/module-const-nan/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `n` is set (line 3)",
+    "an event handler (line 11)"
+  ],
   "props": [],
   "state": [
     {
