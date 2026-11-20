@@ -497,3 +497,30 @@ fn values_stored_into_a_local_or_computed_from_module_tables_are_not_module_obje
         );
     }
 }
+
+#[test]
+fn a_call_handed_a_primitive_const_or_a_package_made_hook_returns_no_module_object() {
+    // the Radix shape: a context hook taken from package code, called with a module string, its value changed
+    let decls = "import { createContextScope } from '@radix-ui/react-context'\nconst LIST = ['a']\nconst NAME = 'Thumb'\nconst [createCtx] = createContextScope('S')\nconst [Provider, useCtx] = createCtx<any>('S')\nexport function useThumb(scope: any, el: any) { const context = useCtx(NAME, scope); context.thumbs.add(el) }";
+    let ir = reading(decls);
+    assert!(
+        fallbacks(&ir)
+            .iter()
+            .all(|(r, _)| r != "module-side-effect"),
+        "{:?}",
+        ir.diagnostics
+    );
+}
+
+#[test]
+fn an_instance_of_a_global_member_class_is_fresh() {
+    let decls = "const LIST = ['a']\nexport function load(src: string) { const image = new window.Image(); image.src = src; return image }";
+    let ir = reading(decls);
+    assert!(
+        fallbacks(&ir)
+            .iter()
+            .all(|(r, _)| r != "module-side-effect"),
+        "{:?}",
+        ir.diagnostics
+    );
+}

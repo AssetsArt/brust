@@ -105,94 +105,6 @@ pub fn module_effect(
             }
         }
     }
-    // F564 D2 (lead ruling 17fbc5e3): the receiver rule of a function's code. A local the code declares or assigns from
-    // a value that reads this module's binding (`const l = LIST`, `l = getList()`), through aliases, counts as one
-    // (addition 1); a module function whose every return is rooted only at imports, globals or fresh values is followed
-    // one level (addition 2).
-    let followable = |r: js_ast::Ref| -> bool {
-        returns
-            .get(&key(r))
-            .and_then(|b| b.as_ref())
-            .is_some_and(|rets| {
-                rets.iter()
-                    .all(|e| !receiver_writes(e, &|x| module.contains(&key(x)), &|_| false))
-            })
-    };
-    let tainted_of = |w: &Walk| -> HashSet<u32> {
-        // Locals rooted at this module (addition 1): a `const` declared, or a local assigned, from a value the receiver
-        // rule roots at this module or a literal that holds one (`const l = LIST`, `const l = getList()`, `l = a ?? LIST`,
-        // `const o = { l: LIST }`). A value stored INTO a local's member (`s.src = URL`, `r[i] ^= gfMul(…)`) does not make
-        // the local the module's object.
-        let mut tainted: HashSet<u32> = HashSet::new();
-        loop {
-            let before = tainted.len();
-            let own_so_far = |r: js_ast::Ref| module.contains(&key(r)) || tainted.contains(&key(r));
-            let mut add: Vec<u32> = Vec::new();
-            for (b, v) in w.const_values.iter().chain(w.reassigned.iter()) {
-                if !tainted.contains(&key(*b))
-                    && !module.contains(&key(*b))
-                    && (receiver_writes(v, &own_so_far, &followable)
-                        || holds_own(v, &own_so_far, 0))
-                {
-                    add.push(key(*b));
-                }
-            }
-            tainted.extend(add);
-            if tainted.len() == before {
-                break;
-            }
-        }
-        tainted
-    };
-    let mutating_write = |w: &Walk| -> Option<js_ast::Expr> {
-        let tainted = tainted_of(w);
-        let own = |r: js_ast::Ref| module.contains(&key(r)) || tainted.contains(&key(r));
-        w.calls.iter().find_map(|c| {
-            let E::ECall(call) = &c.data else {
-                return None;
-            };
-            match &call.target.data {
-                E::EDot(d)
-                    if MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
-                        && receiver_writes(&d.target, &own, &followable) =>
-                {
-                    Some(call.target)
-                }
-                _ => None,
-            }
-        })
-    };
-    // A function WRITES a module binding when its code assigns or writes through one, calls a mutating method on one (a
-    // fresh copy excepted), writes through a root it cannot name (`get().a = …`, `this.a = …`), or calls or names a
-    // function that writes. A least fixpoint.
-    let writes = |w: &Walk, writers: &HashSet<u32>| {
-        // a write through a local holding this module's object counts (addition 1); assigning the local itself does not
-        let tainted = tainted_of(w);
-        let through = w
-            .member_written
-            .iter()
-            .chain(w.member_writes.iter().map(|(r, _)| r));
-        w.opaque_write
-            || w.assigned.iter().any(|r| module.contains(&key(*r)))
-            || through
-                .into_iter()
-                .any(|r| module.contains(&key(*r)) || tainted.contains(&key(*r)))
-            || w.used.iter().any(|r| writers.contains(&key(*r)))
-            || mutating_write(w).is_some()
-    };
-    let mut writers: HashSet<u32> = HashSet::new();
-    loop {
-        let before = writers.len();
-        for (k, w) in &walks {
-            if !writers.contains(k) && writes(w, &writers) {
-                writers.insert(*k);
-            }
-        }
-        if writers.len() == before {
-            break;
-        }
-    }
-    let function_ok = |k: u32| !writers.contains(&k);
     // Lead ruling b0dff21e: a package call or an element built from accepted values runs only package code
     // (trusted, ledger N1) and hands it nothing that could run app code that writes.
     let package_rooted = |e: &js_ast::Expr| {
@@ -265,6 +177,125 @@ pub fn module_effect(
             break;
         }
     }
+    // F564 D2: a binding taken from package code (`const useXContext = createXContext(…)[0]`) is package code: what
+    // calling it returns is the package's object, as for an import.
+    // … and a `const` holding a primitive literal (`const NAME = 'Slider'`) is no object anything could change.
+    let mut primitive_consts: HashSet<u32> = HashSet::new();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            if let S::SLocal(l) = &stmt.data
+                && matches!(l.kind, js_ast::S::Kind::KConst)
+            {
+                for d in l.decls.iter() {
+                    if let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
+                        && matches!(
+                            v.data,
+                            E::EString(_)
+                                | E::ENumber(_)
+                                | E::EBigInt(_)
+                                | E::EBoolean(_)
+                                | E::ENull(_)
+                                | E::EUndefined(_)
+                        )
+                    {
+                        primitive_consts.insert(key(id.r#ref));
+                    }
+                }
+            }
+        }
+    }
+    let own_module = |r: js_ast::Ref| {
+        let k = key(r);
+        module.contains(&k) && !foreign.contains(&k) && !primitive_consts.contains(&k)
+    };
+    // F564 D2 (lead ruling 17fbc5e3): the receiver rule of a function's code. A local the code declares or assigns from
+    // a value that reads this module's binding (`const l = LIST`, `l = getList()`), through aliases, counts as one
+    // (addition 1); a module function whose every return is rooted only at imports, globals or fresh values is followed
+    // one level (addition 2).
+    let followable = |r: js_ast::Ref| -> bool {
+        returns
+            .get(&key(r))
+            .and_then(|b| b.as_ref())
+            .is_some_and(|rets| {
+                rets.iter()
+                    .all(|e| !receiver_writes(e, &own_module, &|_| false))
+            })
+    };
+    let tainted_of = |w: &Walk| -> HashSet<u32> {
+        // Locals rooted at this module (addition 1): a `const` declared, or a local assigned, from a value the receiver
+        // rule roots at this module or a literal that holds one (`const l = LIST`, `const l = getList()`, `l = a ?? LIST`,
+        // `const o = { l: LIST }`). A value stored INTO a local's member (`s.src = URL`, `r[i] ^= gfMul(…)`) does not make
+        // the local the module's object.
+        let mut tainted: HashSet<u32> = HashSet::new();
+        loop {
+            let before = tainted.len();
+            let own_so_far = |r: js_ast::Ref| own_module(r) || tainted.contains(&key(r));
+            let mut add: Vec<u32> = Vec::new();
+            for (b, v) in w.const_values.iter().chain(w.reassigned.iter()) {
+                if !tainted.contains(&key(*b))
+                    && !module.contains(&key(*b))
+                    && (receiver_writes(v, &own_so_far, &followable)
+                        || holds_own(v, &own_so_far, 0))
+                {
+                    add.push(key(*b));
+                }
+            }
+            tainted.extend(add);
+            if tainted.len() == before {
+                break;
+            }
+        }
+        tainted
+    };
+    let mutating_write = |w: &Walk| -> Option<js_ast::Expr> {
+        let tainted = tainted_of(w);
+        let own = |r: js_ast::Ref| own_module(r) || tainted.contains(&key(r));
+        w.calls.iter().find_map(|c| {
+            let E::ECall(call) = &c.data else {
+                return None;
+            };
+            match &call.target.data {
+                E::EDot(d)
+                    if MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+                        && receiver_writes(&d.target, &own, &followable) =>
+                {
+                    Some(call.target)
+                }
+                _ => None,
+            }
+        })
+    };
+    // A function WRITES a module binding when its code assigns or writes through one, calls a mutating method on one (a
+    // fresh copy excepted), writes through a root it cannot name (`get().a = …`, `this.a = …`), or calls or names a
+    // function that writes. A least fixpoint.
+    let writes = |w: &Walk, writers: &HashSet<u32>| {
+        // a write through a local holding this module's object counts (addition 1); assigning the local itself does not
+        let tainted = tainted_of(w);
+        let through = w
+            .member_written
+            .iter()
+            .chain(w.member_writes.iter().map(|(r, _)| r));
+        w.opaque_write
+            || w.assigned.iter().any(|r| module.contains(&key(*r)))
+            || through
+                .into_iter()
+                .any(|r| module.contains(&key(*r)) || tainted.contains(&key(*r)))
+            || w.used.iter().any(|r| writers.contains(&key(*r)))
+            || mutating_write(w).is_some()
+    };
+    let mut writers: HashSet<u32> = HashSet::new();
+    loop {
+        let before = writers.len();
+        for (k, w) in &walks {
+            if !writers.contains(k) && writes(w, &writers) {
+                writers.insert(*k);
+            }
+        }
+        if writers.len() == before {
+            break;
+        }
+    }
+    let function_ok = |k: u32| !writers.contains(&k);
     let package_rooted = |e: &js_ast::Expr| {
         package_rooted(e)
             || matches!(&e.data, E::EIdentifier(id) if foreign.contains(&key(id.ref_)))
@@ -739,9 +770,8 @@ fn receiver_writes(
             }
             // `new` of a global or an imported class is a fresh object, unless it is handed this module's object
             E::ENew(n) => {
-                !matches!(&n.target.data, E::EImportIdentifier(_))
-                    && !matches!(&n.target.data, E::EIdentifier(id) if !module(id.ref_))
-                    || n.args.iter().any(hands)
+                // `new Map()`, `new window.Image()`, `new Poller(…)`: the constructor's root is a global or an import
+                chain_root(&n.target).is_none_or(&module) || n.args.iter().any(hands)
             }
             E::EIdentifier(id) => module(id.ref_),
             E::EImportIdentifier(_) => false,
@@ -808,8 +838,8 @@ fn holds_own(e: &js_ast::Expr, own: &dyn Fn(js_ast::Ref) -> bool, depth: u8) -> 
     }
 }
 
-/// F564 D2 addition 2: the values a function body returns, when the rule can read every path (`return` in blocks and
-/// `if`s); `None` for a loop, a `try`, a `switch` or a label.
+/// F564 D2 addition 2: the values a function body returns (every `return` in it, through blocks, branches, loops,
+/// `try` and `switch`, not in a nested function); `None` for a statement the rule does not read (`with`, a class).
 fn returns_of(stmts: &[js_ast::Stmt]) -> Option<Vec<js_ast::Expr>> {
     fn go(s: &js_ast::Stmt, out: &mut Vec<js_ast::Expr>) -> bool {
         match &s.data {
@@ -819,6 +849,27 @@ fn returns_of(stmts: &[js_ast::Stmt]) -> Option<Vec<js_ast::Expr>> {
             }
             S::SBlock(b) => b.stmts.slice().iter().all(|x| go(x, out)),
             S::SIf(i) => go(&i.yes, out) && i.no.as_ref().is_none_or(|n| go(n, out)),
+            S::SFor(f) => go(&f.body, out),
+            S::SForIn(f) => go(&f.body, out),
+            S::SForOf(f) => go(&f.body, out),
+            S::SWhile(w) => go(&w.body, out),
+            S::SDoWhile(w) => go(&w.body, out),
+            S::SLabel(l) => go(&l.stmt, out),
+            S::STry(t) => {
+                t.body.slice().iter().all(|x| go(x, out))
+                    && t.catch
+                        .as_ref()
+                        .is_none_or(|c| c.body.slice().iter().all(|x| go(x, out)))
+                    && t.finally
+                        .as_ref()
+                        .is_none_or(|f| f.stmts.slice().iter().all(|x| go(x, out)))
+            }
+            S::SSwitch(sw) => sw
+                .cases
+                .slice()
+                .iter()
+                .all(|c| c.body.slice().iter().all(|x| go(x, out))),
+            S::SBreak(_) | S::SContinue(_) => true,
             S::SLocal(_)
             | S::SExpr(_)
             | S::SThrow(_)
