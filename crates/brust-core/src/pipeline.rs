@@ -2801,7 +2801,7 @@ mod tests {
     /// `json_attr`, member access, hidden maps, length, iteration, truthiness.
     #[test]
     fn props_view_paints_like_the_cloned_props() {
-        let r = Renderer::from_templates(&BTreeMap::from([(
+        let r = Renderer::from_templates(BTreeMap::from([(
             "T".to_string(),
             "{{ _props | json_attr }}|{{ _props.name | e }}|{{ _props.__own is defined }}|\
              {{ _props['__children'] is defined }}|{{ _props | length }}|\
@@ -2849,7 +2849,7 @@ mod tests {
 
     #[test]
     fn props_view_hides_the_store() {
-        let r = Renderer::from_templates(&BTreeMap::from([(
+        let r = Renderer::from_templates(BTreeMap::from([(
             "T".to_string(),
             "{{ _props | json_attr }}".to_string(),
         )]))

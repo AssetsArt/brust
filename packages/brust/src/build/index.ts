@@ -24,7 +24,7 @@ import { escapes, relPosix } from './posix'
 import { swapDist } from './swap'
 import { importsStore } from './features'
 import { exposedModules, exposedStores } from './expose'
-import { type CacheRecord, type ManifestJson, needsWorkers, reachedJobs, tierOf, writeManifest } from './manifest'
+import { type CacheRecord, type ManifestJson, needsWorkers, reachedJobs, renderedTemplates, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 import { type ExprReads, prepareStatic, writeStatic } from './static'
 import { writeStaticWorker } from './static-worker'
@@ -371,14 +371,18 @@ async function buildInto(
     if (nestedOf(compiled, id) !== undefined) throw new BuildError('revive-host-route-root', `${id} is a page or layout and also receives lowered JSX children from a caller; this is a compiler bug (F158), please report it`)
   }
 
-  mkdirSync(join(out, 'jinja'), { recursive: true })
-  for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
-
   // F517: the modules `[build] expose` shares with runtime components are entries of the native-chunk build.
   const exposedMods = exposedModules(appRoot, o.expose)
   const client = await buildClientChunks(out, compiled, ctx, runtimeUrls, exposedMods, o.exposeIsolated, o.log)
   const chunks = new Map([...client.chunks, ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writersFor))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store }, nav: runtime.nav }, chunks })
+  // F559: the server looks a template up by name only for a member of a route's chain; every other component is
+  // printed inside the template of the component that places it, so its own template is never read. Only the chain
+  // members' templates are written (`components[id].template` of the others names no file). `BRUST_BUILD_ALL_TEMPLATES=1`
+  // writes every component's template as well, to read what one component compiles to; the server ignores the extras.
+  mkdirSync(join(out, 'jinja'), { recursive: true })
+  const written = process.env.BRUST_BUILD_ALL_TEMPLATES === '1' ? [...compiled.keys()] : renderedTemplates(manifest)
+  for (const id of written) writeFileSync(join(out, 'jinja', `${id}.jinja`), compiled.get(id)!.jinja)
   // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.
   const readClient = (rel: string) => (existsSync(join(out, rel)) ? readFileSync(join(out, rel), 'utf8') : undefined)
   for (const rec of Object.values(manifest.components)) if (rec.client && importsStore(readClient, rec.client, runtime.store)) rec.features.push('store')

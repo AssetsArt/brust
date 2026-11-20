@@ -18,7 +18,7 @@ fn fx() -> PathBuf {
 
 fn load() -> (Loaded, Renderer) {
     let l = Manifest::load(&fx()).unwrap();
-    let r = Renderer::from_templates(&l.templates).unwrap();
+    let r = Renderer::from_templates(l.templates.clone()).unwrap();
     (l, r)
 }
 
@@ -51,7 +51,7 @@ fn outlet_is_not_escaped() {
     let l = Manifest::load(&fx()).unwrap();
     let mut templates: BTreeMap<String, String> = l.templates.clone();
     templates.insert("leaf".into(), "<p><b>{{ who | e }}</b></p>".into());
-    let r = Renderer::from_templates(&templates).unwrap();
+    let r = Renderer::from_templates(templates).unwrap();
     let html = r
         .render_chain(
             &chain(&["appLayout_a1", "leaf"]),
@@ -165,7 +165,7 @@ fn render_error_names_template_and_line() {
     // `from_templates` (boot), not from `render`.
     let mut templates = BTreeMap::new();
     templates.insert("bad".to_string(), "<p>\n{{ 1 +* }}</p>".to_string());
-    match Renderer::from_templates(&templates) {
+    match Renderer::from_templates(templates) {
         Err(RenderError::Render { name, msg }) => {
             assert_eq!(name, "bad");
             assert!(msg.contains("line 2"), "{msg}");

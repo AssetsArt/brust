@@ -4,7 +4,7 @@
 // as the built route does.
 // Run alone: `bun test --timeout 180000 tests/server/recursive.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
 import { firstDifference, normalise } from '../../scripts/battery/ssr-normalise'
@@ -54,7 +54,10 @@ test('the recursive component is static and each template holds at most one macr
   const m = JSON.parse(readFileSync(join(app, 'dist/manifest.json'), 'utf8'))
   const comps = Object.values(m.components as Record<string, { tier: string; template: string }>)
   expect(comps.some((c) => c.tier === 'react')).toBe(false)
-  const macros = comps.map((c) => readFileSync(join(app, 'dist', c.template), 'utf8').match(/\{%-? ?macro /g)?.length ?? 0)
+  // Only the templates a route renders by name are written (F559); a component placed inside one is printed there.
+  const written = comps.filter((c) => existsSync(join(app, 'dist', c.template)))
+  expect(written.length).toBeGreaterThan(0)
+  const macros = written.map((c) => readFileSync(join(app, 'dist', c.template), 'utf8').match(/\{%-? ?macro /g)?.length ?? 0)
   expect(Math.max(...macros)).toBe(1)
 })
 

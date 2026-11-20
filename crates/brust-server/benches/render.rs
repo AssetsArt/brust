@@ -79,7 +79,7 @@ fn load() -> (Manifest, Renderer) {
             (id.clone(), src)
         })
         .collect();
-    let r = Renderer::from_templates(&templates).expect("templates compile");
+    let r = Renderer::from_templates(templates).expect("templates compile");
     (m, r)
 }
 

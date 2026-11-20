@@ -87,6 +87,10 @@ export default function Cli({ blocks, panels }: CliData) {
           Takes one entry, <code>routes.tsx</code> by default. A build error prints <code>error &lt;rule&gt; &lt;message&gt;</code> and exits 1.
         </li>
         <li>Writes to a temporary folder and swaps it in only on success.</li>
+        {/* source: packages/brust/src/build/index.ts (renderedTemplates: the members of manifest.routes[].chain; BRUST_BUILD_ALL_TEMPLATES) */}
+        <li>
+          <code>dist/jinja/</code> holds one template per page and layout. A component placed inside a page is printed in that page&rsquo;s template and gets no file of its own. Set <code>BRUST_BUILD_ALL_TEMPLATES=1</code> to also write every component&rsquo;s template when you want to read what one compiles to; the server ignores the extra files.
+        </li>
         <li>
           Refuses an out dir that is not empty and was not made by brust, unless you pass <code>--force</code>, and never writes to the app root, your home or a folder with sources (<code>out-dir-unsafe</code>).
         </li>

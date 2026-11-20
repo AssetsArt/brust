@@ -426,6 +426,12 @@ export function writeManifest(opts: {
   return { version: MANIFEST_VERSION, routes, components, assets: { runtime: opts.runtime.core, features: opts.runtime.features, ...(opts.runtime.nav === undefined ? {} : { nav: opts.runtime.nav }) }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
 }
 
+/** F559: the components whose template the server renders by name: the members of some route's chain, sorted. Every
+ * other component is printed inside the template of the component that places it. */
+export function renderedTemplates(manifest: { routes?: { chain: string[] }[] }): string[] {
+  return [...new Set((manifest.routes ?? []).flatMap((r) => r.chain))].sort()
+}
+
 /** S6 amendment (F66): the server's asset injection walks only each chain component's direct
  * `children[]`, and an inlined native child with a client chunk but no job and no `useId` has no
  * `instances[]` record. So every chain component gets one static entry `{ id, instances:
