@@ -8,6 +8,8 @@ import { type Browser, chromium, type Page } from 'playwright'
 const host = join(import.meta.dir, '../fixtures/cf-min')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
 let app = ''
+// build outputs live beside the app, not in it: the dev watcher would see every file written there and reload the open page
+let outRoot = ''
 let base = ''
 let proc: ReturnType<typeof Bun.spawn>
 let startProc: ReturnType<typeof Bun.spawn> | undefined
@@ -99,6 +101,7 @@ async function openPanel(page: Page, path: string) {
 
 beforeAll(async () => {
   app = mkdtempSync(join(host, '.devtest-ui-'))
+  outRoot = mkdtempSync(join(host, '.devtest-out-'))
   mkdirSync(join(app, 'pages'))
   for (const [f, s] of Object.entries(files)) writeFileSync(join(app, f), s)
   const port = freePort()
@@ -128,6 +131,7 @@ afterAll(async () => {
     }
   }
   rmSync(app, { recursive: true, force: true })
+  rmSync(outRoot, { recursive: true, force: true })
 })
 
 test('the indicator appears in dev with the build state and the tier counts of the page; Alt+Shift+B toggles the panel', async () => {
@@ -175,7 +179,7 @@ test('the host takes no part in the page layout (grid and flex bodies give it no
 }, 60_000)
 
 test('it is dev-only: `brust start` serves no <brust-devtools> and no devtools bundle', async () => {
-  const out = join(app, '.start-dist')
+  const out = join(outRoot, 'start-dist')
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.exitCode, b.stderr.toString()).toBe(0)
   startProc = Bun.spawn([bin, 'start', '--dist-dir', out, '--entry', join(app, 'routes.tsx'), '--port', '0', '--workers', '1'], {
@@ -209,7 +213,7 @@ test('it is dev-only: `brust start` serves no <brust-devtools> and no devtools b
 }, 120_000)
 
 test('the Components panel lists the tiers the manifest says (static layout, native page, react island, static item with a job)', async () => {
-  const out = join(app, '.manifest-dist')
+  const out = join(outRoot, 'manifest-dist')
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out, '--dev'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.exitCode, b.stderr.toString()).toBe(0)
   const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')) as { routes: { pattern: string; chain: string[] }[]; components: Record<string, { tier: string }> }
@@ -381,3 +385,7 @@ test('contrast of the indicator, the text and the tier badges is at least 4.5:1 
   }
   await page.close()
 }, 90_000)
+
+test('nothing in this file touched the watched app: the dev server never logged a change (F583)', () => {
+  expect(log.match(/^.*change detected.*$/gm) ?? []).toEqual([])
+})
