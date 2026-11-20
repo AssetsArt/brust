@@ -161,7 +161,7 @@ export default function Navigation({ blocks }: NavigationData) {
             <td>
               <code>data-brust-prefetch="false"</code>
             </td>
-            <td>On a link or a region: the links inside are not prefetched. They still navigate.</td>
+            <td>On a link, a region or <code>&lt;html&gt;</code>: the links inside are not prefetched. They still navigate. On <code>&lt;html&gt;</code> it turns prefetch off for the whole app.</td>
           </tr>
           <tr>
             <td>
@@ -312,6 +312,10 @@ export default function Navigation({ blocks }: NavigationData) {
         <li>
           <code>trigger</code> is <code>'link'</code>, <code>'navigate'</code> or <code>'popstate'</code>. <code>from</code> is the URL that was on screen, <code>url</code> the final URL after redirects, and <code>id</code> a per-tab counter that pairs
           the end of a navigation with its start.
+        </li>
+        <li>
+          {/* source: packages/runtime-dom/src/nav/nav.ts:305-315 (the `popstate` listener on `window`, registered when the nav module runs, before DOMContentLoaded) */}
+          The navigator handles <code>popstate</code> (back and forward) before any listener your app adds later, so by the time yours runs the page may already be changing. To follow a history move, listen for <code>brust:nav:load</code>, <code>success</code> and <code>error</code> and read <code>trigger</code> (<code>'popstate'</code> for back and forward) rather than listening for <code>popstate</code> yourself.
         </li>
         <li>
           The order is <code>click</code> (link clicks only), <code>load</code>, then exactly one of <code>success</code> or <code>error</code>. A newer navigation supersedes the one in flight, and the superseded one fires nothing more. Its

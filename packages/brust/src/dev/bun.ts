@@ -12,7 +12,7 @@ import { type DevProxy, startProxy } from './proxy'
 import { openCommand } from './open'
 import { HOTKEYS, Tui, type TuiOut, tuiMode } from './tui'
 import { loadBuildConfig } from '../build/config'
-import { broadRootWarnings, changeLine, defaultIgnored, watchLoop } from './watch'
+import { broadRootWarnings, changeLine, defaultIgnored, devExtraRoots, watchLoop } from './watch'
 
 export interface BunDevOptions {
   appRoot: string
@@ -317,7 +317,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
   const isCss = (rel: string) => rel.startsWith('public/') && rel.endsWith('.css')
 
   // F273: `[build] source_roots` are watched too (a bad config is the build's error to report, not the watcher's)
-  const extraRoots = await loadBuildConfig(appRoot).then((c) => c.sourceRoots.map((r) => resolve(appRoot, r)), () => [] as string[])
+  const extraRoots = await loadBuildConfig(appRoot).then((c) => devExtraRoots(appRoot, c.sourceRoots, c.devWatch, (l) => tui.log(l)), () => [] as string[])
   for (const w of broadRootWarnings(extraRoots, appRoot)) tui.log(w)
   const loop = watchLoop({
     root: appRoot,

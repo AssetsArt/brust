@@ -352,6 +352,10 @@ export default function Configuration({ blocks }: ConfigurationData) {
       <p>
         <code>[build] source_roots</code> lists directories outside the app, relative to the app root, that its relative imports may reach: in a monorepo, <code>import Button from &quot;../shared/Button&quot;</code> compiles when <code>../shared</code> is listed. Without it brust reads only the app&rsquo;s own directory, and the import fails the build with <code>unresolved-import</code> (&ldquo;it leaves the app root&rdquo;). Each entry must be an existing directory; <code>..</code> chains are normalised. The check is on the path as written, so an import that climbs out of a listed directory (<code>../shared/../secret</code>) is refused as well. Symbolic links are not followed when checking.
       </p>
+      {/* source: packages/brust/src/build/config.ts:554 parseDevWatch (one key, `watch`; unknown keys and non-string entries are a config error at build too) and packages/brust/src/dev/watch.ts:51 devExtraRoots */}
+      <p>
+        <code>[dev] watch</code> is an array of files or directories, relative to the app root, that <code>brust dev</code> also reloads for (for example <code>watch = [&quot;../../packages/api&quot;]</code>). It only watches: unlike <code>source_roots</code> it does not change what imports may reach, and <code>brust build</code> and <code>brust start</code> ignore it. An unknown key or a non-string entry is a build error; a path that does not exist is a warning in dev. See <a href="/docs/dev-mode#watched">Dev mode</a>.
+      </p>
       <p>
         <code>[cache]</code> configures a shared cache adapter (see <a href="/docs/cache-adapters/overview">Cache adapters</a>), and <code>[cloudflare]</code> the Workers target (see <a href="/docs/cloudflare/workers">Workers target</a>).
       </p>

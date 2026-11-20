@@ -152,6 +152,8 @@ export interface BuildConfig {
   trailingSlash: TrailingSlash
   /** `[tiers]` (F569): the heaviest tier per path pattern and the tier snapshot; `null` = not written (or `--actions-only`). */
   tiers: TiersConfig | null
+  /** `[dev] watch` (F575): files or directories, as written (relative to the app root), that `brust dev` also reloads for. Watch only: the build ignores it. */
+  devWatch: string[]
 }
 
 const isTable = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -545,6 +547,21 @@ function parseTrailingSlash(file: string, server: unknown): TrailingSlash {
   return r.value
 }
 
+/**
+ * F575 `[dev] watch`: files or directories (relative to the app root) `brust dev` reloads for besides the app and its
+ * `source_roots`. Checked here so a typo fails the build too; a path that does not exist is dev's warning, not an error.
+ */
+export function parseDevWatch(file: string, raw: unknown): string[] {
+  if (raw === undefined) return []
+  if (!isTable(raw)) throw new BuildError('config', `${file}: [dev] must be a table`)
+  for (const k of Object.keys(raw)) if (k !== 'watch') throw new BuildError('config', `${file}: dev.${k} is not a known key (allowed: watch)`)
+  const w = raw.watch
+  if (w === undefined) return []
+  if (!Array.isArray(w) || w.some((p) => typeof p !== 'string' || p.trim() === '' || p.includes('\0')))
+    throw new BuildError('config', `${file}: dev.watch must be an array of non-empty strings (paths relative to the app root)`)
+  return (w as string[]).map((p) => p.trim())
+}
+
 /** F549 `[build] expose_isolated`: a boolean; absent = `false`. */
 export function parseExposeIsolated(file: string, v: unknown): boolean {
   if (v === undefined) return false
@@ -555,7 +572,7 @@ export function parseExposeIsolated(file: string, v: unknown): boolean {
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict', tiers: null }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict', tiers: null, devWatch: [] }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -571,16 +588,17 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   const cssGlobal = parseCss(file, root.css)
   // F569 (D7): an actions-only build compiles no component, so `[tiers]` is not read.
   const tiers = o.actionsOnly === true ? null : parseTiers(file, root.tiers)
+  const devWatch = parseDevWatch(file, root.dev)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash, tiers }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash, tiers, devWatch }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
   const expose = parseExpose(file, appRoot, sourceRoots, (build as Record<string, unknown>).expose)
   const islands = parseIslands(file, appRoot, expose, (build as Record<string, unknown>).islands)
   const exposeIsolated = parseExposeIsolated(file, (build as Record<string, unknown>).expose_isolated)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch }
 }
