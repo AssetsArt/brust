@@ -215,10 +215,16 @@ fn js_strings(cases: &[(String, serde_json::Value)]) -> Option<Vec<String>> {
         .iter()
         .map(|(e, p)| format!("(({{a, b, c, d}}) => String({e}))({p}),"))
         .collect();
+    // A script file, not `bun -e`: the script is far over the Windows command-line limit (32767 chars, os error 206).
+    let dir = std::env::temp_dir().join(format!("brust-logical-chain-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("cases.js");
+    std::fs::write(&script, format!("console.log(JSON.stringify([{body}]))\n")).unwrap();
     let out = std::process::Command::new(bun)
-        .args(["-e", &format!("console.log(JSON.stringify([{body}]))")])
+        .arg(&script)
         .output()
         .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
     assert!(
         out.status.success(),
         "{}",

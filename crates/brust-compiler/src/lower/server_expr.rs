@@ -347,7 +347,6 @@ fn logical_value(e: &RawExpr, op: BinOp, ctx: &JinjaCtx<'_>) -> String {
     let mut acc = raw(last, ctx);
     for o in rest.iter().rev() {
         acc = match op {
-            // `&&` / `||` return an operand, chosen by JS truthiness.
             // `&&` / `||` return an operand, chosen by JS truthiness. The operand is printed as its test and then only as
             // the value it has once that test is known (F555 ruling 3): a falsy `||` chain is its last operand, a truthy
             // `&&` chain is its last operand.

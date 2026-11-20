@@ -98,7 +98,7 @@ export default function Cli({ blocks, panels }: CliData) {
       <p id="large-templates">
         Each component compiles to one template in <code>dist/jinja/</code>, and <code>brust start</code> parses every template when it loads. When one is larger than 1 MB the build prints{' '}
         <code>warning template &lt;name&gt; is &lt;n&gt; MB (&lt;source&gt;)</code> and still succeeds: a template that large slows start-up and holds its memory. It usually comes from a component inlined at many call sites, a very large literal, or deep conditional
-        nesting. Long <code>&amp;&amp;</code>, <code>||</code> and <code>??</code> chains print each operand a fixed number of times, so they do not cause it. Split the component, move the large data into a prop or a loader, or keep that component in React.
+        nesting. A long chain of one operator (<code>a &amp;&amp; b &amp;&amp; …</code>, <code>a || b || …</code>, <code>a ?? b ?? …</code>) prints each operand a fixed number of times, so it does not cause it. Split the component, move the large data into a prop or a loader, or keep that component in React.
       </p>
 
       <h2 id="start">brust start</h2>
