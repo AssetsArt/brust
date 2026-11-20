@@ -5,7 +5,7 @@
 // over the production `jsx`/`jsxs` when it runs in production. `bun test` itself sets NODE_ENV, so the servers here are
 // spawned with it removed, like a real shell. Run alone: `bun test --timeout 120000 tests/server/jsx-const-sibling.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/jsx-const-sibling')
@@ -74,9 +74,14 @@ test('brust dev serves it too', async () => {
 }, 60_000)
 
 test('brust build --target static prerenders it', async () => {
-  const out = join(app, 'dist-static')
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'static', '--out-dir', out], { cwd: app, env: shellEnv(), stdout: 'pipe', stderr: 'pipe' })
-  expect(b.exitCode).toBe(0)
-  expect(await Bun.file(join(out, 'static', 'index.html')).text()).toContain('<p data-testid="p"><b>hi</b></p>')
-  rmSync(out, { recursive: true, force: true })
+  // beside the app, not in it (a `brust dev` started by the test above is still watching it), and next to it so packages resolve
+  const outRoot = mkdtempSync(join(app, '..', '.tmp-jsx-sibling-out-'))
+  const out = join(outRoot, 'dist-static')
+  try {
+    const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'static', '--out-dir', out], { cwd: app, env: shellEnv(), stdout: 'pipe', stderr: 'pipe' })
+    expect(b.exitCode).toBe(0)
+    expect(await Bun.file(join(out, 'static', 'index.html')).text()).toContain('<p data-testid="p"><b>hi</b></p>')
+  } finally {
+    rmSync(outRoot, { recursive: true, force: true })
+  }
 }, 60_000)

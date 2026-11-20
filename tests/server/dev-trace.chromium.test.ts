@@ -9,6 +9,8 @@ import { type Browser, chromium, type Page } from 'playwright'
 const host = join(import.meta.dir, '../fixtures/cf-min')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
 let app = ''
+// build outputs live beside the app, not in it: the dev watcher would see every file written there and reload the open page
+let outRoot = ''
 let base = ''
 let proc: ReturnType<typeof Bun.spawn>
 let browser: Browser
@@ -72,6 +74,7 @@ const traceOf = (page: Page) => page.evaluate(() => JSON.parse(document.getEleme
 
 beforeAll(async () => {
   app = mkdtempSync(join(host, '.devtest-trace-'))
+  outRoot = mkdtempSync(join(host, '.devtest-trace-out-'))
   mkdirSync(join(app, 'pages'))
   for (const [f, s] of Object.entries(files())) writeFileSync(join(app, f), s)
   const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('') })
@@ -101,6 +104,7 @@ afterAll(async () => {
     if ((await Promise.race([proc.exited, sleep(8000).then(() => undefined)])) === undefined) proc.kill('SIGKILL')
   }
   rmSync(app, { recursive: true, force: true })
+  rmSync(outRoot, { recursive: true, force: true })
 })
 
 test('a page carries its trace in #__brust_trace: route, params, cache, loader and render ms, jobs, components; never as a header', async () => {
@@ -207,8 +211,8 @@ test('/_brust/dev/traces keeps the last 50 traces, actions included', async () =
 })
 
 test('dev.json: component -> file, tier, react reason, diagnostics; its tiers equal the manifest; a production build writes none and no dev code', async () => {
-  const dev = join(app, '.dev-out')
-  const prod = join(app, '.prod-out')
+  const dev = join(outRoot, 'dev-out')
+  const prod = join(outRoot, 'prod-out')
   for (const [out, flag] of [[dev, ['--dev']], [prod, []]] as const) {
     const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out, ...flag], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
     expect(b.exitCode, b.stderr.toString()).toBe(0)
@@ -236,7 +240,7 @@ test('dev.json: component -> file, tier, react reason, diagnostics; its tiers eq
 }, 120_000)
 
 test('a document with a doctype stays in standards mode with the level markers (compatMode CSS1Compat); a layout without one gets one (F392); a non-document control stays BackCompat', async () => {
-  const out = join(app, '.doctype-out')
+  const out = join(outRoot, 'doctype-out')
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out, '--dev'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.exitCode, b.stderr.toString()).toBe(0)
   const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')) as { routes: { pattern: string; chain: string[] }[]; components: Record<string, { template: string }> }
