@@ -42,6 +42,7 @@ For each new version, make two edits in `ReleaseNotes.tsx`:
    {/* source: the pull requests merged after v2.0.0-alpha.<N-1>: #A–#B (ledger rows / lanes) */}
    <p>One sentence: what this version is about, for a user deciding whether to upgrade.</p>
 
+   <h3>Upgrading: what you must change</h3> {/* ALWAYS present, first; see the rule below */}
    <h3>New</h3>      {/* features someone can use now */}
    <h3>Fixed</h3>    {/* wrong output, crashes, build errors on valid React */}
    <h3>Security</h3> {/* hardening a reviewer signed off; never print an exploit */}
@@ -50,7 +51,8 @@ For each new version, make two edits in `ReleaseNotes.tsx`:
 
 Rules:
 
-- Leave out any heading that has no items.
+- Leave out any heading that has no items, except **Upgrading: what you must change**, which every version has.
+- **Upgrading: what you must change** is the first heading. It holds one `<li>` per change after which an app that built and ran on the previous version needs an edit, a rebuild step, a config change or a changed test: a removed or renamed option, a changed default, a file the build no longer writes, output that moved, a diagnostic that became an error. Each line says what to change and how to find the affected code, with a search pattern the reader can paste (`grep -rn "dist/jinja/" test/`), and links the item below that explains it. New warnings an upgrade will print are listed here too, marked "expected, nothing to change". When nothing must change, the section is the single sentence "Nothing: an app on the previous version builds and runs unchanged." Do not put new features here.
 - Every `<li>` has a source comment just above it naming the PR (and the ledger row or plan) it comes from: `{/* source: PR #250 (F206) */}`. The page header requires this. Reviewers check claims against it.
 - Each `<li>` opens with one bold sentence that states the outcome. One or two plain sentences follow. Wrap code, props and file names in `<code>`.
 - Write for app authors. Use no internal task names, agent names or F-numbers in the visible text (they belong in the source comments). Prefer "renders with React" to "falls back".
