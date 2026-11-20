@@ -84,6 +84,7 @@ export async function devModeLoader(): Promise<DevModeData> {
       { id: 'loop', title: 'What happens when you save' },
       { id: 'try', title: 'Try it' },
       { id: 'reloads', title: 'What reloads and what does not' },
+      { id: 'watched', title: 'What is watched' },
       { id: 'errors', title: 'Build errors' },
       { id: 'terminal', title: 'The terminal' },
       { id: 'devtools', title: 'The devtools overlay' },
@@ -233,7 +234,7 @@ export default function DevMode({ blocks }: DevModeData) {
       </ul>
       <CodeBlock code={blocks.watch.code} lang={blocks.watch.lang} file={blocks.watch.file} html={blocks.watch.html} />
       <p>
-        A path that does not exist is logged once as <code>warning dev.watch &quot;&lt;path&gt;&quot; does not exist</code> and the session goes on, since a package may not be checked out. A path inside the app or inside a <code>source_roots</code> directory is accepted and not watched twice. The reload is the same full reload as for an app file.
+        A path that does not exist is logged once as <code>warning dev.watch &quot;&lt;path&gt;&quot; does not exist</code> and the session goes on, since a package may not be checked out. A path inside the app or inside a <code>source_roots</code> directory is accepted and not watched twice. A watched single file whose name matches the ignored patterns (a <code>.sqlite</code> or <code>.db</code> file, an editor temporary file) is never reported. The reload is the same full reload as for an app file.
       </p>
 
       <h2 id="errors">Build errors</h2>

@@ -3,7 +3,7 @@
 // run (post-mortem 8f29c26: an edit during a rebuild was dropped). `run` receives the app-relative
 // paths that changed since the previous run started.
 import { type FSWatcher, existsSync, readdirSync, statSync, watch } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 export interface WatchLoop {
   /** Queue a run as if `rel` changed (the `r` hotkey, tests). */
@@ -108,10 +108,13 @@ export function watchLoop(o: { root: string; /** F273: `[build] source_roots`, a
     // a root inside the app is already watched; one that cannot be watched must not stop the session
     if (abs === o.root || abs.startsWith(o.root + sep)) continue
     try {
-      // F575: `[dev] watch` may name a single file; its event reports the basename, so report the path itself
+      // F575: `[dev] watch` may name a single file, which is watched through its parent directory and reported by its own path
       if (statSync(abs).isFile()) {
         const rel = relative(o.root, abs).split(sep).join('/')
-        watchers.push(watch(abs, () => void (o.ignored(rel) || queue(rel))))
+        // an editor that saves by rename-over replaces the inode, and a watch on the file itself goes silent after the
+        // first change: watch the parent directory (not recursive) and keep the events that name this file
+        const name = basename(abs)
+        watchers.push(watch(dirname(abs), (_ev, n) => void ((n === null || String(n) === name) && !o.ignored(rel) && queue(rel))))
         continue
       }
       watchers.push(watch(abs, { recursive: true }, onEvent(abs)))

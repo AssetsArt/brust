@@ -1,7 +1,7 @@
 // `brust dev` pieces that need no browser: the status block render, the TUI's plain mode, the shared watch loop
 // (an edit during a run is not dropped), build-output parsing, script injection and the ignore rules.
 import { expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseBuildError, parseWarnings } from '../src/dev/diag'
@@ -334,6 +334,34 @@ test('F575: a [dev] watch directory and a single file outside the app trigger a 
     await Bun.sleep(200)
     await loop.idle()
     expect([...seen].some((x) => x.includes('node_modules'))).toBe(false)
+    loop.close()
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test('F575: a watched single file replaced by rename (write tmp + rename over) triggers a rebuild every time', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'brust-devwatch-'))
+  try {
+    const app = join(base, 'app')
+    mkdirSync(app)
+    const file = join(base, 'data.json')
+    writeFileSync(file, '0')
+    const rounds: string[][] = []
+    const loop = watchLoop({ root: app, extraRoots: [file], ignored: (r) => defaultIgnored(r, 'dist'), debounceMs: 20, run: async (c) => void rounds.push([...c]) })
+    const replace = async (v: number) => {
+      const before = rounds.length
+      for (let i = 0; rounds.length === before && i < 60; i++) {
+        writeFileSync(join(base, 'data.tmp-x'), `${v}.${i}`)
+        renameSync(join(base, 'data.tmp-x'), file)
+        await Bun.sleep(60)
+      }
+      await loop.idle()
+      return rounds.length > before
+    }
+    expect(await replace(1)).toBe(true)
+    expect(await replace(2)).toBe(true)
+    expect(rounds.every((r) => r.every((x) => x === '../data.json'))).toBe(true)
     loop.close()
   } finally {
     rmSync(base, { recursive: true, force: true })
