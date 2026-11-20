@@ -20,7 +20,7 @@ const PAGE: &str = concat!(
 fn renderer() -> Renderer {
     let mut t = BTreeMap::new();
     t.insert("page_1".to_string(), PAGE.to_string());
-    Renderer::from_templates(&t).expect("a template with a recursive macro boots")
+    Renderer::from_templates(t).expect("a template with a recursive macro boots")
 }
 
 fn chain(depth: usize) -> serde_json::Value {

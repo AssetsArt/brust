@@ -80,7 +80,10 @@ test('brust build writes the S6 manifest (pinned) and every file it names', asyn
   expect(readFileSync(join(dist, m.assets.nav), 'utf8')).not.toContain('/_brust/')
   for (const p of [m.assets.runtime, m.assets.nav, ...Object.values(m.components).map((c: any) => c.client).filter(Boolean), 'jobs.js', 'public/app.css', 'index.js'])
     expect(existsSync(join(dist, p))).toBe(true)
-  for (const c of Object.values(m.components) as any[]) expect(existsSync(join(dist, c.template))).toBe(true)
+  // F559: a template file exists exactly for the members of a route's chain; the server reads no other.
+  const rendered = new Set<string>(m.routes.flatMap((r: any) => r.chain))
+  for (const [id, c] of Object.entries(m.components) as [string, any][]) expect([id, existsSync(join(dist, c.template))]).toEqual([id, rendered.has(id)])
+  expect(rendered.size).toBeLessThan(Object.keys(m.components).length)
   for (const f of readdirSync(join(dist, 'client'))) expect(f).toMatch(/^[A-Za-z0-9_][A-Za-z0-9_.-]*-[0-9a-f]{10}\.js$/) // pipeline.rs safe_rel + is_hashed
   expect(existsSync(join(dist, '.stage'))).toBe(false)
   // Client chunks import the runtime by the URL the manifest names; the runtime mounts the document.

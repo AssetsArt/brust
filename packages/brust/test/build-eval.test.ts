@@ -22,7 +22,8 @@ const jinja = (cwd: string, prefix: string, out = 'dist') => {
 let okBuild: ReturnType<typeof build>
 beforeAll(() => {
   uninstall = installTinyFmt(root)
-  okBuild = build(ok)
+  // F559: a build writes only the templates a route renders; these tests read what single components compile to.
+  okBuild = build(ok, { BRUST_BUILD_ALL_TEMPLATES: '1' })
 }, 120_000)
 afterAll(() => {
   for (const app of ['ok', 'throws', 'client', 'envbt', 'importmeta-bt']) rmSync(join(root, app, 'dist'), { recursive: true, force: true })

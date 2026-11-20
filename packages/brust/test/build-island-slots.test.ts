@@ -30,6 +30,17 @@ test('the page stays static; the islands carry unrolled lists and an element pro
   expect(code).toContain('$x')
 })
 
+// F559: the server looks a template up by name only for a member of a route's chain, so the build writes those and no
+// other; a component placed inside a page is printed in the page's template.
+test('only the templates a route renders by name are written', () => {
+  const manifest = JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf8')) as { routes: { chain: string[] }[]; components: Record<string, { template: string }> }
+  const rendered = [...new Set(manifest.routes.flatMap((r) => r.chain))].sort()
+  expect(readdirSync(join(dist, 'jinja')).sort()).toEqual(rendered.map((id) => `${id}.jinja`))
+  expect(rendered.length).toBeGreaterThan(0)
+  expect(Object.keys(manifest.components).length).toBeGreaterThan(rendered.length)
+  for (const id of rendered) expect(manifest.components[id]!.template).toBe(`jinja/${id}.jinja`)
+})
+
 test('only the names the compiler lists are revived; data is never a marker (R34.52)', async () => {
   const file = join(import.meta.dir, 'fixtures/island-slots', `revive-probe-${process.pid}.tsx`)
   writeFileSync(file, `import { createElement, Fragment } from 'react'\n${reviveSource("{ ok: (p: any) => createElement('i', null, p.x ?? 'ok') }")}\nexport { __mk, __rv }\n`)

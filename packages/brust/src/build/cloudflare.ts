@@ -15,7 +15,7 @@ import { type CoreCf, resolveCoreCf } from './cf-core'
 import { type CacheNeed, mergeWrangler, readUserWrangler, renderWrangler, type UserWrangler, verifyCacheBindings } from './cf-wrangler'
 import { type CloudflareBuildConfig, CF_MIN_COMPAT_DATE } from './config'
 import { installedWorkerd } from './cf-workerd'
-import { MANIFEST_VERSION } from './manifest'
+import { MANIFEST_VERSION, renderedTemplates } from './manifest'
 import { exposePlugin, PRODUCTION, type SourceOf, sourceDirPlugin } from './bundle'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
@@ -100,7 +100,7 @@ export interface CfBuildCtx {
   /** the FINAL dist dir (`out` is a tmp sibling that is renamed to it): wrangler paths are relative to `<dist>/cf` */
   dist: string
   compiled: Map<string, Compiled>
-  manifest: { components: Record<string, { template: string }>; /** F495 `[server] base_path`: the asset tree is laid out under it. */ base_path?: string; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow'; stream?: string[]; maxStreamBytes?: number } | null; cache?: CacheRecord }
+  manifest: { routes?: { chain: string[] }[]; components: Record<string, { template: string }>; /** F495 `[server] base_path`: the asset tree is laid out under it. */ base_path?: string; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow'; stream?: string[]; maxStreamBytes?: number } | null; cache?: CacheRecord }
   sourceOf: SourceOf
   actionsEntry: string | null
   /** L16 R16.3: an actions-only Worker: no pages (no routes entry, no jobs, no templates), no Static Assets. */
@@ -286,10 +286,12 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   mkdirSync(stage, { recursive: true })
   cpSync(p.core.workerDir, join(cfDir, 'worker'), { recursive: true })
 
+  // F559: only the templates a route renders by name are embedded (the Worker looks no other up).
   const templates: Record<string, string> = {}
-  for (const [id, c] of Object.entries(ctx.manifest.components)) {
+  for (const id of renderedTemplates(ctx.manifest)) {
     const comp = ctx.compiled.get(id)
-    if (comp) templates[c.template] = comp.jinja
+    const rec = ctx.manifest.components[id]
+    if (comp && rec) templates[rec.template] = comp.jinja
   }
   const templatesPath = join(stage, 'templates.json')
   writeFileSync(templatesPath, JSON.stringify(templates))
