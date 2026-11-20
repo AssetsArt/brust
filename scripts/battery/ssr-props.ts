@@ -27,6 +27,8 @@ const OVERRIDES: Record<string, Record<string, unknown>> = {
   'e-precompute-per-item': { items: ITEMS },
   'e-static-list-child': { rows: ROWS },
   'e-reactive-list-child': { rows: ROWS },
+  'c-local-arrow-call-in-list': { lang: 'th', langs: ['th', 'en'] },
+  'c-local-arrow-call-row-shadows': { lang: 'th', langs: ['th', 'en'] },
 }
 
 const BY_NAME: Record<string, unknown> = {

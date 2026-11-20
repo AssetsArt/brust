@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 62 | 40 | 16 | 6 | 0 | 0 | 0 | 0 |
 | B Composition | 246 | 130 | 20 | 96 | 0 | 0 | 0 | 0 |
-| C Hooks | 245 | 80 | 78 | 87 | 0 | 0 | 0 | 0 |
+| C Hooks | 247 | 82 | 78 | 87 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 77 | 33 | 16 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 663 | 296 | 131 | 232 | 3 | 1 | 0 | 0 |
+| **Total** | 665 | 298 | 131 | 232 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -360,6 +360,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-custom-hook-import-store | custom hook of another module that reads a store its module imports | native | native | 0 | ok | 5.1 | — | F560: the handle is the hook module's import, re-anchored to the component (`../cart` in lib/ is `./cart` here); was react (hook-shape: only a hook declared beside the component may use useStore) |
 | c-custom-hook-store-own-module | custom hook of another module that reads a store declared in that same module | react | react | ssr | ok | 4.5 | fallback:hook-shape | F560: a handle the hook's module declares is not one the component can import; the finding names it |
 | c-local-arrow-call | a const arrow with an expression body, declared in the component and called in the markup | static | static | 0 | ok | 0 | — | F560: the call is replaced by the arrow's expression (was react, client-function-in-job) |
+| c-local-arrow-call-in-list | a const arrow that reads a prop, called in the rows of a list | static | static | 0 | ok | 0 | — | F560: the call is the arrow's expression in the row (the row binds `x`, the arrow reads the prop `lang`) |
+| c-local-arrow-call-row-shadows | a const arrow that reads a prop, called in rows whose item is spelled like that prop | static | static | precompute | ok | 0 | — | F560: inside the row `lang` is the item, so the arrow's expression there would compare the row with itself; the call stays a call (one job), and the served rows equal React's (ssr-compare) |
 | c-hook-relax-all | custom hook with an object-pattern parameter, a plain module function, a dev-only log block and a React hook alias | native | native | 0 | ok | 5.1 | — | R34.105: the shapes of a published controllable-state hook, each general |
 | c-hook-relax-param-not-literal | custom hook with an object-pattern parameter called with a non-literal | react | react | ssr | ok | 4.5 | fallback:hook-shape | R34.105: destructuring needs an object literal of plain keys at the call site |
 | c-hook-relax-helper-reads-const | custom hook calling a module function that reads a module const | react | react | ssr | ok | 4.5 | fallback:hook-shape | R34.105: only a plain, self-contained module function travels with the hook |

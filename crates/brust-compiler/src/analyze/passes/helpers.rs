@@ -12,6 +12,7 @@ use crate::ir::{
     ArrowBody, Attr, ComponentIR, DerivedDecl, Expr, IdentKind, InlineFn, Node, RawExpr, RawKind,
     ServerExpr,
 };
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 pub fn inline(ir: &mut ComponentIR) {
@@ -35,6 +36,7 @@ pub fn inline(ir: &mut ComponentIR) {
         fns: &fns,
         locals: &locals,
         hidden: &hidden,
+        bound: RefCell::new(Vec::new()),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(Vec::new()));
     cx.node(&mut template);
@@ -142,6 +144,7 @@ pub(crate) fn inline_local_calls(derived: &mut [DerivedDecl], taken: &HashSet<&s
         fns: &[],
         locals: &locals,
         hidden: &hidden,
+        bound: RefCell::new(Vec::new()),
     };
     for d in derived.iter_mut() {
         cx.expr(&mut d.expr);
@@ -153,6 +156,9 @@ struct Cx<'a> {
     /// F560: the component's own const arrows ([`local_arrows`]).
     locals: &'a [InlineFn],
     hidden: &'a HashSet<String>,
+    /// The item and index names of the lists around the node being read (`items.map((item, i) => …)`), innermost
+    /// last. Inside them such a name is the row's value, whatever the component declares under that spelling.
+    bound: RefCell<Vec<String>>,
 }
 
 impl Cx<'_> {
@@ -192,11 +198,23 @@ impl Cx<'_> {
                     .for_each(|c| self.node(c));
             }
             Node::For {
-                source, key, body, ..
+                source,
+                item,
+                index,
+                key,
+                body,
             } => {
+                // The list itself is read outside its rows; the key and the row are read with the row's names bound.
                 self.expr(source);
+                let mark = self.bound.borrow().len();
+                {
+                    let mut bound = self.bound.borrow_mut();
+                    bound.push(item.clone());
+                    bound.extend(index.iter().cloned());
+                }
                 self.expr(key);
                 body.iter_mut().for_each(|c| self.node(c));
+                self.bound.borrow_mut().truncate(mark);
             }
             Node::Component {
                 props, children, ..
@@ -273,6 +291,17 @@ impl Cx<'_> {
         if f.params.len() != args.len() || !args.iter().all(arg_ok) {
             return;
         }
+        // Inside a list, a name the row binds is the row's value: a function whose own name, or a name its body reads
+        // from the component (`lang` in `(l) => lang === l`), is spelled like the item or the index would read the row
+        // once its body stands in the row. The call stays a call (the function is called with the names it closed over).
+        {
+            let bound = self.bound.borrow();
+            if !bound.is_empty()
+                && (bound.iter().any(|b| b == name) || reads_any(&f.body, &f.params, &bound))
+            {
+                return;
+            }
+        }
         let map: HashMap<&str, &RawExpr> = f
             .params
             .iter()
@@ -303,6 +332,27 @@ fn call_free(e: &RawExpr) -> bool {
         RawKind::Call { .. } | RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
             false
         }
+    }
+}
+
+/// Whether `e` reads a name of `bound` that is not one of `params` (the function's own parameters are replaced by the
+/// arguments, which the call site wrote inside the row).
+fn reads_any(e: &RawExpr, params: &[String], bound: &[String]) -> bool {
+    let any = |e: &RawExpr| reads_any(e, params, bound);
+    match &e.kind {
+        RawKind::Ident { name, .. } => !params.contains(name) && bound.contains(name),
+        RawKind::Lit(_) => false,
+        RawKind::Member { target, .. } => any(target),
+        RawKind::Index { target, index } => any(target) || any(index),
+        RawKind::Unary { value, .. } => any(value),
+        RawKind::Binary { left, right, .. } => any(left) || any(right),
+        RawKind::Cond { test, yes, no } => any(test) || any(yes) || any(no),
+        RawKind::Template { parts, .. } => parts.iter().any(|(p, _)| any(p)),
+        RawKind::Call { callee, args } => any(callee) || args.iter().any(any),
+        RawKind::Array(xs) => xs.iter().any(any),
+        RawKind::Object(ps) => ps.iter().any(|(_, v)| any(v)),
+        // Not a body `put` rewrites (a module function's body is proven without them, a local arrow's by `plain`).
+        RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => true,
     }
 }
 

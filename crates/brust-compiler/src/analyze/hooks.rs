@@ -752,8 +752,9 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, m: Module<'_, '_>
     out.inline.root_declared = w.declared.iter().map(|d| r.names.name(*d)).collect();
     if !m.foreign {
         out.inline.root_module = r.names.declared_spellings().collect();
-        out.inline.root_path = m.parsed.path();
     }
+    // Also for a component of a package: a handle one of its hooks imports is resolved from the component's own file.
+    out.inline.root_path = m.parsed.path();
     read_props(func, r, &mut out);
     let returned = read_stmts(func.body.stmts.slice(), r, &mut out, m);
     out.return_expr = returned.flatten().map(Expr::Raw);

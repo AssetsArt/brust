@@ -69,3 +69,59 @@ fn an_arrow_that_is_not_one_expression_or_is_also_a_value_is_left_alone() {
         );
     }
 }
+
+/// Inside a list, the item and index names are the row's values. An arrow that reads a component name spelled like one
+/// of them (`lang` in `(l) => lang === l`, called in `langs.map((lang) => …)`) is not replaced there: its body standing
+/// in the row would compare the row with itself (`* en` for a row React prints as `en`). The call stays a call.
+#[test]
+fn an_arrow_that_reads_a_name_the_row_binds_is_not_replaced_in_that_row() {
+    const LABEL: &str = "const label = (l: string) => (lang === l ? `* ${l}` : l)";
+    let shadowed = [
+        // the item is spelled like the prop the arrow reads
+        format!(
+            "export default function T({{ lang, langs }}: any) {{ {LABEL}; return <ul>{{langs.map((lang: string) => <li key={{lang}}>{{label(lang)}}</li>)}}</ul> }}"
+        ),
+        // the index is
+        format!(
+            "export default function T({{ lang, langs }}: any) {{ {LABEL}; return <ul>{{langs.map((l: string, lang: number) => <li key={{l}}>{{label(l)}}{{lang}}</li>)}}</ul> }}"
+        ),
+        // an outer list's item is, around an inner list
+        format!(
+            "export default function T({{ lang, groups }}: any) {{ {LABEL}; return <ul>{{groups.map((lang: any) => <li key={{lang.id}}>{{lang.xs.map((x: string) => <b key={{x}}>{{label(x)}}</b>)}}</li>)}}</ul> }}"
+        ),
+        // the same with state (a native component)
+        format!(
+            "import {{ useState }} from 'react'\nexport default function T({{ langs }}: any) {{ const [lang, setLang] = useState('th'); {LABEL}; return <ul onClick={{() => setLang('en')}}>{{langs.map((lang: string) => <li key={{lang}}>{{label(lang)}}</li>)}}</ul> }}"
+        ),
+    ];
+    for src in &shadowed {
+        let ir = analyze(src);
+        let template = format!("{:?}", ir.template);
+        assert!(!template.contains("StrictEq"), "{src}: {template}");
+    }
+    // The same arrow in a row that binds other names is its expression there, and outside the list too.
+    let free = format!(
+        "export default function T({{ lang, langs }}: any) {{ {LABEL}; return <ul title={{label('th')}}>{{langs.map((x: string, i: number) => <li key={{x}}>{{label(x)}}{{i}}</li>)}}</ul> }}"
+    );
+    let ir = analyze(&free);
+    let template = format!("{:?}", ir.template);
+    assert_eq!(template.matches("StrictEq").count(), 2, "{template}");
+    assert!(fallbacks(&ir).is_empty(), "{:?}", ir.diagnostics);
+    assert!(ir.jobs.is_empty(), "{:?}", ir.jobs);
+    // After the list, the name is the component's again.
+    let after = format!(
+        "export default function T({{ lang, langs }}: any) {{ {LABEL}; return <div><ul>{{langs.map((lang: string) => <li key={{lang}}>{{lang}}</li>)}}</ul><p>{{label('th')}}</p></div> }}"
+    );
+    let template = format!("{:?}", analyze(&after).template);
+    assert_eq!(template.matches("StrictEq").count(), 1, "{template}");
+}
+
+/// A row that binds the arrow's own name calls the row's value, not the arrow.
+#[test]
+fn a_row_that_binds_the_arrows_name_does_not_call_the_arrow() {
+    let ir = analyze(
+        "export default function T({ fs }: any) { const f = (x: number) => x * 7; return <ul>{fs.map((f: any, i: number) => <li key={i}>{f(i)}</li>)}</ul> }",
+    );
+    let template = format!("{:?}", ir.template);
+    assert!(!template.contains("Mul"), "{template}");
+}

@@ -4545,10 +4545,6 @@ impl Walker<'_, '_> {
         Ok((clone, id, key))
     }
 
-    /// F307: a `slot-owner` refusal at `loc` the frames pass may answer by cloning the child with the content (on the
-    /// component's second read, `run_passes`). Only a lowered child of a module (not a Provider, not a clone) that prints
-    /// a real `{children}` slot (S1), and not polymorphic (`asChild`: its host is the element between its tags, which
-    /// the call site must keep); a call site already tried keeps its refusal.
     /// F560: a `nested-instance` refusal at `loc` (a fed child inside this fed, inlined component) the frames pass may
     /// answer on the next run by putting the child's React copy there (`react_copy`).
     fn want_react(&mut self, loc: u32, child: &Child) {
@@ -4619,6 +4615,10 @@ impl Walker<'_, '_> {
         Some((id, key))
     }
 
+    /// F307: a `slot-owner` refusal at `loc` the frames pass may answer by cloning the child with the content (on the
+    /// component's second read, `run_passes`). Only a lowered child of a module (not a Provider, not a clone) that prints
+    /// a real `{children}` slot (S1), and not polymorphic (`asChild`: its host is the element between its tags, which
+    /// the call site must keep); a call site already tried keeps its refusal.
     fn want_host(&mut self, loc: u32, child: &Child) {
         if child.path.is_some()
             && child.poly.is_none()
