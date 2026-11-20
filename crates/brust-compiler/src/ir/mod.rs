@@ -273,6 +273,11 @@ pub struct ComponentIR {
     /// this id. Read by the children pass (F502) and by the tree pruning (`pipeline::compile_tree`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed_clone_of: Option<String>,
+    /// F560: this is the React copy of the component with this id: the same function compiled as a React island, for the
+    /// call sites where the server cannot feed its instance (`nested-instance`). A tree that names it at no call site
+    /// leaves it out (`pipeline::compile_tree`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub react_copy_of: Option<String>,
     /// F298: a clone made for one call site whose children were put where the component spreads its rest: the clones
     /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -610,6 +615,7 @@ impl ComponentIR {
             unexported: false,
             specialised: false,
             fixed_clone_of: None,
+            react_copy_of: None,
             reads_request_prop: false,
             rest_clone_of: None,
             rest_childless: false,

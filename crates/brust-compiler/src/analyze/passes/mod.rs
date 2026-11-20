@@ -58,6 +58,11 @@ pub struct PassState {
     pub host_spec: BTreeSet<u32>,
     /// F307: the call sites the children pass refused with `slot-owner` whose child could take the content as a clone.
     pub host_wanted: BTreeSet<u32>,
+    /// F560: the call sites whose child is replaced by its React copy (`children::react_copy`), set by `run_passes` for
+    /// another run from the call sites the run before refused because the child is fed inside a fed component.
+    pub react_spec: BTreeSet<u32>,
+    /// F560: the call sites the children pass refused with `nested-instance` whose child could be its React copy there.
+    pub react_wanted: BTreeSet<u32>,
     /// F523: where the component calls itself (`<Self/>` in its own template), in document order. The children pass
     /// records them with no fallback, island, job or link; `recursion::check` decides after the tier pass.
     pub self_calls: Vec<u32>,
@@ -121,12 +126,6 @@ impl PassState {
     }
 }
 
-/// Runs every pass on `ir` (a structural IR from `analyze_component`).
-///
-/// F307 (option B): where the children pass refuses slot content a child prints inside its own host (`slot-owner`,
-/// F214 / F309), the component is read once more from the same structural IR with those call sites specialised: the
-/// child is cloned for the call site with the content spliced in, so the content's directives are the clone's own. Only
-/// those call sites change; a clone that cannot be made keeps the refusal (and says why).
 /// F548: the island call at `loc` is server-rendered again (its node's tier as the child's own).
 fn unstamp_client_only(n: &mut crate::ir::Node, loc: u32) {
     use crate::ir::{Node, Tier};
@@ -158,16 +157,74 @@ fn unstamp_client_only(n: &mut crate::ir::Node, loc: u32) {
     }
 }
 
+/// Runs every pass on `ir` (a structural IR from `analyze_component`).
+///
+/// F307 (option B): where the children pass refuses slot content a child prints inside its own host (`slot-owner`,
+/// F214 / F309), the component is read once more from the same structural IR with those call sites specialised: the
+/// child is cloned for the call site with the content spliced in, so the content's directives are the clone's own. Only
+/// those call sites change; a clone that cannot be made keeps the refusal (and says why).
+///
+/// F560: where the children pass refuses a child the server would have to feed through this component's own instance
+/// (`nested-instance`: the child has a job or `useId`, so has this component, and this component is inlined into its
+/// callers), the component is read once more with that child replaced, at those call sites only, by the child's React
+/// copy: an island the server renders on its own. This component keeps its tier and the child keeps its own everywhere
+/// else. A copy that does not help (the component needs React anyway) is dropped and the refusal stands.
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     crate::stats::passes_ran(&ir.id);
-    let saved = has_slot_content(&ir.template).then(|| ir.clone());
-    let st = run_passes_with(ir, ctx, BTreeSet::new());
-    match saved {
-        Some(again) if !st.host_wanted.is_empty() => {
-            *ir = again;
-            run_passes_with(ir, ctx, st.host_wanted)
+    // A React copy is React whatever its children are: nothing to ask for.
+    let may_nest = !ctx.is_root && ir.react_copy_of.is_none() && has_component(&ir.template);
+    let saved = (has_slot_content(&ir.template) || may_nest).then(|| ir.clone());
+    let st = run_passes_with(ir, ctx, BTreeSet::new(), BTreeSet::new());
+    let Some(saved) = saved else {
+        return st;
+    };
+    let host = st.host_wanted.clone();
+    let mut react = BTreeSet::new();
+    let mut st = st;
+    // Twice: a call site only the specialised content shows is asked for by the second run.
+    for round in 0..2 {
+        let want = react_request(ir, &st);
+        if want.is_empty() && (round > 0 || host.is_empty()) {
+            break;
         }
-        _ => st,
+        react.extend(want);
+        *ir = saved.clone();
+        st = run_passes_with(ir, ctx, host.clone(), react.clone());
+    }
+    if !react.is_empty() && matches!(ir.tier, crate::ir::Tier::React { .. }) {
+        // The copies did not keep this component out of React: it renders its children itself, so no call site names
+        // them (`pipeline::compile_tree` leaves an unused copy out of the tree).
+        *ir = saved;
+        st = run_passes_with(ir, ctx, host, BTreeSet::new());
+    }
+    st
+}
+
+/// F560: the call sites to read again with the child's React copy: the ones the run refused, when those refusals are
+/// all that keeps the component in React (any other cause, and the copies would change nothing).
+fn react_request(ir: &ComponentIR, st: &PassState) -> BTreeSet<u32> {
+    let other_cause = ir.diagnostics.iter().any(|d| {
+        d.class == crate::ir::DiagClass::Fallback
+            && !(d.rule == "nested-instance" && st.react_wanted.contains(&d.loc))
+    });
+    if other_cause {
+        BTreeSet::new()
+    } else {
+        st.react_wanted.clone()
+    }
+}
+
+/// Whether the template renders a component at all (the only place a `nested-instance` refusal can arise).
+fn has_component(n: &crate::ir::Node) -> bool {
+    use crate::ir::Node;
+    match n {
+        Node::Component { .. } => true,
+        Node::Element { children, .. } | Node::Fragment(children) => {
+            children.iter().any(has_component)
+        }
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(has_component),
+        Node::For { body, .. } => body.iter().any(has_component),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => false,
     }
 }
 
@@ -185,7 +242,12 @@ fn has_slot_content(n: &crate::ir::Node) -> bool {
     }
 }
 
-fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<u32>) -> PassState {
+fn run_passes_with(
+    ir: &mut ComponentIR,
+    ctx: &PassCtx<'_>,
+    host_spec: BTreeSet<u32>,
+    react_spec: BTreeSet<u32>,
+) -> PassState {
     // lucide icons become elements before anything snapshots or places the template (L23).
     icons::inline(ir, ctx);
     // F279: calls of single-return module helpers become their expression, before anything places a value.
@@ -203,6 +265,7 @@ fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<
     let provider_locs = {
         let mut tmp = PassState::new(ir);
         tmp.host_spec = host_spec.clone();
+        tmp.react_spec = react_spec.clone();
         children::contexts(ir, &mut tmp, ctx)
     };
     ir.structural = Some(Box::new(crate::ir::Structural {
@@ -214,6 +277,7 @@ fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<
     let mut st = PassState::new(ir);
     st.provider_locs = provider_locs;
     st.host_spec = host_spec;
+    st.react_spec = react_spec;
     placement::place(ir, &mut st, ctx);
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);

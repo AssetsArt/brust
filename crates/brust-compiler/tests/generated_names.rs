@@ -269,10 +269,11 @@ fn generated_names_keep_their_spelling_unless_taken() {
 
 /// A structured arrow parameter named `props` beside a prop read in its body: the context's `props` is renamed, so the
 /// prop read is not captured by the parameter.
+/// (Called from a handler: a call in the markup is replaced by the arrow's expression, F560, and no arrow is printed.)
 #[test]
 fn an_arrow_parameter_named_props_does_not_capture_a_prop_read() {
     let c = lower(
-        "import { useState } from 'react'\nexport default function T({ a, ...props }: any) { const [n, setN] = useState(0); const f = (props: number) => a + props + n; return <b onClick={() => setN(n + 1)}>{f(1)}</b> }",
+        "import { useState } from 'react'\nexport default function T({ a, ...props }: any) { const [n, setN] = useState(0); const f = (props: number) => a + props + n; return <b onClick={() => setN(f(1))}>{n}</b> }",
     )
     .client_js
     .unwrap();

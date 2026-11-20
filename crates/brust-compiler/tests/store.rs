@@ -193,8 +193,13 @@ fn use_store_shapes() {
         "const s = useStore(props.h); return <p>{s.count}</p>",
         "store-name-unresolved",
     );
+    // F560: `useStore(cart).count` is a one-key read; an optional chain or a computed key is not.
     has(
-        "const n = useStore(cart).count; return <p>{n}</p>",
+        "const n = useStore(cart)?.count; return <p>{n}</p>",
+        "hook-unsupported",
+    );
+    has(
+        "const n = useStore(cart)[props.k]; return <p>{n}</p>",
         "hook-unsupported",
     );
     let bare = has("useStore(cart); return <p>x</p>", "hook-shape");
@@ -1692,4 +1697,119 @@ fn user_store_named_navigation_is_reserved() {
     assert_eq!(d.class, DiagClass::Error);
     assert!(format!("{d:?}").contains("@brust/core/navigation"), "{d:?}");
     assert!(d.message.contains("nav.ts"), "{d:?}");
+}
+
+// --- F560: `useStore(h).key`, and a custom hook of another module that reads a store. ---
+
+const USE_STORE: &str = "import { useStore } from 'brust/store/react'\n";
+
+fn fallbacks(ir: &ComponentIR) -> Vec<(&str, &str)> {
+    ir.diagnostics
+        .iter()
+        .filter(|d| d.class == DiagClass::Fallback)
+        .map(|d| (d.rule.as_str(), d.message.as_str()))
+        .collect()
+}
+
+#[test]
+fn use_store_member_is_a_one_key_read() {
+    let c = format!(
+        "{USE_STORE}import {{ cart }} from './cart'\nexport default function C() {{ const n = useStore(cart).count; return <p>{{n}}</p> }}"
+    );
+    let ir = analyze_tree(&[("cart.ts", CART), ("C.tsx", &c)]);
+    assert!(fallbacks(&ir).is_empty(), "{:?}", ir.diagnostics);
+    assert!(!matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert_eq!(resolved(&ir).name, "cart");
+    assert_eq!(ir.stores[0].import, import("cart", "./cart", "cart"));
+}
+
+#[test]
+fn an_imported_hook_reads_a_store_its_module_imports() {
+    let hook = format!(
+        "{USE_STORE}import {{ cart }} from '../cart'\nexport function useCount() {{ const n = useStore(cart).count; return n }}\n"
+    );
+    let ir = analyze_tree(&[
+        ("cart.ts", CART),
+        ("lib/use-count.ts", &hook),
+        (
+            "C.tsx",
+            "import { useCount } from './lib/use-count'\nexport default function C() { const n = useCount(); return <p>{n}</p> }",
+        ),
+    ]);
+    assert!(fallbacks(&ir).is_empty(), "{:?}", ir.diagnostics);
+    assert!(!matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert_eq!(resolved(&ir).name, "cart");
+    // The handle is the hook module's import, written as the component's module would write it.
+    assert_eq!(ir.stores[0].import.1, "./cart");
+    assert_eq!(ir.stores[0].import.2, "cart");
+}
+
+#[test]
+fn a_store_read_returned_without_a_name_is_still_a_hook_inside_an_expression() {
+    let hook = format!(
+        "{USE_STORE}import {{ cart }} from '../cart'\nexport function useCount() {{ return useStore(cart).count }}\n"
+    );
+    let ir = analyze_tree(&[
+        ("cart.ts", CART),
+        ("lib/use-count.ts", &hook),
+        (
+            "C.tsx",
+            "import { useCount } from './lib/use-count'\nexport default function C() { const n = useCount(); return <p>{n}</p> }",
+        ),
+    ]);
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert!(
+        rules(&ir).contains(&"hook-unsupported"),
+        "{:?}",
+        ir.diagnostics
+    );
+}
+
+#[test]
+fn an_imported_hook_reads_a_store_through_a_view_and_a_hook_of_a_third_module() {
+    let inner = format!(
+        "{USE_STORE}import {{ cart }} from '../../cart'\nexport function useCart() {{ const s = useStore(cart); return s.count }}\n"
+    );
+    let ir = analyze_tree(&[
+        ("cart.ts", CART),
+        ("lib/deep/use-cart.ts", &inner),
+        (
+            "lib/use-twice.ts",
+            "import { useCart } from './deep/use-cart'\nexport function useTwice() { const n = useCart(); return n }\n",
+        ),
+        ("pages/C.tsx", "export {}\n"),
+        (
+            "C.tsx",
+            "import { useTwice } from './lib/use-twice'\nexport default function C() { const n = useTwice(); return <p>{n}</p> }",
+        ),
+    ]);
+    assert!(fallbacks(&ir).is_empty(), "{:?}", ir.diagnostics);
+    assert!(!matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert_eq!(resolved(&ir).name, "cart");
+    assert_eq!(ir.stores[0].import.1, "./cart");
+}
+
+#[test]
+fn an_imported_hook_whose_store_is_declared_in_its_own_module_keeps_the_component_in_react() {
+    let hook = format!(
+        "import {{ defineStore, signal }} from 'brust/store'\n{USE_STORE}const local = defineStore('local', () => ({{ n: signal(0) }}))\nexport function useLocal() {{ return useStore(local).n }}\n"
+    );
+    let ir = analyze_tree(&[
+        ("lib/use-local.ts", &hook),
+        (
+            "C.tsx",
+            "import { useLocal } from './lib/use-local'\nexport default function C() { const n = useLocal(); return <p>{n}</p> }",
+        ),
+    ]);
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    let f = fallbacks(&ir);
+    assert!(
+        f.iter().any(|(_, m)| m.contains("local")),
+        "the finding names the handle: {f:?}"
+    );
+    assert!(
+        ir.stores.iter().all(|s| s.resolved.is_none()),
+        "{:?}",
+        ir.stores
+    );
 }

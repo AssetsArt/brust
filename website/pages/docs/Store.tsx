@@ -97,6 +97,13 @@ export default function Store({ blocks, candidates }: StoreData) {
       <p>
         <code>useStore</code> alone compiles to the native tier. An island needs another React feature to be React, here <code>useTransition</code>. (<code>useReducer</code> compiles natively.)
       </p>
+      {/* source: crates/brust-compiler/src/analyze/hooks.rs (use_store_member, read_hook: the handle's import is re-anchored to the component, rebase_spec); crates/brust-compiler/tests/store.rs (F560 tests); scripts/battery/rows.ts e-store-member, c-custom-hook-import-store, c-custom-hook-store-own-module */}
+      <p>
+        The native tier reads three shapes: the whole view (<code>const s = useStore(team)</code>), a destructuring (<code>const {'{'} members, max {'}'} = useStore(team)</code>) and one field (<code>const max = useStore(team).max</code>). A custom hook may
+        read a store as well, also a hook in another module, as long as that module imports the handle: <code>export function useMax() {'{'} const max = useStore(team).max; return max {'}'}</code> in <code>lib/use-max.ts</code> keeps the components
+        that call it native. A hook whose module declares the store itself (<code>defineStore</code> beside the hook) makes its callers React islands: define the store in a module of its own and import it. Bind the read to a name first:{' '}
+        <code>return useStore(team).max</code> is a hook call inside an expression, which is not lowered.
+      </p>
 
       <h2 id="try">Try it</h2>
       <p>

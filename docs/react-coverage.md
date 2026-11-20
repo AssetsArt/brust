@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 62 | 40 | 16 | 6 | 0 | 0 | 0 | 0 |
-| B Composition | 245 | 129 | 20 | 96 | 0 | 0 | 0 | 0 |
-| C Hooks | 242 | 79 | 77 | 86 | 0 | 0 | 0 | 0 |
+| B Composition | 246 | 130 | 20 | 96 | 0 | 0 | 0 | 0 |
+| C Hooks | 247 | 82 | 78 | 87 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 76 | 33 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 658 | 294 | 129 | 231 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 77 | 33 | 16 | 24 | 3 | 1 | 0 | 0 |
+| **Total** | 665 | 298 | 131 | 232 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -258,6 +258,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |
 | b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | 0 | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
 | b-fed-child-in-wrapper | a wrapper component rendering a child with a job of its own (shadcn PaginationNext over PaginationLink) | static | static | 0 | ok | 0 | — | F164 R34.97: the grandchild's job has no slot key inside an inlined wrapper (F53), so PR 1 made the wrapper the React island (nested-instance fallback); PR 2a re-bases the wrapper's child onto the caller (R34.96 static-wrapper case) and the page is static |
+| b-fed-child-in-fed-component | a native child with a job of its own inside a component that has a job of its own | static | static | 0 | ok | 6.1 | — | F560: the server cannot feed Bell through Shell's instance, so Bell is its React copy THERE (an island, nested-fed-child) and Shell keeps its tier; Shell was the React island (nested-instance), which made a component worse when its child got better |
 | b-fed-child-nested-lists | a child with a job of its own inside two nested lists over props | react | react | ssr | ok | 4.5 | fallback:nested-instance | F164 R34.97: the server feeds one list level per instance; nested lists were the nested-instance build error of the manifest, now a fallback |
 | b-fed-child-prop-is-a-job-output | a prop of a child with a job of its own is computed by a call (className={cn(…)}) | static | static | precompute | ok | 0 | — | F164 R34.96 (PR 2b): the value is another job's output, which the single-phase planner cannot bind (was the instance-prop-path build error, then the PR 1 fallback); the child's job now runs INSIDE the page's own job (fused) |
 | b-fed-children-repeated-by-list | children with a job of their own passed to a component that repeats them in a list | react | react | ssr | ok | 4.5 | fallback:nested-instance | F164 R34.97 (review r1 D): slot content is printed once and pasted per row, so a job inside it would repeat; it was the lowering nested-instance error |
@@ -355,7 +356,12 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-usereducer | useReducer | native | native | 0 | ok | 5.1 | — | F285: a state cell and one stable dispatch handler (was react, hook-unsupported) |
 | c-usecontext | useContext | static | static | 0 | ok | 0 | — | R34.142: a context with a literal default read as a value, with no Provider above the page, is its default (React's own rule) |
 | c-custom-hook | custom hook | native | native | 0 | ok | 5.1 | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
-| c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | 5.1 | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
+| c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | 5.1 | — | G3: an imported hook may use React hooks and globals, and read a store its module imports (F560: c-custom-hook-import-store); its module's other bindings are B2's rules |
+| c-custom-hook-import-store | custom hook of another module that reads a store its module imports | native | native | 0 | ok | 5.1 | — | F560: the handle is the hook module's import, re-anchored to the component (`../cart` in lib/ is `./cart` here); was react (hook-shape: only a hook declared beside the component may use useStore) |
+| c-custom-hook-store-own-module | custom hook of another module that reads a store declared in that same module | react | react | ssr | ok | 4.5 | fallback:hook-shape | F560: a handle the hook's module declares is not one the component can import; the finding names it |
+| c-local-arrow-call | a const arrow with an expression body, declared in the component and called in the markup | static | static | 0 | ok | 0 | — | F560: the call is replaced by the arrow's expression (was react, client-function-in-job) |
+| c-local-arrow-call-in-list | a const arrow that reads a prop, called in the rows of a list | static | static | 0 | ok | 0 | — | F560: the call is the arrow's expression in the row (the row binds `x`, the arrow reads the prop `lang`) |
+| c-local-arrow-call-row-shadows | a const arrow that reads a prop, called in rows whose item is spelled like that prop | static | static | precompute | ok | 0 | — | F560: inside the row `lang` is the item, so the arrow's expression there would compare the row with itself; the call stays a call (one job), and the served rows equal React's (ssr-compare) |
 | c-hook-relax-all | custom hook with an object-pattern parameter, a plain module function, a dev-only log block and a React hook alias | native | native | 0 | ok | 5.1 | — | R34.105: the shapes of a published controllable-state hook, each general |
 | c-hook-relax-param-not-literal | custom hook with an object-pattern parameter called with a non-literal | react | react | ssr | ok | 4.5 | fallback:hook-shape | R34.105: destructuring needs an object literal of plain keys at the call site |
 | c-hook-relax-helper-reads-const | custom hook calling a module function that reads a module const | react | react | ssr | ok | 4.5 | fallback:hook-shape | R34.105: only a plain, self-contained module function travels with the hook |
@@ -694,6 +700,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-static-list-child | static child with row-only props in a prop list (F70) | static | static | 0 | ok | 0 | — | ledger F70: no link, no chunk, no x-* — the row cannot change on the client |
 | e-reactive-list-child | static child in a state-dependent list keeps its link (F70) | native | native | precompute | ok | 6.3 | — | ledger F70/F71: the client re-creates the rows; the helper reads rows whole, so x-props keeps the full list |
 | e-store-read | store field read through useStore | native | native | 0 | ok | 5.1 | — | M3-F D7: store-view root → __store.cart.count |
+| e-store-member | one store field read as useStore(handle).key | native | native | 0 | ok | 5.1 | — | F560: a one-key destructuring (was react, hook-unsupported: a hook inside an expression) |
 | e-store-destructure | destructured useStore fields | native | native | 0 | ok | 5.1 | — | M3-F D7 |
 | e-store-derived | helper over a store read | native | native | precompute | ok | 5.1 | — | M3-F D7: precompute slot keyed by __store.cart.count |
 | e-store-handler-write | store write in an event handler | native | native | 0 | ok | 5.1 | — | M3-F D7: writes in handlers are plain calls |

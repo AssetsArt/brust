@@ -2,12 +2,22 @@
 //! arguments put in (`ComponentIR::inline_fns`, proven primitive-valued by `plain_fn`), before placement: the server
 //! prints the value where a precompute job would have had to run the function, so a child whose only job was such a
 //! call (Radix's `data-state={getState(checked)}`) has none.
+//!
+//! F560: the same for a function the component itself declares as a const arrow with an expression body
+//! (`const l = (th, en) => (lang === 'th' ? th : en)`, also what a custom hook returns once it is inlined): a call in
+//! the render is the arrow's expression over what it captures. A page of translated labels then prints them, where it
+//! had one job per component, and a value computed per request no longer names a function only the client has.
 use super::children::pure_read;
-use crate::ir::{Attr, ComponentIR, Expr, IdentKind, InlineFn, Node, RawExpr, RawKind, ServerExpr};
+use crate::ir::{
+    ArrowBody, Attr, ComponentIR, DerivedDecl, Expr, IdentKind, InlineFn, Node, RawExpr, RawKind,
+    ServerExpr,
+};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 pub fn inline(ir: &mut ComponentIR) {
-    if ir.inline_fns.is_empty() {
+    let locals = local_arrows(ir);
+    if ir.inline_fns.is_empty() && locals.is_empty() {
         return;
     }
     let fns: Vec<InlineFn> = ir.inline_fns.clone();
@@ -24,7 +34,9 @@ pub fn inline(ir: &mut ComponentIR) {
     hidden.extend(ir.props.iter().map(|p| p.local.clone()));
     let cx = Cx {
         fns: &fns,
+        locals: &locals,
         hidden: &hidden,
+        bound: RefCell::new(Vec::new()),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(Vec::new()));
     cx.node(&mut template);
@@ -37,9 +49,116 @@ pub fn inline(ir: &mut ComponentIR) {
     }
 }
 
+/// F560: the component's own const arrows a call can be replaced by: an expression body made only of nodes [`put`]
+/// rewrites (no function, JSX or code kept as written inside it, which would keep naming a parameter), distinct
+/// parameter names, and a name no state, prop, handler or second declaration shares.
+fn local_arrows(ir: &ComponentIR) -> Vec<InlineFn> {
+    let mut taken: HashSet<&str> = HashSet::new();
+    taken.extend(ir.handlers.iter().map(|h| h.name.as_str()));
+    taken.extend(ir.refs.iter().map(|r| r.name.as_str()));
+    taken.extend(ir.id_bindings.iter().map(String::as_str));
+    for s in &ir.state {
+        taken.insert(s.name.as_str());
+        taken.extend(s.setter.iter().map(String::as_str));
+    }
+    taken.extend(ir.props.iter().map(|p| p.local.as_str()));
+    arrows_of(&ir.derived, &taken)
+}
+
+/// [`local_arrows`] over a list of declarations; `taken` are the names something that is not a derived value holds.
+fn arrows_of(derived: &[DerivedDecl], taken: &HashSet<&str>) -> Vec<InlineFn> {
+    fn plain(e: &RawExpr) -> bool {
+        match &e.kind {
+            RawKind::Lit(_) | RawKind::Ident { .. } => true,
+            RawKind::Member { target, .. } => plain(target),
+            RawKind::Index { target, index } => plain(target) && plain(index),
+            RawKind::Unary { value, .. } => plain(value),
+            RawKind::Binary { left, right, .. } => plain(left) && plain(right),
+            RawKind::Cond { test, yes, no } => plain(test) && plain(yes) && plain(no),
+            RawKind::Template { parts, .. } => parts.iter().all(|(p, _)| plain(p)),
+            // A method of an imported object or of a store handle may write it (`cart.count.set(1)`): such an arrow
+            // stays a function, so the render-write checks report the write where it is written.
+            RawKind::Call { callee, args } => {
+                !member_of_import(callee) && plain(callee) && args.iter().all(plain)
+            }
+            RawKind::Array(xs) => xs.iter().all(plain),
+            RawKind::Object(ps) => ps.iter().all(|(_, v)| plain(v)),
+            RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => false,
+        }
+    }
+    fn member_of_import(callee: &RawExpr) -> bool {
+        let mut at = callee;
+        let mut member = false;
+        loop {
+            match &at.kind {
+                RawKind::Member { target, .. } | RawKind::Index { target, .. } => {
+                    member = true;
+                    at = target;
+                }
+                RawKind::Ident { kind, .. } => {
+                    return member
+                        && matches!(kind, IdentKind::Import { .. } | IdentKind::Store { .. });
+                }
+                _ => return false,
+            }
+        }
+    }
+    derived
+        .iter()
+        .filter_map(|d| {
+            let Expr::Raw(RawExpr {
+                kind:
+                    RawKind::Arrow {
+                        params,
+                        body: ArrowBody::Expr(body),
+                        ..
+                    },
+                ..
+            }) = &d.expr
+            else {
+                return None;
+            };
+            let distinct = params.iter().collect::<HashSet<_>>().len() == params.len();
+            let once = derived.iter().filter(|o| o.name == d.name).count() == 1;
+            (distinct && once && !taken.contains(d.name.as_str()) && plain(body)).then(|| {
+                InlineFn {
+                    name: d.name.clone(),
+                    params: params.clone(),
+                    body: (**body).clone(),
+                }
+            })
+        })
+        .collect()
+}
+
+/// F560, for the reader: the calls of the component's own expression arrows inside its derived values, replaced before
+/// the reader judges those values (a value computed per request must not name a function only the client has; a call
+/// that is replaced names none). `taken`: the names a handler, a state, a setter or a ref holds.
+pub(crate) fn inline_local_calls(derived: &mut [DerivedDecl], taken: &HashSet<&str>) {
+    let locals = arrows_of(derived, taken);
+    if locals.is_empty() {
+        return;
+    }
+    let hidden = HashSet::new();
+    let cx = Cx {
+        fns: &[],
+        locals: &locals,
+        hidden: &hidden,
+        bound: RefCell::new(Vec::new()),
+    };
+    for d in derived.iter_mut() {
+        cx.expr(&mut d.expr);
+    }
+}
+
 struct Cx<'a> {
     fns: &'a [InlineFn],
+    /// F560: the component's own const arrows ([`local_arrows`]).
+    locals: &'a [InlineFn],
     hidden: &'a HashSet<String>,
+    /// The item and index names of the lists around the node being read (`items.map((item, i) => …)`), innermost
+    /// last. Inside them such a name is the row's value, whatever the component declares under that spelling.
+    bound: RefCell<Vec<String>>,
 }
 
 impl Cx<'_> {
@@ -79,11 +198,23 @@ impl Cx<'_> {
                     .for_each(|c| self.node(c));
             }
             Node::For {
-                source, key, body, ..
+                source,
+                item,
+                index,
+                key,
+                body,
             } => {
+                // The list itself is read outside its rows; the key and the row are read with the row's names bound.
                 self.expr(source);
+                let mark = self.bound.borrow().len();
+                {
+                    let mut bound = self.bound.borrow_mut();
+                    bound.push(item.clone());
+                    bound.extend(index.iter().cloned());
+                }
                 self.expr(key);
                 body.iter_mut().for_each(|c| self.node(c));
+                self.bound.borrow_mut().truncate(mark);
             }
             Node::Component {
                 props, children, ..
@@ -145,14 +276,31 @@ impl Cx<'_> {
         else {
             return;
         };
-        if self.hidden.contains(name) {
+        // A local arrow is the component's own declaration of that name; a module function is hidden by one.
+        let (f, local) = match self.locals.iter().find(|f| &f.name == name) {
+            Some(f) => (f, true),
+            None if self.hidden.contains(name) => return,
+            None => match self.fns.iter().find(|f| &f.name == name) {
+                Some(f) => (f, false),
+                None => return,
+            },
+        };
+        // A local arrow's argument may be any expression without a call: computing it where the parameter is read
+        // (once, several times or never) cannot be told from computing it at the call.
+        let arg_ok = |a: &RawExpr| if local { call_free(a) } else { pure_read(a) };
+        if f.params.len() != args.len() || !args.iter().all(arg_ok) {
             return;
         }
-        let Some(f) = self.fns.iter().find(|f| &f.name == name) else {
-            return;
-        };
-        if f.params.len() != args.len() || !args.iter().all(pure_read) {
-            return;
+        // Inside a list, a name the row binds is the row's value: a function whose own name, or a name its body reads
+        // from the component (`lang` in `(l) => lang === l`), is spelled like the item or the index would read the row
+        // once its body stands in the row. The call stays a call (the function is called with the names it closed over).
+        {
+            let bound = self.bound.borrow();
+            if !bound.is_empty()
+                && (bound.iter().any(|b| b == name) || reads_any(&f.body, &f.params, &bound))
+            {
+                return;
+            }
         }
         let map: HashMap<&str, &RawExpr> = f
             .params
@@ -166,6 +314,45 @@ impl Cx<'_> {
         *r = body;
         // the body may call other inlinable helpers
         self.raw(r, depth + 1);
+    }
+}
+
+/// No call, no function, no JSX and no code kept as written anywhere in `e`: reads, literals and operators only.
+fn call_free(e: &RawExpr) -> bool {
+    match &e.kind {
+        RawKind::Lit(_) | RawKind::Ident { .. } => true,
+        RawKind::Member { target, .. } => call_free(target),
+        RawKind::Index { target, index } => call_free(target) && call_free(index),
+        RawKind::Unary { value, .. } => call_free(value),
+        RawKind::Binary { left, right, .. } => call_free(left) && call_free(right),
+        RawKind::Cond { test, yes, no } => call_free(test) && call_free(yes) && call_free(no),
+        RawKind::Template { parts, .. } => parts.iter().all(|(p, _)| call_free(p)),
+        RawKind::Array(xs) => xs.iter().all(call_free),
+        RawKind::Object(ps) => ps.iter().all(|(_, v)| call_free(v)),
+        RawKind::Call { .. } | RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
+            false
+        }
+    }
+}
+
+/// Whether `e` reads a name of `bound` that is not one of `params` (the function's own parameters are replaced by the
+/// arguments, which the call site wrote inside the row).
+fn reads_any(e: &RawExpr, params: &[String], bound: &[String]) -> bool {
+    let any = |e: &RawExpr| reads_any(e, params, bound);
+    match &e.kind {
+        RawKind::Ident { name, .. } => !params.contains(name) && bound.contains(name),
+        RawKind::Lit(_) => false,
+        RawKind::Member { target, .. } => any(target),
+        RawKind::Index { target, index } => any(target) || any(index),
+        RawKind::Unary { value, .. } => any(value),
+        RawKind::Binary { left, right, .. } => any(left) || any(right),
+        RawKind::Cond { test, yes, no } => any(test) || any(yes) || any(no),
+        RawKind::Template { parts, .. } => parts.iter().any(|(p, _)| any(p)),
+        RawKind::Call { callee, args } => any(callee) || args.iter().any(any),
+        RawKind::Array(xs) => xs.iter().any(any),
+        RawKind::Object(ps) => ps.iter().any(|(_, v)| any(v)),
+        // Not a body `put` rewrites (a module function's body is proven without them, a local arrow's by `plain`).
+        RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => true,
     }
 }
 
@@ -187,8 +374,18 @@ fn put(e: &mut RawExpr, map: &HashMap<&str, &RawExpr>) {
             put(yes, map);
             put(no, map);
         }
-        RawKind::Call { args, .. } => args.iter_mut().for_each(|a| put(a, map)),
+        RawKind::Call { callee, args } => {
+            put(callee, map);
+            args.iter_mut().for_each(|a| put(a, map));
+        }
         RawKind::Template { parts, .. } => parts.iter_mut().for_each(|(p, _)| put(p, map)),
+        RawKind::Member { target, .. } => put(target, map),
+        RawKind::Index { target, index } => {
+            put(target, map);
+            put(index, map);
+        }
+        RawKind::Array(xs) => xs.iter_mut().for_each(|x| put(x, map)),
+        RawKind::Object(ps) => ps.iter_mut().for_each(|(_, v)| put(v, map)),
         _ => {}
     }
 }

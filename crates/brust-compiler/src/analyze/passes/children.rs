@@ -674,6 +674,36 @@ struct Own {
     export: Option<String>,
 }
 
+/// F560: where the component's markup starts (its first element or component), for a finding about the whole component.
+fn root_loc(n: &Node) -> u32 {
+    match n {
+        Node::Element { loc, .. } | Node::Component { loc, .. } => *loc,
+        Node::Fragment(c) => c.iter().map(root_loc).find(|l| *l > 0).unwrap_or(0),
+        Node::If { then, else_, .. } => then
+            .iter()
+            .chain(else_)
+            .map(root_loc)
+            .find(|l| *l > 0)
+            .unwrap_or(0),
+        Node::For { body, .. } => body.iter().map(root_loc).find(|l| *l > 0).unwrap_or(0),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet | Node::Dynamic { .. } => 0,
+    }
+}
+
+/// F560: whether `c` may get a React copy (`Walker::react_copy`): a component of a module as its author wrote it. A clone
+/// carries content of one call site, a Provider's frame is read by the consumers under it, and a component that renders
+/// itself or holds a `<Dynamic>` is not one React renders as an island.
+fn react_copyable(c: &ComponentIR) -> bool {
+    !c.specialised
+        && c.fixed_clone_of.is_none()
+        && c.react_copy_of.is_none()
+        && c.provides.is_empty()
+        && c.external.is_none()
+        && !c.dynamic
+        && !c.holds_recursion
+        && !matches!(c.tier, Tier::React { .. })
+}
+
 /// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
 /// (F142 R34.43, ruling Q3: the same cap as island-children's per-instance tree).
 const MAX_ROWS_JSON: usize = 64 * 1024;
@@ -3591,8 +3621,25 @@ impl Walker<'_, '_> {
                     return;
                 }
                 let mark = self.diagnostics.len();
-                let child =
+                let mut child =
                     self.resolve_child(name, source.as_deref(), imported.as_deref(), member, *loc);
+                // F560: the run before refused this call site (`nested-instance`): the child is its React copy here.
+                if self.st.react_spec.contains(loc)
+                    && let (Some(from), Some(shared)) = (child.path.clone(), child.ir.clone())
+                    && let Some((id, key)) = self.react_copy(&shared, &from, *loc)
+                {
+                    *name = id;
+                    *source = Some(SPEC_SOURCE.to_string());
+                    *imported = Some(key);
+                    member.clear();
+                    child = self.resolve_child(
+                        name,
+                        source.as_deref(),
+                        imported.as_deref(),
+                        member,
+                        *loc,
+                    );
+                }
                 // The children pass resolves it again and reports; these diagnostics are not repeated.
                 self.diagnostics.truncate(mark);
                 let Some(mut cir) = child.ir.clone() else {
@@ -4496,6 +4543,76 @@ impl Walker<'_, '_> {
             return Err("its clone fixes nothing below it".into());
         }
         Ok((clone, id, key))
+    }
+
+    /// F560: a `nested-instance` refusal at `loc` (a fed child inside this fed, inlined component) the frames pass may
+    /// answer on the next run by putting the child's React copy there (`react_copy`).
+    fn want_react(&mut self, loc: u32, child: &Child) {
+        if child.path.is_some()
+            && !self.st.react_spec.contains(&loc)
+            && child.ir.as_deref().is_some_and(react_copyable)
+        {
+            self.st.react_wanted.insert(loc);
+        }
+    }
+
+    /// F560: the React copy of the shared component `cir` (module `c_path`): the same function compiled once more as a
+    /// component of its own that is a React island, whatever tier the shared one has. One copy per component, shared by
+    /// every call site that needs it; the shared component is untouched. `None` = no copy (the call site keeps its
+    /// refusal): two call sites share this offset, the component is a clone or a Provider, or the copy is not an island
+    /// React can render on its own.
+    fn react_copy(
+        &mut self,
+        cir: &Rc<ComponentIR>,
+        c_path: &str,
+        loc: u32,
+    ) -> Option<(String, String)> {
+        let ctx = self.ctx;
+        if self.shared_locs.contains(&loc) || !react_copyable(cir) {
+            return None;
+        }
+        let export = match &cir.export {
+            Some(n) => Export::Named(n.clone()),
+            None => Export::Default,
+        };
+        let exp = cir.export.as_deref().unwrap_or("default");
+        let id = format!("{}_r", cir.id);
+        let key = format!("{c_path}#{exp}~react");
+        let (copy_id, shared_id, unexported) = (id.clone(), cir.id.clone(), cir.unexported);
+        let name = cir.export.clone().unwrap_or_else(|| "the component".into());
+        let copy = crate::analyze::modules::compile_specialised(
+            c_path,
+            &export,
+            key.clone(),
+            ctx.opts,
+            ctx.modules,
+            &mut |ir: &mut ComponentIR, _: &crate::parse::Parsed| {
+                if ir.id != shared_id {
+                    return Err("the module's export is another component".into());
+                }
+                ir.id = copy_id.clone();
+                ir.unexported = unexported;
+                ir.react_copy_of = Some(shared_id.clone());
+                let at = root_loc(&ir.template);
+                ir.diagnostics.push(Diagnostic::fallback(
+                    "nested-fed-child",
+                    format!(
+                        "{name} has a job or useId of its own and is placed inside a component that has one too and is inlined into its callers; the server cannot feed it through that component, so it renders as a React island there (and keeps its own tier everywhere else)"
+                    ),
+                    at,
+                    "use it directly in the route component, or move the computed value into the component that places it",
+                ));
+                Ok(())
+            },
+        )
+        .ok()?;
+        let island = matches!(copy.tier, Tier::React { .. })
+            && !copy.diagnostics.iter().any(|d| d.class == DiagClass::Error);
+        if !island {
+            ctx.modules.borrow_mut().remove(&key);
+            return None;
+        }
+        Some((id, key))
     }
 
     /// F307: a `slot-owner` refusal at `loc` the frames pass may answer by cloning the child with the content (on the
@@ -7513,6 +7630,9 @@ impl Walker<'_, '_> {
                 if child.fed && !fused && self.own_fed && !self.ctx.is_root {
                     // This component is inlined into its callers and its server instance cannot also feed a
                     // child of its own that was not fused (F53, R34.97).
+                    // F560: asked for again with the child's React copy here (`run_passes`); the finding below
+                    // stands only when that copy cannot be made or does not keep this component out of React.
+                    self.want_react(*loc, &child);
                     self.diagnostics.push(Diagnostic::fallback(
                         "nested-instance",
                         format!(

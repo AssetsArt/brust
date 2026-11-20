@@ -474,3 +474,75 @@ fn an_island_with_a_per_row_prop_in_two_lists_next_to_a_dynamic_slot_is_client_o
         p.warnings
     );
 }
+
+// ---- F560: a fed child inside a fed, inlined component is its React copy there; the component keeps its tier ----
+
+const SHELL_PAGE: &str = "import Shell from './Shell'\nexport default function P(props: { title: string; tone: string }) { return <main><Shell title={props.title} tone={props.tone} /></main> }";
+
+#[test]
+fn a_fed_child_inside_a_fed_inlined_component_is_its_react_copy_there() {
+    let t = lower(SHELL_PAGE);
+    let shell = named(&t, "shell_");
+    assert!(!is_react(shell), "{:?} {:?}", shell.tier, shell.fallbacks);
+    assert!(shell.fallbacks.is_empty(), "{:?}", shell.fallbacks);
+    let p = named(&t, "p_");
+    assert!(!is_react(p), "{:?} {:?}", p.tier, p.fallbacks);
+    // The copy is an island with its own id and says why; the shared component keeps its tier.
+    let copy = t
+        .iter()
+        .find(|c| c.id.starts_with("bell_") && c.id.ends_with("_r"))
+        .unwrap_or_else(|| panic!("no copy: {:?}", t.iter().map(|c| &c.id).collect::<Vec<_>>()));
+    assert!(is_react(copy), "{:?}", copy.tier);
+    assert_eq!(copy.fallbacks, ["nested-fed-child"]);
+    let shared = t
+        .iter()
+        .find(|c| c.id.starts_with("bell_") && !c.id.ends_with("_r"))
+        .expect("the shared component is still compiled");
+    assert!(matches!(shared.tier, Tier::Native), "{:?}", shared.tier);
+}
+
+#[test]
+fn the_same_child_placed_in_the_route_component_stays_native_with_no_copy() {
+    let t = lower(
+        "import Bell from './Bell'\nexport default function P(props: { tone: string }) { return <main><Bell tone={props.tone} /></main> }",
+    );
+    assert!(!is_react(named(&t, "p_")));
+    assert!(matches!(named(&t, "bell_").tier, Tier::Native));
+    assert!(
+        !t.iter().any(|c| c.id.ends_with("_r")),
+        "{:?}",
+        t.iter().map(|c| &c.id).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_component_that_needs_react_anyway_gets_no_copy_of_its_child() {
+    let t = lower(
+        "import ShellHook from './ShellHook'\nexport default function P(props: { title: string; tone: string }) { return <main><ShellHook title={props.title} tone={props.tone} /></main> }",
+    );
+    assert!(is_react(named(&t, "shellHook_")));
+    assert!(
+        !t.iter().any(|c| c.id.ends_with("_r")),
+        "{:?}",
+        t.iter().map(|c| &c.id).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_copy_that_does_not_keep_the_component_out_of_react_is_dropped() {
+    let t = lower(
+        "import ShellFn from './ShellFn'\nexport default function P(props: { title: string; tone: string }) { return <main><ShellFn title={props.title} tone={props.tone} /></main> }",
+    );
+    let shell = named(&t, "shellFn_");
+    assert!(is_react(shell), "{:?}", shell.tier);
+    assert!(
+        shell.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        shell.fallbacks
+    );
+    assert!(
+        !t.iter().any(|c| c.id.ends_with("_r")),
+        "{:?}",
+        t.iter().map(|c| &c.id).collect::<Vec<_>>()
+    );
+}
