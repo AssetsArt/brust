@@ -206,7 +206,8 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         accepted when <code>ICON</code> is <code>{'export const ICON = { … }'}</code> (an object or array literal, also through a re-export) with no getter, spread or computed key on the way to the value, and nothing changes it. A
         value read that way is not converted to a string or a number at load (<code>{'`${ICON.overview}`'}</code> is not accepted). Not accepted: a class, a <code>let</code> or <code>var</code> a function changes, a statement that runs at
         load, a call of your own function at load, a <code>const</code> read before it is declared. A function changes a module value when it assigns one, or calls <code>push</code>, <code>sort</code>, <code>delete</code> and the
-        like on an object the module may own (a module constant, what a function of the module returns, or a local holding one); the same call on the result of an imported function (<code>{'api(id).delete(id)'}</code>) does not.
+        like on an object the module may own (a module constant, what a function of the module returns, or a value brust cannot name, such as the result of{' '}
+        <code>{'(c ? a : b)(…)'}</code>); the same call on the result of an imported function (<code>{'api(id).delete(id)'}</code>) does not.
       </p>
       {/* source: crates/brust-compiler/src/analyze/passes/mod.rs (run_passes, react_request), children.rs (want_react, react_copy), pipeline.rs (an unused copy is left out); crates/brust-compiler/tests/nested_fed.rs (F560 tests) */}
       <p>

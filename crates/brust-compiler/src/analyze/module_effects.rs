@@ -231,59 +231,10 @@ pub fn module_effect(
         objects.contains(&k) || object_readers.contains(&k) || app_import(r)
     };
     let hands = |a: &js_ast::Expr| hands_module_object(a, &gives_object, 0);
-    // F564 D2, AMENDMENT 3 (closed grammar).
-
-    // Roots whose objects are not this module's: an import, a global, a binding taken from package code (the package's
-    // object, as an import's; `const [P, useCtx] = createCtx(…)`).
-    let outside = |r: js_ast::Ref| {
-        let k = key(r);
-        if module.contains(&k) {
-            return foreign.contains(&k);
-        }
-        names.import_of(r).is_some() || matches!(names.kind_of(r).1, crate::ir::IdentKind::Global)
-    };
-    // Module-wide guard: a call anywhere in the module that hands one of its bindings to an import-, global- or
-    // package-rooted callee (a registry could hand it back) makes no import-rooted call result clean in this module.
-    let guard = {
-        let mut all = Walk::default();
-        for part in ast.parts.iter() {
-            for stmt in part.stmts.slice() {
-                all.stmt(stmt);
-            }
-        }
-        // function locals only: a module binding stands for itself
-        let inits: std::collections::HashMap<u32, js_ast::Expr> = all
-            .const_values
-            .iter()
-            .filter(|(r, _)| !module.contains(&key(*r)))
-            .map(|(r, v)| (key(*r), *v))
-            .collect();
-        let g = Grammar {
-            key: &key,
-            own: &gives_object,
-            outside: &outside,
-            inits: &inits,
-            guard: false,
-        };
-        all.calls.iter().any(|c| {
-            let E::ECall(call) = &c.data else {
-                return false;
-            };
-            chain_root(&call.target).is_some_and(&outside)
-                && call.args.iter().any(|a| g.hands(a, 0))
-        })
-    };
-    // A mutating-name call whose receiver may be this module's object (as on base), unless the grammar proves it clean.
+    // The writer rule is base's (F215; F564 D2 is its own ledger row): a mutating-name method writes a module binding
+    // unless its receiver is fresh (a literal, a copying method's result) or rooted, through members, indexes and
+    // calls, at a name that is not a binding of this module.
     let mutating_write = |w: &Walk| -> Option<js_ast::Expr> {
-        let inits: std::collections::HashMap<u32, js_ast::Expr> =
-            w.const_values.iter().map(|(r, v)| (key(*r), *v)).collect();
-        let g = Grammar {
-            key: &key,
-            own: &gives_object,
-            outside: &outside,
-            inits: &inits,
-            guard,
-        };
         w.calls.iter().find_map(|c| {
             let E::ECall(call) = &c.data else {
                 return None;
@@ -291,7 +242,9 @@ pub fn module_effect(
             match &call.target.data {
                 E::EDot(d)
                     if MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
-                        && g.receiver_writes(&d.target, &|r| module.contains(&key(r))) =>
+                        && !crate::analyze::plain_fn::fresh(&d.target)
+                        && root_through_calls(&d.target)
+                            .is_none_or(|r| module.contains(&key(r))) =>
                 {
                     Some(call.target)
                 }
@@ -299,35 +252,17 @@ pub fn module_effect(
             }
         })
     };
-    // A function-local const whose value the grammar does not prove clean or fresh: a member write through it may write
-    // a module object (`const l = LIST; l[0] = x`).
-    let local_bad = |w: &Walk, r: js_ast::Ref| {
-        let inits: std::collections::HashMap<u32, js_ast::Expr> =
-            w.const_values.iter().map(|(r, v)| (key(*r), *v)).collect();
-        let g = Grammar {
-            key: &key,
-            own: &gives_object,
-            outside: &outside,
-            inits: &inits,
-            guard,
-        };
-        inits
-            .get(&key(r))
-            .is_some_and(|v| !crate::analyze::plain_fn::fresh(v) && !g.clean(v, 0))
-    };
     // A function WRITES a module binding when its code assigns or writes through one, calls a mutating method on one (a
     // fresh copy excepted), writes through a root it cannot name (`get().a = …`, `this.a = …`), or calls or names a
     // function that writes. A least fixpoint.
     let writes = |w: &Walk, writers: &HashSet<u32>| {
-        let through = w
-            .member_written
+        let roots = w
+            .assigned
             .iter()
+            .chain(w.member_written.iter())
             .chain(w.member_writes.iter().map(|(r, _)| r));
         w.opaque_write
-            || w.assigned.iter().any(|r| module.contains(&key(*r)))
-            || through
-                .into_iter()
-                .any(|r| module.contains(&key(*r)) || local_bad(w, *r))
+            || roots.into_iter().any(|r| module.contains(&key(*r)))
             || w.used.iter().any(|r| writers.contains(&key(*r)))
             || mutating_write(w).is_some()
     };
@@ -408,22 +343,11 @@ pub fn module_effect(
         let named = w
             .assigned
             .iter()
-            .find(|r| module.contains(&key(**r)))
-            .or_else(|| {
-                w.member_written
-                    .iter()
-                    .chain(w.member_writes.iter().map(|(r, _)| r))
-                    .find(|r| module.contains(&key(**r)) || local_bad(w, **r))
-            });
+            .chain(w.member_written.iter())
+            .chain(w.member_writes.iter().map(|(r, _)| r))
+            .find(|r| module.contains(&key(**r)));
         if let Some(r) = named {
-            return if module.contains(&key(*r)) {
-                format!("writes the module binding `{}`", names.name(*r))
-            } else {
-                format!(
-                    "writes through `{}`, a local that holds a module object",
-                    names.name(*r)
-                )
-            };
+            return format!("writes the module binding `{}`", names.name(*r));
         }
         if let Some(t) = mutating_write(w)
             && let E::EDot(d) = &t.data
@@ -689,100 +613,6 @@ fn hands_module_object(
             w.used.iter().any(|r| gives_object(*r))
         }
         _ => chain_root(a).is_some_and(gives_object),
-    }
-}
-
-/// F564 D2, AMENDMENT 3: the closed grammar of receivers whose object is not this module's.
-struct Grammar<'a> {
-    key: &'a dyn Fn(js_ast::Ref) -> u32,
-    /// A binding that gives this module's object when handed (`gives_object`: a module array or object, a function
-    /// reading one, an app import).
-    own: &'a dyn Fn(js_ast::Ref) -> bool,
-    /// An import, a global or a binding taken from package code.
-    outside: &'a dyn Fn(js_ast::Ref) -> bool,
-    /// The function's local `const`s and their values.
-    inits: &'a std::collections::HashMap<u32, js_ast::Expr>,
-    /// The module-wide guard: no import-rooted call result is clean.
-    guard: bool,
-}
-
-impl Grammar<'_> {
-    /// `clean(e)`: an import / global / package-made identifier; a member or any index of clean; a call of a clean
-    /// callee handed no binding of this module (and, under the guard, not rooted at an import); `?:`, `||`, `??`, `&&`
-    /// of clean arms; `new C(…)` of an import or a global handed no binding of this module. A local `const` stands for
-    /// its value. Nothing else.
-    fn clean(&self, e: &js_ast::Expr, depth: u8) -> bool {
-        if depth > 16 {
-            return false;
-        }
-        let go = |x: &js_ast::Expr| self.clean(x, depth + 1);
-        match &e.data {
-            E::EImportIdentifier(_) => true,
-            E::EIdentifier(id) => match self.inits.get(&(self.key)(id.ref_)) {
-                Some(v) => go(v),
-                None => (self.outside)(id.ref_),
-            },
-            E::EDot(d) => go(&d.target),
-            E::EIndex(i) => go(&i.target),
-            E::ECall(c) => {
-                !c.args.iter().any(|a| self.hands(a, depth + 1))
-                    && go(&c.target)
-                    && !(self.guard && chain_root(&c.target).is_some_and(|r| (self.outside)(r)))
-            }
-            E::EIf(i) => go(&i.yes) && go(&i.no),
-            E::EBinary(b)
-                if matches!(
-                    b.op,
-                    js_ast::OpCode::BinLogicalOr
-                        | js_ast::OpCode::BinLogicalAnd
-                        | js_ast::OpCode::BinNullishCoalescing
-                ) =>
-            {
-                go(&b.left) && go(&b.right)
-            }
-            E::ENew(n) => {
-                let ctor = matches!(&n.target.data, E::EImportIdentifier(_))
-                    || chain_root(&n.target).is_some_and(|r| {
-                        !self.inits.contains_key(&(self.key)(r)) && (self.outside)(r)
-                    });
-                ctor && !n.args.iter().any(|a| self.hands(a, depth + 1))
-            }
-            _ => false,
-        }
-    }
-
-    /// The existing `hands` (an argument that hands this module's object: the object, a literal holding it, a function
-    /// reading one), with a local `const` standing for its value.
-    fn hands(&self, a: &js_ast::Expr, depth: u8) -> bool {
-        if depth > 16 {
-            return true;
-        }
-        let gives = |r: js_ast::Ref| match self.inits.get(&(self.key)(r)) {
-            Some(v) => self.hands(v, depth + 1),
-            None => (self.own)(r),
-        };
-        hands_module_object(a, &gives, 0)
-    }
-
-    /// Whether a mutating method called on `recv` may change this module's object (AMENDMENT 3). Not a write: the
-    /// receiver ITSELF fresh (a literal, a copying method's result: top level only), a clean receiver, a local `const`
-    /// whose value is clean or fresh, or (base's behaviour, the open gap) a receiver rooted at a local that is not a
-    /// `const` with a value (a parameter, a `let`, a loop / catch binding, a destructured name). Everything else is a
-    /// write: a root that is this module's binding, a local `const` not proven, an import / global / package root the
-    /// grammar did not prove clean, `this` or an opaque expression.
-    fn receiver_writes(&self, recv: &js_ast::Expr, module: &dyn Fn(js_ast::Ref) -> bool) -> bool {
-        if crate::analyze::plain_fn::fresh(recv) || self.clean(recv, 0) {
-            return false;
-        }
-        if let E::EIdentifier(id) = &recv.data
-            && let Some(v) = self.inits.get(&(self.key)(id.ref_))
-        {
-            return !crate::analyze::plain_fn::fresh(v);
-        }
-        match root_through_calls(recv) {
-            None => true,
-            Some(r) => module(r) || self.inits.contains_key(&(self.key)(r)) || (self.outside)(r),
-        }
     }
 }
 
