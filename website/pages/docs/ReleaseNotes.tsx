@@ -21,6 +21,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-55', title: '2.0.0-alpha.55' },
       { id: 'alpha-54', title: '2.0.0-alpha.54' },
       { id: 'alpha-53', title: '2.0.0-alpha.53' },
       { id: 'alpha-52', title: '2.0.0-alpha.52' },
@@ -81,6 +82,82 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-55">2.0.0-alpha.55 · 21 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.54: #513 (ledger F562), #514 (F575), #515 (F571, F574), #516 (F577, F581) and #517 (F578, F579, F580 in part) */}
+      <p>This version lets more everyday list and hook code compile without React: a list callback may destructure its item and compute row values, the component body may destructure, and a custom hook may come through a re-exporting module or take a default argument. It also adds <code>[dev] watch</code> for files outside the app, fixes a hook helper that stopped a page script from loading, and makes tier errors point at the right line.</p>
+
+      <h3>Upgrading: what you must change</h3>
+      <ul>
+        {/* source: PR #517 (F578 D6, F580 input); crates/brust-compiler/src/analyze/component.rs (hook_fn_handler_refusals); crates/brust-compiler/tests/hook_body_shapes.rs (a_returned_handler_reading_a_store_or_a_context_value_refuses_by_name; a_returned_handler_reading_a_prop_carries_it_in_x_props); packages/brust/src/build/tiers.ts (a component heavier than its rule or snapshot fails the build) */}
+        <li>
+          <strong>A component whose custom hook returns a function that is used as an event handler by name, and that function reads a store or a context value, now renders with React (#517).</strong> That is <code>{'onClick={q.find}'}</code>, or <code>{'const { say } = useSay(); … onClick={say}'}</code>, where the function reads a store or a context inside the hook. The build prints a <code>hook-shape</code> finding that names the hook and the function and says <code>used as an event handler by name, reads a store</code> (or <code>reads a context value</code>); brust does not check that read on the client yet. The output is the same as before for a component that works, and the page may be heavier. If your <code>brust.toml</code> has a <code>[tiers]</code> snapshot or a <code>[tiers.max]</code> rule that covers such a component, the build now fails with a <code>tier</code> error: check the component, then run <code>brust build --update-tiers</code> to accept the change or relax the rule. To keep the component light, call the function from an inline handler, <code>{'onClick={() => q.find()}'}</code>. To find these components, build once and search the output for <code>hook-shape</code>.
+        </li>
+        {/* source: PR #514 (F575); packages/brust/src/build/config.ts:554 parseDevWatch (called from loadBuildConfig; version alpha.54 had no [dev] handling) */}
+        <li>
+          <strong>A <code>[dev]</code> table in <code>brust.toml</code> is now checked (#514).</strong> It has one key, <code>watch</code>. Any other key, or a <code>[dev]</code> that is not a table, is a <code>config</code> error at <code>brust build</code> and at <code>brust dev</code>; before, the table was ignored. This only matters if your app already has a <code>[dev]</code> table of its own: search <code>brust.toml</code> for <code>[dev]</code> and remove what is not <code>watch</code>.
+        </li>
+        {/* source: PR #516 (F581); crates/brust-compiler/src/analyze/passes/tier.rs (native_because); packages/brust/src/build/tiers.ts (causes picks the first cause with a line); packages/brust/test/tiers.test.ts (a ref-only component) */}
+        <li>
+          <strong>The first line of a <code>tier</code> error can show a different line number (#516).</strong> For a component that compiles to native because of a <code>ref</code>, a prop linked to a child, or an expression that depends on state, the position used to be the start of the file (<code>:1:1</code>). It is now the line of the first cause that has one. Nothing to change, unless a script parses that line.
+        </li>
+      </ul>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #513 (F562); crates/brust-compiler/src/analyze/jsx.rs (read_list); crates/brust-compiler/tests/list_shapes.rs; tests/server/list-shapes.chromium.test.ts; the React coverage page, section Lists */}
+        <li>
+          <strong>A list callback may destructure its item and compute row values, and the component stays native or static (#513).</strong> The item may be a flat pattern, <code>{'({ id, name }) =>'}</code> or <code>{'([key, , value]) =>'}</code>. The body may be a block of <code>const</code> declarations and <code>if (…) return null;</code> statements before one <code>return &lt;li …/&gt;</code>. Before, both made the component a React island (<code>list-shape</code>). Four kinds of callback still stay React and the build names the reason: an item pattern with a default, a nested pattern, a rest element or a computed key (or a pattern as the index); a row binding that is <code>let</code>, <code>var</code> or a pattern, or a const that holds JSX or calls a hook; an early return other than <code>return null</code>; and a row const read where a nested list or a function declares a name its value reads. One difference from React: brust does not keep a row const as a variable, so a const read twice calls its helper twice. For a pure render the output is the same. See <a href="/docs/react-coverage#lists">React coverage</a>.
+        </li>
+        {/* source: PR #517 (F578 D1); crates/brust-compiler/src/analyze/hooks.rs (read_body_pattern); crates/brust-compiler/tests/hook_body_shapes.rs; scripts/battery/rows.ts c-body-destructure-object, c-body-destructure-array-call; the React coverage page, section Component body and custom hooks */}
+        <li>
+          <strong>The component body may destructure: <code>{'const { kind, m: msg } = ask'}</code> or <code>{'const [first, , third] = pair'}</code> (#517).</strong> Over a path of props, state, a store view or another body const, each name reads its member of that path. Over anything else, such as a call, the call runs once and each name reads its member of the result. A default, a nested pattern, a rest element or a computed key keeps the component React (<code>body-shape</code>).
+        </li>
+        {/* source: PR #517 (F578 D2, D3); crates/brust-compiler/src/analyze/hooks.rs (follow_reexports, Slot::Defaulted); crates/brust-compiler/tests/hook_body_shapes.rs; scripts/battery/rows.ts c-custom-hook-reexport, c-custom-hook-param-default; the React coverage page, section Component body and custom hooks */}
+        <li>
+          <strong>A custom hook may be imported through a module that only re-exports it, and may take a parameter with a default (#517).</strong> The re-export may be <code>{"export { useX } from './x'"}</code>, <code>{"import { useX } from './x'; export { useX }"}</code> (renamed too) or <code>{"export * from './x'"}</code>, up to four modules deep. A parameter such as <code>{"selector = 'input'"}</code> is accepted when its default reads no other parameter and calls nothing: a call that leaves the argument out, or passes <code>undefined</code>, gets the default, as in React. Before, both were React islands (<code>hook-unsupported</code> and <code>hook-shape</code>).
+        </li>
+        {/* source: PR #514 (F575); packages/brust/src/build/config.ts:554 parseDevWatch; packages/brust/src/dev/watch.ts:51 devExtraRoots; the Dev mode page, section What is watched; the Configuration page */}
+        <li>
+          <strong><code>[dev] watch</code> makes <code>brust dev</code> reload for files outside the app (#514).</strong> It is an array of files or directories relative to the app root, for example <code>{'watch = ["../../packages/api"]'}</code> for a workspace package reached through <code>node_modules</code>. It only watches: unlike <code>source_roots</code> it does not change what imports may reach, and <code>brust build</code> and <code>brust start</code> ignore it. A path that does not exist is one <code>warning dev.watch</code> line, and the session goes on. See <a href="/docs/dev-mode#watched">Dev mode</a> and <a href="/docs/configuration">Configuration</a>.
+        </li>
+        {/* source: PR #516 (F577, F581); packages/brust/src/build/index.ts (the --update-tiers line); crates/brust-compiler/src/analyze/passes/tier.rs; packages/brust/test/tiers.test.ts */}
+        <li>
+          <strong><code>brust build --update-tiers</code> without a <code>[tiers] snapshot</code> says so, and a <code>tier</code> error points at the line of the first cause (#516).</strong> The build prints <code>tiers: --update-tiers has no effect: no [tiers] snapshot is configured</code> instead of nothing. A cause that is a <code>ref</code>, a linked child or a state-dependent expression now carries a line, as a state or an event handler did.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #517 (F579); crates/brust-compiler/src/analyze/expr.rs (Reader::function_decl); tests/browser/cases/hook-exported-helper.test.ts (fails with "Unexpected export" without the fix); tests/fixtures/hook-exported-helper */}
+        <li>
+          <strong>A component did nothing in the browser when a hook&rsquo;s module exported a helper function that the hook&rsquo;s handler used (#517).</strong> With <code>{'export function shout(x) { … }'}</code> next to <code>useShout</code>, the page script was written with the <code>export</code> keyword inside it and the browser refused it (<code>Unexpected export</code>); the build printed nothing. The helper is now carried without <code>export</code>.
+        </li>
+        {/* source: PR #517 (F578 review, D6); crates/brust-compiler/src/lower/client.rs; crates/brust-compiler/src/analyze/passes/captures.rs; crates/brust-compiler/tests/hook_body_shapes.rs (a_returned_function_declares_the_hook_local_function_and_derived_value_it_reads, a_returned_handler_reading_a_prop_carries_it_in_x_props); tests/browser/cases/hook-returned-fn.test.ts, hook-returned-matrix.test.ts */}
+        <li>
+          <strong>A function returned by a custom hook and used as an event handler by name could fail on click or read a wrong value (#517).</strong> For <code>{'onClick={q.find}'}</code>, a name the function read inside the hook (the hook&rsquo;s own function or derived value) was missing from the page script, so the click raised an error. A prop the function read, through a hook parameter, was not sent to the browser and arrived as <code>undefined</code>. Both are now declared and carried. A read of a store or a context there is not checked on the client yet, so that component renders with React (see Upgrading).
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #515 (F571, F574); the Caching page, section Every cache layer (#layers); the Rendering tiers page, section What the template prints (#expressions); the Runtime components page, section island */}
+        <li>
+          <strong>Two docs pages state what was implicit (#515).</strong> <a href="/docs/caching#layers">Caching</a> has one table with the contract of every cache layer: key, lifetime, what is stored, what a route <code>bypass</code> skips and how it is configured. <a href="/docs/rendering-tiers#expressions">Rendering tiers</a> says which expressions the template prints directly and that anything else runs as your own JavaScript in a server job.
+        </li>
+        {/* source: PR #514 (F575), Navigation docs page (data-brust-prefetch on <html>; popstate order, packages/runtime-dom/src/nav/nav.ts:305-315) */}
+        <li>
+          <strong>The Navigation page says that <code>data-brust-prefetch="false"</code> on <code>&lt;html&gt;</code> turns prefetch off for the whole app, and that the navigator handles <code>popstate</code> before a listener you add (#514).</strong> To follow a back or forward move, listen for <code>brust:nav:load</code>, <code>success</code> and <code>error</code> and read <code>trigger</code>.
+        </li>
+        {/* source: PR #516 (F577), the Rendering tiers, Configuration and CLI docs pages */}
+        <li>
+          <strong>The tier pages gain three notes (#516).</strong> A component under <code>[build] source_roots</code> outside the app is matched by a key that starts with <code>../</code>; the snapshot lists the components of your source, not copies; and the check runs after a successful compile, so a build error comes first.
+        </li>
+        {/* source: PR #513 (F562) "Measured on an app report: list-shape findings 65 → 4; components better 4, worse 0"; PR #517 (F578) "the 24 findings of these three kinds go to 0; components better 3, worse 0", and the READY note of task hook-body-shapes (probe of 548 components: React 353 → 350) */}
+        <li>
+          <strong>On one app report, <code>list-shape</code> findings went from 65 to 4 (#513), and the 24 findings about a destructured body, a re-exported hook or a defaulted hook parameter went to 0 (#517).</strong> Of its 548 components, those rendering with React went from 353 to 350 after #517. No component moved to a heavier tier in either measurement.
+        </li>
+      </ul>
 
       <h2 id="alpha-54">2.0.0-alpha.54 · 21 November 2026</h2>
       {/* source: the pull request merged after v2.0.0-alpha.53: #510 (ledger F569) */}
