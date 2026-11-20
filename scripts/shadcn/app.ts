@@ -267,7 +267,8 @@ function buildEntry(entryRel: string, id: string): AppRow['build'] {
   const out = join(FIXTURE, '.rows', `dist-${id}`)
   mkdirSync(join(FIXTURE, '.rows'), { recursive: true })
   try {
-    const p = spawnSync(process.execPath, [join(repo, 'packages/brust/bin/brust'), 'build', entryRel, '--out-dir', `.rows/dist-${id}`], { cwd: FIXTURE, encoding: 'utf8', timeout: BUILD_TIMEOUT_MS, killSignal: 'SIGKILL' })
+    // measureDist walks every component's own template (F559: a build writes only the route chain's unless asked).
+    const p = spawnSync(process.execPath, [join(repo, 'packages/brust/bin/brust'), 'build', entryRel, '--out-dir', `.rows/dist-${id}`], { cwd: FIXTURE, encoding: 'utf8', timeout: BUILD_TIMEOUT_MS, killSignal: 'SIGKILL', env: { ...process.env, BRUST_BUILD_ALL_TEMPLATES: '1' } })
     if (timedOut(p)) return { ok: false, message: 'timeout', refusal: null }
     if (p.status === 0) return { ok: true, measured: measureDist(out) }
     const text = (p.stderr || p.stdout).replaceAll(FIXTURE, '.')
