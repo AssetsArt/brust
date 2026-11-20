@@ -360,7 +360,8 @@ pub struct RenderItem {
     pub props: serde_json::Value,
 }
 
-/// F546: the answer to one [`RenderItem`]: `html` (`null` = the app renders nothing for it) or what `render` threw.
+/// F546: the answer to one [`RenderItem`]: `html` (`null` = the app renders nothing for it), what `render` threw, or
+/// (F572) `notNow`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HtmlResult {
     #[serde(rename = "ref")]
@@ -370,6 +371,9 @@ pub struct HtmlResult {
     pub html: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// F572: `render` answered `ctx.notNow()`: no HTML this time, ask again on the next page render.
+    #[serde(default, rename = "notNow")]
+    pub not_now: bool,
 }
 
 /// F519 `component` call response: `{ results: [{ ref, artifact } | { ref, missing: true } | { ref, error }] }`.

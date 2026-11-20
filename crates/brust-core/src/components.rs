@@ -664,6 +664,8 @@ enum Html {
     Ready(Option<Arc<str>>),
     /// `render` threw, its output was over the cap, or no answer came: an empty host, the page is not stored.
     Failed,
+    /// F572: `render` answered `ctx.notNow()`: an empty host, nothing cached, the page is not stored, no log line.
+    NotNow,
 }
 
 #[derive(Debug, Default)]
@@ -803,10 +805,13 @@ impl RenderSlots {
         }
         // F546: the HTML of each asked pair whose ref is (now) an island artifact in the page's map.
         // A key answered twice is a worker bug: taken as no answer.
-        let mut answers: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        let mut answers: HashMap<String, (Option<String>, Option<String>, bool)> = HashMap::new();
         let mut twice = BTreeSet::new();
         for h in html_answers {
-            if answers.insert(h.key.clone(), (h.html, h.error)).is_some() {
+            if answers
+                .insert(h.key.clone(), (h.html, h.error, h.not_now))
+                .is_some()
+            {
                 twice.insert(h.key);
             }
         }
@@ -825,12 +830,21 @@ impl RenderSlots {
                     s.notes.push((item.reference.clone(), why.clone()));
                     Html::Failed
                 }
-                (None, Some((_, Some(e)))) => {
+                // F572: a not-now answer that also carries a result is a worker bug.
+                (None, Some((h, e, true))) if h.is_some() || e.is_some() => {
+                    s.notes.push((
+                        item.reference.clone(),
+                        "render answered not now with a result".into(),
+                    ));
+                    Html::Failed
+                }
+                (None, Some((_, _, true))) => Html::NotNow,
+                (None, Some((_, Some(e), _))) => {
                     s.notes
                         .push((item.reference.clone(), format!("render threw: {e}")));
                     Html::Failed
                 }
-                (None, Some((Some(h), None))) if h.len() > MAX_SLOT_OUTPUT_BYTES => {
+                (None, Some((Some(h), None, _))) if h.len() > MAX_SLOT_OUTPUT_BYTES => {
                     s.notes.push((
                         item.reference.clone(),
                         format!(
@@ -840,7 +854,7 @@ impl RenderSlots {
                     ));
                     Html::Failed
                 }
-                (None, Some((h, None))) => {
+                (None, Some((h, None, _))) => {
                     let h: Option<Arc<str>> = h.map(Arc::from);
                     let canon = item.props.to_string();
                     self.reg
@@ -1064,6 +1078,11 @@ impl RenderSlots {
         let inner = match html {
             Html::Ready(h) => h,
             Html::Failed => {
+                s.failed = true;
+                None
+            }
+            // F572: the same "page not stored" as a failure, with no note
+            Html::NotNow => {
                 s.failed = true;
                 None
             }

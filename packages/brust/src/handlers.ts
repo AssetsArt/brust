@@ -4,7 +4,7 @@
 import { installServerResolver, type StoreSnapshot } from './store/core-adapter'
 import { collectSnapshot, getServerInstance, runInStoreContext, touchStores } from './store/server-context'
 import { NAVIGATION_MODULE } from './store/builtin'
-import { type FlatRoute, isHttpErrorTrigger, isVerdict, type LoaderReq, type Route, type RuntimeComponents, type Verdict } from './routes'
+import { type FlatRoute, isHttpErrorTrigger, isVerdict, type LoaderReq, type RenderNotNow, type Route, type RuntimeComponents, type Verdict } from './routes'
 
 installServerResolver(getServerInstance)
 
@@ -75,8 +75,16 @@ export interface RenderItem {
 /** One answer per ref: the artifact, `missing` (the resolver returned null), or what the resolver threw. */
 export type ComponentResult = { ref: string; artifact: unknown } | { ref: string; missing: true } | { ref: string; error: string }
 
-/** F546: one answer per render whose ref is an island artifact: its HTML (`null` = none) or what `render` threw. */
-export type HtmlResult = { ref: string; key: string; html: string | null } | { ref: string; key: string; error: string }
+/** F546: one answer per render whose ref is an island artifact: its HTML (`null` = none), what `render` threw, or (F572)
+ * `notNow` (`render` returned `ctx.notNow()`). */
+export type HtmlResult =
+  | { ref: string; key: string; html: string | null }
+  | { ref: string; key: string; error: string }
+  | { ref: string; key: string; notNow: true }
+
+/** F572: the one value `ctx.notNow()` returns (compared by identity). */
+const NOT_NOW: RenderNotNow = Object.freeze({ __brustRenderNotNow: true as const })
+const notNow = (): RenderNotNow => NOT_NOW
 
 export interface ComponentResponse {
   results: ComponentResult[]
@@ -314,7 +322,8 @@ export async function resolveComponents(components: RuntimeComponents | undefine
     calls.map(async ({ ref, key, props }): Promise<HtmlResult> => {
       if (typeof render !== 'function') return { ref, key, html: null }
       try {
-        const out = await render.call(components, ref, props && typeof props === 'object' ? props : {}, { build, page: { ...page } })
+        const out = await render.call(components, ref, props && typeof props === 'object' ? props : {}, { build, page: { ...page }, notNow })
+        if (out === NOT_NOW) return { ref, key, notNow: true }
         if (out == null) return { ref, key, html: null }
         if (typeof out !== 'string') return { ref, key, error: `components.render returned ${typeof out}, not a string or null` }
         return { ref, key, html: out }
