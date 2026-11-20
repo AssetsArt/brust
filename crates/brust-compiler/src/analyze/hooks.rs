@@ -55,6 +55,8 @@ pub struct BodyDecls {
     pub diagnostics: Vec<Diagnostic>,
     /// The first reason this component needs React, if any.
     pub react_reason: Option<String>,
+    /// F578 D6: functions an inlined hook declares (derived name, hook), for the handler-by-name refusals.
+    pub hook_fns: Vec<(String, String)>,
     /// Hook calls already classified as top-level statements, by address.
     classified_hooks: HashSet<usize>,
     /// Custom hooks being inlined (G3).
@@ -4037,6 +4039,18 @@ fn read_hook(
             });
         }
         let mut returned = read_stmts(&body, &mut hr, out, hm);
+        for d in &out.derived[start.derived..] {
+            if matches!(
+                &d.expr,
+                Expr::Raw(RawExpr {
+                    kind: RawKind::Arrow { .. },
+                    ..
+                })
+            ) && !out.hook_fns.iter().any(|(n, _)| *n == d.name)
+            {
+                out.hook_fns.push((d.name.clone(), hook.to_string()));
+            }
+        }
         if !module_consts.is_empty() {
             let values: HashMap<String, RawExpr> = module_consts
                 .iter()

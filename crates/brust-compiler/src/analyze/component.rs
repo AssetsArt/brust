@@ -727,10 +727,69 @@ fn read_function_as(
         .map(root_node)
         .unwrap_or(Node::Fragment(vec![]));
     ir.template = host_root(root, root_loc);
+    hook_fn_handler_refusals(ir, &body.hook_fns);
     falsy_left_slots(ir);
     callback_refs(ir);
     ir.uses_outlet = has_outlet(&ir.template);
     check_printer_panic(ir);
+}
+
+/// F578 D6: a function an inlined hook returns, used as an event handler by name (`onClick={q.run}`,
+/// `const { run } = useX(); onClick={run}`), that reads a store or a context value (directly or through the hook's other
+/// values) is not yet proven on the client: the component stays React, naming the hook, the function and the read.
+fn hook_fn_handler_refusals(ir: &mut ComponentIR, hook_fns: &[(String, String)]) {
+    fn reads(e: &RawExpr, out: &mut Vec<(String, IdentKind)>) {
+        let mut visit = |n: &str, k: &IdentKind| out.push((n.to_string(), k.clone()));
+        crate::lower::common::visit_idents(e, &mut visit);
+    }
+    for name in crate::lower::client::event_handlers(&ir.template) {
+        let Some((_, hook)) = hook_fns.iter().find(|(n, _)| *n == name) else {
+            continue;
+        };
+        if ir.handlers.iter().any(|h| h.name == name) {
+            continue;
+        }
+        // what the function reads, through the derived values it reaches
+        let mut seen: Vec<String> = Vec::new();
+        let mut stack = vec![name.clone()];
+        let mut found: Option<(String, &str)> = None;
+        let mut loc = 0;
+        while let Some(n) = stack.pop() {
+            if seen.contains(&n) {
+                continue;
+            }
+            seen.push(n.clone());
+            let Some(Expr::Raw(raw)) = ir.derived.iter().find(|d| d.name == n).map(|d| &d.expr)
+            else {
+                continue;
+            };
+            if n == name {
+                loc = raw.loc;
+            }
+            let mut rs = Vec::new();
+            reads(raw, &mut rs);
+            for (r, k) in rs {
+                match &k {
+                    IdentKind::Store { .. } => found = found.or(Some((r.clone(), "a store"))),
+                    IdentKind::Prop if r.starts_with("__ctx_") => {
+                        found = found.or(Some((r.clone(), "a context value")))
+                    }
+                    IdentKind::Local => stack.push(r.clone()),
+                    _ => {}
+                }
+            }
+        }
+        if let Some((what_name, what)) = found {
+            ir.diagnostics.push(Diagnostic::fallback(
+                "hook-shape",
+                format!(
+                    "custom hook {hook}: `{name}`, used as an event handler by name, reads {what} (`{what_name}`); brust does not check that read on the client yet"
+                ),
+                loc,
+                "call it from an inline handler (`onClick={() => run()}`), or keep this component in React",
+            ));
+        }
+    }
 }
 
 /// F388 (rulings 3743aabc, 6a4a1b50): the reader gives `left && <X/>` (a side-effect-free `left`) an else branch that

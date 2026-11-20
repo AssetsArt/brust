@@ -75,6 +75,27 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             raw: Some((h.body.clone(), h.item_scoped.clone())),
         });
     }
+    // F578 review (D6): a body function used as an event handler BY NAME (`onClick={q.find}`, an inlined hook's
+    // returned function) runs on the client like a hoisted handler: what it reads (props too) is the chunk's.
+    for name in crate::lower::client::event_handlers(&ir.template) {
+        if ir.handlers.iter().any(|h| h.name == name) || !ir.derived.iter().any(|d| d.name == name)
+        {
+            continue;
+        }
+        let read = crate::ir::RawExpr {
+            loc: 0,
+            kind: crate::ir::RawKind::Ident {
+                name,
+                kind: crate::ir::IdentKind::Local,
+            },
+        };
+        uses.push(ClientUse {
+            loc: 0,
+            deps: cx.deps(&read, &[]),
+            what: "a handler",
+            raw: Some((read, Vec::new())),
+        });
+    }
     for e in &ir.effects {
         // F41 (§8.1): names the effect reads that its declared dependency array lacks.
         if let Some(declared) = &e.deps {

@@ -754,7 +754,7 @@ fn object_key(k: &str) -> String {
 }
 
 /// Handler names the template's `x-on-*` directives use.
-fn event_handlers(n: &Node) -> Vec<String> {
+pub(crate) fn event_handlers(n: &Node) -> Vec<String> {
     let mut out = Vec::new();
     fn walk(n: &Node, out: &mut Vec<String>) {
         match n {
