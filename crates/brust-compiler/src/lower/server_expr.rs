@@ -186,29 +186,7 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                 _ => name.clone(),
             }
         }
-        RawKind::Member {
-            target,
-            name,
-            optional,
-        } => {
-            let t = raw(target, ctx);
-            if name == "length" {
-                return if *optional {
-                    format!(
-                        "(({t} | length) if {t} is defined and {t} is not none else {UNDEFINED})"
-                    )
-                } else {
-                    format!("({t} | length)")
-                };
-            }
-            let access = member_access(&t, name);
-            if *optional {
-                format!("({access} if {t} is defined and {t} is not none else {UNDEFINED})")
-            } else {
-                access
-            }
-        }
-        RawKind::Index { target, index } => format!("{}[{}]", raw(target, ctx), raw(index, ctx)),
+        RawKind::Member { .. } | RawKind::Index { .. } => member_path(e, ctx),
         RawKind::Unary { op, value } => match op {
             // JS truthiness (an empty list or object is true): brust-jinja's `truthy`.
             UnOp::Not => format!("(not {})", test(value, ctx)),
@@ -368,15 +346,73 @@ fn logical_value(e: &RawExpr, op: BinOp, ctx: &JinjaCtx<'_>) -> String {
     let (last, rest) = ops.split_last().expect("a chain has operands");
     let mut acc = raw(last, ctx);
     for o in rest.iter().rev() {
-        let v = raw(o, ctx);
         acc = match op {
             // `&&` / `||` return an operand, chosen by JS truthiness.
-            BinOp::And => format!("({acc} if {} else {v})", test(o, ctx)),
-            BinOp::Or => format!("({v} if {} else {acc})", test(o, ctx)),
-            _ => format!("({v} if {v} is defined and {v} is not none else {acc})"),
+            // `&&` / `||` return an operand, chosen by JS truthiness. The operand is printed as its test and then only as
+            // the value it has once that test is known (F555 ruling 3): a falsy `||` chain is its last operand, a truthy
+            // `&&` chain is its last operand.
+            BinOp::And => format!("({acc} if {} else {})", test(o, ctx), known(o, false, ctx)),
+            BinOp::Or => format!("({} if {} else {acc})", known(o, true, ctx), test(o, ctx)),
+            _ => {
+                let v = raw(o, ctx);
+                format!("({v} if {v} is defined and {v} is not none else {acc})")
+            }
         };
     }
     acc
+}
+
+/// F555 ruling 3: the value of `e` where its truthiness is already known (`truthy`). An `||` chain known falsy returned
+/// its last operand (every operand was falsy); an `&&` chain known truthy returned its last operand (every operand was
+/// truthy); that operand is itself known the same way. Anything else prints its whole value.
+fn known(e: &RawExpr, truthy: bool, ctx: &JinjaCtx<'_>) -> String {
+    let op = if truthy { BinOp::And } else { BinOp::Or };
+    match &e.kind {
+        RawKind::Binary { op: o, .. } if *o == op => {
+            let mut ops = Vec::new();
+            chain(e, op, &mut ops);
+            known(ops.last().expect("a chain has operands"), truthy, ctx)
+        }
+        _ => raw(e, ctx),
+    }
+}
+
+/// F557: a member / index path. An optional link (`a?.b`) makes the whole path undefined when its target is `undefined`
+/// or `null` (JS short-circuits the rest of the chain), so the path prints once, plainly, under one guard: every
+/// optional link's target present, tested left to right by jinja's short-circuit `and`. Printing each optional link as
+/// `(t.b if t present else undefined)` repeated its target three times: `a?.b?.c?.d` was 3^depth copies.
+fn member_path(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
+    let mut guards = Vec::new();
+    let plain = plain_path(e, ctx, &mut guards);
+    if guards.is_empty() {
+        plain
+    } else {
+        format!("({plain} if {} else {UNDEFINED})", guards.join(" and "))
+    }
+}
+
+fn plain_path(e: &RawExpr, ctx: &JinjaCtx<'_>, guards: &mut Vec<String>) -> String {
+    match &e.kind {
+        RawKind::Member {
+            target,
+            name,
+            optional,
+        } => {
+            let t = plain_path(target, ctx, guards);
+            if *optional {
+                guards.push(format!("{t} is defined and {t} is not none"));
+            }
+            if name == "length" {
+                format!("({t} | length)")
+            } else {
+                member_access(&t, name)
+            }
+        }
+        RawKind::Index { target, index } => {
+            format!("{}[{}]", plain_path(target, ctx, guards), raw(index, ctx))
+        }
+        _ => raw(e, ctx),
+    }
 }
 
 /// F555: `e` tested for JS truthiness, as a jinja expression that is `true` or `false`. `&&`, `||` and `!` print as

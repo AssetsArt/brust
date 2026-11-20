@@ -122,7 +122,24 @@ fn boolean_attribute_prints_each_operand_once() {
     assert_eq!(j.matches("(a16 | truthy)").count(), 1, "{j}");
 }
 
-/// Each row: an expression over props `a`, `b`, `c` printed as text through a template literal (JS `String()` of its
+#[test]
+fn alternating_mix_of_16_is_small() {
+    // ((((a1 || a2) && a3) || a4) && …): each level's left prints as a test plus one operand.
+    let mut e = String::from("a1");
+    for i in 2..=16 {
+        e = format!("({e} {} a{i})", if i % 2 == 0 { "||" } else { "&&" });
+    }
+    assert_small("alternating", &format!("<p title={{{e}}}>t</p>"));
+}
+
+#[test]
+fn optional_chain_of_16_is_small() {
+    // F557: `x?.a1?.a2?…?.a16` was 3^16 copies of `x`.
+    let path: String = (1..=16).map(|i| format!("?.a{i}")).collect();
+    assert_small("optional", &format!("<p title={{x{path}}}>t</p>"));
+}
+
+/// Each row: an expression over props `a` … `d` printed as text through a template literal (JS `String()` of its
 /// value), and the inputs it is rendered with.
 const ROWS: &[(&str, &str)] = &[
     ("a && b", r#"{"a": 0, "b": "x"}"#),
@@ -139,6 +156,41 @@ const ROWS: &[(&str, &str)] = &[
     ("!(a && b)", r#"{"a": 1, "b": 0}"#),
     ("!(a && b)", r#"{"a": 1, "b": 2}"#),
     ("!(a || b)", r#"{"a": 0, "b": ""}"#),
+    // Ruling 3: a left chain prints as its test plus its last operand.
+    ("(a || b) && c", r#"{"a": 0, "b": "", "c": "x"}"#),
+    ("(a || b) && c", r#"{"a": 0, "b": 5, "c": "x"}"#),
+    ("(a && b) || c", r#"{"a": 1, "b": 0, "c": "c"}"#),
+    ("(a && b) || c", r#"{"a": 1, "b": "v", "c": "c"}"#),
+    // A last operand that is itself a chain.
+    (
+        "(a || (b && c)) && d",
+        r#"{"a": 0, "b": 1, "c": 0, "d": "d"}"#,
+    ),
+    (
+        "(a || (b && c)) && d",
+        r#"{"a": 0, "b": "", "c": 2, "d": "d"}"#,
+    ),
+    (
+        "(a && (b || c)) || d",
+        r#"{"a": 1, "b": 0, "c": "w", "d": "d"}"#,
+    ),
+    (
+        "(a && (b || c)) || d",
+        r#"{"a": 1, "b": 0, "c": "", "d": "d"}"#,
+    ),
+    // F557: optional member paths.
+    ("a?.b?.c", r#"{}"#),
+    ("a?.b?.c", r#"{"a": null}"#),
+    ("a?.b?.c", r#"{"a": {"b": null}}"#),
+    ("a?.b?.c", r#"{"a": {"b": {"c": 7}}}"#),
+    ("a?.b.c", r#"{"a": null}"#),
+    ("a?.b.c", r#"{"a": {"b": {"c": "z"}}}"#),
+    ("a?.items.length", r#"{}"#),
+    ("a?.items.length", r#"{"a": {"items": [1, 2]}}"#),
+    ("a?.b?.length", r#"{"a": {}}"#),
+    ("a?.b?.length", r#"{"a": {"b": "four"}}"#),
+    ("a?.b ?? d", r#"{"a": {"b": 0}, "d": 1}"#),
+    ("a?.b ?? d", r#"{"d": 1}"#),
 ];
 
 /// Inputs for the mixed rows: every pair of a falsy and a truthy value per prop.
@@ -151,13 +203,17 @@ const MIXED: &[&str] = &[
     "(a || b) ?? c",
     "!(a && b) || c",
     "a && b ? b : c",
+    // Three levels, alternating.
+    "((a || b) && c) || d",
+    "((a && b) || c) && d",
+    "(a ?? (b || c)) && d",
 ];
 
 fn js_strings(cases: &[(String, serde_json::Value)]) -> Option<Vec<String>> {
     let bun = lower_common::bun()?;
     let body: String = cases
         .iter()
-        .map(|(e, p)| format!("(({{a, b, c}}) => String({e}))({p}),"))
+        .map(|(e, p)| format!("(({{a, b, c, d}}) => String({e}))({p}),"))
         .collect();
     let out = std::process::Command::new(bun)
         .args(["-e", &format!("console.log(JSON.stringify([{body}]))")])
@@ -188,7 +244,12 @@ fn chains_render_the_value_js_gives() {
         for a in &values {
             for b in &values {
                 for c in &values {
-                    cases.push((e.to_string(), serde_json::json!({"a": a, "b": b, "c": c})));
+                    for d in &values {
+                        cases.push((
+                            e.to_string(),
+                            serde_json::json!({"a": a, "b": b, "c": c, "d": d}),
+                        ));
+                    }
                 }
             }
         }
@@ -199,13 +260,13 @@ fn chains_render_the_value_js_gives() {
     };
     for ((e, p), want) in cases.iter().zip(js) {
         let j = jinja(&format!(
-            "export default function L({{ a, b, c }}: any) {{ return <p>{{`${{{e}}}`}}</p> }}"
+            "export default function L({{ a, b, c, d }}: any) {{ return <p>{{`${{{e}}}`}}</p> }}"
         ));
         let html = render(&j, p);
         assert_eq!(html, format!("<p>{want}</p>"), "{e} with {p}\n{j}");
         // In a test position (a branch) the same expression picks the branch JS picks.
         let j = jinja(&format!(
-            "export default function L({{ a, b, c }}: any) {{ return <p>{{({e}) ? <b>y</b> : <i>n</i>}}</p> }}"
+            "export default function L({{ a, b, c, d }}: any) {{ return <p>{{({e}) ? <b>y</b> : <i>n</i>}}</p> }}"
         ));
         let truthy = !matches!(
             want.as_str(),
