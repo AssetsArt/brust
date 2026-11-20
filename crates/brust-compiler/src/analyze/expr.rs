@@ -637,7 +637,8 @@ impl<'r, 'a> Reader<'r, 'a> {
             self.names.note_bound_problem(
                 loc,
                 format!(
-                    "the row const `{}` is read inside a nested list whose `{shadow}` hides the `{shadow}` its value reads",
+                    "the {} `{}` is read inside a nested list whose `{shadow}` hides the `{shadow}` its value reads",
+                    if b.depth == 0 { "destructured const" } else { "row const" },
                     b.name
                 ),
                 b.depth,
@@ -872,7 +873,8 @@ impl<'r, 'a> Reader<'r, 'a> {
                     self.names.note_bound_problem(
                         at,
                         format!(
-                            "the row const `{}` is read in code that declares `{d}`, a name its value reads",
+                            "the {} `{}` is read in code that declares `{d}`, a name its value reads",
+                            if b.depth == 0 { "destructured const" } else { "row const" },
                             b.name
                         ),
                         b.depth,

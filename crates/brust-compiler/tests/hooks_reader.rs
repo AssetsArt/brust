@@ -461,9 +461,10 @@ fn custom_hook_shapes_that_fall_back() {
             "function useX(a) { return a\n const b = 1 }\nexport default function C({ a }: any) { const x = useX(a); return <p>{x}</p> }",
             "stmt-after-return",
         ),
-        // default parameter
+        // F578: a plain parameter with a default is read (tests/hook_body_shapes.rs); one whose default reads another
+        // parameter is not
         (
-            "function useX(a = 1) { return a }\nexport default function C() { const x = useX(); return <p>{x}</p> }",
+            "function useX(a, b = a) { return b }\nexport default function C() { const x = useX(1); return <p>{x}</p> }",
             "hook-shape",
         ),
         // array pattern against a non-literal return

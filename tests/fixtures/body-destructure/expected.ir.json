@@ -164,7 +164,7 @@
             "link": null,
             "tier": {
               "React": {
-                "reason": "destructuring in component body",
+                "reason": "destructuring the props object outside the props pattern",
                 "client_only": false
               }
             }
@@ -218,7 +218,7 @@
       "path": "tests/fixtures/body-destructure/Two.tsx",
       "tier": {
         "React": {
-          "reason": "destructuring in component body",
+          "reason": "destructuring the props object outside the props pattern",
           "client_only": false
         }
       }

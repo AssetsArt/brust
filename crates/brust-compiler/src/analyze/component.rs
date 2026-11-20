@@ -645,6 +645,16 @@ fn read_function_as(
             "read the members (`t.key`, or destructure the hook's result), or keep this component in React",
         ));
     }
+    // F578: a name bound to an expression in the body (a destructured const) read where a nested scope hides a name the
+    // expression reads: the read would change meaning (F562's lists refuse their own; the body's are refused here).
+    if let Some((loc, why, _)) = reader.names.bound_problem.borrow_mut().take() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "body-shape",
+            why,
+            loc,
+            "rename the inner name, or keep this component in React",
+        ));
+    }
     if let Some((loc, name, code, what)) = reader.names.prop_read_problem.borrow().clone() {
         ir.diagnostics.push(Diagnostic::fallback(
             code,
