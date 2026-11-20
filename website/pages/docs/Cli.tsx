@@ -205,8 +205,8 @@ export default function Cli({ blocks, panels }: CliData) {
             </td>
             <td>build</td>
             <td>
-              {/* source: packages/brust/src/cli.ts (the flag, build only), packages/brust/src/build/tiers.ts checkTiers (no snapshot violation, the file rewritten, each difference printed; the [tiers.max] rules still apply), packages/brust/test/tiers.test.ts */}
-              Rewrites the <code>[tiers]</code> snapshot with this build&rsquo;s tiers instead of failing on a component that got heavier, and prints each difference. The <code>[tiers.max]</code> rules still apply. See{' '}
+              {/* source: packages/brust/src/build/index.ts (F577: the line printed when no snapshot is configured), packages/brust/test/tiers.test.ts; packages/brust/src/cli.ts (the flag, build only), packages/brust/src/build/tiers.ts checkTiers (no snapshot violation, the file rewritten, each difference printed; the [tiers.max] rules still apply), packages/brust/test/tiers.test.ts */}
+              Rewrites the <code>[tiers]</code> snapshot with this build&rsquo;s tiers instead of failing on a component that got heavier, and prints each difference. The <code>[tiers.max]</code> rules still apply. Without a <code>[tiers] snapshot</code> it prints <code>tiers: --update-tiers has no effect: no [tiers] snapshot is configured</code> and changes nothing. See{' '}
               <a href="/docs/rendering-tiers#see">Rendering tiers</a>.
             </td>
           </tr>

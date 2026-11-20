@@ -364,6 +364,9 @@ async function buildInto(
     ;({ compiled, routeComponent } = compileApp({ ...compileOpts, packages, iconSvgs, iconsFinal: hasIcons, slotValues, log: hasIcons ? o.log : () => {} }))
   } else firstLog.forEach((l) => o.log(l))
 
+  // F577: `--update-tiers` rewrites the snapshot; with none configured it has nothing to do, and says so.
+  if (o.updateTiers && o.tiers?.snapshot === undefined) o.log('tiers: --update-tiers has no effect: no [tiers] snapshot is configured')
+
   // F569 (D2-D6): the final compile against `[tiers]`; every target, before anything is bundled.
   if (o.tiers) {
     const check = checkTiers({ appRoot, file: join(appRoot, 'brust.toml'), tiers: o.tiers, compiled, dev: o.dev, updateTiers: o.updateTiers })

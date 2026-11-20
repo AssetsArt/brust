@@ -297,6 +297,11 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         The compiler may make a copy of a component for some call sites (a React copy where the server cannot render it inside its parent). A copy is checked against its component&rsquo;s pattern, and the error says which
         component places it. <code>brust dev</code> prints these as <code>warning tier</code> lines and keeps running.
       </p>
+      {/* source: packages/brust/src/build/index.ts (compileApp throws a compile error before checkTiers runs: "the final compile against [tiers]"); packages/brust/test/tiers.test.ts (a build error, list-key, stops the build before [tiers.max] is read) */}
+      <p>
+        The check runs after the compile has succeeded. A build error, such as <code>list-key</code> for a list whose items have no <code>key</code>, stops the build first and is the only thing printed. <code>[tiers.max]</code> guards a tier that changes,
+        not code that does not build.
+      </p>
       {/* source: packages/brust/src/build/tiers.ts (checkTiers: the snapshot; writeTierSnapshot runs after the build succeeded; never in dev), packages/brust/test/tiers.test.ts (written, unchanged, heavier, lighter, --update-tiers) */}
       <h3 id="snapshot">Keep a tier snapshot</h3>
       <p>
@@ -313,7 +318,13 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       </ul>
       <CodeBlock code={blocks.snapshot.code} lang={blocks.snapshot.lang} file={blocks.snapshot.file} html={blocks.snapshot.html} />
       <p>
-        The snapshot holds the components of your app, keyed <code>path#Export</code>, not the copies the compiler makes. <code>brust dev</code> never writes it.
+        The snapshot lists the components of your app&rsquo;s source, one entry per component, keyed <code>path#Export</code>. The copies the compiler makes for single call sites are checked against <code>[tiers.max]</code> but are not listed. Components
+        compiled at run time with <code>compileComponent</code> (see <a href="/docs/runtime-components#compile">Runtime components</a>) are outside the check, which runs in <code>brust build</code>. <code>brust dev</code> never writes the file.
+      </p>
+      {/* source: packages/brust/src/build/tiers.ts (tierKey: relPosix(appRoot, file); ruleFor matches the same path), packages/brust/test/tiers.test.ts (a source_roots component keys as ../shared/Stateful.tsx#Stateful in the snapshot and matches "../shared/**") */}
+      <p>
+        A component in a directory you list in <code>[build] source_roots</code> outside the app is keyed by its path from the app root, which starts with <code>../</code>: <code>{'"../shared/Stateful.tsx#Stateful"'}</code> in the snapshot, and a pattern such as{' '}
+        <code>{'"../shared/**"'}</code> in <code>[tiers.max]</code>.
       </p>
     </>
   )

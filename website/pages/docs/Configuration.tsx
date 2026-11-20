@@ -330,6 +330,10 @@ export default function Configuration({ blocks }: ConfigurationData) {
         the heaviest tier allowed. A <code>#Export</code> suffix picks one component of a file (<code>#default</code> is the default export). When several patterns match a component, one with <code>#Export</code> wins,
         then the longer one; two equally long patterns with different tiers are a config error. <code>react</code> allows anything.
       </p>
+      {/* source: packages/brust/src/build/tiers.ts (tierKey, ruleFor: the path is relPosix(appRoot, file)), packages/brust/test/tiers.test.ts (a source_roots component outside the app: ../shared/Stateful.tsx#Stateful, "../shared/**") */}
+      <p>
+        A component in a <code>[build] source_roots</code> directory outside the app root is matched by its path from the app root, which starts with <code>../</code>: <code>{'"../shared/**"'}</code> or <code>{'"../shared/Stateful.tsx#Stateful"'}</code>.
+      </p>
       <p>
         A component that compiles heavier than its pattern allows fails <code>brust build</code>, for every target. The clones and React copies the compiler makes of a component for some call sites are checked under that
         component. A pattern that matches no component prints <code>warning tiers &quot;&lt;pattern&gt;&quot; matches no component</code>. <code>[tiers] snapshot</code> keeps a file with every component&rsquo;s tier, and a build

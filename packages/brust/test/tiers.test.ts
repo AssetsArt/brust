@@ -2,7 +2,7 @@
 // allows, naming why; `[tiers] snapshot` records the tiers and fails a build that makes one heavier. An app report: the
 // tier of a component changed with ordinary edits, the build only warned, and regressions shipped.
 import { afterAll, expect, test } from 'bun:test'
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BuildError, runBuild } from '../src/build'
 import { loadBuildConfig } from '../src/build/config'
@@ -225,4 +225,69 @@ test('dev prints violations as warnings and goes on; the snapshot is not written
   ])
   expect(existsSync(join(dir, 'tiers.json'))).toBe(false)
   expect(existsSync(join(dir, 'dist', 'dev.json'))).toBe(true)
+}, T)
+
+// F581: a component under `[build] source_roots`, outside the app root, keys as `../…` and reports the line of its first cause.
+/** A monorepo shape: `<tmp>/app` (inside the package, so `@brust/core` resolves) and `<tmp>/shared/Stateful.tsx`. */
+const monorepo = (toml: string, shared: string) => {
+  const root = mkdtempSync(join(import.meta.dir, '.tmp-tiers-sr-'))
+  dirs.push(root)
+  mkdirSync(join(root, 'app/pages'), { recursive: true })
+  mkdirSync(join(root, 'shared'), { recursive: true })
+  writeFileSync(join(root, 'shared/Stateful.tsx'), shared)
+  writeFileSync(
+    join(root, 'app/routes.tsx'),
+    "import { defineRoutes } from '@brust/core/routes'\nimport Page from './pages/Page'\n\nexport const routes = defineRoutes([{ path: '/', Component: Page }])\n",
+  )
+  writeFileSync(join(root, 'app/pages/Page.tsx'), "import { Stateful } from '../../shared/Stateful'\n\nexport default function Page() {\n  return <main><Stateful /></main>\n}\n")
+  writeFileSync(join(root, 'app/brust.toml'), toml)
+  return join(root, 'app')
+}
+
+const STATIC_SHARED = "export function Stateful() {\n  return <button type=\"button\">x</button>\n}\n"
+const NATIVE_SHARED = "import { useState } from 'react'\n\nexport function Stateful() {\n  const [n, setN] = useState(0)\n  return (\n    <button type=\"button\" onClick={() => setN(n + 1)}>\n      {n}\n    </button>\n  )\n}\n"
+
+test('a source_roots component outside the app reports its first cause line, for the snapshot and for [tiers.max]', async () => {
+  const key = '../shared/Stateful.tsx#Stateful'
+  const dir = monorepo('[build]\nsource_roots = ["../shared"]\n\n[tiers]\nsnapshot = "tiers.json"\n', STATIC_SHARED)
+  const first = await build(dir)
+  expect(first.error).toBeUndefined()
+  const snap = JSON.parse(readFileSync(join(dir, 'tiers.json'), 'utf8'))
+  expect(snap.components[key]).toBe('static')
+  // Made native: the snapshot records static.
+  writeFileSync(join(dir, '../shared/Stateful.tsx'), NATIVE_SHARED)
+  const failed = await build(dir)
+  expect(failed.error?.rule).toBe('tier')
+  expect(failed.error?.message.split('\n').slice(0, 3)).toEqual(['../shared/Stateful.tsx:4:1 Stateful compiles to native; tiers.json records static', '  state `n` is set (line 4)', '  an event handler (line 6)'])
+  // The same component against a [tiers.max] pattern keyed the same way.
+  const max = monorepo('[build]\nsource_roots = ["../shared"]\n\n[tiers.max]\n"../shared/**" = "static"\n', NATIVE_SHARED)
+  const over = await build(max)
+  expect(over.error?.rule).toBe('tier')
+  expect(over.error?.message.split('\n')[0]).toBe('../shared/Stateful.tsx:4:1 Stateful compiles to native; [tiers.max] "../shared/**" allows static')
+}, T * 3)
+
+test('--update-tiers with no snapshot configured says it has no effect, with or without [tiers]', async () => {
+  const line = 'tiers: --update-tiers has no effect: no [tiers] snapshot is configured'
+  const bare = await build(app(''), { updateTiers: true })
+  expect(bare.error).toBeUndefined()
+  expect(bare.tierLogs).toEqual([line])
+  const maxOnly = await build(app('[tiers.max]\n"components/views/**" = "native"\n'), { updateTiers: true })
+  expect(maxOnly.error).toBeUndefined()
+  expect(maxOnly.tierLogs).toEqual([line])
+  // Without the flag nothing is printed; with a snapshot the flag works as before (covered above).
+  const plain = await build(app(''))
+  expect(plain.tierLogs).toEqual([])
+}, T * 3)
+
+test('the tier check runs after the compile: a build error stops the build before [tiers.max] is read', async () => {
+  const dir = app('[tiers.max]\n"components/views/**" = "static"\n')
+  // Counter breaks the max rule (native) and now also fails to compile: a list of elements without keys.
+  writeFileSync(
+    join(dir, 'components/views/Counter.tsx'),
+    "import { useState } from 'react'\n\nexport default function Counter() {\n  const [count, setCount] = useState(0)\n  return (\n    <button type=\"button\" onClick={() => setCount(count + 1)}>\n      {[1, 2].map((n) => <i>{n}</i>)}\n    </button>\n  )\n}\n",
+  )
+  const r = await build(dir)
+  expect(r.error).toBeDefined()
+  expect(r.error?.rule).toBe('list-key')
+  expect(r.error?.message).not.toContain('compiles to native')
 }, T)
