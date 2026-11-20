@@ -437,63 +437,67 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
           The server caches the HTML per (ref, artifact, props), bounded by <code>[components] cache_entries</code> and 64 MiB in total; a new artifact for the ref starts afresh. There is no time limit: an entry stays until it is evicted or the ref has a new
           artifact, and a route&rsquo;s <code>bypass</code> does not skip this cache. What each answer of <code>render</code> does (all the cache layers are in{' '}
           <a href="/docs/caching#layers">Every cache layer</a>):
-          {/* source: crates/brust-core/src/components.rs (resolved: Html::Ready / Html::Failed / Html::NotNow; island_slot: NotNow sets the page's not-stored state, no note), packages/brust/src/handlers.ts (resolveComponents: ctx.notNow), crates/brust-core/tests/runtime_components.rs (not_now_*), tests/server/rc-island.chromium.test.ts (F572) */}
-          <TableWrap label="What each answer of render does">
-            <table>
-              <thead>
-                <tr>
-                  <th>
-                    <code>render</code> returns
-                  </th>
-                  <th>The slot</th>
-                  <th>Island HTML cache</th>
-                  <th>The page</th>
-                  <th>Log</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>a string</td>
-                  <td>that HTML in the host</td>
-                  <td>kept</td>
-                  <td>cached as usual</td>
-                  <td>nothing</td>
-                </tr>
-                <tr>
-                  <td>
-                    <code>null</code> (or no <code>render</code>)
-                  </td>
-                  <td>an empty host your client mounts into</td>
-                  <td>
-                    kept: return it only for an answer that stays right until the artifact changes
-                  </td>
-                  <td>cached as usual</td>
-                  <td>nothing</td>
-                </tr>
-                <tr>
-                  <td>
-                    <code>ctx.notNow()</code>
-                  </td>
-                  <td>an empty host your client mounts into</td>
-                  <td>not kept: the next page render calls <code>render</code> again</td>
-                  <td>not cached</td>
-                  <td>nothing</td>
-                </tr>
-                <tr>
-                  <td>a throw, or more than 4 MiB of HTML</td>
-                  <td>an empty host</td>
-                  <td>not kept</td>
-                  <td>not cached</td>
-                  <td>
-                    <code>[brust] runtime component &lt;ref&gt;: render threw: &lt;error&gt;</code>, once for each ref and reason
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </TableWrap>
-          Return <code>ctx.notNow()</code> (directly or from a promise) when the HTML is not ready yet, for example while your renderer warms up: it is the answer
-          for &ldquo;no HTML this time, ask again&rdquo;, where a throw would log a failure and <code>null</code> would be kept.
         </li>
+      </ul>
+      {/* source: crates/brust-core/src/components.rs (resolved: Html::Ready / Html::Failed / Html::NotNow; island_slot: NotNow sets the page's not-stored state, no note), packages/brust/src/handlers.ts (resolveComponents: ctx.notNow), crates/brust-core/tests/runtime_components.rs (not_now_*), tests/server/rc-island.chromium.test.ts (F572) */}
+      <TableWrap label="What each answer of render does">
+        <table>
+          <thead>
+            <tr>
+              <th>
+                <code>render</code> returns
+              </th>
+              <th>The slot</th>
+              <th>Island HTML cache</th>
+              <th>The page</th>
+              <th>Log</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>a string</td>
+              <td>that HTML in the host</td>
+              <td>kept</td>
+              <td>cached as usual</td>
+              <td>nothing</td>
+            </tr>
+            <tr>
+              <td>
+                <code>null</code> (or no <code>render</code>)
+              </td>
+              <td>an empty host your client mounts into</td>
+              <td>
+                kept: return it only for an answer that stays right until the artifact changes
+              </td>
+              <td>cached as usual</td>
+              <td>nothing</td>
+            </tr>
+            <tr>
+              <td>
+                <code>ctx.notNow()</code>
+              </td>
+              <td>an empty host your client mounts into</td>
+              <td>not kept: the next page render calls <code>render</code> again</td>
+              <td>not cached</td>
+              <td>nothing</td>
+            </tr>
+            <tr>
+              <td>a throw, or more than 4 MiB of HTML</td>
+              <td>an empty host</td>
+              <td>not kept</td>
+              <td>not cached</td>
+              <td>
+                <code>[brust] runtime component &lt;ref&gt;: render threw: &lt;error&gt;</code>, once for each ref and reason
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </TableWrap>
+      <p>
+        Return <code>ctx.notNow()</code> (directly or from a promise) when the HTML is not ready yet, for example while your renderer warms up: it is the answer
+        for &ldquo;no HTML this time, ask again&rdquo;, where a throw would log a failure and <code>null</code> would be kept.
+      </p>
+      <ul>
         <li>
           <strong>
             <code>render</code> must depend only on <code>(ref, props)</code>.
