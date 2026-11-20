@@ -1141,17 +1141,20 @@ fn a_placed_island_brings_the_runtime_the_island_feature_and_its_build_chunk_onc
 
 // ----- F572: `ctx.notNow()` -----
 
-/// Counts the warn events of a closure (the `[brust] runtime component …` lines).
+/// The warn events (the `[brust] runtime component …` lines) a closure emits on this thread. One global subscriber,
+/// installed once, writes into a per-thread buffer: scoped subscribers on parallel test threads race on tracing's
+/// process-wide callsite interest cache and can miss events.
 fn warns<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
-    use std::sync::{Arc as A, Mutex};
-    struct Count(A<Mutex<Vec<String>>>);
+    use std::cell::RefCell;
+    thread_local! { static SEEN: RefCell<Option<Vec<String>>> = const { RefCell::new(None) }; }
+    struct Capture;
     struct Msg(String);
     impl tracing::field::Visit for Msg {
         fn record_debug(&mut self, _: &tracing::field::Field, v: &dyn std::fmt::Debug) {
             self.0.push_str(&format!("{v:?}"));
         }
     }
-    impl tracing::Subscriber for Count {
+    impl tracing::Subscriber for Capture {
         fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
             true
         }
@@ -1164,15 +1167,24 @@ fn warns<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
             if *e.metadata().level() == tracing::Level::WARN {
                 let mut m = Msg(String::new());
                 e.record(&mut m);
-                self.0.lock().unwrap().push(m.0);
+                SEEN.with(|s| {
+                    if let Some(v) = s.borrow_mut().as_mut() {
+                        v.push(m.0)
+                    }
+                });
             }
         }
         fn enter(&self, _: &tracing::span::Id) {}
         fn exit(&self, _: &tracing::span::Id) {}
     }
-    let seen = A::new(Mutex::new(Vec::new()));
-    let out = tracing::subscriber::with_default(Count(A::clone(&seen)), f);
-    let v = seen.lock().unwrap().clone();
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        tracing::subscriber::set_global_default(Capture)
+            .expect("the only subscriber of this test binary")
+    });
+    SEEN.with(|s| *s.borrow_mut() = Some(Vec::new()));
+    let out = f();
+    let v = SEEN.with(|s| s.borrow_mut().take()).unwrap_or_default();
     (out, v)
 }
 
