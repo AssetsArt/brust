@@ -113,6 +113,7 @@ export async function cachingLoader(): Promise<CachingData> {
       { id: 'key', title: 'What is stored, under which key' },
       { id: 'prefix', title: 'Split the cache with prefix' },
       { id: 'invalidate', title: 'Invalidate' },
+      { id: 'layers', title: 'Every cache layer' },
       { id: 'shared', title: 'Across instances' },
     ],
     blocks: {
@@ -279,7 +280,7 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
               The process environment variable, read <strong>once</strong>, when the route is installed (empty if unset). Refused when building for Cloudflare Workers, which has no process environment.
             </td>
           </tr>
-          {/* source: key_expr.rs:124-135 (a quoted string or a bare word is a literal), :245-251 (a name is letters, digits, _ and -), :262-275 (no escapes in a quoted string) */}
+          {/* source: key_expr.rs:175-189 (Parser::expr: a quoted string, or a bare word not followed by `(`, is a literal), :296-311 (ident: a name is letters, digits, _ and -), :313-326 (string_lit: it ends at the next matching quote, so there are no escapes) */}
           <tr>
             <td>
               <code>'text'</code>, <code>"text"</code>, or a bare word
@@ -430,6 +431,112 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
           With a <a href="/docs/cache-adapters/overview">cache adapter</a> the prefix goes with the event: the shared store deletes that prefix's pages only, and every instance replays it the same way.
         </li>
       </ul>
+
+      <h2 id="layers">Every cache layer</h2>
+      <p>
+        A running server keeps six caches. Only the first three hold a whole page or a server result you chose to cache; the last three belong to runtime components. The table says what each one keys on, how long it lives, what a route{' '}
+        <code>bypass</code> skips, and where you configure it.
+      </p>
+      {/* source: crates/brust-core/src/pipeline.rs:334-372 (a bypass leaves the key empty: L1 and L2 are not read, and not written), :1458-1464 (bypass skips L1 read AND write), :668-670 (ttl_seconds, capped at NEGATIVE_TTL_SECS when a slot's ref is missing), :558 (lookup_jobs does not look at the bypass), :615-623 (the island HTML cache is used on every render); crates/brust-server/src/cache/l1.rs and crates/brust-core/src/cache/local.rs (the page cache, Workers); crates/brust-core/src/l2.rs (the shared store); crates/brust-server/src/cache/job_cache.rs (bounded by entries, a per-entry ttl, `None` = no expiry), crates/brust-compiler/src/analyze/component.rs:227-309 (cache(Component, { key, tags, revalidate })), crates/brust-core/src/manifest.rs:160-168 (ttl_seconds); crates/brust-core/src/components.rs:29-34 (NEGATIVE_ENTRIES, NEGATIVE_TTL_SECS), :36-44 (MAX_SLOT_OUTPUT_BYTES, HTML_CACHE_BYTES), :236-278 (HtmlCache, html_key), :406-413 (warm, html, negative), :823-889 (what is stored and what is not); crates/brust-napi/src/server.rs:340-341, :389-390 (l1_capacity, job_cache_capacity default 1000); crates/brust-core/src/cache/local.rs:39-42 (Workers 256 and 512); docs RuntimeComponents.tsx (Warm artifacts, Islands you render yourself), cache-adapters/Overview.tsx (#tiers, #semantics, #failure) */}
+      <TableWrap label="Cache layers">
+        <table>
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Key</th>
+              <th>Lifetime</th>
+              <th>What is stored</th>
+              <th>A route <code>bypass</code></th>
+              <th>Configured by</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Page cache</td>
+              <td>
+                The prefix, method, path and sorted query (<a href="#key">above</a>)
+              </td>
+              <td>
+                The route&rsquo;s <code>ttl_seconds</code>, or until invalidated; at most 10 seconds when a runtime component&rsquo;s ref was missing
+              </td>
+              <td>The rendered page, a 200 only</td>
+              <td>Skips it: no read, no write</td>
+              <td>
+                The route&rsquo;s <code>cache</code>; 1000 entries on a native server, <code>[cloudflare] l1_capacity</code> on Workers (default 256)
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Shared store (<a href="/docs/cache-adapters/overview#tiers">cache adapter</a>)
+              </td>
+              <td>The same page key, in the adapter&rsquo;s namespace</td>
+              <td>The route&rsquo;s <code>ttl_seconds</code>, or until invalidated</td>
+              <td>The rendered page body</td>
+              <td>Skips it too: no read, no write</td>
+              <td>
+                <code>[cache]</code> in <code>brust.toml</code>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Job cache, <code>cache(Component, {'{ … }'})</code>
+              </td>
+              <td>
+                The job&rsquo;s input, or what your <code>key</code> returns
+              </td>
+              <td>
+                <code>revalidate</code> seconds; without it, until evicted or invalidated
+              </td>
+              <td>The JSON result of a server job</td>
+              <td>Does not skip it: a bypassed page still reads and fills it</td>
+              <td>
+                <code>key</code>, <code>tags</code> and <code>revalidate</code> on the component; 1000 entries on a native server (a count, not bytes), <code>[cloudflare] job_cache_capacity</code> on Workers (default 512)
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Runtime components: artifacts
+              </td>
+              <td>The component&rsquo;s ref</td>
+              <td>Until evicted, least recently used first</td>
+              <td>The resolved artifact, up to 512 KiB each</td>
+              <td>Does not skip it</td>
+              <td>
+                <code>[components] cache_entries</code>, default 2048
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Runtime components: missing or refused refs
+              </td>
+              <td>The component&rsquo;s ref</td>
+              <td>10 seconds</td>
+              <td>The answer that a ref is missing or refused</td>
+              <td>Does not skip it</td>
+              <td>Fixed: 4096 entries</td>
+            </tr>
+            <tr>
+              <td>
+                Runtime components: island HTML (<code>components.render</code>)
+              </td>
+              <td>The ref, the artifact&rsquo;s digest and the canonical props</td>
+              <td>No time limit: until evicted, or until the ref has a new artifact</td>
+              <td>
+                The HTML <code>render</code> returned, and <code>null</code> too. Not stored: a throw, more than 4 MiB, or no answer; the page is then not stored either
+              </td>
+              <td>Does not skip it</td>
+              <td>
+                <code>[components] cache_entries</code> (default 2048) and 64 MiB in total; a value over the byte cap is not stored
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </TableWrap>
+      {/* source: crates/brust-core/src/render.rs:86-112 (Renderer::from_templates: one parse at boot, auto-reload off) */}
+      <p>
+        Templates are not on the list: the server parses them once at start and never reloads them, so there is nothing to tune or to invalidate. Runtime components and their cache settings are described in{' '}
+        <a href="/docs/runtime-components#island">Runtime components</a>.
+      </p>
 
       <h2 id="shared">Across instances</h2>
       <p>

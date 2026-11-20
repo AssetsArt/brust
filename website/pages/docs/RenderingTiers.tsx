@@ -51,6 +51,7 @@ export async function renderingTiersLoader(): Promise<RenderingTiersData> {
       { id: 'three', title: 'Three tiers' },
       { id: 'live', title: 'The three, live' },
       { id: 'hooks', title: 'What decides the tier' },
+      { id: 'expressions', title: 'What the template prints, and what runs as a job' },
       { id: 'runtime', title: 'What the browser loads' },
       { id: 'committed', title: 'When an island is ready' },
       { id: 'see', title: 'See what you got' },
@@ -207,6 +208,38 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         A React island with per-row props in nested lists, or in the rows of a component inlined into its callers, cannot be server-rendered row by row, so the component around it becomes one React island (<code>nested-instance</code>). Two cases cannot
         do that: a component that renders itself (a tree, compiled to one template macro) and one that holds a <code>{'<Dynamic>'}</code> slot (React cannot render it). There the island is <strong>client-only</strong> instead: the page prints its
         host with that row&apos;s props and nothing inside, the browser mounts it, the component keeps its tier, and the build says so with an <code>island-client-only</code> warning.
+      </p>
+
+      <h2 id="expressions">What the template prints, and what runs as a job</h2>
+      {/* source: crates/brust-compiler/src/analyze/passes/server_expr.rs:6-17 (METHODS), :19-20 (MAX_RANGE), :26-62 (check: the node kinds), :64-117 (includes_chain: at most 16 members), :120-165 (call: Object.keys / entries / assign, Array.from, methods with literal arguments, join with a string literal), :168-172 (is_range), :175-182 (literal_only); crates/brust-compiler/src/ir/expr.rs:40-65 (BinOp, UnOp); crates/brust-compiler/src/analyze/passes/placement.rs:1550-1580 (Place::Server when the expression is in the subset, Place::Slot otherwise, Place::Code for a function, JSX or a browser value) */}
+      <p>
+        The compiler prints an expression into the page&rsquo;s template when it is in a small subset. It does not translate anything else: an expression outside the subset runs as your own JavaScript, in a server job, so its meaning cannot change. The
+        price is a worker call: the jobs of a page go to the worker together (<code>jobs</code> in <code>dist/manifest.json</code>). A value that needs the browser, or a function, makes the component render with React instead.
+      </p>
+      <p>The template prints these, with no job:</p>
+      <ul>
+        <li>member reads and indexes with a literal key (<code>user.name</code>, <code>items[0]</code>);</li>
+        <li>
+          <code>!</code>, unary <code>-</code>, every binary operator (arithmetic, comparison, <code>&amp;&amp;</code>, <code>||</code>, <code>??</code>) and <code>?:</code>;
+        </li>
+        <li>template strings, and array and object literals;</li>
+        <li>
+          <code>Object.keys(x)</code>, <code>Object.entries(x)</code>, <code>{'Object.assign({}, a, b)'}</code> (which is what an object spread reads as) and <code>{'Array.from({ length: 3 })'}</code>, where the length is a literal number from 0 to 1024;
+        </li>
+        <li>
+          <code>[&apos;a&apos;, &apos;b&apos;].includes(x)</code> on an array of literals with at most 16 members;
+        </li>
+        <li>
+          these methods, with literal arguments only: <code>toUpperCase</code>, <code>toLowerCase</code>, <code>trim</code>, <code>slice</code>, <code>startsWith</code>, <code>endsWith</code>, <code>includes</code> and <code>join</code> (the separator is a string literal).
+        </li>
+      </ul>
+      <p>
+        These run as a job instead, because they are outside the subset: <code>n.toLocaleString()</code>, <code>n.toPrecision(3)</code>, <code>s.padStart(6, &apos;*&apos;)</code>, <code>s.trimEnd()</code> and <code>new Date(x).toISOString()</code>. The output is the same as
+        React&rsquo;s; the page costs a worker call.
+      </p>
+      {/* source: scripts/battery/ssr-compare.ts (header: the HTML the server paints for a native or static row is compared with React's renderToString), .github/workflows/ci.yml (bun scripts/battery/ssr-compare.ts --check); scripts/battery/rows.ts b-plain-wrapper-methods (jobs 1) */}
+      <p>
+        How this is checked: in CI, the HTML the server prints for every native and static row of the compiler&rsquo;s battery is compared with React&rsquo;s <code>renderToString</code> of the same source and props. A difference fails the build unless a list of known differences explains it.
       </p>
 
       <h2 id="runtime">What the browser loads</h2>
