@@ -1,12 +1,8 @@
 //! F564: what `module-side-effect` proves runs nothing at module load (D1), when a mutating method writes a module
 //! binding (D2), and what the finding says (D3).
-mod lower_common;
 use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
 use brust_compiler::ir::{ComponentIR, DiagClass, Tier};
-use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
 use brust_compiler::parse::run_on_compiler_thread;
-use brust_compiler::pipeline::compile_tree;
-use lower_common::lower;
 use std::path::PathBuf;
 
 fn write_tree(files: &[(&str, &str)]) -> PathBuf {
@@ -45,46 +41,12 @@ fn analyze_tree(files: &[(&str, &str)]) -> ComponentIR {
     })
 }
 
-/// (jinja, job, chunk) of `C.tsx` in a tree of files.
-fn lower_tree(files: &[(&str, &str)]) -> (String, String, String) {
-    let root = write_tree(files);
-    run_on_compiler_thread(move || {
-        let out = compile_tree(
-            "C.tsx",
-            None,
-            &AnalyzeOptions {
-                root,
-                ..Default::default()
-            },
-            DEFAULT_RUNTIME_IMPORT,
-        )
-        .unwrap()
-        .remove(0)
-        .artifacts;
-        (
-            out.jinja,
-            out.server_ts.unwrap_or_default(),
-            out.client_js.unwrap_or_default(),
-        )
-    })
-}
-
 fn fallbacks(ir: &ComponentIR) -> Vec<(String, String)> {
     ir.diagnostics
         .iter()
         .filter(|d| d.class == DiagClass::Fallback)
         .map(|d| (d.rule.clone(), d.message.clone()))
         .collect()
-}
-
-#[track_caller]
-fn accepted(ir: &ComponentIR, tier: Tier) {
-    assert!(
-        fallbacks(ir).is_empty() && ir.tier == tier,
-        "{:?}\n{:?}",
-        ir.tier,
-        ir.diagnostics
-    );
 }
 
 #[track_caller]
@@ -486,4 +448,31 @@ fn a_const_read_before_it_is_declared_is_refused() {
         "",
         "const f = () => B\nconst B = 2",
     ));
+}
+
+#[test]
+fn a_local_that_holds_values_from_module_code_is_not_the_module_object() {
+    // a Reed-Solomon remainder: `r` is a fresh array that HOLDS products a module function computes
+    let base = "const EXP = [1, 2]\nfunction gfMul(a: number, b: number) { return a === 0 || b === 0 ? 0 : EXP[a + b] }\n";
+    let d = format!(
+        "{base}export function rs(data: number[], divisor: number[]) {{ const r = divisor.map(() => 0); for (const b of data) {{ const f = b ^ (r.shift() as number); r.push(0); divisor.forEach((c, i) => (r[i] ^= gfMul(c, f))) }} return r }}"
+    );
+    clean(&reading(&d));
+    // a const holding what a module function returns, or an alias of a module array, is that object
+    for (decls, why) in [
+        (
+            "const LIST = ['a']\nconst get = () => LIST\nexport function add(x: string) { const l = get(); l.push(x) }",
+            "this module's function `add` (line 4) may change a module binding: `l.push(…)`",
+        ),
+        (
+            "const LIST = ['a']\nexport function set(x: string) { const l = LIST; l[0] = x }",
+            "this module's function `set` (line 3) writes through `l`, a local that holds a module object",
+        ),
+        (
+            "const LIST = ['a']\nexport function add(x: string) { const o = { l: LIST }; o.l.push(x) }",
+            "this module's function `add` (line 3) may change a module binding: `o.l.push(…)`",
+        ),
+    ] {
+        refused(&reading(decls), "module-side-effect", why);
+    }
 }

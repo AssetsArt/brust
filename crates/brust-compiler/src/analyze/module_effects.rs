@@ -118,22 +118,38 @@ pub fn module_effect(
                     .all(|e| !receiver_writes(e, &|x| module.contains(&key(x)), &|_| false))
             })
     };
-    let mutating_write = |w: &Walk| -> Option<js_ast::Expr> {
-        // locals rooted at this module through what they are declared or assigned from
+    let tainted_of = |w: &Walk| -> HashSet<u32> {
+        // Locals rooted at this module (addition 1): a `const` whose initialiser the receiver rule roots at this module
+        // (`const l = LIST`, `const l = getList()`), and any local that is an alias of one (`l = LIST`, `x = a ?? LIST`,
+        // `o.k = LIST`: what holds the object may hand it out). A local that only HOLDS a value computed from module code
+        // (`r[i] = gfMul(…)`) is not the module's object.
         let mut tainted: HashSet<u32> = HashSet::new();
         loop {
             let before = tainted.len();
-            for (b, r) in w.flows.iter().chain(w.aliases.iter()) {
-                let k = key(*r);
-                let from_module = (module.contains(&k) && !followable(*r)) || tainted.contains(&k);
-                if from_module && !module.contains(&key(*b)) {
-                    tainted.insert(key(*b));
+            let own_so_far = |r: js_ast::Ref| module.contains(&key(r)) || tainted.contains(&key(r));
+            let mut add: Vec<u32> = Vec::new();
+            for (b, v) in &w.const_values {
+                if !tainted.contains(&key(*b))
+                    && (receiver_writes(v, &own_so_far, &followable)
+                        || holds_own(v, &own_so_far, 0))
+                {
+                    add.push(key(*b));
                 }
             }
+            for (b, r) in &w.aliases {
+                if !tainted.contains(&key(*b)) && own_so_far(*r) && !module.contains(&key(*b)) {
+                    add.push(key(*b));
+                }
+            }
+            tainted.extend(add);
             if tainted.len() == before {
                 break;
             }
         }
+        tainted
+    };
+    let mutating_write = |w: &Walk| -> Option<js_ast::Expr> {
+        let tainted = tainted_of(w);
         let own = |r: js_ast::Ref| module.contains(&key(r)) || tainted.contains(&key(r));
         w.calls.iter().find_map(|c| {
             let E::ECall(call) = &c.data else {
@@ -154,13 +170,17 @@ pub fn module_effect(
     // fresh copy excepted), writes through a root it cannot name (`get().a = …`, `this.a = …`), or calls or names a
     // function that writes. A least fixpoint.
     let writes = |w: &Walk, writers: &HashSet<u32>| {
-        let roots = w
-            .assigned
+        // a write through a local holding this module's object counts (addition 1); assigning the local itself does not
+        let tainted = tainted_of(w);
+        let through = w
+            .member_written
             .iter()
-            .chain(w.member_written.iter())
             .chain(w.member_writes.iter().map(|(r, _)| r));
         w.opaque_write
-            || roots.into_iter().any(|r| module.contains(&key(*r)))
+            || w.assigned.iter().any(|r| module.contains(&key(*r)))
+            || through
+                .into_iter()
+                .any(|r| module.contains(&key(*r)) || tainted.contains(&key(*r)))
             || w.used.iter().any(|r| writers.contains(&key(*r)))
             || mutating_write(w).is_some()
     };
@@ -401,14 +421,26 @@ pub fn module_effect(
     let at = |s: &js_ast::Stmt| s.loc.start.max(0) as u32;
     // F564 D3: what a writing function writes, said for the diagnostic.
     let written = |w: &Walk| -> String {
+        let tainted = tainted_of(w);
         let named = w
             .assigned
             .iter()
-            .chain(w.member_written.iter())
-            .chain(w.member_writes.iter().map(|(r, _)| r))
-            .find(|r| module.contains(&key(**r)));
+            .find(|r| module.contains(&key(**r)))
+            .or_else(|| {
+                w.member_written
+                    .iter()
+                    .chain(w.member_writes.iter().map(|(r, _)| r))
+                    .find(|r| module.contains(&key(**r)) || tainted.contains(&key(**r)))
+            });
         if let Some(r) = named {
-            return format!("writes the module binding `{}`", names.name(*r));
+            return if module.contains(&key(*r)) {
+                format!("writes the module binding `{}`", names.name(*r))
+            } else {
+                format!(
+                    "writes through `{}`, a local that holds a module object",
+                    names.name(*r)
+                )
+            };
         }
         if let Some(t) = mutating_write(w)
             && let E::EDot(d) = &t.data
@@ -710,10 +742,67 @@ fn receiver_writes(
             }
             E::EIdentifier(id) => module(id.ref_),
             E::EImportIdentifier(_) => false,
+            // a primitive or a fresh closure is no module object (`const n = 'none'`, `() => …`)
+            E::EString(_)
+            | E::ENumber(_)
+            | E::EBigInt(_)
+            | E::EBoolean(_)
+            | E::ENull(_)
+            | E::EUndefined(_)
+            | E::EArrow(_)
+            | E::EFunction(_) => false,
+            E::ETemplate(t) => t.tag.is_some(),
+            E::EUnary(u) => !matches!(
+                u.op,
+                js_ast::OpCode::UnNot
+                    | js_ast::OpCode::UnNeg
+                    | js_ast::OpCode::UnPos
+                    | js_ast::OpCode::UnTypeof
+                    | js_ast::OpCode::UnVoid
+                    | js_ast::OpCode::UnCpl
+            ),
+            E::EBinary(b) => !matches!(
+                b.op,
+                js_ast::OpCode::BinAdd
+                    | js_ast::OpCode::BinSub
+                    | js_ast::OpCode::BinMul
+                    | js_ast::OpCode::BinDiv
+                    | js_ast::OpCode::BinRem
+                    | js_ast::OpCode::BinLt
+                    | js_ast::OpCode::BinLe
+                    | js_ast::OpCode::BinGt
+                    | js_ast::OpCode::BinGe
+                    | js_ast::OpCode::BinStrictEq
+                    | js_ast::OpCode::BinStrictNe
+                    | js_ast::OpCode::BinLooseEq
+                    | js_ast::OpCode::BinLooseNe
+            ),
             _ => true,
         }
     }
     walk(recv, module, follow, 0)
+}
+
+/// F564 D2 addition 1: an object or array literal that holds an object of this module (`{ l: LIST }`, `[A, B]`): a
+/// receiver reached through it (`o.l.push(x)`) is that object.
+fn holds_own(e: &js_ast::Expr, own: &dyn Fn(js_ast::Ref) -> bool, depth: u8) -> bool {
+    if depth > 16 {
+        return true;
+    }
+    let held = |x: &js_ast::Expr| {
+        crate::analyze::expr::alias_roots(x).into_iter().any(own) || holds_own(x, own, depth + 1)
+    };
+    match &e.data {
+        E::EObject(o) => o
+            .properties
+            .iter()
+            .any(|p| p.value.as_ref().is_some_and(held)),
+        E::EArray(a) => a.items.iter().any(|x| match &x.data {
+            E::ESpread(sp) => held(&sp.value),
+            _ => held(x),
+        }),
+        _ => false,
+    }
 }
 
 /// F564 D2 addition 2: the values a function body returns, when the rule can read every path (`return` in blocks and

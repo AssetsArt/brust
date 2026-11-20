@@ -1260,6 +1260,9 @@ pub struct Walk {
     /// F329: the start of each identifier written as the `ref` prop of a COMPONENT element (`<Item ref={ref} />`): a use that
     /// only hands the ref on, never reads it.
     pub component_ref_props: Vec<i32>,
+    /// F564 D2 (addition 1): `(binding, initialiser)` of each `const name = value` the walk declares, so a receiver rooted
+    /// at the local can be rooted through what it holds.
+    pub const_values: Vec<(js_ast::Ref, js_ast::Expr)>,
     /// Depth of nested functions at the point being walked (crate-visible: F230's shallow walks build a `Walk` too).
     pub(crate) depth: u32,
 }
@@ -1397,6 +1400,11 @@ impl Walk {
                     let d0 = self.declared.len();
                     self.declare_binding(&d.binding);
                     let d1 = self.declared.len();
+                    if let (js_ast::b::B::BIdentifier(id), Some(v), js_ast::S::Kind::KConst) =
+                        (d.binding.data, &d.value, l.kind)
+                    {
+                        self.const_values.push((id.r#ref, *v));
+                    }
                     if let Some(v) = &d.value {
                         let u0 = self.used.len();
                         self.expr(v);
