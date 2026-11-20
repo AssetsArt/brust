@@ -11,7 +11,7 @@ import Lead from '../../components/docs/Lead'
 
 export interface DevModeData {
   toc: TocItem[]
-  blocks: Record<'run' | 'plain' | 'tty' | 'ttyErr' | 'trace' | 'meta' | 'host', CodeBlockData>
+  blocks: Record<'run' | 'plain' | 'tty' | 'ttyErr' | 'trace' | 'meta' | 'host' | 'watch', CodeBlockData>
 }
 
 const RUN = `$ cd my-app
@@ -71,6 +71,9 @@ const META = `{
 }`
 
 // observed: a request to the dev port with a Host header the dev server does not know answered 421.
+const WATCH = `[dev]
+watch = ["../../packages/api", "../shared/data.json"]   # directories or single files, relative to the app root`
+
 const HOST = `$ curl -s -o /dev/null -w "%{http_code}\\n" -H 'Host: evil.example' localhost:4874/
 421`
 
@@ -95,6 +98,7 @@ export async function devModeLoader(): Promise<DevModeData> {
       trace: codeBlock({ lang: 'json', file: '#__brust_trace', code: TRACE }),
       meta: codeBlock({ lang: 'json', file: '/_brust/dev/meta (dev.json)', code: META }),
       host: codeBlock({ lang: 'sh', cwd: '~', code: HOST }),
+      watch: codeBlock({ lang: 'toml', file: 'brust.toml', code: WATCH }),
     },
   }
 }
@@ -212,6 +216,24 @@ export default function DevMode({ blocks }: DevModeData) {
       {/* source: packages/brust/src/dev/watch.ts:54-61 (defaultIgnored: node_modules, .git, .wrangler, .brust, editor temp files, databases) and bun.ts:295 (the out folder `dist` is ignored too) */}
       <p>
         The watcher ignores <code>node_modules</code>, <code>.git</code>, <code>.wrangler</code>, <code>.brust</code>, <code>dist</code>, editor swap and temporary files, and database files (<code>.sqlite</code>, <code>.db</code>).
+      </p>
+
+      <h2 id="watched">What is watched</h2>
+      {/* source: packages/brust/src/dev/watch.ts:51-60 devExtraRoots and :63 watchLoop (the app root, `[build] source_roots`, `[dev] watch`); packages/brust/src/build/config.ts:554 parseDevWatch */}
+      <p>
+        <code>brust dev</code> reloads for a change under the app root, under every <code>[build] source_roots</code> directory, and under every path in <code>[dev] watch</code>. They share one debounce, one build at a time, and the same ignored paths.
+      </p>
+      <ul>
+        <li>
+          <code>source_roots</code> is for shared source the app imports with a relative path (<code>../shared/Button</code>). It also widens what those imports may reach, so it belongs to the build.
+        </li>
+        <li>
+          <code>[dev] watch</code> is for anything else a change should reload for: a workspace package reached through <code>node_modules</code>, a data file the app reads at start. It only watches. It does not change what imports may reach, and <code>brust build</code> and <code>brust start</code> ignore it.
+        </li>
+      </ul>
+      <CodeBlock code={blocks.watch.code} lang={blocks.watch.lang} file={blocks.watch.file} html={blocks.watch.html} />
+      <p>
+        A path that does not exist is logged once as <code>warning dev.watch &quot;&lt;path&gt;&quot; does not exist</code> and the session goes on, since a package may not be checked out. A path inside the app or inside a <code>source_roots</code> directory is accepted and not watched twice. The reload is the same full reload as for an app file.
       </p>
 
       <h2 id="errors">Build errors</h2>

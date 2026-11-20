@@ -2,7 +2,7 @@
 // ONE run at a time, and every change that arrives while a run is in flight is kept for the next
 // run (post-mortem 8f29c26: an edit during a rebuild was dropped). `run` receives the app-relative
 // paths that changed since the previous run started.
-import { type FSWatcher, readdirSync, statSync, watch } from 'node:fs'
+import { type FSWatcher, existsSync, readdirSync, statSync, watch } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 
 export interface WatchLoop {
@@ -41,6 +41,23 @@ export function countFiles(dir: string, limit: number): number {
 /** Warning lines for source roots broader than `ROOT_FILE_WARN` files; `roots` are absolute. */
 export function broadRootWarnings(roots: string[], appRoot: string, limit = ROOT_FILE_WARN): string[] {
   return roots.flatMap((r) => (countFiles(r, limit) > limit ? [`[brust] warning: source root ${relative(appRoot, r) || r} holds more than ${limit} files; watching it slows every change check. Point source_roots at a narrower directory`] : []))
+}
+
+/**
+ * F575: the extra paths a dev session watches: `[build] source_roots` plus `[dev] watch` (both app-root-relative),
+ * absolute and deduplicated; an entry inside the app root or inside another entry adds nothing. A `[dev] watch` path
+ * that does not exist is one `warning dev.watch` line (a package may not be checked out), and is not watched.
+ */
+export function devExtraRoots(appRoot: string, sourceRoots: string[], devWatch: string[], warn: (line: string) => void): string[] {
+  const inside = (abs: string, base: string) => abs === base || abs.startsWith(base + sep)
+  const all = sourceRoots.map((r) => resolve(appRoot, r))
+  for (const w of devWatch) {
+    const abs = resolve(appRoot, w)
+    if (!existsSync(abs)) warn(`[brust] warning dev.watch ${JSON.stringify(w)} does not exist`)
+    else all.push(abs)
+  }
+  const uniq = [...new Set(all)].filter((a) => !inside(a, resolve(appRoot)))
+  return uniq.filter((a) => !uniq.some((b) => b !== a && inside(a, b)))
 }
 
 export function watchLoop(o: { root: string; /** F273: `[build] source_roots`, absolute: watched too; their changes are reported app-relative (`../shared/x.ts`). */ extraRoots?: string[]; ignored: (rel: string) => boolean; debounceMs: number; run: (changed: Set<string>) => Promise<void> }): WatchLoop {
@@ -91,6 +108,12 @@ export function watchLoop(o: { root: string; /** F273: `[build] source_roots`, a
     // a root inside the app is already watched; one that cannot be watched must not stop the session
     if (abs === o.root || abs.startsWith(o.root + sep)) continue
     try {
+      // F575: `[dev] watch` may name a single file; its event reports the basename, so report the path itself
+      if (statSync(abs).isFile()) {
+        const rel = relative(o.root, abs).split(sep).join('/')
+        watchers.push(watch(abs, () => void (o.ignored(rel) || queue(rel))))
+        continue
+      }
       watchers.push(watch(abs, { recursive: true }, onEvent(abs)))
     } catch (e) {
       console.error(`[brust] cannot watch source root ${abs}: ${(e as Error).message}`)

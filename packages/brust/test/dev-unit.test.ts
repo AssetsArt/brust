@@ -3,12 +3,13 @@
 import { expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { parseBuildError, parseWarnings } from '../src/dev/diag'
 import { contrast, tierCounts } from '../src/dev/devtools-data'
 import { allowedHosts, inject, sameOriginOrNone } from '../src/dev/proxy'
 import { HOTKEYS, MAX_STATUS_LINES, renderStatus, rowsFor, Tui, tuiMode } from '../src/dev/tui'
-import { broadRootWarnings, changeLine, countFiles, defaultIgnored, watchLoop } from '../src/dev/watch'
+import { parseDevWatch } from '../src/build/config'
+import { broadRootWarnings, changeLine, countFiles, defaultIgnored, devExtraRoots, watchLoop } from '../src/dev/watch'
 
 const base = { url: 'http://localhost:1337', gen: 3, buildMs: 412, warnings: [] as string[] }
 
@@ -282,4 +283,59 @@ test('F133: the boot trigger (the app root, `.`) logs no change line; a real edi
   expect(changeLine(new Set(['pages/Home.tsx']))).toBe('[brust] change detected: pages/Home.tsx')
   expect(changeLine(new Set(['.', 'a.ts']))).toBe('[brust] change detected: a.ts')
   expect(changeLine(new Set(['a', 'b', 'c', 'd', '.']))).toBe('[brust] change detected: a, b, c +1')
+})
+
+test('F575: [dev] watch is validated like the other tables', () => {
+  expect(parseDevWatch('f', undefined)).toEqual([])
+  expect(parseDevWatch('f', {})).toEqual([])
+  expect(parseDevWatch('f', { watch: [' ../api ', 'data.json'] })).toEqual(['../api', 'data.json'])
+  expect(() => parseDevWatch('f', { watch: '../api' })).toThrow(/dev\.watch must be an array of non-empty strings/)
+  expect(() => parseDevWatch('f', { watch: [''] })).toThrow(/non-empty strings/)
+  expect(() => parseDevWatch('f', { watch: [1] })).toThrow(/non-empty strings/)
+  expect(() => parseDevWatch('f', { wach: [] })).toThrow(/dev\.wach is not a known key/)
+  expect(() => parseDevWatch('f', [])).toThrow(/\[dev\] must be a table/)
+})
+
+test('F575: devExtraRoots dedupes, drops paths inside the app or another root, and warns once per missing path', () => {
+  const base = mkdtempSync(join(tmpdir(), 'brust-devwatch-'))
+  try {
+    const app = join(base, 'app')
+    mkdirSync(join(app, 'src'), { recursive: true })
+    mkdirSync(join(base, 'shared', 'sub'), { recursive: true })
+    mkdirSync(join(base, 'api'))
+    const warns: string[] = []
+    const got = devExtraRoots(app, ['../shared'], ['../api', '../shared/sub', '../api', 'src', '../missing'], (l) => warns.push(l))
+    expect(got.sort()).toEqual([resolve(base, 'api'), resolve(base, 'shared')].sort())
+    expect(warns).toEqual(['[brust] warning dev.watch "../missing" does not exist'])
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test('F575: a [dev] watch directory and a single file outside the app trigger a rebuild; an ignored dir does not', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'brust-devwatch-'))
+  try {
+    const app = join(base, 'app')
+    const pkg = join(base, 'pkg')
+    mkdirSync(app)
+    mkdirSync(pkg)
+    writeFileSync(join(base, 'one.json'), '0')
+    const seen = new Set<string>()
+    const loop = watchLoop({ root: app, extraRoots: [pkg, join(base, 'one.json')], ignored: (r) => defaultIgnored(r, 'dist'), debounceMs: 20, run: async (c) => void c.forEach((x) => seen.add(x)) })
+    for (let i = 0; !(seen.has('../pkg/a.ts') && seen.has('../one.json')) && i < 60; i++) {
+      writeFileSync(join(pkg, 'a.ts'), String(i))
+      writeFileSync(join(base, 'one.json'), String(i))
+      await Bun.sleep(50)
+    }
+    expect(seen.has('../pkg/a.ts')).toBe(true)
+    expect(seen.has('../one.json')).toBe(true)
+    mkdirSync(join(pkg, 'node_modules'))
+    writeFileSync(join(pkg, 'node_modules', 'x.js'), '1')
+    await Bun.sleep(200)
+    await loop.idle()
+    expect([...seen].some((x) => x.includes('node_modules'))).toBe(false)
+    loop.close()
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
 })
