@@ -5,7 +5,7 @@
   "native_because": [
     "state `shown` is set (line 7)",
     "an effect (line 8)",
-    "a ref `ref`"
+    "a ref `ref` (line 18)"
   ],
   "props": [],
   "state": [

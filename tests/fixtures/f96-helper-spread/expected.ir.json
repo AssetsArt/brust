@@ -4,7 +4,7 @@
   "tier": "Native",
   "native_because": [
     "state `items` is set (line 6)",
-    "an expression depends on state"
+    "an expression depends on state (line 13)"
   ],
   "props": [],
   "state": [

@@ -291,3 +291,20 @@ test('the tier check runs after the compile: a build error stops the build befor
   expect(r.error?.rule).toBe('list-key')
   expect(r.error?.message).not.toContain('compiles to native')
 }, T)
+
+test('a native component whose only cause is a ref reports the line that binds it, in the app and under source_roots', async () => {
+  // Counter's only cause is `ref={el}`: no state, no handler.
+  const dir = app('[tiers.max]\n"components/views/**" = "static"\n')
+  writeFileSync(
+    join(dir, 'components/views/Counter.tsx'),
+    "import { useRef } from 'react'\n\nexport default function Counter() {\n  const el = useRef<HTMLButtonElement>(null)\n  return <button type=\"button\" ref={el}>x</button>\n}\n",
+  )
+  const inApp = await build(dir)
+  expect(inApp.error?.rule).toBe('tier')
+  expect(inApp.error?.message.split('\n')).toEqual(['components/views/Counter.tsx:5:1 Counter compiles to native; [tiers.max] "components/views/**" allows static', '  a ref `el` (line 5)'])
+
+  const REF_SHARED = "import { useRef } from 'react'\n\nexport function Stateful() {\n  const r = useRef<HTMLButtonElement>(null)\n  return <button type=\"button\" ref={r}>x</button>\n}\n"
+  const outside = await build(monorepo('[build]\nsource_roots = ["../shared"]\n\n[tiers.max]\n"../shared/**" = "static"\n', REF_SHARED))
+  expect(outside.error?.rule).toBe('tier')
+  expect(outside.error?.message.split('\n')).toEqual(['../shared/Stateful.tsx:5:1 Stateful compiles to native; [tiers.max] "../shared/**" allows static', '  a ref `r` (line 5)'])
+}, T * 2)

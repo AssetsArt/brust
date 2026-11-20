@@ -5,7 +5,7 @@
   "native_because": [
     "state `scale` is set (line 7)",
     "an event handler (line 9)",
-    "an expression depends on state"
+    "an expression depends on state (line 13)"
   ],
   "props": [
     {
