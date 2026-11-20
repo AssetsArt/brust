@@ -382,7 +382,13 @@ async function buildInto(
   // writes every component's template as well, to read what one component compiles to; the server ignores the extras.
   mkdirSync(join(out, 'jinja'), { recursive: true })
   const written = process.env.BRUST_BUILD_ALL_TEMPLATES === '1' ? [...compiled.keys()] : renderedTemplates(manifest)
-  for (const id of written) writeFileSync(join(out, 'jinja', `${id}.jinja`), compiled.get(id)!.jinja)
+  for (const id of written) {
+    const c = compiled.get(id)!
+    writeFileSync(join(out, 'jinja', `${id}.jinja`), c.jinja)
+    // F556: a written template is one the server parses at start (or one asked for by the switch above).
+    const w = largeTemplateWarning(c, appRoot)
+    if (w !== undefined) o.log(w)
+  }
   // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.
   const readClient = (rel: string) => (existsSync(join(out, rel)) ? readFileSync(join(out, rel), 'utf8') : undefined)
   for (const rec of Object.values(manifest.components)) if (rec.client && importsStore(readClient, rec.client, runtime.store)) rec.features.push('store')
@@ -488,6 +494,17 @@ async function cacheRecord(out: string, manifest: ManifestJson, c: CacheBuildCon
     epochIntervalMs: c.epochIntervalMs,
     buildId: computeBuildId(out, manifest),
   }
+}
+
+/** F556: a template file past this size slows `brust start` (each one is parsed when it loads) and holds its memory. */
+export const LARGE_TEMPLATE_BYTES = 1024 * 1024
+
+/** F556: the warning for one emitted template larger than {@link LARGE_TEMPLATE_BYTES}; undefined under it. */
+export function largeTemplateWarning(c: Pick<Compiled, 'id' | 'file' | 'jinja'>, appRoot: string): string | undefined {
+  const bytes = Buffer.byteLength(c.jinja)
+  if (bytes <= LARGE_TEMPLATE_BYTES) return undefined
+  const mb = (bytes / (1024 * 1024)).toFixed(1)
+  return `[brust] warning template ${c.id}.jinja is ${mb} MB (${relPosix(appRoot, c.file)}): a large template slows start-up and uses memory; see https://brust.dev/docs/cli#large-templates`
 }
 
 /** R7: the first 16 hex chars of sha256 over the manifest (without `cache`), every `jinja/*.jinja`

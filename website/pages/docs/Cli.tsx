@@ -98,6 +98,12 @@ export default function Cli({ blocks, panels }: CliData) {
           <code>--target cloudflare</code> also writes <code>dist/cf/</code>, a Worker ready for wrangler.
         </li>
       </ul>
+      {/* source: packages/brust/src/build/index.ts (LARGE_TEMPLATE_BYTES, largeTemplateWarning: printed where dist/jinja is written), crates/brust-compiler/src/lower/server_expr.rs (F555 logical_value / test) */}
+      <p id="large-templates">
+        The template of a page or layout in <code>dist/jinja/</code> holds every component placed in it, and <code>brust start</code> parses each of them when it loads. When one is larger than 1 MB the build prints{' '}
+        <code>warning template &lt;name&gt; is &lt;n&gt; MB (&lt;source&gt;)</code> and still succeeds: a template that large slows start-up and holds its memory. It usually comes from a component inlined at many call sites, a very large literal, or deep conditional
+        nesting. A long chain of one operator (<code>a &amp;&amp; b &amp;&amp; …</code>, <code>a || b || …</code>, <code>a ?? b ?? …</code>) prints each operand a fixed number of times, so it does not cause it. Split the component, move the large data into a prop or a loader, or keep that component in React.
+      </p>
 
       <h2 id="start">brust start</h2>
       <ul>

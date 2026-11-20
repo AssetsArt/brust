@@ -73,7 +73,7 @@ fn boolean_attribute_from_a_server_expression() {
         "export default function T({ ok }: any) { return <button disabled={!ok}>x</button> }",
     );
     assert!(
-        j.contains("{% if ((not (ok | truthy))) | truthy %} disabled{% endif %}"),
+        j.contains("{% if (not (ok | truthy)) %} disabled{% endif %}"),
         "{j}"
     );
     assert!(!j.contains("disabled=\""), "{j}");

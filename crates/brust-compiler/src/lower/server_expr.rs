@@ -186,37 +186,19 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                 _ => name.clone(),
             }
         }
-        RawKind::Member {
-            target,
-            name,
-            optional,
-        } => {
-            let t = raw(target, ctx);
-            if name == "length" {
-                return if *optional {
-                    format!(
-                        "(({t} | length) if {t} is defined and {t} is not none else {UNDEFINED})"
-                    )
-                } else {
-                    format!("({t} | length)")
-                };
-            }
-            let access = member_access(&t, name);
-            if *optional {
-                format!("({access} if {t} is defined and {t} is not none else {UNDEFINED})")
-            } else {
-                access
-            }
-        }
-        RawKind::Index { target, index } => format!("{}[{}]", raw(target, ctx), raw(index, ctx)),
+        RawKind::Member { .. } | RawKind::Index { .. } => member_path(e, ctx),
         RawKind::Unary { op, value } => match op {
             // JS truthiness (an empty list or object is true): brust-jinja's `truthy`.
-            UnOp::Not => format!("(not ({} | truthy))", raw(value, ctx)),
+            UnOp::Not => format!("(not {})", test(value, ctx)),
             UnOp::Neg if is_number(value, ctx) => format!("(-{})", raw(value, ctx)),
             UnOp::Neg => format!("({} | js_neg)", raw(value, ctx)),
             UnOp::Pos => format!("({} | js_num)", raw(value, ctx)),
             UnOp::Typeof => "none".into(),
         },
+        RawKind::Binary {
+            op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
+            ..
+        } => logical_value(e, *op, ctx),
         RawKind::Binary { op, left, right } => {
             let (l, r) = (raw(left, ctx), raw(right, ctx));
             match op {
@@ -269,12 +251,7 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                         format!("(not ({l} | {f}({r})))")
                     }
                 }
-                BinOp::Nullish => {
-                    format!("({l} if {l} is defined and {l} is not none else {r})")
-                }
-                // `&&` / `||` return an operand, chosen by JS truthiness.
-                BinOp::And => format!("({r} if ({l} | truthy) else {l})"),
-                BinOp::Or => format!("({l} if ({l} | truthy) else {r})"),
+                BinOp::Nullish | BinOp::And | BinOp::Or => unreachable!(),
                 // minijinja 3 floors `%` and errors on a zero divisor; JS does neither.
                 BinOp::Div => format!("({l} | js_div({r}))"),
                 BinOp::Rem => format!("({l} | js_mod({r}))"),
@@ -297,10 +274,12 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                 }
             }
         }
-        RawKind::Cond { test, yes, no } => format!(
-            "({} if ({} | truthy) else {})",
+        RawKind::Cond {
+            test: t, yes, no, ..
+        } => format!(
+            "({} if {} else {})",
             raw(yes, ctx),
-            raw(test, ctx),
+            test(t, ctx),
             raw(no, ctx)
         ),
         RawKind::Template { head, parts } => {
@@ -342,6 +321,141 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
         ),
         // Not in the subset: placement never makes these `Server`.
         RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => "none".into(),
+    }
+}
+
+/// F555: the operands of a chain of one logical operator, in source order. `&&`, `||` and `??` are each associative in
+/// value, evaluation order and short-circuit, so `(a && b) && c` and `a && (b && c)` are the same chain.
+fn chain<'a>(e: &'a RawExpr, op: BinOp, out: &mut Vec<&'a RawExpr>) {
+    match &e.kind {
+        RawKind::Binary { op: o, left, right } if *o == op => {
+            chain(left, op, out);
+            chain(right, op, out);
+        }
+        _ => out.push(e),
+    }
+}
+
+/// F555: a `&&` / `||` / `??` chain as a value, nested to the right: `a && b && c` prints as `a && (b && c)`. Each
+/// operand that may be returned is printed in its test and in its value, never inside another operand's copies, so the
+/// text is linear in the chain (JS chains nest to the left: printing that left side twice per operator was 2^n, 3^n
+/// for `??`).
+fn logical_value(e: &RawExpr, op: BinOp, ctx: &JinjaCtx<'_>) -> String {
+    let mut ops = Vec::new();
+    chain(e, op, &mut ops);
+    let (last, rest) = ops.split_last().expect("a chain has operands");
+    let mut acc = raw(last, ctx);
+    for o in rest.iter().rev() {
+        acc = match op {
+            // `&&` / `||` return an operand, chosen by JS truthiness. The operand is printed as its test and then only as
+            // the value it has once that test is known (F555 ruling 3): a falsy `||` chain is its last operand, a truthy
+            // `&&` chain is its last operand.
+            BinOp::And => format!("({acc} if {} else {})", test(o, ctx), known(o, false, ctx)),
+            BinOp::Or => format!("({} if {} else {acc})", known(o, true, ctx), test(o, ctx)),
+            _ => {
+                let v = raw(o, ctx);
+                format!("({v} if {v} is defined and {v} is not none else {acc})")
+            }
+        };
+    }
+    acc
+}
+
+/// F555 ruling 3: the value of `e` where its truthiness is already known (`truthy`). An `||` chain known falsy returned
+/// its last operand (every operand was falsy); an `&&` chain known truthy returned its last operand (every operand was
+/// truthy); that operand is itself known the same way. Anything else prints its whole value.
+fn known(e: &RawExpr, truthy: bool, ctx: &JinjaCtx<'_>) -> String {
+    let op = if truthy { BinOp::And } else { BinOp::Or };
+    match &e.kind {
+        RawKind::Binary { op: o, .. } if *o == op => {
+            let mut ops = Vec::new();
+            chain(e, op, &mut ops);
+            known(ops.last().expect("a chain has operands"), truthy, ctx)
+        }
+        _ => raw(e, ctx),
+    }
+}
+
+/// F557: a member / index path. An optional link (`a?.b`) makes the whole path undefined when its target is `undefined`
+/// or `null` (JS short-circuits the rest of the chain), so the path prints once, plainly, under one guard: every
+/// optional link's target present, tested left to right by jinja's short-circuit `and`. Printing each optional link as
+/// `(t.b if t present else undefined)` repeated its target three times: `a?.b?.c?.d` was 3^depth copies.
+fn member_path(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
+    let mut guards = Vec::new();
+    let plain = plain_path(e, ctx, &mut guards);
+    if guards.is_empty() {
+        plain
+    } else {
+        format!("({plain} if {} else {UNDEFINED})", guards.join(" and "))
+    }
+}
+
+fn plain_path(e: &RawExpr, ctx: &JinjaCtx<'_>, guards: &mut Vec<String>) -> String {
+    match &e.kind {
+        RawKind::Member {
+            target,
+            name,
+            optional,
+        } => {
+            let t = plain_path(target, ctx, guards);
+            if *optional {
+                guards.push(format!("{t} is defined and {t} is not none"));
+            }
+            if name == "length" {
+                format!("({t} | length)")
+            } else {
+                member_access(&t, name)
+            }
+        }
+        RawKind::Index { target, index } => {
+            format!("{}[{}]", plain_path(target, ctx, guards), raw(index, ctx))
+        }
+        _ => raw(e, ctx),
+    }
+}
+
+/// F555: `e` tested for JS truthiness, as a jinja expression that is `true` or `false`. `&&`, `||` and `!` print as
+/// jinja's own short-circuit `and` / `or` / `not` over `(x | truthy)` operands: each operand is printed once, whatever
+/// the nesting or the mix, where the value form repeats the operands it may return.
+fn test(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
+    match &e.kind {
+        RawKind::Binary {
+            op: op @ (BinOp::And | BinOp::Or),
+            ..
+        } => {
+            let mut ops = Vec::new();
+            chain(e, *op, &mut ops);
+            let word = if matches!(op, BinOp::And) {
+                " and "
+            } else {
+                " or "
+            };
+            format!(
+                "({})",
+                ops.iter()
+                    .map(|o| test(o, ctx))
+                    .collect::<Vec<_>>()
+                    .join(word)
+            )
+        }
+        RawKind::Unary {
+            op: UnOp::Not,
+            value,
+        } => format!("(not {})", test(value, ctx)),
+        _ => format!("({} | truthy)", raw(e, ctx)),
+    }
+}
+
+/// F555: `e` as an `{% if %}` test, when it is a `&&` / `||` / `!` expression whose boolean form ([`test`]) is shorter
+/// than its value under `| truthy`; `None` otherwise (the caller prints `(value) | truthy`, as before).
+pub fn to_jinja_test(e: &ServerExpr, ctx: &JinjaCtx<'_>) -> Option<String> {
+    match &e.0.kind {
+        RawKind::Binary {
+            op: BinOp::And | BinOp::Or,
+            ..
+        }
+        | RawKind::Unary { op: UnOp::Not, .. } => Some(test(&e.0, ctx)),
+        _ => None,
     }
 }
 
