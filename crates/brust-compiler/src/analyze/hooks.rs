@@ -55,6 +55,8 @@ pub struct BodyDecls {
     pub diagnostics: Vec<Diagnostic>,
     /// The first reason this component needs React, if any.
     pub react_reason: Option<String>,
+    /// F578 D6: functions an inlined hook declares (derived name, hook), for the handler-by-name refusals.
+    pub hook_fns: Vec<(String, String)>,
     /// Hook calls already classified as top-level statements, by address.
     classified_hooks: HashSet<usize>,
     /// Custom hooks being inlined (G3).
@@ -2515,13 +2517,7 @@ fn read_decl(
         return;
     }
     let Some(name) = ident else {
-        out.fallback(
-            "body-shape",
-            "destructuring in component body".into(),
-            loc,
-            "bind each value with its own const",
-        );
-        return;
+        return read_body_pattern(r, out, decl, value, loc);
     };
     // R34.28: `const Comp = asChild ? Slot.Root : "button"` is not a value: it is the tag of `<Comp>`,
     // which a call site resolves. A second one in the same component stays a plain const (its tag
@@ -2553,6 +2549,113 @@ fn read_decl(
         name,
         expr: Expr::Raw(expr),
     });
+}
+
+/// F578 D1: `const { a, b: x } = init` / `const [a, , c] = init` in the component body (a flat pattern, `const`). Over a
+/// plain read (a path over props, state, a derived value or a store view) each name is bound to its member of `init`;
+/// over anything else ONE derived value under a generated name holds `init` and each name reads off it. Nothing else
+/// is declared; the names stay bound for the whole body.
+fn read_body_pattern(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    decl: &js_ast::G::Decl,
+    value: &js_ast::Expr,
+    loc: u32,
+) {
+    let remedy = "bind each value with its own const, or write a flat `const { a, b: x } = value` / `const [a, , b] = value`";
+    if !out.inline.stack.is_empty() {
+        return out.fallback(
+            "body-shape",
+            "destructuring in a custom hook's body".into(),
+            loc,
+            "bind each value with its own const",
+        );
+    }
+    if let Some(why) = crate::analyze::jsx::pattern_problem(&decl.binding) {
+        return out.fallback(
+            "body-shape",
+            format!("destructuring in component body with {why}"),
+            loc,
+            remedy,
+        );
+    }
+    // a path of non-optional `.key` reads over one identifier
+    fn path(e: &js_ast::Expr) -> bool {
+        match &e.data {
+            E::EIdentifier(_) => true,
+            E::EDot(d) => d.optional_chain.is_none() && path(&d.target),
+            _ => false,
+        }
+    }
+    fn root_kind(e: &RawExpr) -> Option<(&str, &IdentKind)> {
+        match &e.kind {
+            RawKind::Ident { name, kind } => Some((name, kind)),
+            RawKind::Member {
+                target,
+                optional: false,
+                ..
+            } => root_kind(target),
+            _ => None,
+        }
+    }
+    // The whole props object (or its `...rest`, an alias of either) is only read through the props pattern.
+    let whole = matches!(&value.data, E::EIdentifier(id)
+        if r.names.is_rest(id.ref_) || matches!(r.names.kind_of(id.ref_), (n, IdentKind::Prop) if n == "*"));
+    if whole {
+        return out.fallback(
+            "body-shape",
+            "destructuring the props object outside the props pattern".into(),
+            loc,
+            "destructure the props in the parameter list or in the first body statement",
+        );
+    }
+    let init = r.expr(value);
+    let plain = path(value)
+        && match root_kind(&init) {
+            Some((_, IdentKind::Prop | IdentKind::State | IdentKind::Store { .. })) => true,
+            // a derived value of the body (a const read as one value); any other local (a parameter, a function) is not
+            Some((n, IdentKind::Local)) => out.derived.iter().any(|d| d.name == n),
+            _ => false,
+        };
+    if plain {
+        let text = r.print(value);
+        let captures = r.expr_captures(value);
+        let mut reads = r.printed_reads(value);
+        crate::analyze::jsx::raw_reads(&init, &mut reads);
+        reads.sort();
+        reads.dedup();
+        crate::analyze::jsx::bind_pattern(r, &decl.binding, &init, &text, &captures, &reads, 0);
+        return;
+    }
+    let mut n = 1;
+    let name = loop {
+        let name = format!("_pat{n}");
+        if !r.names.spells(&name) && !out.derived.iter().any(|d| d.name == name) {
+            break name;
+        }
+        n += 1;
+    };
+    let vloc = loc_of(value);
+    out.derived.push(DerivedDecl {
+        name: name.clone(),
+        expr: Expr::Raw(init),
+    });
+    let target = RawExpr {
+        loc: vloc,
+        kind: RawKind::Ident {
+            name: name.clone(),
+            kind: IdentKind::Local,
+        },
+    };
+    crate::analyze::jsx::bind_pattern(
+        r,
+        &decl.binding,
+        &target,
+        &name,
+        &[(name.clone(), IdentKind::Local)],
+        std::slice::from_ref(&name),
+        0,
+    );
 }
 
 /// `value` is `flag ? Slot : "host"` (or `flag ? "host" : Slot`): `flag` a prop that defaults to
@@ -2905,6 +3008,7 @@ fn inline_hook(
     else {
         return false;
     };
+    let reached = path.clone();
     let (path, imported) = follow_reexports(opts, path, imported);
     // F442 (W3b): Radix's own `useId`, recognised by its printed shape, is React 19's `useId` under a prefix: an id slot.
     if crate::analyze::radix_id::is_radix_use_id(&path, &imported, opts)
@@ -2915,7 +3019,20 @@ fn inline_hook(
     }
     // B2: the specifier the component's own module imports the hook by; only then can a name the hook's module exports
     // be imported from the same place (a hook reached through another hook's module has no specifier of the component's).
-    let spec = (!m.foreign).then(|| source.clone());
+    // F578 D2: a hook reached through an app module's re-export is declared elsewhere: its module's other exports are
+    // imported from the DECLARING module (a package keeps its specifier: its barrel is the package's entry).
+    let spec = (!m.foreign).then(|| {
+        if path == reached || crate::analyze::modules::is_package_source(&path) {
+            source.clone()
+        } else {
+            let file = path.rsplit('/').next().unwrap_or(&path);
+            let stem = [".tsx", ".ts", ".jsx", ".js", ".mjs"]
+                .iter()
+                .find_map(|x| file.strip_suffix(x))
+                .unwrap_or(file);
+            rebase_spec(&path, &format!("./{stem}"), &m.parsed.path())
+        }
+    });
     let hook = site.hook;
     let bytes = match std::fs::read(opts.root.join(&path)) {
         Ok(b) => b,
@@ -3008,48 +3125,99 @@ fn read_radix_use_id(r: &mut Reader<'_, '_>, out: &mut BodyDecls, site: &Site<'_
     bind_result(r, out, site, Some(value));
 }
 
-/// A package barrel (`export { useX } from "./use-x"`, the build's own P1 barrel) names the hook but does not
-/// declare it: follow named re-exports to the module that does. A module that declares it, or any hop that cannot
-/// be read, parsed or resolved, ends the walk where it stands and `inline_hook` reports from there.
-fn follow_reexports(
+/// The module that declares the hook a module exports as `imported`, following re-exports (F578 D2): `export { x } from
+/// './m'` (renamed too), `import { x } from './m'; export { x }`, and `export * from './m'`, at most 4 hops, cycles cut.
+/// When nothing declares it, the last module reached (its fallback names that module).
+fn follow_reexports(opts: &AnalyzeOptions, path: String, imported: String) -> (String, String) {
+    let mut seen = Vec::new();
+    let mut last = (path.clone(), imported.clone());
+    find_hook_export(opts, path, imported, 0, &mut seen, &mut last).unwrap_or(last)
+}
+
+fn find_hook_export(
     opts: &AnalyzeOptions,
-    mut path: String,
-    mut imported: String,
-) -> (String, String) {
-    for _ in 0..4 {
-        let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
-            break;
+    path: String,
+    imported: String,
+    depth: u8,
+    seen: &mut Vec<(String, String)>,
+    last: &mut (String, String),
+) -> Option<(String, String)> {
+    let here = (path.clone(), imported.clone());
+    if depth > 4 || seen.contains(&here) {
+        return None;
+    }
+    seen.push(here.clone());
+    *last = here;
+    let bytes = std::fs::read(opts.root.join(&path)).ok()?;
+    let parsed = crate::parse::parse_cached(&path, bytes).ok()?;
+    // (declared here, the named re-export step, the `export *` modules)
+    let (declared, step, stars) = parsed.with_ast(|ast| {
+        if exported_fn(ast, &imported).is_some() {
+            return (true, None, Vec::new());
+        }
+        let names = NameTable::for_hook(ast);
+        let records = ast.import_records.as_slice();
+        let spec_of = |i: u32| {
+            records
+                .get(i as usize)
+                .map(|r| String::from_utf8_lossy(r.path.text).into_owned())
         };
-        let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
-            break;
-        };
-        let next = parsed.with_ast(|ast| {
-            if exported_fn(ast, &imported).is_some() {
-                return None;
-            }
-            let records = ast.import_records.as_slice();
-            ast.parts.iter().find_map(|part| {
-                part.stmts.slice().iter().find_map(|stmt| match &stmt.data {
-                    S::SExportFrom(f) => f.items.slice().iter().find_map(|item| {
-                        if item.alias.slice() != imported.as_bytes() {
-                            return None;
+        let mut step = None;
+        let mut stars = Vec::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    S::SExportFrom(f) if step.is_none() => {
+                        for item in f.items.slice() {
+                            if item.alias.slice() == imported.as_bytes()
+                                && let Some(spec) = spec_of(f.import_record_index)
+                            {
+                                let original = String::from_utf8_lossy(item.original_name.slice());
+                                step = Some((spec, original.into_owned()));
+                            }
                         }
-                        let spec = records.get(f.import_record_index as usize)?;
-                        let spec = String::from_utf8_lossy(spec.path.text).into_owned();
-                        let to = crate::analyze::modules::resolve_module(&path, &spec, opts)?;
-                        let original = String::from_utf8_lossy(item.original_name.slice());
-                        Some((to, original.into_owned()))
-                    }),
-                    _ => None,
-                })
-            })
-        });
-        match next {
-            Some((to, original)) => (path, imported) = (to, original),
-            None => break,
+                    }
+                    // `import { x as y } from './m'; export { y as z }`
+                    S::SExportClause(c) if step.is_none() => {
+                        for item in c.items.slice() {
+                            if item.alias.slice() == imported.as_bytes()
+                                && let Some((src, orig)) = names.import_of(item.name.ref_)
+                            {
+                                step = Some((src.to_string(), orig.to_string()));
+                            }
+                        }
+                    }
+                    S::SExportStar(st) if st.alias.is_none() && imported != "default" => {
+                        stars.extend(spec_of(st.import_record_index));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        (false, step, stars)
+    });
+    if declared {
+        return Some((path, imported));
+    }
+    if let Some((spec, original)) = step {
+        if original == "*" {
+            return None;
+        }
+        let to = crate::analyze::modules::resolve_module(&path, &spec, opts)?;
+        return find_hook_export(opts, to, original, depth + 1, seen, last);
+    }
+    for spec in stars {
+        let Some(to) = crate::analyze::modules::resolve_module(&path, &spec, opts) else {
+            continue;
+        };
+        let mut probe = last.clone();
+        if let Some(found) =
+            find_hook_export(opts, to, imported.clone(), depth + 1, seen, &mut probe)
+        {
+            return Some(found);
         }
     }
-    (path, imported)
+    None
 }
 
 /// The module-level `function` declaring `target`.
@@ -3220,6 +3388,7 @@ fn read_hook(
     // with optional defaults, bound to an object literal at the call site.
     let mut params = Vec::new();
     let mut slots: Vec<Slot> = Vec::new();
+    let hnames_probe = NameTable::for_hook(hm.ast);
     for arg in func.args.slice() {
         let last = std::ptr::eq(arg, &func.args.slice()[func.args.len() - 1]);
         match arg.binding.data {
@@ -3232,6 +3401,39 @@ fn read_hook(
             B::BIdentifier(id) if arg.default.is_none() && !func.flags.contains(F::HasRestArg) => {
                 params.push(id.r#ref);
                 slots.push(Slot::Whole(id.r#ref));
+            }
+            // F578 D3: a plain parameter with a default that reads no parameter and calls nothing (a literal, a path over
+            // module or component names, an arrow that calls nothing): `arg === undefined ? default : arg`.
+            B::BIdentifier(id) if !func.flags.contains(F::HasRestArg) => {
+                let d = arg
+                    .default
+                    .expect("guarded: the arm above takes the parameter without a default");
+                let mut w = Walk::default();
+                w.expr(&d);
+                let reads_param = w.used.iter().any(|u| {
+                    func.args.slice().iter().any(|a| {
+                        let mut refs = Vec::new();
+                        crate::analyze::names::binding_refs(&a.binding, &mut refs);
+                        refs.iter().any(|p| hnames_probe.same(*p, *u))
+                    })
+                });
+                if reads_param || !w.calls.is_empty() {
+                    return fail(
+                        out,
+                        "hook-shape",
+                        format!(
+                            "custom hook {hook}: the default of parameter `{}` {}",
+                            hnames_probe.name(id.r#ref),
+                            if reads_param {
+                                "reads another parameter"
+                            } else {
+                                "calls a function"
+                            }
+                        ),
+                    );
+                }
+                params.push(id.r#ref);
+                slots.push(Slot::Defaulted(id.r#ref, d));
             }
             B::BObject(obj) if arg.default.is_none() && !func.flags.contains(F::HasRestArg) => {
                 let mut members = Vec::new();
@@ -3259,11 +3461,30 @@ fn read_hook(
                 }
                 slots.push(Slot::Object(members));
             }
+            B::BIdentifier(id) => {
+                return fail(
+                    out,
+                    "hook-shape",
+                    format!(
+                        "custom hook {hook}: parameter `{}` has a default next to a rest parameter",
+                        hnames_probe.name(id.r#ref)
+                    ),
+                );
+            }
+            B::BObject(_) => {
+                return fail(
+                    out,
+                    "hook-shape",
+                    format!(
+                        "custom hook {hook}: an object parameter with a default or next to a rest parameter"
+                    ),
+                );
+            }
             _ => {
                 return fail(
                     out,
                     "hook-shape",
-                    format!("custom hook {hook} has a default, rest or destructured parameter"),
+                    format!("custom hook {hook}: an array pattern parameter"),
                 );
             }
         }
@@ -3586,6 +3807,8 @@ fn read_hook(
     let mut param_aliases = Vec::new();
     // `name === undefined ? default : name` for a defaulted member, read once the aliases are set.
     let mut defaulted: Vec<(String, RawExpr, js_ast::Expr)> = Vec::new();
+    // F578 D3: a defaulted parameter the call omits: its default, read once the aliases are set.
+    let mut omitted: Vec<(String, js_ast::Expr)> = Vec::new();
     for (i, slot) in slots.iter().enumerate() {
         let call_arg = site.call.args.get(i);
         match slot {
@@ -3611,6 +3834,36 @@ fn read_hook(
                     }
                 };
                 param_aliases.push((*p, alias));
+            }
+            Slot::Defaulted(p, d) => {
+                let name = gen_of(&hnames, *p);
+                match call_arg {
+                    // omitted: the parameter is its default
+                    None => omitted.push((name.clone(), *d)),
+                    Some(a) => {
+                        let mut raw = r.arg(a);
+                        relocate(&mut raw, ploc);
+                        // read twice (`v === undefined ? d : v`): only a value whose computation can be dropped may be
+                        if !inert(&raw) {
+                            return fail(
+                                out,
+                                "hook-shape",
+                                format!(
+                                    "custom hook {hook}: parameter `{}` has a default and the call site passes a computed value",
+                                    hnames.name(*p)
+                                ),
+                            );
+                        }
+                        defaulted.push((name.clone(), raw, *d));
+                    }
+                }
+                param_aliases.push((
+                    *p,
+                    Alias {
+                        print: name,
+                        kind: None,
+                    },
+                ));
             }
             Slot::Rest(p) => {
                 let items: Vec<RawExpr> = site.call.args.iter().skip(i).map(|a| r.arg(a)).collect();
@@ -3738,6 +3991,14 @@ fn read_hook(
     {
         let print = |js: Js<'_>, a: &Aliases| print_js_with(hm.parsed, hm.ast, a, js);
         let mut hr = Reader::new(&mut hnames, &print);
+        for (name, default) in omitted.drain(..) {
+            let mut d = hr.expr(&default);
+            relocate(&mut d, ploc);
+            out.derived.push(DerivedDecl {
+                name,
+                expr: Expr::Raw(d),
+            });
+        }
         for (name, raw, default) in defaulted.drain(..) {
             let mut d = hr.expr(&default);
             relocate(&mut d, ploc);
@@ -3778,6 +4039,18 @@ fn read_hook(
             });
         }
         let mut returned = read_stmts(&body, &mut hr, out, hm);
+        for d in &out.derived[start.derived..] {
+            if matches!(
+                &d.expr,
+                Expr::Raw(RawExpr {
+                    kind: RawKind::Arrow { .. },
+                    ..
+                })
+            ) && !out.hook_fns.iter().any(|(n, _)| *n == d.name)
+            {
+                out.hook_fns.push((d.name.clone(), hook.to_string()));
+            }
+        }
         if !module_consts.is_empty() {
             let values: HashMap<String, RawExpr> = module_consts
                 .iter()
@@ -4012,6 +4285,8 @@ fn ident_alias(names: &NameTable<'_>, a: &js_ast::Expr) -> Option<Alias> {
 /// A custom hook's parameter: a plain identifier, or an object pattern of plain keys.
 enum Slot {
     Whole(js_ast::Ref),
+    /// F578 D3: a plain parameter with a default (checked: it reads no parameter and calls nothing).
+    Defaulted(js_ast::Ref, js_ast::Expr),
     /// B2: `...rest` of the hook's parameters, bound to an array of the call site's remaining arguments.
     Rest(js_ast::Ref),
     Object(Vec<Member>),

@@ -1,0 +1,141 @@
+{
+  "id": "input_1432ba98",
+  "source": "tests/fixtures/hook-returned-fn/input.tsx",
+  "tier": "Native",
+  "native_because": [
+    "state `hit_useQ1` is set (line 5)"
+  ],
+  "props": [],
+  "state": [
+    {
+      "name": "hit_useQ1",
+      "setter": "setHit_useQ1",
+      "init": {
+        "Server": {
+          "loc": 193,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "sel_useQ1",
+      "expr": {
+        "ClientOnly": {
+          "js": "\"a, button\""
+        }
+      }
+    },
+    {
+      "name": "after_useQ1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => {}"
+        }
+      }
+    },
+    {
+      "name": "mark_useQ1",
+      "expr": {
+        "ClientOnly": {
+          "js": "sel_useQ1.length"
+        }
+      }
+    },
+    {
+      "name": "find_useQ1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => {\n  setHit_useQ1(`${sel_useQ1}#${mark_useQ1}`);\n  after_useQ1();\n}"
+        }
+      }
+    }
+  ],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 215,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 227,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "go"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "find_useQ1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "find"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 296,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "out"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 309,
+                    "kind": {
+                      "Ident": {
+                        "name": "hit_useQ1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

@@ -97,8 +97,6 @@ fn everything_else_keeps_body_shape() {
     for body in [
         "const { a: { b } } = props; return <p>{b}</p>",
         "const { a, ...r1 } = props; const { b, ...r2 } = props; return <p {...r1} {...r2}>{a}{b}</p>",
-        "const { a } = props.inner; return <p>{a}</p>",
-        "const [x] = props.list; return <p>{x}</p>",
         "const { ['a' + 'b']: v } = props; return <p>{v}</p>",
     ] {
         let ir = comp(body);
@@ -114,11 +112,30 @@ fn everything_else_keeps_body_shape() {
 }
 
 #[test]
+fn a_flat_pattern_over_a_props_path_is_read_off_the_path() {
+    // F578 D1: not the props pattern, a plain read: each name is its member of the path
+    for body in [
+        "const { a } = props.inner; return <p>{a}</p>",
+        "const [x] = props.list; return <p>{x}</p>",
+    ] {
+        let ir = comp(body);
+        assert!(!has(&ir, "body-shape"), "{body}: {:?}", ir.diagnostics);
+        assert!(
+            !matches!(ir.tier, Tier::React { .. }),
+            "{body}: {:?}",
+            ir.tier
+        );
+    }
+}
+
+#[test]
 fn a_pattern_over_a_different_binding_is_not_absorbed() {
     let ir = analyze(
         "export default function C(props: any) { const other = props; const { a } = other; return <p>{a}</p> }",
     );
-    assert!(has(&ir, "body-shape"), "{:?}", ir.diagnostics);
+    // F578 D1: read as `other.a` (a derived value of the props object), as written so
+    assert!(!has(&ir, "body-shape"), "{:?}", ir.diagnostics);
+    assert!(!matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
 }
 
 #[test]
@@ -126,7 +143,12 @@ fn the_pattern_is_not_absorbed_when_the_first_parameter_is_already_a_pattern() {
     let ir = analyze(
         "export default function C({ x }: any, props: any) { const { a } = props; return <p>{x}{a}</p> }",
     );
-    assert!(has(&ir, "body-shape"), "{:?}", ir.diagnostics);
+    // F578 D1: the second parameter is not the props; read as one value it stays React
+    assert!(
+        matches!(ir.tier, Tier::React { .. }),
+        "{:?}",
+        ir.diagnostics
+    );
 }
 
 #[test]

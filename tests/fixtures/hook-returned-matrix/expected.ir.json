@@ -1,0 +1,1095 @@
+{
+  "id": "input_ebd8172e",
+  "source": "tests/fixtures/hook-returned-matrix/input.tsx",
+  "tier": "Native",
+  "native_because": [
+    "state `v_usePlain1` is set (line 6)",
+    "state `v_usePlain2` is set (line 7)",
+    "state `v_usePlain3` is set (line 8)",
+    "state `v_usePlain4` is set (line 9)",
+    "state `v_useDefaulted1` is set (line 10)",
+    "state `v_useDefaulted2` is set (line 11)",
+    "state `v_useObject1` is set (line 12)",
+    "state `v_useObject2` is set (line 13)",
+    "… and 8 more"
+  ],
+  "props": [
+    {
+      "name": "title",
+      "local": "title",
+      "ts_type": null,
+      "default": null
+    },
+    {
+      "name": "items",
+      "local": "items",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "repeats_children": true,
+  "state": [
+    {
+      "name": "v_usePlain1",
+      "setter": "setV_usePlain1",
+      "init": {
+        "Server": {
+          "loc": 413,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_usePlain2",
+      "setter": "setV_usePlain2",
+      "init": {
+        "Server": {
+          "loc": 460,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_usePlain3",
+      "setter": "setV_usePlain3",
+      "init": {
+        "Server": {
+          "loc": 490,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_usePlain4",
+      "setter": "setV_usePlain4",
+      "init": {
+        "Server": {
+          "loc": 537,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useDefaulted1",
+      "setter": "setV_useDefaulted1",
+      "init": {
+        "Server": {
+          "loc": 567,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useDefaulted2",
+      "setter": "setV_useDefaulted2",
+      "init": {
+        "Server": {
+          "loc": 620,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useObject1",
+      "setter": "setV_useObject1",
+      "init": {
+        "Server": {
+          "loc": 648,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useObject2",
+      "setter": "setV_useObject2",
+      "init": {
+        "Server": {
+          "loc": 705,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useDerived1",
+      "setter": "setV_useDerived1",
+      "init": {
+        "Server": {
+          "loc": 744,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useDerived2",
+      "setter": "setV_useDerived2",
+      "init": {
+        "Server": {
+          "loc": 793,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useLocalFn1",
+      "setter": "setV_useLocalFn1",
+      "init": {
+        "Server": {
+          "loc": 824,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useLocalFn2",
+      "setter": "setV_useLocalFn2",
+      "init": {
+        "Server": {
+          "loc": 873,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useCounted1",
+      "setter": "setV_useCounted1",
+      "init": {
+        "Server": {
+          "loc": 904,
+          "kind": {
+            "Lit": {
+              "Str": "0"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useCounted2",
+      "setter": "setV_useCounted2",
+      "init": {
+        "Server": {
+          "loc": 948,
+          "kind": {
+            "Lit": {
+              "Str": "0"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "sel_usePlain1",
+      "expr": {
+        "ClientOnly": {
+          "js": "\"lit\""
+        }
+      }
+    },
+    {
+      "name": "run_usePlain1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_usePlain1(`${sel_usePlain1}!`)"
+        }
+      }
+    },
+    {
+      "name": "sel_usePlain2",
+      "expr": {
+        "ClientOnly": {
+          "js": "\"lit2\""
+        }
+      }
+    },
+    {
+      "name": "run_usePlain2",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_usePlain2(`${sel_usePlain2}!`)"
+        }
+      }
+    },
+    {
+      "name": "run_usePlain3",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_usePlain3(`${props().title}!`)"
+        }
+      }
+    },
+    {
+      "name": "run_usePlain4",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_usePlain4(`${props().title}!`)"
+        }
+      }
+    },
+    {
+      "name": "sel_useDefaulted1",
+      "expr": {
+        "ClientOnly": {
+          "js": "props().title === undefined ? \"dflt\" : props().title"
+        }
+      }
+    },
+    {
+      "name": "run_useDefaulted1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useDefaulted1(`${sel_useDefaulted1}?`)"
+        }
+      }
+    },
+    {
+      "name": "sel_useDefaulted2",
+      "expr": {
+        "ClientOnly": {
+          "js": "\"dflt\""
+        }
+      }
+    },
+    {
+      "name": "run_useDefaulted2",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useDefaulted2(`${sel_useDefaulted2}?`)"
+        }
+      }
+    },
+    {
+      "name": "run_useObject1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useObject1(`<${props().title}>`)"
+        }
+      }
+    },
+    {
+      "name": "run_useObject2",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useObject2(`<${props().title}>`)"
+        }
+      }
+    },
+    {
+      "name": "label_useDerived1",
+      "expr": {
+        "ClientOnly": {
+          "js": "`${props().title}#${props().title.length}`"
+        }
+      }
+    },
+    {
+      "name": "run_useDerived1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useDerived1(label_useDerived1)"
+        }
+      }
+    },
+    {
+      "name": "label_useDerived2",
+      "expr": {
+        "ClientOnly": {
+          "js": "`${props().title}#${props().title.length}`"
+        }
+      }
+    },
+    {
+      "name": "run_useDerived2",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useDerived2(label_useDerived2)"
+        }
+      }
+    },
+    {
+      "name": "wrap_useLocalFn1",
+      "expr": {
+        "ClientOnly": {
+          "js": "(x_useLocalFn1) => `[${x_useLocalFn1}]`"
+        }
+      }
+    },
+    {
+      "name": "run_useLocalFn1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useLocalFn1(wrap_useLocalFn1(props().title))"
+        }
+      }
+    },
+    {
+      "name": "wrap_useLocalFn2",
+      "expr": {
+        "ClientOnly": {
+          "js": "(x_useLocalFn2) => `[${x_useLocalFn2}]`"
+        }
+      }
+    },
+    {
+      "name": "run_useLocalFn2",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useLocalFn2(wrap_useLocalFn2(props().title))"
+        }
+      }
+    },
+    {
+      "name": "run_useCounted1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => {\n  r_useCounted1.current += 1;\n  setV_useCounted1(String(r_useCounted1.current));\n}"
+        }
+      }
+    },
+    {
+      "name": "run_useCounted2",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => {\n  r_useCounted2.current += 1;\n  setV_useCounted2(String(r_useCounted2.current));\n}"
+        }
+      }
+    }
+  ],
+  "effects": [],
+  "handlers": [],
+  "refs": [
+    {
+      "name": "r_useCounted1",
+      "init": {
+        "ClientOnly": {
+          "js": "0"
+        }
+      }
+    },
+    {
+      "name": "r_useCounted2",
+      "init": {
+        "ClientOnly": {
+          "js": "0"
+        }
+      }
+    }
+  ],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 976,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 988,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "m1"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_usePlain1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1022,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_usePlain1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1043,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "d1"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_usePlain2"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1075,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_usePlain2",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1094,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "m2"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_usePlain3"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1128,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_usePlain3",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1149,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "d2"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_usePlain4"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1181,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_usePlain4",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1200,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "m2d"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useDefaulted1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1236,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useDefaulted1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1258,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "d2d"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useDefaulted2"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1292,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useDefaulted2",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1312,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "m3"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useObject1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1346,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useObject1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1367,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "d3"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useObject2"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1399,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useObject2",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1418,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "m5"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useDerived1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1452,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useDerived1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1473,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "d5"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useDerived2"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1505,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useDerived2",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1524,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "m6"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useLocalFn1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1558,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useLocalFn1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1579,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "d6"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useLocalFn2"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1611,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useLocalFn2",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1630,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "m9"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useCounted1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1664,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useCounted1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1685,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "d9"
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "run_useCounted2"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 1717,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useCounted2",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 1736,
+            "tag": "ul",
+            "attrs": [],
+            "children": [
+              {
+                "For": {
+                  "source": {
+                    "Server": {
+                      "loc": 1750,
+                      "kind": {
+                        "Ident": {
+                          "name": "items",
+                          "kind": "Prop"
+                        }
+                      }
+                    }
+                  },
+                  "item": "it",
+                  "index": null,
+                  "key": {
+                    "Server": {
+                      "loc": 1789,
+                      "kind": {
+                        "Ident": {
+                          "name": "it",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    }
+                  },
+                  "body": [
+                    {
+                      "Element": {
+                        "loc": 1780,
+                        "tag": "li",
+                        "attrs": [],
+                        "children": [
+                          {
+                            "Element": {
+                              "loc": 1806,
+                              "tag": "button",
+                              "attrs": [
+                                {
+                                  "Static": {
+                                    "name": "className",
+                                    "value": "m10"
+                                  }
+                                },
+                                {
+                                  "Event": {
+                                    "event": "click",
+                                    "handler": "run_usePlain1"
+                                  }
+                                }
+                              ],
+                              "children": [
+                                {
+                                  "Slot": {
+                                    "Server": {
+                                      "loc": 1848,
+                                      "kind": {
+                                        "Ident": {
+                                          "name": "it",
+                                          "kind": "LoopBinding"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "host": false,
+                              "ref_name": null
+                            }
+                          },
+                          {
+                            "Element": {
+                              "loc": 1873,
+                              "tag": "button",
+                              "attrs": [
+                                {
+                                  "Static": {
+                                    "name": "className",
+                                    "value": "d10"
+                                  }
+                                },
+                                {
+                                  "Event": {
+                                    "event": "click",
+                                    "handler": "run_useCounted2"
+                                  }
+                                }
+                              ],
+                              "children": [
+                                {
+                                  "Slot": {
+                                    "Server": {
+                                      "loc": 1913,
+                                      "kind": {
+                                        "Ident": {
+                                          "name": "it",
+                                          "kind": "LoopBinding"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "host": false,
+                              "ref_name": null
+                            }
+                          }
+                        ],
+                        "host": false,
+                        "ref_name": null
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [
+    "items",
+    "title"
+  ],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

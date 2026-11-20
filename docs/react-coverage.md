@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 71 | 46 | 16 | 9 | 0 | 0 | 0 | 0 |
-| B Composition | 246 | 130 | 20 | 96 | 0 | 0 | 0 | 0 |
-| C Hooks | 247 | 82 | 78 | 87 | 0 | 0 | 0 | 0 |
+| B Composition | 246 | 131 | 20 | 95 | 0 | 0 | 0 | 0 |
+| C Hooks | 251 | 86 | 78 | 87 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 77 | 34 | 16 | 23 | 3 | 1 | 0 | 0 |
-| **Total** | 674 | 305 | 131 | 234 | 3 | 1 | 0 | 0 |
+| **Total** | 678 | 310 | 131 | 233 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -176,7 +176,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-body-destructure-mixed | a body destructuring next to a `props.x` read | static | static | 0 | ok | 0 | — |  |
 | b-body-destructure-nested | a nested pattern in the body destructuring stays body-shape | react | react | ssr | ok | 4.5 | fallback:body-shape |  |
 | b-body-destructure-two-rests | a second `...rest` in the body stays body-shape | react | react | ssr | ok | 4.5 | fallback:body-shape, fallback:spread-props |  |
-| b-body-destructure-other | destructuring something that is not the props object | react | react | ssr | ok | 4.5 | fallback:body-shape |  |
+| b-body-destructure-other | destructuring something that is not the props object | static | static | 0 | ok | 0 | — | was body-shape; F578 D1: a flat pattern over a props path reads each name off the path |
 | b-body-destructure-let | `let { a } = props` is not read as a props pattern | react | react | ssr | ok | 4.5 | fallback:let-var |  |
 | b-body-destructure-default-local | a body-destructuring default that reads a body local stays body-shape | react | react | ssr | ok | 4.5 | fallback:body-shape | review F1: the template binds no local for an absorbed default |
 | b-union-spread-body-const | a spread of a conditional object literal held in a body const (`decorative ? { role } : { aria-orientation, role }`) | static | static | 0 | ok | 0 | — | R34.66 part 3: one conditional attribute per key; a later own attribute or key wins |
@@ -367,6 +367,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-custom-hook | custom hook | native | native | 0 | ok | 5.1 | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
 | c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | 5.1 | — | G3: an imported hook may use React hooks and globals, and read a store its module imports (F560: c-custom-hook-import-store); its module's other bindings are B2's rules |
 | c-custom-hook-import-store | custom hook of another module that reads a store its module imports | native | native | 0 | ok | 5.1 | — | F560: the handle is the hook module's import, re-anchored to the component (`../cart` in lib/ is `./cart` here); was react (hook-shape: only a hook declared beside the component may use useStore) |
+| c-body-destructure-object | a flat object pattern over a prop in the component body (`const { kind, m: msg } = ask`) | static | static | 0 | ok | 0 | — | F578 D1: each name reads its member of the path; nothing is declared |
+| c-body-destructure-array-call | an array pattern over a call in the component body (`const [th, , en] = greeting(h)`) | static | static | precompute | ok | 0 | — | F578 D1: one derived value under a generated name holds the call; each name reads off it (one call) |
+| c-custom-hook-reexport | custom hook a module only re-exports (`import { useL } from …; export { useL }`) | static | static | 0 | ok | 0 | — | F578 D2: followed to the declaring module (also `export { x } from`, `export *`; four hops) |
+| c-custom-hook-param-default | custom hook with a defaulted plain parameter the call omits | static | static | 0 | ok | 0 | — | F578 D3: the default when omitted, else `arg === undefined ? default : arg` |
 | c-custom-hook-store-own-module | custom hook of another module that reads a store declared in that same module | react | react | ssr | ok | 4.5 | fallback:hook-shape | F560: a handle the hook's module declares is not one the component can import; the finding names it |
 | c-local-arrow-call | a const arrow with an expression body, declared in the component and called in the markup | static | static | 0 | ok | 0 | — | F560: the call is replaced by the arrow's expression (was react, client-function-in-job) |
 | c-local-arrow-call-in-list | a const arrow that reads a prop, called in the rows of a list | static | static | 0 | ok | 0 | — | F560: the call is the arrow's expression in the row (the row binds `x`, the arrow reads the prop `lang`) |

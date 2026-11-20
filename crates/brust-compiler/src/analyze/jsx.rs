@@ -2267,58 +2267,23 @@ fn read_list(r: &mut Reader<'_, '_>, e: &js_ast::Expr, call: &js_ast::E::Call) -
     let depth = r.loop_scope.len();
     let mut bound: Vec<js_ast::Ref> = Vec::new();
     if let Some(pattern) = item_pattern {
-        for (name_ref, access) in item_pattern_names(pattern) {
-            let loc = 0;
-            let target = Box::new(RawExpr {
-                loc,
-                kind: RawKind::Ident {
-                    name: item.clone(),
-                    kind: IdentKind::LoopBinding,
-                },
-            });
-            let (expr, text) = match access {
-                Access::Key(k) if is_js_identifier(&k) => (
-                    RawKind::Member {
-                        target,
-                        name: k.clone(),
-                        optional: false,
-                    },
-                    format!("{item}.{k}"),
-                ),
-                Access::Key(k) => (
-                    RawKind::Index {
-                        target,
-                        index: Box::new(RawExpr {
-                            loc,
-                            kind: RawKind::Lit(crate::ir::Literal::Str(k.clone())),
-                        }),
-                    },
-                    format!("{item}[{}]", serde_json::to_string(&k).unwrap_or_default()),
-                ),
-                Access::At(n) => (
-                    RawKind::Index {
-                        target,
-                        index: Box::new(RawExpr {
-                            loc,
-                            kind: RawKind::Lit(crate::ir::Literal::Num(n as f64)),
-                        }),
-                    },
-                    format!("{item}[{n}]"),
-                ),
-            };
-            r.names.bind_expr(
-                name_ref,
-                crate::analyze::names::Bound {
-                    name: r.names.name(name_ref),
-                    expr: RawExpr { loc, kind: expr },
-                    text,
-                    captures: vec![(item.clone(), IdentKind::LoopBinding)],
-                    reads: vec![item.clone()],
-                    depth,
-                },
-            );
-            bound.push(name_ref);
-        }
+        let target = RawExpr {
+            loc: 0,
+            kind: RawKind::Ident {
+                name: item.clone(),
+                kind: IdentKind::LoopBinding,
+            },
+        };
+        let captures = vec![(item.clone(), IdentKind::LoopBinding)];
+        bound = bind_pattern(
+            r,
+            pattern,
+            &target,
+            &item,
+            &captures,
+            std::slice::from_ref(&item),
+            depth,
+        );
     }
     // D5: each early `return null` condition, read where it stands.
     let mut early: Vec<RawExpr> = Vec::new();
@@ -2421,37 +2386,110 @@ enum Access {
 
 /// F562 D2: what makes an item pattern unsupported: a default, a nested pattern, a rest element, a computed key.
 fn item_pattern_problem(b: &js_ast::Binding) -> Option<&'static str> {
+    pattern_problem(b).map(|w| match w {
+        "a rest element (`...rest`)" => "the item pattern has a rest element (`...rest`)",
+        "a computed key" => "the item pattern has a computed key",
+        "a default value" => "the item pattern has a default value",
+        "a nested pattern" => "the item pattern has a nested pattern",
+        _ => "the item parameter is not a name or a pattern",
+    })
+}
+
+/// F562 / F578: what makes a flat destructuring pattern unsupported (`a default value`, `a nested pattern`,
+/// `a rest element (`...rest`)`, `a computed key`), `None` when every name reads off the value by key or position.
+pub(crate) fn pattern_problem(b: &js_ast::Binding) -> Option<&'static str> {
     use js_ast::flags::Property as P;
     match b.data {
         B::BObject(obj) => obj.properties().iter().find_map(|p| {
             if p.flags.contains(P::IsSpread) {
-                Some("the item pattern has a rest element (`...rest`)")
+                Some("a rest element (`...rest`)")
             } else if p.flags.contains(P::IsComputed) || !matches!(p.key.data, E::EString(_)) {
-                Some("the item pattern has a computed key")
+                Some("a computed key")
             } else if p.default_value.is_some() {
-                Some("the item pattern has a default value")
+                Some("a default value")
             } else if !matches!(p.value.data, B::BIdentifier(_)) {
-                Some("the item pattern has a nested pattern")
+                Some("a nested pattern")
             } else {
                 None
             }
         }),
         B::BArray(arr) => {
             if arr.has_spread {
-                return Some("the item pattern has a rest element (`...rest`)");
+                return Some("a rest element (`...rest`)");
             }
             arr.items().iter().find_map(|i| {
                 if i.default_value.is_some() {
-                    Some("the item pattern has a default value")
+                    Some("a default value")
                 } else if !matches!(i.binding.data, B::BIdentifier(_) | B::BMissing(_)) {
-                    Some("the item pattern has a nested pattern")
+                    Some("a nested pattern")
                 } else {
                     None
                 }
             })
         }
-        _ => Some("the item parameter is not a name or a pattern"),
+        _ => Some("not a pattern"),
     }
+}
+
+/// F562 / F578: binds each name of a checked flat pattern (D1 of F562) to its member / position of `target`, printed
+/// as `text.key` / `text[n]`; code that reads a name captures `captures` and reads `reads`. The bound refs.
+pub(crate) fn bind_pattern(
+    r: &mut Reader<'_, '_>,
+    pattern: &js_ast::Binding,
+    target: &RawExpr,
+    text: &str,
+    captures: &[(String, IdentKind)],
+    reads: &[String],
+    depth: usize,
+) -> Vec<js_ast::Ref> {
+    let mut bound = Vec::new();
+    for (name_ref, access) in item_pattern_names(pattern) {
+        let loc = target.loc;
+        let t = Box::new(target.clone());
+        let (expr, printed) = match access {
+            Access::Key(k) if is_js_identifier(&k) => (
+                RawKind::Member {
+                    target: t,
+                    name: k.clone(),
+                    optional: false,
+                },
+                format!("{text}.{k}"),
+            ),
+            Access::Key(k) => (
+                RawKind::Index {
+                    target: t,
+                    index: Box::new(RawExpr {
+                        loc,
+                        kind: RawKind::Lit(crate::ir::Literal::Str(k.clone())),
+                    }),
+                },
+                format!("{text}[{}]", serde_json::to_string(&k).unwrap_or_default()),
+            ),
+            Access::At(n) => (
+                RawKind::Index {
+                    target: t,
+                    index: Box::new(RawExpr {
+                        loc,
+                        kind: RawKind::Lit(crate::ir::Literal::Num(n as f64)),
+                    }),
+                },
+                format!("{text}[{n}]"),
+            ),
+        };
+        r.names.bind_expr(
+            name_ref,
+            crate::analyze::names::Bound {
+                name: r.names.name(name_ref),
+                expr: RawExpr { loc, kind: expr },
+                text: printed,
+                captures: captures.to_vec(),
+                reads: reads.to_vec(),
+                depth,
+            },
+        );
+        bound.push(name_ref);
+    }
+    bound
 }
 
 /// The names a (checked) item pattern declares and where each reads.
@@ -2602,7 +2640,7 @@ fn row_stmt_problem(
 }
 
 /// F562: every name an expression reads in the IR (an identifier's root, what a function or opaque code captures).
-fn raw_reads(e: &RawExpr, out: &mut Vec<String>) {
+pub(crate) fn raw_reads(e: &RawExpr, out: &mut Vec<String>) {
     let caps = |c: &[(String, IdentKind)], out: &mut Vec<String>| {
         for (n, _) in c {
             out.push(n.split('.').next().unwrap_or(n).to_string());

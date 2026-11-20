@@ -1745,6 +1745,32 @@ fn an_imported_hook_reads_a_store_its_module_imports() {
 }
 
 #[test]
+fn an_imported_hook_reached_through_a_re_export_rebases_its_store_import_from_the_declaring_module()
+{
+    // F578 D2: the component imports the hook from a barrel in another directory; the store handle is the DECLARING
+    // module's import, rebased to the component's file.
+    let hook = format!(
+        "{USE_STORE}import {{ cart }} from '../../cart'\nexport function useCount() {{ const n = useStore(cart).count; return n }}\n"
+    );
+    let ir = analyze_tree(&[
+        ("cart.ts", CART),
+        ("lib/hooks/use-count.ts", &hook),
+        (
+            "lib/index.ts",
+            "import { useCount } from './hooks/use-count'\nexport { useCount }\n",
+        ),
+        (
+            "C.tsx",
+            "import { useCount } from './lib'\nexport default function C() { const n = useCount(); return <p>{n}</p> }",
+        ),
+    ]);
+    assert!(fallbacks(&ir).is_empty(), "{:?}", ir.diagnostics);
+    assert!(!matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert_eq!(resolved(&ir).name, "cart");
+    assert_eq!(ir.stores[0].import.1, "./cart");
+}
+
+#[test]
 fn a_store_read_returned_without_a_name_is_still_a_hook_inside_an_expression() {
     let hook = format!(
         "{USE_STORE}import {{ cart }} from '../cart'\nexport function useCount() {{ return useStore(cart).count }}\n"

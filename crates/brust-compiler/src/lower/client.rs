@@ -112,7 +112,14 @@ fn chunk_in(
         .into_iter()
         .filter(|h| !ir.handlers.iter().any(|d| &d.name == h))
         .collect::<Vec<_>>();
-    let mut reached = f.reach(&roots);
+    // F578 review: a body function used as a handler by name (`onClick={find}`, an inlined hook's returned function)
+    // is a root too: what it reads (a hook parameter, a hook derived value or local function) is declared like what a
+    // hoisted handler reads; before, only the function itself was declared and the chunk threw on the click.
+    let event_raws: Vec<&RawExpr> = event_locals
+        .iter()
+        .filter_map(|n| f.derived_raw(n))
+        .collect();
+    let mut reached = f.reach(&roots.iter().copied().chain(event_raws).collect::<Vec<_>>());
     reached.extend(
         event_locals
             .iter()
@@ -747,7 +754,7 @@ fn object_key(k: &str) -> String {
 }
 
 /// Handler names the template's `x-on-*` directives use.
-fn event_handlers(n: &Node) -> Vec<String> {
+pub(crate) fn event_handlers(n: &Node) -> Vec<String> {
     let mut out = Vec::new();
     fn walk(n: &Node, out: &mut Vec<String>) {
         match n {
