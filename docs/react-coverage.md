@@ -12,8 +12,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 246 | 131 | 20 | 95 | 0 | 0 | 0 | 0 |
 | C Hooks | 251 | 86 | 78 | 87 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 82 | 37 | 16 | 25 | 3 | 1 | 0 | 0 |
-| **Total** | 683 | 313 | 131 | 235 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 82 | 36 | 16 | 26 | 3 | 1 | 0 | 0 |
+| **Total** | 683 | 312 | 131 | 236 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -653,7 +653,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | 4.5 | fallback:external-component, fallback:spread-props, fallback:module-side-effect, warning:icon-dynamic-prop, warning:island-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
 | e-module-table-import-member | a module table whose members read an imported literal table (`icon: ICON.overview`) | static | static | precompute | ok | 0 | — | F564 D1 (ruling 5e9842ab): a data-property read of an object literal an app module exports and nothing writes runs no code; was module-side-effect |
 | e-module-alias-import | a module const that aliases an imported table | static | static | precompute | ok | 0 | — | F564 D1: naming an import runs nothing; a member of an imported literal is a data read |
-| e-module-writer-on-call-result | module functions call `.delete()` on the result of a conditional callee of imported actions, and of a module arrow that returns an imported call | static | static | precompute | ok | 0 | — | F564 D2 (ruling 17fbc5e3): receivers rooted only at imports (through a conditional, and one level through a module arrow), handed no module object, are not this module's objects; was module-side-effect |
+| e-module-writer-on-call-result | module functions call `.delete()` on the result of a conditional callee of imported actions, and of a module arrow that returns an imported call | react | react | ssr | ok | 4.5 | fallback:module-side-effect | F564: the writer rule stays base's (AMENDMENT 4): a conditional callee cannot be named and a module arrow is this module's code, so both stay module-side-effect, now named with the function and its line; a sound receiver rule is ledger F587 |
 | e-module-let-state | a module `let` a function writes | react | react | ssr | ok | 4.5 | fallback:jsx-const-child, fallback:module-side-effect | F564: really effectful, stays module-side-effect; the finding names `let` / `var` `seq` and its line |
 | e-module-class | a module class and an instance of it | react | react | ssr | ok | 4.5 | fallback:jsx-const-child, fallback:module-side-effect | F564: a class declaration runs code; stays module-side-effect, named with its line |
 | b-cn-fold-literal | a literal variant on a cva + cn component (shadcn Badge) | static | static | 0 | ok | 0 | — | F149 R34.88/R34.89: a candidate; `brust build` runs the job once and prints the class (R34.90) |
