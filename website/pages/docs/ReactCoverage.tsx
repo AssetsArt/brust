@@ -134,6 +134,23 @@ export default function ReactCoverage({ reference, summary, groups }: ReactCover
         <code>items?.map(…)</code> stays an island too.
       </p>
 
+      <h2 id="body-and-hooks">Component body and custom hooks</h2>
+      {/* source: crates/brust-compiler/src/analyze/hooks.rs (read_body_pattern, follow_reexports, Slot::Defaulted);
+          crates/brust-compiler/tests/hook_body_shapes.rs (each accepted form and each refusal); tests/browser/cases/hook-exported-helper.test.ts. */}
+      <p>
+        The component body may destructure a value with a flat pattern: <code>{'const { kind, m: msg } = ask'}</code> or <code>{'const [first, , third] = pair'}</code>. Over a
+        path of props, state, a store view or another body const, each name reads its member of that path. Over anything else, such as a call, the value is computed once and each
+        name reads its member of the result. A default, a nested pattern, a rest element or a computed key in the pattern keeps the component a React island, and the build names it{' '}
+        <code>body-shape</code> with the reason. So does a destructured name read where a nested list or a function declares a name its value reads.
+      </p>
+      <p>
+        A custom hook may be imported through a module that only re-exports it: <code>{"export { useX } from './x'"}</code>, <code>{"import { useX } from './x'; export { useX }"}</code>{' '}
+        (renamed too) or <code>{"export * from './x'"}</code>, up to four modules deep. Its module&apos;s other exports are then imported from the module that declares the hook. A
+        hook parameter may have a default, such as <code>{"function useFocus(selector = 'input', count?)"}</code>, when the default reads no other parameter and calls nothing: a
+        call that leaves the argument out, or passes <code>undefined</code>, gets the default, as in React. A default that reads a parameter or calls a function keeps the{' '}
+        <code>hook-shape</code> finding, which names the parameter.
+      </p>
+
       {groups.map((g) => (
         <section style={{ display: 'contents' }} key={g.id}>
           <h2 id={g.id}>{g.title}</h2>
