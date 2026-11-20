@@ -474,6 +474,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/bind-parity.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/icon-shapes.test.ts
       - run: bun test --timeout 120000 tests/server/nested-fed.test.ts
+      # F560: the React copy of a fed child inside a fed component hydrates and toggles; the page's own copy of that child stays native.
+      - run: bun test --timeout 120000 tests/server/nested-fed-copy.chromium.test.ts
       # F284-F287: an arrow-const component, useReducer, hoisted hooks and includes: served == React, then the interaction.
       - run: bun test --timeout 120000 tests/server/presence-general.chromium.test.ts
       # F289: a hook's returned object bound whole at the call site (t.on / t.toggle): served == React, then the clicks.

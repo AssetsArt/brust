@@ -90,6 +90,10 @@ pub fn compile_tree(
         if !reachable.contains(&ir.id) && fixed_cloned.contains(&ir.id) {
             continue;
         }
+        // F560: a React copy no call site of this tree names (the component that asked for it needs React anyway).
+        if !reachable.contains(&ir.id) && ir.react_copy_of.is_some() {
+            continue;
+        }
         out.push(Lowered {
             artifacts: locate(
                 lower(&ir, &ctx).map_err(|d| in_module(d, &ir, opts, None))?,

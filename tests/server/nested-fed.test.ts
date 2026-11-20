@@ -85,3 +85,27 @@ test('a wrapper with a fed child before and after its slot content (which itself
   const order = [...served.matchAll(/tone-(\w+)/g)].map((m) => m[1])
   expect(order).toEqual(['W1', 'SLOT1', 'LAST', 'W2', 'SLOT2', 'LAST'])
 })
+
+// F560: a native child with a job of its own inside a component that has one too. The server cannot feed the child through
+// that component, so the child renders THERE as its React copy (an island) and the component keeps its tier; the same child
+// placed in the page itself stays native.
+test('a fed child inside a fed component is its React copy there; the component and the shared child keep their tiers', async () => {
+  const manifest = JSON.parse(readFileSync(join(app, 'dist/manifest.json'), 'utf8'))
+  const comps = Object.entries<{ tier: string }>(manifest.components)
+  const tier = (re: RegExp) => comps.filter(([id]) => re.test(id)).map(([, c]) => c.tier)
+  expect(tier(/^shell_[0-9a-f]{8}$/)).toEqual(['static'])
+  expect(tier(/^shellPage_[0-9a-f]{8}$/)).toEqual(['static'])
+  expect(tier(/^bell_[0-9a-f]{8}$/)).toEqual(['native'])
+  expect(tier(/^bell_[0-9a-f]{8}_r$/)).toEqual(['react'])
+  const copy = comps.find(([id]) => /^bell_[0-9a-f]{8}_r$/.test(id))![0]
+
+  const html = await (await fetch(`${base}/shell`)).text()
+  // Shell's own job ran, and the copy was server-rendered by React inside its island host.
+  expect(html).toContain('<header class="tone-TOP">')
+  const island = new RegExp(`<brust-island[^>]*data-id="${copy}"[^>]*>([\\s\\S]*?)</brust-island>`).exec(html)
+  expect(island).not.toBeNull()
+  expect(island![1]).toBe('<button class="tone-WARN">off</button>')
+  // The Bell of the page itself is the native one: fed by the page, bound by the runtime.
+  expect(html).toMatch(/<button[^>]*class="tone-DIRECT"[^>]*>off<\/button>/)
+  expect(html.match(/<brust-island/g)?.length).toBe(1)
+})
