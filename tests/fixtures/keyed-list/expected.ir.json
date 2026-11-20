@@ -2,6 +2,10 @@
   "id": "input_d4c7015a",
   "source": "tests/fixtures/keyed-list/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `selected` is set (line 6)",
+    "an event handler (line 10)"
+  ],
   "props": [
     {
       "name": "todos",

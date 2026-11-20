@@ -2,6 +2,9 @@
   "id": "input_16206eff",
   "source": "tests/fixtures/forwardref-fallback/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "a ref `r`"
+  ],
   "props": [],
   "sink_refs": [
     "r"

@@ -26,6 +26,7 @@ import { importsStore } from './features'
 import { exposedModules, exposedStores } from './expose'
 import { type CacheRecord, type ManifestJson, needsWorkers, reachedJobs, renderedTemplates, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
+import { checkTiers, reportTiers, type TierCheck, type TiersConfig, writeTierSnapshot } from './tiers'
 import { type ExprReads, prepareStatic, writeStatic } from './static'
 import { writeStaticWorker } from './static-worker'
 
@@ -116,6 +117,8 @@ export async function runBuild(opts: {
   actionsOnly?: boolean
   /** `brust build --dev` (L14, used by `brust dev`): also writes `dev.json` and builds the client runtime with `__BRUST_DEV__`. */
   dev?: boolean
+  /** `--update-tiers` (F569 D5): rewrite the `[tiers]` snapshot with the tiers of this build instead of failing on a heavier one. */
+  updateTiers?: boolean
   log: (s: string) => void
 }): Promise<void> {
   setDevBuild(opts.dev === true)
@@ -131,7 +134,7 @@ export async function runBuild(opts: {
   process.env.BRUST_BASE_PATH = built.basePath
   if (opts.actionsOnly)
     return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
-  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash } = built
+  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers } = built
   // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
   // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
   const remote =
@@ -200,8 +203,10 @@ export async function runBuild(opts: {
   const tmp = join(dirname(dist), `.${basename(dist)}.brust-tmp`)
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
+  // F569 (D5): the tier snapshot is written once the whole build succeeded.
+  const tierCheck: { done?: TierCheck } = {}
   try {
-    await buildInto(tmp, { target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { tiers, updateTiers: opts.updateTiers === true, tierCheck, target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -210,6 +215,7 @@ export async function runBuild(opts: {
     }
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
     swapDist(tmp, dist)
+    if (tierCheck.done) writeTierSnapshot(tierCheck.done, opts.log)
   } catch (e) {
     rmSync(tmp, { recursive: true, force: true })
     throw e
@@ -223,6 +229,11 @@ async function buildInto(
     target?: string
     /** Write `dev.json` (L14). */
     dev: boolean
+    /** `[tiers]` (F569); `null` = no check. */
+    tiers: TiersConfig | null
+    updateTiers: boolean
+    /** Receives the tier check, for the snapshot write after the build. */
+    tierCheck: { done?: TierCheck }
     appRoot: string
     entry: string
     /** The final dist dir (`index.js` points at the entry relative to it). */
@@ -352,6 +363,13 @@ async function buildInto(
     if (!hasIcons) firstLog.forEach((l) => o.log(l))
     ;({ compiled, routeComponent } = compileApp({ ...compileOpts, packages, iconSvgs, iconsFinal: hasIcons, slotValues, log: hasIcons ? o.log : () => {} }))
   } else firstLog.forEach((l) => o.log(l))
+
+  // F569 (D2-D6): the final compile against `[tiers]`; every target, before anything is bundled.
+  if (o.tiers) {
+    const check = checkTiers({ appRoot, file: join(appRoot, 'brust.toml'), tiers: o.tiers, compiled, dev: o.dev, updateTiers: o.updateTiers })
+    reportTiers(check, o.dev, o.log)
+    o.tierCheck.done = check
+  }
 
   // F519 (R4.5, amended): a runtime component is resolved by the native server per request; a static file (`--target
   // static`, ssg) would freeze the slot and the Cloudflare target has no resolver. v1 serves slots on the native server only.

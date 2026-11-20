@@ -2,6 +2,11 @@
   "id": "input_5e4b56f8",
   "source": "tests/fixtures/store-handler-write/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "an event handler (line 9)",
+    "an event handler (line 10)",
+    "it reads the store `cart` (line 5)"
+  ],
   "props": [
     {
       "name": "step",

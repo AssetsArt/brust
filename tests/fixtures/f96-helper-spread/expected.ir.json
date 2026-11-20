@@ -2,6 +2,10 @@
   "id": "input_560e4311",
   "source": "tests/fixtures/f96-helper-spread/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `items` is set (line 6)",
+    "an expression depends on state"
+  ],
   "props": [],
   "state": [
     {

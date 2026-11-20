@@ -2,6 +2,10 @@
   "id": "input_2b13db9f",
   "source": "tests/fixtures/controlled-input/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `q` is set (line 4)",
+    "an event handler (line 7)"
+  ],
   "props": [
     {
       "name": "placeholder",

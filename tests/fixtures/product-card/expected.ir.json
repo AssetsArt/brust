@@ -2,6 +2,11 @@
   "id": "input_6af673af",
   "source": "tests/fixtures/product-card/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `qty` is set (line 5)",
+    "an event handler (line 13)",
+    "an expression depends on state"
+  ],
   "props": [
     {
       "name": "item",

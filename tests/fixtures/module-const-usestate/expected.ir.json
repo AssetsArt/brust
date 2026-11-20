@@ -2,6 +2,12 @@
   "id": "input_c0e8de97",
   "source": "tests/fixtures/module-const-usestate/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `n` is set (line 3)",
+    "state `tab` is set (line 8)",
+    "an event handler (line 11)",
+    "an event handler (line 12)"
+  ],
   "props": [],
   "state": [
     {

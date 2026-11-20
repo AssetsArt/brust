@@ -27,6 +27,7 @@ import {
 import { ADAPTER_NAMES, BUILTINS, installHint } from '../cache-adapter/load'
 import { checkTrailingSlash, normalizeBasePath, type TrailingSlash } from '../config'
 import { BuildError } from './errors'
+import { parseTiers, type TiersConfig } from './tiers'
 import { posixOf } from './posix'
 
 // [actions] (opt-in, ruling R6): present table => actions on. Both byte caps cross napi as u32 (F82: 1..64 MiB / 256 KiB..64 MiB).
@@ -149,6 +150,8 @@ export interface BuildConfig {
   basePath: string
   /** `[server] trailing_slash` (F506), baked into the manifest; `strict` (the default) = the path is matched as written. */
   trailingSlash: TrailingSlash
+  /** `[tiers]` (F569): the heaviest tier per path pattern and the tier snapshot; `null` = not written (or `--actions-only`). */
+  tiers: TiersConfig | null
 }
 
 const isTable = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -552,7 +555,7 @@ export function parseExposeIsolated(file: string, v: unknown): boolean {
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict' }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict', tiers: null }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -566,16 +569,18 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   const cloudflare = parseCloudflare(file, appRoot, root.cloudflare)
   const cache = await parseCache(file, appRoot, root.cache)
   const cssGlobal = parseCss(file, root.css)
+  // F569 (D7): an actions-only build compiles no component, so `[tiers]` is not read.
+  const tiers = o.actionsOnly === true ? null : parseTiers(file, root.tiers)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash, tiers }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
   const expose = parseExpose(file, appRoot, sourceRoots, (build as Record<string, unknown>).expose)
   const islands = parseIslands(file, appRoot, expose, (build as Record<string, unknown>).islands)
   const exposeIsolated = parseExposeIsolated(file, (build as Record<string, unknown>).expose_isolated)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers }
 }

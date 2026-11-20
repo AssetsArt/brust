@@ -2,6 +2,11 @@
   "id": "input_517275ac",
   "source": "tests/fixtures/parent-counter/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `count` is set (line 5)",
+    "an event handler (line 9)",
+    "a prop is linked to a child"
+  ],
   "props": [],
   "state": [
     {

@@ -2,6 +2,12 @@
   "id": "input_5d6490dd",
   "source": "tests/fixtures/custom-hook-debounce/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `q` is set (line 7)",
+    "state `settled_useDebounced1` is set (line 8)",
+    "an event handler (line 11)",
+    "an effect (line 8)"
+  ],
   "props": [
     {
       "name": "initial",

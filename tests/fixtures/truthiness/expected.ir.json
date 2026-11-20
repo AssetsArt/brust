@@ -2,6 +2,13 @@
   "id": "input_38302085",
   "source": "tests/fixtures/truthiness/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `open` is set (line 7)",
+    "state `n` is set (line 8)",
+    "state `list` is set (line 9)",
+    "an event handler (line 12)",
+    "a prop is linked to a child"
+  ],
   "props": [],
   "state": [
     {

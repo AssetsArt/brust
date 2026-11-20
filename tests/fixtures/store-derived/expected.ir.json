@@ -2,6 +2,10 @@
   "id": "input_2c401fa9",
   "source": "tests/fixtures/store-derived/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "an expression depends on state",
+    "it reads the store `cart` (line 6)"
+  ],
   "props": [
     {
       "name": "unit",

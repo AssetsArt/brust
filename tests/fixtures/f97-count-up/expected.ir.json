@@ -2,6 +2,11 @@
   "id": "input_a5f5c4d0",
   "source": "tests/fixtures/f97-count-up/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `shown` is set (line 7)",
+    "an effect (line 8)",
+    "a ref `ref`"
+  ],
   "props": [],
   "state": [
     {

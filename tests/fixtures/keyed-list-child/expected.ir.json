@@ -2,6 +2,10 @@
   "id": "input_18a4a322",
   "source": "tests/fixtures/keyed-list-child/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `selected` is set (line 4)",
+    "a prop is linked to a child"
+  ],
   "props": [
     {
       "name": "props",

@@ -16,7 +16,7 @@ export interface CliData {
 
 // source: packages/brust/src/cli.ts:10-14 (the usage text, verbatim)
 const USAGE = `usage:
-  brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare|static] [--actions-only] [--strict] [--wasm-from-source] [--dev]
+  brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare|static] [--actions-only] [--strict] [--wasm-from-source] [--dev] [--update-tiers]
   brust dev [entry=routes.tsx] [--port N] [--workers N]    (Bun target: proxy + hot reload + inline TUI)
   brust dev [entry=routes.tsx] --target cloudflare [--out-dir dist] [--port N] [--wasm-from-source] [-- <wrangler args>]
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
@@ -197,6 +197,17 @@ export default function Cli({ blocks, panels }: CliData) {
             <td>
               {/* source: cli.ts:60 and :92 and packages/brust/src/build/index.ts:99-103 (`brust build --dev`: also writes dev.json and builds the client runtime with __BRUST_DEV__); `brust dev` passes it itself, bun.ts:168 */}
               Also writes <code>dev.json</code> and builds the client runtime for dev. <code>brust dev</code> passes it for you; you rarely type it.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>--update-tiers</code>
+            </td>
+            <td>build</td>
+            <td>
+              {/* source: packages/brust/src/cli.ts (the flag, build only), packages/brust/src/build/tiers.ts checkTiers (no snapshot violation, the file rewritten, each difference printed; the [tiers.max] rules still apply), packages/brust/test/tiers.test.ts */}
+              Rewrites the <code>[tiers]</code> snapshot with this build&rsquo;s tiers instead of failing on a component that got heavier, and prints each difference. The <code>[tiers.max]</code> rules still apply. See{' '}
+              <a href="/docs/rendering-tiers#see">Rendering tiers</a>.
             </td>
           </tr>
           <tr>

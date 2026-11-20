@@ -2,6 +2,10 @@
   "id": "input_82339f83",
   "source": "tests/fixtures/table-rows/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `showTotal` is set (line 3)",
+    "an event handler (line 6)"
+  ],
   "props": [
     {
       "name": "props",

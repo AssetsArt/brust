@@ -10,7 +10,7 @@ import Lead from '../../components/docs/Lead'
 
 export interface ConfigurationData {
   toc: TocItem[]
-  blocks: Record<'server' | 'code' | 'cors' | 'build' | 'cache' | 'oversize' | 'oversizeLog', CodeBlockData>
+  blocks: Record<'server' | 'code' | 'cors' | 'build' | 'cache' | 'tiers' | 'oversize' | 'oversizeLog', CodeBlockData>
 }
 
 const SERVER = `[server]
@@ -66,6 +66,16 @@ const BUILD = `[build]
 server_only = ["lib/db", "bun:sqlite"]   # import prefixes or app-relative paths kept out of the browser
 source_roots = ["../shared"]             # monorepo: directories beside the app that relative imports may reach`
 
+// source: packages/brust/src/build/tiers.ts parseTiers (the keys, the three tier names, the pattern rules) and ruleFor (#Export first, then the
+// longer pattern; a tie between different tiers is a config error), packages/brust/test/tiers.test.ts
+const TIERS = `[tiers]
+snapshot = "tiers.json"            # optional: record every component's tier (path relative to the app root)
+
+[tiers.max]                        # path pattern = the heaviest tier allowed: "static" < "native" < "react"
+"components/views/**" = "static"
+"pages/**" = "native"
+"components/chat/Composer.tsx#Composer" = "react"   # #Export picks one component of a file (#default)`
+
 const CACHE = `[cache]
 adapter = "redis"                 # redis | dragonfly | cloudflare-kv | cloudflare-do | custom
 
@@ -85,6 +95,7 @@ export async function configurationLoader(): Promise<ConfigurationData> {
       { id: 'try', title: 'Try it' },
       { id: 'size', title: 'Response size' },
       { id: 'env', title: 'Environment variables' },
+      { id: 'tiers', title: 'Tier assertions' },
       { id: 'other', title: 'The other sections' },
     ],
     blocks: {
@@ -93,6 +104,7 @@ export async function configurationLoader(): Promise<ConfigurationData> {
       cors: codeBlock({ lang: 'toml', file: 'brust.toml', code: CORS }),
       build: codeBlock({ lang: 'toml', file: 'brust.toml', code: BUILD }),
       cache: codeBlock({ lang: 'toml', file: 'brust.toml', code: CACHE }),
+      tiers: codeBlock({ lang: 'toml', file: 'brust.toml', code: TIERS }),
       oversize: codeBlock({ lang: 'sh', cwd: '~/my-app', code: OVERSIZE }),
       oversizeLog: codeBlock({ lang: 'text', cwd: 'server log', code: OVERSIZE_LOG }),
     },
@@ -310,6 +322,20 @@ export default function Configuration({ blocks }: ConfigurationData) {
           </tr>
         </tbody>
       </table>
+
+      <h2 id="tiers">Tier assertions</h2>
+      {/* source: packages/brust/src/build/tiers.ts (parseTiers, checkTiers, reportTiers), packages/brust/src/build/index.ts (checked after the final compile, for every target), packages/brust/src/build/config.ts (not read by --actions-only) */}
+      <p>
+        <code>[tiers.max]</code> says how heavy a component may get. Each key is a path pattern relative to the app root, with <code>/</code> between directories (<code>*</code> and <code>**</code> as in a glob), and the value is
+        the heaviest tier allowed. A <code>#Export</code> suffix picks one component of a file (<code>#default</code> is the default export). When several patterns match a component, one with <code>#Export</code> wins,
+        then the longer one; two equally long patterns with different tiers are a config error. <code>react</code> allows anything.
+      </p>
+      <p>
+        A component that compiles heavier than its pattern allows fails <code>brust build</code>, for every target. The clones and React copies the compiler makes of a component for some call sites are checked under that
+        component. A pattern that matches no component prints <code>warning tiers &quot;&lt;pattern&gt;&quot; matches no component</code>. <code>[tiers] snapshot</code> keeps a file with every component&rsquo;s tier, and a build
+        fails when one gets heavier than the file records. Both are described in <a href="/docs/rendering-tiers#see">Rendering tiers</a>.
+      </p>
+      <CodeBlock code={blocks.tiers.code} lang={blocks.tiers.lang} file={blocks.tiers.file} html={blocks.tiers.html} />
 
       <h2 id="other">The other sections</h2>
       <p>

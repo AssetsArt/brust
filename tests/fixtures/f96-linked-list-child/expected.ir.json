@@ -2,6 +2,11 @@
   "id": "input_c7026e6f",
   "source": "tests/fixtures/f96-linked-list-child/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `log` is set (line 7)",
+    "an event handler (line 10)",
+    "a prop is linked to a child"
+  ],
   "props": [],
   "state": [
     {

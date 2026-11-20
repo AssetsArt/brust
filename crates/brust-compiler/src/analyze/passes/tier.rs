@@ -78,6 +78,7 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         ir.tier = Tier::Static;
     } else {
         ir.tier = Tier::Native;
+        ir.native_because = native_because(ir, st, ctx);
     }
     // F548 (R3): an island listed in `[build] islands` that a runtime component places is never server-rendered: it
     // mounts in the browser, like a `browser-global` one (the compile API passes the list as `client_only`).
@@ -93,6 +94,10 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
 
 /// The React tail of the decision: run again when a later check makes the component React.
 pub fn react_jobs(ir: &mut ComponentIR) {
+    // F569 (D4): the reasons are those of a native component only.
+    if !matches!(ir.tier, Tier::Native) {
+        ir.native_because.clear();
+    }
     // §3.3: a React component's one job is its SSR render over its props;
     // precompute slots and child islands are React's business then.
     if matches!(ir.tier, Tier::React { .. }) && ir.uses_outlet {
@@ -155,6 +160,62 @@ pub fn react_jobs(ir: &mut ComponentIR) {
         ir.fused.clear();
     }
     ir.needs_worker = !ir.jobs.is_empty();
+}
+
+/// F569 (D4): why a component that is not React is not static either: the conditions of the static test above, in its
+/// order, one line each (with the source line when the IR has a position). Deterministic: a child's IR is compared
+/// across trees (`component-compile-divergent`).
+fn native_because(ir: &ComponentIR, st: &PassState, ctx: &PassCtx<'_>) -> Vec<String> {
+    const MAX: usize = 8;
+    let at = |loc: Option<u32>| match loc {
+        Some(loc) if loc > 0 => format!(" (line {})", ctx.line(loc)),
+        _ => String::new(),
+    };
+    let mut out: Vec<String> = Vec::new();
+    for s in ir.state.iter().filter(|s| !st.cx.is_fixed(&s.name)) {
+        out.push(format!(
+            "state `{}` is set{}",
+            s.name,
+            at(expr_loc(&s.init))
+        ));
+    }
+    for h in &ir.handlers {
+        out.push(format!("an event handler{}", at(Some(h.body.loc))));
+    }
+    for e in &ir.effects {
+        out.push(format!("an effect{}", at(Some(e.body.loc))));
+    }
+    for r in &ir.refs {
+        out.push(format!("a ref `{}`", r.name));
+    }
+    if !ir.child_links.is_empty() {
+        out.push("a prop is linked to a child".to_string());
+    }
+    if has_state_dependent(ir) {
+        out.push("an expression depends on state".to_string());
+    }
+    for s in &ir.stores {
+        if let Some(r) = &s.resolved {
+            out.push(format!(
+                "it reads the store `{}`{}",
+                r.name,
+                at(Some(s.loc))
+            ));
+        }
+    }
+    if out.len() > MAX {
+        let more = out.len() - MAX;
+        out.truncate(MAX);
+        out.push(format!("… and {more} more"));
+    }
+    out
+}
+
+fn expr_loc(e: &Expr) -> Option<u32> {
+    match e {
+        Expr::Raw(r) | Expr::Server(crate::ir::ServerExpr(r)) => Some(r.loc),
+        Expr::Precomputed { .. } | Expr::ClientOnly { .. } => None,
+    }
 }
 
 /// Where the template holds a `<Dynamic>` (or the component that renders one), for a finding with no better place.

@@ -2,6 +2,10 @@
   "id": "input_8d528211",
   "source": "tests/fixtures/store-dotted-warning/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "an expression depends on state",
+    "it reads the store `shop.cart` (line 6)"
+  ],
   "props": [
     {
       "name": "unit",

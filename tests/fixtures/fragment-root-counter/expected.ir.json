@@ -2,6 +2,10 @@
   "id": "input_2bfb2bae",
   "source": "tests/fixtures/fragment-root-counter/input.tsx",
   "tier": "Native",
+  "native_because": [
+    "state `n` is set (line 5)",
+    "an event handler (line 10)"
+  ],
   "props": [],
   "state": [
     {
