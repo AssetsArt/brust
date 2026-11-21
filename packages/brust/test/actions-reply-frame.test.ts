@@ -42,7 +42,7 @@ const VALUES = ['a', 'text/html; charset=utf-8', 'ünïcödé-€-日本語', 'a
 const pairs = (): [string, string][] => {
   const n = rnd() < 0.2 ? 0 : int(41)
   const out: [string, string][] = []
-  for (let i = 0; i < n; i++) out.push([rnd() < 0.3 ? NAMES[int(2) + 1] : NAMES[int(NAMES.length)], rnd() < 0.15 ? VALUES[2] : rnd() < 0.1 ? 'y'.repeat(int(300)) : VALUES[int(VALUES.length)]])
+  for (let i = 0; i < n; i++) out.push([rnd() < 0.3 ? NAMES[int(2) + 1] ?? 'x' : NAMES[int(NAMES.length)] ?? 'x', rnd() < 0.15 ? 'ünïcödé-€-日本語' : rnd() < 0.1 ? 'y'.repeat(int(300)) : VALUES[int(VALUES.length)] ?? ''])
   if (rnd() < 0.04) out.push(['x-huge', 'z'.repeat(SUB - 100 + int(300))]) // a meta at / over the slot
   return out
 }
@@ -76,7 +76,7 @@ test('writeReply equals the previous reply stage for 6,000 generated replies (re
   const seen = { fits: 0, exact: 0, oneOver: 0, heap: 0, overMax: 0, metaTooBig: 0, ws: 0, declined: 0 }
   for (let i = 0; i < 6000; i++) {
     const p = pairs()
-    const status = STATUSES[int(STATUSES.length)]
+    const status = STATUSES[int(STATUSES.length)] ?? 200
     const metaBytes = enc.encode(JSON.stringify({ status, headers: p })).length
     const room = SUB - 4 - metaBytes // body length that fits exactly
     const kind = i % 8
