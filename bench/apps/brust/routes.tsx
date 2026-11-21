@@ -1,4 +1,4 @@
-// bench/apps/brust/routes.tsx — three probes: S cacheable (L1 1 h), D and I bypass L1 on ?nocache=1 (the bench
+// bench/apps/brust/routes.tsx — S cacheable (L1 1 h; S-render = the same page on ?nocache=1, rendered per request), D and I bypass L1 on ?nocache=1 (the bench
 // measures the MISS path: loader every request, jobs from the job cache, Counter ssr job + hydration tags).
 import { defineRoutes } from '@brust/core/routes'
 import Layout from './components/Layout'
@@ -11,7 +11,7 @@ export const routes = defineRoutes([
   {
     Component: Layout,
     children: [
-      { path: '/types', Component: TypesPage, loader: typesLoader, cache: { ttl_seconds: 3600, tags: ['types'] } },
+      { path: '/types', Component: TypesPage, loader: typesLoader, cache: { ttl_seconds: 3600, bypass: 'query(nocache)', tags: ['types'] } },
       { path: '/dex', Component: DexPage, loader: dexLoader, cache: { ttl_seconds: 60, bypass: 'query(nocache)', tags: ['dex'] } },
       { path: '/team', Component: TeamPage, loader: teamLoader, cache: { ttl_seconds: 60, bypass: 'query(nocache)', tags: ['team'] } },
     ],

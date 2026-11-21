@@ -2,13 +2,17 @@
 //  1. an exclusive lock FILE (/tmp/brust-bench.lock, O_EXCL create, holder pid inside) — always on, no env needed;
 //  2. the blackboard key `bench:host-lock` = '<slug> <agent> <ISO time>' when BENCH_LOCK_WS + BENCH_LOCK_ID are set,
 //     read fail-CLOSED (an unreadable key counts as held), set-then-verify, deleted only if still ours.
-// Held for at most 20 minutes: a waiter gives up after that, a lock older than that is stale, and the holder itself
+// Held for at most 20 minutes (BENCH_LOCK_MAX_MIN overrides): a waiter gives up after that, a lock older than that is stale, and the holder itself
 // exits 1 when its own hold exceeds it.
 import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs'
 
 export const LOCK_KEY = 'bench:host-lock'
 export const LOCK_FILE = process.env.BENCH_LOCK_FILE ?? '/tmp/brust-bench.lock'
-export const MAX_HOLD_MS = 20 * 60_000
+/** 20 min, or `BENCH_LOCK_MAX_MIN` for a run that needs longer (run.ts refuses a run whose estimate exceeds it). */
+export const MAX_HOLD_MS = (() => {
+  const n = Number.parseInt(process.env.BENCH_LOCK_MAX_MIN ?? '', 10)
+  return (Number.isInteger(n) && n > 0 ? n : 20) * 60_000
+})()
 
 export interface LockValue { owner: string; at: string }
 /** `<slug> <agent> <ISO>` → parts; null when the value does not look like a lock. */

@@ -17,6 +17,8 @@ export interface AppSpec {
   sanity?(base: string, probe: ProbeId): Promise<void>
   /** bun-serve, elysia-bun: per-process request counts (to verify reusePort balanced the load). */
   distribution?(): Promise<number[]>
+  /** F595 D3: the app runs as N processes on one port (its balance is measured); absent = one process. */
+  multiProcess?: boolean
 }
 export interface RunningApp { base: string; proc: Subprocess; log(): string; stop(): Promise<void> }
 
@@ -73,11 +75,12 @@ export async function portInUse(port: number): Promise<boolean> {
   return false
 }
 
-export async function startApp(spec: Pick<AppSpec, 'id' | 'port' | 'startCmd' | 'ready' | 'cwd'>, opts: { timeoutMs?: number } = {}): Promise<RunningApp> {
+export async function startApp(spec: Pick<AppSpec, 'id' | 'port' | 'startCmd' | 'ready' | 'cwd'>, opts: { timeoutMs?: number; /** F595 D2: e.g. ['taskset', '-c', '0-7'] */ prefix?: string[] } = {}): Promise<RunningApp> {
   killAllOnExit()
   if (spec.port > 0 && (await portInUse(spec.port)))
     throw new Error(`[${spec.id}] port ${spec.port} is already in use by another process — not starting, and not killing it (find the owner with: lsof -ti tcp:${spec.port})`)
-  const { cmd, env, cwd } = spec.startCmd()
+  const { cmd: own, env, cwd } = spec.startCmd()
+  const cmd = [...(opts.prefix ?? []), ...own]
   // detached = own process group, so stop() can end the child AND anything it spawned (and nothing else).
   const proc = Bun.spawn(cmd, { cwd: cwd ?? spec.cwd, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'inherit', detached: true })
   CHILDREN.add(proc)
