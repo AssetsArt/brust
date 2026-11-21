@@ -66,6 +66,11 @@ pub struct LoadWrites {
     /// (`const_fold::load_clean`), sorted. A module not listed (unclean, or not scanned) keeps the native chunk that
     /// bundles it on every page its route can print it.
     pub load_clean: Vec<String>,
+    /// F599 (D1, review F1): the modules whose exports the load-time judge may NOT read as plain data, because the module
+    /// or one that imports it (through a re-export too) is itself not load-clean: its load-time code can write into what
+    /// the exporter hands out (a returned reference, a `for…of` alias, a member path) where this scan cannot see it. Only
+    /// the scan's own passes fill it (it is not part of the JSON the build hands to a compile).
+    pub untrusted: HashSet<String>,
 }
 
 impl LoadWrites {
@@ -104,6 +109,7 @@ impl LoadWrites {
             written: j.written.into_iter().map(|(m, e, w)| ((m, e), w)).collect(),
             writers: j.writers,
             load_clean: j.load_clean,
+            untrusted: HashSet::new(),
         })
     }
 }
@@ -141,7 +147,7 @@ struct Scanned {
 pub fn scan(paths: &[String], opts: &AnalyzeOptions) -> LoadWrites {
     let _aliases = crate::analyze::aliases::Scope::enter(&opts.root, &opts.path_aliases);
     let mut scanned = Vec::new();
-    let mut clean = Vec::new();
+    let mut readable = Vec::new();
     for path in paths {
         let Ok(source) = std::fs::read(opts.root.join(path)) else {
             continue;
@@ -150,14 +156,101 @@ pub fn scan(paths: &[String], opts: &AnalyzeOptions) -> LoadWrites {
             continue;
         };
         scanned.push(parsed.with_ast(|ast| scan_module(path, ast, opts)));
-        if crate::analyze::const_fold::load_clean(path, opts) {
-            clean.push(path.clone());
-        }
+        readable.push(path.clone());
     }
     let mut out = propagate(&scanned);
+    // F599 (review F1): the load-time judge reads an imported value as plain data only when no module writes it as it
+    // loads (the table just built) and no module that can reach what its exporter hands out is itself running arbitrary
+    // code at load. So the judge runs AFTER the writes are known, and again while the set of modules whose exports it may
+    // not trust grows (a module becoming unclean can only make others untrusted, never the reverse): the passes stop at a
+    // fixed point, or after a few with every module untrusted.
+    let importers = importers_of(&scanned);
+    let mut clean: Vec<String> = Vec::new();
+    for pass in 0.. {
+        let mut with = opts.clone();
+        with.load_writes = Some(std::sync::Arc::new(out.clone()));
+        clean = readable
+            .iter()
+            .filter(|p| crate::analyze::const_fold::load_clean(p, &with))
+            .cloned()
+            .collect();
+        let clean_set: HashSet<&String> = clean.iter().collect();
+        let untrusted: HashSet<String> = readable
+            .iter()
+            .filter(|m| {
+                !clean_set.contains(m)
+                    || importers
+                        .get(m.as_str())
+                        .is_some_and(|xs| xs.iter().any(|x| !clean_set.contains(x)))
+            })
+            .cloned()
+            .collect();
+        if untrusted == out.untrusted {
+            break;
+        }
+        if pass >= 8 {
+            out.untrusted = readable.iter().cloned().collect();
+            let mut with = opts.clone();
+            with.load_writes = Some(std::sync::Arc::new(out.clone()));
+            clean = readable
+                .iter()
+                .filter(|p| crate::analyze::const_fold::load_clean(p, &with))
+                .cloned()
+                .collect();
+            break;
+        }
+        out.untrusted = untrusted;
+    }
     clean.sort();
     clean.dedup();
     out.load_clean = clean;
+    out
+}
+
+/// For each scanned module, the scanned modules that can obtain what it exports: those that import it, and, through a
+/// module that only re-exports from it (`export { x } from`, `export *`), those that import that module.
+fn importers_of(scanned: &[Scanned]) -> HashMap<&str, HashSet<String>> {
+    let mut direct: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut reexporters: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for m in scanned {
+        for (target, _) in m.imports.values() {
+            direct.entry(target.as_str()).or_default().insert(&m.path);
+        }
+        for (_, target, _) in &m.follows {
+            direct.entry(target.as_str()).or_default().insert(&m.path);
+            reexporters
+                .entry(target.as_str())
+                .or_default()
+                .insert(&m.path);
+        }
+        for target in &m.stars {
+            direct.entry(target.as_str()).or_default().insert(&m.path);
+            reexporters
+                .entry(target.as_str())
+                .or_default()
+                .insert(&m.path);
+        }
+    }
+    let mut out: HashMap<&str, HashSet<String>> = HashMap::new();
+    for m in scanned {
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut stack = vec![m.path.as_str()];
+        let mut found: HashSet<String> = HashSet::new();
+        // a module's own load code counts too
+        found.insert(m.path.clone());
+        while let Some(x) = stack.pop() {
+            if !seen.insert(x) {
+                continue;
+            }
+            if let Some(ds) = direct.get(x) {
+                found.extend(ds.iter().map(|d| d.to_string()));
+            }
+            if let Some(rs) = reexporters.get(x) {
+                stack.extend(rs.iter().copied());
+            }
+        }
+        out.insert(m.path.as_str(), found);
+    }
     out
 }
 

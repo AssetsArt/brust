@@ -2162,10 +2162,12 @@ pub fn import_data(
     let declared = |ast: &js_ast::Ast<'_>, n: &str| export_value(ast, n).is_some();
     let (module, export) =
         crate::analyze::hooks::follow_export(opts, start, imported.to_string(), &declared)?;
+    // Written as a module loads (F230), or the exporter (or a module that can reach what it hands out) runs code the judge
+    // cannot follow at load, which can change the value where no scan sees it (review F1).
     if opts
         .load_writes
         .as_deref()
-        .is_some_and(|lw| lw.why(&module, &export).is_some())
+        .is_some_and(|lw| lw.why(&module, &export).is_some() || lw.untrusted.contains(&module))
     {
         return None;
     }

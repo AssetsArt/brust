@@ -1434,3 +1434,124 @@ fn f599_the_reported_module_shapes_are_clean() {
         )]),
     ]);
 }
+
+/// F599 review F1: an imported value is DATA only when nothing can put app code into it as the app loads. Another module
+/// writes it (`T.a.toString = hit`, `Object.defineProperty`, a `for…of` alias), or hands out through a function of the
+/// exporter, from a module that is itself not load-clean: the consumer must stay unclean (its chunk would be left out
+/// and the write it would have triggered lost). Each case is `base.ts` (the export), `c.ts` (the consumer), `w.ts` (the
+/// writer, always unclean) and sometimes a re-export.
+#[test]
+fn f599_f1_a_value_another_module_changes_at_load_is_not_data() {
+    const HIT: &str = "() => {\n  (globalThis as any).hit = 1\n  return 'x'\n}";
+    let t = "export const T = { a: { k: 1 } }\n";
+    let arr = "export const ARR = [{ k: 'a' }]\n";
+    let c_t = "import { T } from './base'\nexport const s = `${T.a}`\n";
+    let c_k = "import { T } from './base'\nexport const v = T.a.k\n";
+    let c_arr = "import { ARR } from './base'\nexport const m = ARR.map((x) => `${x}`)\n";
+    let c_join = "import { ARR } from './base'\nexport const j = [...ARR].join()\n";
+    let base_poison = format!(
+        "{arr}export function poison() {{\n  for (const x of ARR) (x as any).toString = {HIT}\n}}\n"
+    );
+    let base_get = format!("{arr}export function get() {{\n  return ARR\n}}\n");
+    let w = |s: &str| {
+        format!("import {{ T, ARR, poison, get }} from './base'\nvoid [T, ARR, poison, get]\n{s}\n")
+    };
+    let w_t = |s: &str| format!("import {{ T }} from './base'\n{s}\n");
+    let w_arr = |s: &str| format!("import {{ ARR }} from './base'\n{s}\n");
+    let _ = w;
+    assert_cases_refused(vec![
+        (
+            "W7 a member write at load, consumer prints it",
+            case(&[
+                ("lib/base.ts", t),
+                ("lib/w.ts", &w_t(&format!("(T.a as any).toString = {HIT}"))),
+                ("lib/c.ts", c_t),
+            ]),
+        ),
+        (
+            "W5 defineProperty at load, consumer reads it",
+            case(&[
+                ("lib/base.ts", t),
+                (
+                    "lib/w.ts",
+                    &w_t(&format!(
+                        "Object.defineProperty(T.a, 'k', {{ get: {HIT} }})"
+                    )),
+                ),
+                ("lib/c.ts", c_k),
+            ]),
+        ),
+        (
+            "A7b an exported function with a for-of alias, called at load",
+            case(&[
+                ("lib/base.ts", &base_poison),
+                ("lib/w.ts", "import { poison } from './base'\npoison()\n"),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "A2 an exported function returning the array, written at load",
+            case(&[
+                ("lib/base.ts", &base_get),
+                (
+                    "lib/w.ts",
+                    &format!(
+                        "import {{ get }} from './base'\n(get()[0] as any).toString = {HIT}\n"
+                    ),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "F597 an element written at load, consumer maps a template",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/w.ts",
+                    &w_arr(&format!("(ARR[0] as any).toString = {HIT}")),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "F597 a for-of alias written at load, consumer joins",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/w.ts",
+                    &w_arr(&format!("for (const x of ARR) (x as any).toString = {HIT}")),
+                ),
+                ("lib/c.ts", c_join),
+            ]),
+        ),
+        (
+            "a write through a re-export",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/r.ts", "export { ARR } from './base'\n"),
+                (
+                    "lib/w.ts",
+                    &format!("import {{ ARR }} from './r'\n(ARR[0] as any).toString = {HIT}\n"),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "an importer that runs code at load for another reason",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/w.ts",
+                    "import { ARR } from './base'\nconsole.log(ARR.length)\n",
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+    ]);
+    // the same trees without the unclean writer stay clean (the writer is what changes the verdict)
+    assert_cases_clean(vec![
+        case(&[("lib/base.ts", t), ("lib/c.ts", c_t)]),
+        case(&[("lib/base.ts", &base_get), ("lib/c.ts", c_arr)]),
+        case(&[("lib/base.ts", &base_poison), ("lib/c.ts", c_arr)]),
+    ]);
+}
