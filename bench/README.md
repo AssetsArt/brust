@@ -96,7 +96,7 @@ default Bun adapter, `app.listen`). Only `brust` (shown as `elysia-brust` in the
 
 Measurements on the shared host are serialised (lead rule `bench-host-lock`), in two layers, always on for `bun run bench`:
 an exclusive lock file `/tmp/brust-bench.lock` (O_EXCL, holder pid inside; a dead holder or one older than 20 min is
-stale) and, with `BENCH_LOCK_WS=<workspace id>` + `BENCH_LOCK_ID='<slug> <agent>'`, the blackboard key `bench:host-lock`
+stale; `BENCH_LOCK_MAX_MIN` raises the 20 min for a long run, and the runner refuses a run whose estimate exceeds it) and, with `BENCH_LOCK_WS=<workspace id>` + `BENCH_LOCK_ID='<slug> <agent>'`, the blackboard key `bench:host-lock`
 (`'<slug> <agent> <ISO time>'`; read fail-closed — an unreadable key refuses the run —, set-then-verified, deleted only
 if still ours). Only the load phase is under the lock; the holder aborts itself after 20 min. The guards run twice
 (before the builds, and before every cell: the idle check in Method): 1- and 5-minute load average must not exceed the core count.

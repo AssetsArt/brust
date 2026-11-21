@@ -16,7 +16,7 @@ import { APP_ORDER, APPS, ROOT } from './lib/apps'
 import { cpuDelta, groupCpu, hostBusy } from './lib/cpu'
 import { aggregate, type Cell, type CellKey, type CellRun, type FairResults, legacyResults, renderRun, type Work } from './lib/fair'
 import { evaluateGuards, probeHost } from './lib/guard'
-import { acquireHostLock } from './lib/lock'
+import { acquireHostLock, MAX_HOLD_MS } from './lib/lock'
 import { type Encoding, runOha, validateRun } from './lib/oha'
 import { checkJsonParity, checkParity, type JsonResponse } from './lib/parity'
 import { probe as probeOf, type ProbeId, serves } from './lib/probes'
@@ -266,6 +266,8 @@ const perCell = secs(f.warmup!) + secs(dur) + 2
 const plannedConns = allConns.includes('auto') ? [...fixedConns, 0] : fixedConns
 const estimateMin = Math.ceil(ns.reduce((t, n) => t + cellsFor(n, sweeping ? [topConn] : plannedConns).length * rounds * perCell, 0) / 60)
 say(`about ${estimateMin} min of load (${ns.length > 1 ? `N = ${ns.join(', ')}; ` : `N = ${ns[0]}; `}${rounds} rounds; ${f.warmup} warm-up + ${dur} per measurement)`)
+if (estimateMin + 5 > MAX_HOLD_MS / 60_000)
+  die(1, `the load takes about ${estimateMin} min but the host lock is held for at most ${MAX_HOLD_MS / 60_000} min: set BENCH_LOCK_MAX_MIN=${estimateMin + 10} (announce the run first) or shorten it`)
 const releaseLock = await acquireHostLock(say)
 let usedConns: number[] = fixedConns
 try {
