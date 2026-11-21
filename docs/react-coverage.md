@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 71 | 46 | 16 | 9 | 0 | 0 | 0 | 0 |
 | B Composition | 246 | 131 | 20 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 251 | 86 | 78 | 87 | 0 | 0 | 0 | 0 |
+| C Hooks | 253 | 86 | 80 | 87 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 82 | 36 | 16 | 26 | 3 | 1 | 0 | 0 |
-| **Total** | 683 | 312 | 131 | 236 | 3 | 1 | 0 | 0 |
+| **Total** | 685 | 312 | 133 | 236 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -371,6 +371,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-body-destructure-array-call | an array pattern over a call in the component body (`const [th, , en] = greeting(h)`) | static | static | precompute | ok | 0 | — | F578 D1: one derived value under a generated name holds the call; each name reads off it (one call) |
 | c-custom-hook-reexport | custom hook a module only re-exports (`import { useL } from …; export { useL }`) | static | static | 0 | ok | 0 | — | F578 D2: followed to the declaring module (also `export { x } from`, `export *`; four hops) |
 | c-custom-hook-param-default | custom hook with a defaulted plain parameter the call omits | static | static | 0 | ok | 0 | — | F578 D3: the default when omitted, else `arg === undefined ? default : arg` |
+| c-custom-hook-handler-reads-store | a function a custom hook returns, used as an event handler by name, reads a store | native | native | 0 | ok | 5.1 | — | F580 cell 7: was hook-shape; proven in Chromium (served test hook-handler-store-ctx: direct, derived, store action, a write by another component, two instances) |
+| c-custom-hook-handler-reads-context | a function a custom hook returns, used as an event handler by name, reads a context value | native | native | 0 | ok | 5.1 | — | F580 cell 8: was hook-shape; proven in Chromium (served test hook-handler-store-ctx: direct, derived, two Providers, a nested Provider, the default) |
 | c-custom-hook-store-own-module | custom hook of another module that reads a store declared in that same module | react | react | ssr | ok | 4.5 | fallback:hook-shape | F560: a handle the hook's module declares is not one the component can import; the finding names it |
 | c-local-arrow-call | a const arrow with an expression body, declared in the component and called in the markup | static | static | 0 | ok | 0 | — | F560: the call is replaced by the arrow's expression (was react, client-function-in-job) |
 | c-local-arrow-call-in-list | a const arrow that reads a prop, called in the rows of a list | static | static | 0 | ok | 0 | — | F560: the call is the arrow's expression in the row (the row binds `x`, the arrow reads the prop `lang`) |
