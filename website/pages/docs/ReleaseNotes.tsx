@@ -25,6 +25,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-59', title: '2.0.0-alpha.59' },
       { id: 'alpha-58', title: '2.0.0-alpha.58' },
       { id: 'alpha-57', title: '2.0.0-alpha.57' },
       { id: 'alpha-56', title: '2.0.0-alpha.56' },
@@ -90,6 +91,42 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
+      <h2 id="alpha-59">2.0.0-alpha.59 · 21 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.58: #530 (ledger F596) and #532 (F597); #531 (the benchmark harness) is not user-facing and has no entry */}
+      <p>This version lets a native component&rsquo;s script be left out of more pages: a module that only builds its own values when it loads, such as a <code>Set</code>, a spread or a <code>filter</code> over a table, no longer makes the script ship on every page of the route. It also moves brust&rsquo;s own build and tests to Bun 1.4.5. Nothing in your app has to change for either.</p>
+
+      <h3>Upgrading: what you must change</h3>
+      <ul>
+        {/* source: PR #530 (F596); the Installation and Quickstart pages (the stated minimum, Bun 1.4 or newer, unchanged); packages/cache-redis/package.json (engines.bun, unchanged); packages/create-app/templates/blank/package.json.tmpl (@types/bun ^1.4.5); the review notes of the bun-145 task (the parser, printer and React compiler sources brust links did not change between the two Bun tags) */}
+        <li>
+          <strong>Nothing to change for Bun 1.4.5 (#530).</strong> The minimum Bun that the docs state for an app is still Bun 1.4 or newer, and <code>@brust/cache-redis</code> still declares <code>bun &gt;=1.2.23</code>: nothing in this version needs 1.4.5. We recommend running your app on 1.4.5, the version that brust&rsquo;s own build, tests and release now use. An app created with <code>create-app</code> after this version lists <code>@types/bun</code> <code>^1.4.5</code> in its <code>devDependencies</code>; an existing app keeps the range it has.
+        </li>
+        {/* source: PR #532 (F597); the alpha.58 entry of this page (the first item under Upgrading: the markup your own code inserts); tests/server/drawn-scripts.chromium.test.ts (case 13) */}
+        <li>
+          <strong>Nothing to change for the wider script judgement (#532); rebuild to get it.</strong> brust leaves a script out only for module code that does nothing when it loads except build its own values. The first item under Upgrading in 2.0.0-alpha.58 still applies as it was: if your own code inserts the markup of a native component that the server did not render, set <code>{'component_scripts = "route"'}</code> under <code>[build]</code> in <code>brust.toml</code>.
+        </li>
+      </ul>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #532 (F597); crates/brust-compiler/src/analyze/module_effects.rs (the load-time forms, hands-only: the judge decides hosts and changes no tier or finding); crates/brust-compiler/tests/load_clean.rs (every accepted and refused form: f597_every_accepted_form, f597_every_refused_form, and every row of the review probes); tests/server/drawn-scripts.chromium.test.ts (case 13 forms: a component whose module uses every accepted form; its script is left out of a page without it and carried by the page with it, where it works); the task notes of load-clean-widen (the probe re-measure); the Rendering tiers page, section Only the components the page drew */}
+        <li>
+          <strong>A module that only builds its own values when it loads no longer keeps a component&rsquo;s script on every page (#532).</strong> In 2.0.0-alpha.58 a script was always sent when its chunk bundled an app module that ran code at load, and an app report showed that this caught modules that only build data. Now these forms count as building values: <code>new Set(…)</code> and <code>new Map(…)</code>, empty or of an array literal or of another such value, with <code>.add</code> and <code>.set</code> chained on the new value; a spread of an array literal, a collection or a constant of the module, and the spread of an array another of your modules exports as a literal; the array methods <code>filter</code>, <code>map</code>, <code>flatMap</code>, <code>reduce</code>, <code>find</code>, <code>some</code>, <code>every</code>, <code>sort</code> of a copy and the other read-only ones, and the reads of a <code>Set</code> or <code>Map</code>, when their callback is written inline as an arrow or a <code>function</code> that only builds values; a call of a function the same module declares, when its body is only <code>const</code> declarations, <code>if</code>, <code>return</code> and calls judged the same way; and a template that holds a string or number constant imported from your own module. The served test builds a component whose module uses all of them: its script is left out of a page that does not draw it, and the page that does draw it works. On our larger test app with 105 native components, 94 now have a script a page can leave out (93 in 2.0.0-alpha.58); the one that moved was held only by a template of an imported string constant, and no other component changed. Tiers and findings are the same as before: this only decides which pages carry the script.
+        </li>
+        {/* source: PR #532 (F597); crates/brust-compiler/tests/load_clean.rs (the refused rows); the review notes of the load-clean-widen task (the narrowed callback and function-body forms after three review rounds) */}
+        <li>
+          <strong>What still keeps the script on every page, because brust cannot prove it only builds values (#532).</strong> A callback that is not written inline (a named function or a <code>const</code> arrow handed to <code>sort</code> or <code>map</code>); <code>sort</code> or <code>reverse</code> of an imported array in place; a spread or a <code>Set</code> of a value brust cannot read as plain data, such as an imported function result or an object with a getter; a function the module calls that uses <code>let</code>, a loop, <code>try</code>, <code>this</code>, <code>arguments</code>, recursion or <code>async</code>, writes outside itself, or is imported from another module of yours; <code>Array.from</code>; and a call of a package with a function.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #530 (F596); the review notes of the bun-145 task (the eight Bun crates at the 1.4.5 tag, the CI and release workflows, bun.lock; the parser, printer and React compiler sources are identical between 1.4.4 and 1.4.5) */}
+        <li>
+          <strong>brust is built and tested with Bun 1.4.5 (#530).</strong> The CI and release workflows run Bun 1.4.5, and the compiler links the Bun parser, printer and React compiler at that version. Those sources did not change between 1.4.4 and 1.4.5.
+        </li>
+      </ul>
+
       <h2 id="alpha-58">2.0.0-alpha.58 · 21 November 2026</h2>
       {/* source: the pull request merged after v2.0.0-alpha.57: #528 (ledger F591) */}
       <p>This version sends a page the scripts of the native components it contains, not those of every native component its route could draw. A page that draws one widget out of six loads one widget&rsquo;s script. If your own code inserts the markup of a native component the server did not render, or a package you import only from components a page does not draw does work when it loads, read the first two items below.</p>
@@ -102,7 +139,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         </li>
         {/* source: PR #528 (F591); crates/brust-compiler/src/analyze/module_effects.rs (the load-time mode: hands_code); crates/brust-compiler/tests/load_clean.rs (accepted and refused rows); packages/brust/src/build/manifest.ts (chunkHosts); tests/server/drawn-scripts.chromium.test.ts (case 13: chunks that bundle load-time code are sent on every page and their code runs); the Rendering tiers page, section Only the components the page drew */}
         <li>
-          <strong>Code a package runs when it is imported no longer runs on a page that does not draw the components that import it (#528).</strong> brust does not check code outside the app root and its <code>[build] source_roots</code>. A package that registers something global as soon as it loads, imported only by components a page does not draw, is not loaded on that page, and a package call that your own module makes when it loads, with data only, runs only on the pages that carry that component&rsquo;s script. If a page needs that code on every page of a route, set <code>{'component_scripts = "route"'}</code>. Code of your own is judged: a script is always sent, on every page of its route, when the component bundles an app module that runs code when it loads (a statement at the top level, a call of your own code, a class, <code>new</code>), so that code runs on every page of the route as before. A function the module declares runs nothing until it is called and does not count, but passing one to a package call at load does.
+          <strong>Code a package runs when it is imported no longer runs on a page that does not draw the components that import it (#528).</strong> brust does not check code outside the app root and its <code>[build] source_roots</code>. A package that registers something global as soon as it loads, imported only by components a page does not draw, is not loaded on that page, and a package call that your own module makes when it loads, with data only, runs only on the pages that carry that component&rsquo;s script. If a page needs that code on every page of a route, set <code>{'component_scripts = "route"'}</code>. Code of your own is judged: a script is always sent, on every page of its route, when the component bundles an app module that runs code when it loads (a statement at the top level, a call of your own code, a class, <code>new</code>), so that code runs on every page of the route as before. A function the module declares runs nothing until it is called and does not count, but passing one to a package call at load does. Update for 2.0.0-alpha.59: a module that only builds its own values when it loads (a collection, a spread, an array method with an inline callback, a call of its own function that only builds values) no longer counts; see the first item under New in that version.
         </li>
         {/* source: PR #528 (F591); crates/brust-core/src/manifest.rs (hosts, component_scripts); packages/brust/src/build/manifest.ts (ComponentRecord.hosts); packages/brust/test/fixtures/app.expected-manifest.json (the pinned manifest gains hosts) */}
         <li>
