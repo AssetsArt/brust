@@ -32,7 +32,7 @@ brust-core = { path = "crates/brust-core" }
 # Minimal lint tables so the vendored crate's `[lints] workspace = true` resolves.
 # Copied from Bun's `[workspace.lints.rust]` entry that silences its cfg names.
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_sema_mimalloc)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_sema_mimalloc)', 'cfg(brust_loom)'] }
 
 [workspace.lints.clippy]
 

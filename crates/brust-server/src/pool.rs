@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
+use crate::call_cell::{CallCell, Done};
 use crate::dispatch::RenderDispatch;
 
 /// One chunk delivered from a worker's `napi_render_chunk` call to handle_conn's
@@ -76,6 +77,11 @@ pub struct Slot {
     /// taken by [`RenderClaim::take_heap_reply`] inside the claim. ALWAYS cleared by
     /// `RenderClaim::drop`: no reply outlives its claim.
     pub(crate) heap_reply: parking_lot::Mutex<Option<bytes::Bytes>>,
+    /// F604: the completion cell of the call this slot carries (a dispatcher that completes through
+    /// `callDone`). It also OWNS the slot's release while a call is in the worker: a claim dropped
+    /// while the cell waits leaves it `ABANDONED` and the slot claimed; the late `callDone` or the
+    /// worker's exit releases it ([`WorkerPool::call_done`], [`WorkerPool::close_calls`]).
+    pub(crate) call: CallCell,
 }
 
 /// The origin of [`Slot`] deadlines (process-wide, so a slot needs no pool back-reference).
@@ -118,6 +124,8 @@ pub struct WorkerEntry {
     /// per-slot `idle` gate + per-slot `render_slot` mutex. Replaces the single
     /// per-worker `idle` + `render_slot` pair.
     pub(crate) slots: Vec<Slot>,
+    /// F604: slots held by abandoned calls (see [`WorkerPool::note_abandoned`]).
+    pub(crate) abandoned: AtomicU32,
 }
 
 impl WorkerEntry {
@@ -279,29 +287,74 @@ impl Drop for RenderClaim {
         // dispatch without first gating release on Promise settlement: doing so
         // would let a recycled slot's new request write the SAB sub-region
         // concurrently with the old JS still touching it (data race).
+        //
+        // F604: for a dispatcher that completes through the slot's cell, the CELL decides: a call
+        // still in the worker (deadline, client gone, panic) leaves the slot claimed (ABANDONED)
+        // and the late `callDone` or the worker's exit releases it. A future-completing dispatcher
+        // never arms the cell (IDLE: release now) and keeps the detached remainder instead.
         let slot = &self.entry.slots[self.slot as usize];
-        // M3-P P6: no plan outlives its claim. The Box is dropped outside the lock.
-        let stale = slot.plan.lock().take();
-        drop(stale);
-        slot.jobs_since.lock().take();
-        let stale = slot.heap_reply.lock().take();
-        drop(stale);
-        // M3-P P7: disarm the call deadline before the slot can be claimed again.
-        slot.deadline_ms.store(0, Ordering::Relaxed);
-        let parked = slot.deadline_waker.lock().take();
-        drop(parked);
-        if !self.lockfree {
-            slot.render_slot.lock().take();
+        let release = slot.call.on_claim_drop();
+        clear_slot(slot, !self.lockfree);
+        if release {
+            release_slot(&self.entry, slot, &self.idle_notify);
+        } else {
+            note_abandoned(&self.entry, 1);
         }
-        self.entry.in_flight.fetch_sub(1, Ordering::Relaxed);
-        slot.idle.store(true, Ordering::Release);
-        // Wake one dispatcher parked in `claim_or_wait`. Fired AFTER the
-        // `idle = true` Release store so the woken claimer's Acquire CAS sees
-        // this worker idle. A missed wakeup (no waiter yet) is harmless: the
-        // permit is stored, and `claim_or_wait` re-checks `try_claim` on every
-        // loop iteration anyway, so the next waiter still claims this worker.
-        self.idle_notify.notify_one();
     }
+}
+
+/// Empty a slot's per-call state. Done when a claim drops and again when an abandoned slot is
+/// released (the worker may have put a plan or a heap reply meanwhile).
+fn clear_slot(slot: &Slot, render_slot: bool) {
+    // M3-P P6: no plan outlives its claim. The Box is dropped outside the lock.
+    let stale = slot.plan.lock().take();
+    drop(stale);
+    slot.jobs_since.lock().take();
+    let stale = slot.heap_reply.lock().take();
+    drop(stale);
+    // M3-P P7: disarm the call deadline before the slot can be claimed again.
+    slot.deadline_ms.store(0, Ordering::Relaxed);
+    let parked = slot.deadline_waker.lock().take();
+    drop(parked);
+    if render_slot {
+        slot.render_slot.lock().take();
+    }
+}
+
+/// F604 (D5'): count a worker's abandoned slots; warn when they pass half of its slots (a
+/// handler that never finishes eats slots silently otherwise).
+fn note_abandoned(entry: &WorkerEntry, delta: i32) {
+    let n = if delta > 0 {
+        entry.abandoned.fetch_add(1, Ordering::Relaxed) + 1
+    } else {
+        entry
+            .abandoned
+            .fetch_sub(1, Ordering::Relaxed)
+            .saturating_sub(1)
+    };
+    let k = entry.slots.len() as u32;
+    // Warn once per crossing: the count just went past half of the slots.
+    if delta > 0 && n * 2 > k && (n - 1) * 2 <= k {
+        tracing::warn!(
+            worker_id = entry.id,
+            abandoned = n,
+            slots = entry.slots.len(),
+            "more than half of a worker's slots hold calls their callers gave up on (the worker never finished them)"
+        );
+    }
+}
+
+/// Hand a slot back to the pool: `in_flight` first, then the `idle` gate (Release), then one
+/// parked claimer.
+fn release_slot(entry: &WorkerEntry, slot: &Slot, idle_notify: &tokio::sync::Notify) {
+    entry.in_flight.fetch_sub(1, Ordering::Relaxed);
+    slot.idle.store(true, Ordering::Release);
+    // Wake one dispatcher parked in `claim_or_wait`. Fired AFTER the
+    // `idle = true` Release store so the woken claimer's Acquire CAS sees
+    // this worker idle. A missed wakeup (no waiter yet) is harmless: the
+    // permit is stored, and `claim_or_wait` re-checks `try_claim` on every
+    // loop iteration anyway, so the next waiter still claims this worker.
+    idle_notify.notify_one();
 }
 
 /// Outcome of `WorkerPool::try_claim_render`. Distinguishes "no workers
@@ -349,6 +402,7 @@ impl WorkerPool {
                 deadline_ms: AtomicU64::new(0),
                 deadline_waker: parking_lot::Mutex::new(None),
                 heap_reply: parking_lot::Mutex::new(None),
+                call: CallCell::new(),
             })
             .collect();
         let entry = Arc::new(WorkerEntry {
@@ -356,6 +410,7 @@ impl WorkerPool {
             dispatch,
             in_flight: AtomicU32::new(0),
             slots,
+            abandoned: AtomicU32::new(0),
         });
         self.swept.lock().push(Arc::downgrade(&entry));
         self.entries.write().push(entry);
@@ -554,6 +609,52 @@ impl WorkerPool {
 
     pub fn entry(&self, id: u32) -> Option<Arc<WorkerEntry>> {
         self.entries.read().iter().find(|e| e.id == id).cloned()
+    }
+
+    /// F604: the worker `id` completed the call of `generation` on `slot` with `len` (napi
+    /// `callDone`, on that worker's JS thread). `false` = ignored: no such worker or slot, or not
+    /// the armed generation (a call already completed, abandoned and released, or closed). An
+    /// abandoned call's late completion releases its slot here.
+    pub fn call_done(&self, id: u32, slot: u32, generation: u64, len: u32) -> bool {
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        let Some(s) = entry.slots.get(slot as usize) else {
+            return false;
+        };
+        match s.call.done(generation, len) {
+            Done::Completed => true,
+            Done::Release => {
+                clear_slot(s, true);
+                release_slot(&entry, s, &self.idle_notify);
+                note_abandoned(&entry, -1);
+                true
+            }
+            Done::Ignored => false,
+        }
+    }
+
+    /// F604: the worker `id` exited (its env went away): every cell of it closes. A waiting call
+    /// fails at once ("worker exited mid-call"), an abandoned slot is released, later `callDone`s
+    /// are ignored and later calls to it fail at the enqueue (the worker is then removed).
+    pub fn close_calls(&self, id: u32) {
+        let entry = self.entry(id).or_else(|| {
+            self.swept
+                .lock()
+                .iter()
+                .filter_map(Weak::upgrade)
+                .find(|e| e.id == id)
+        });
+        let Some(entry) = entry else {
+            return;
+        };
+        for s in &entry.slots {
+            if s.call.close() {
+                clear_slot(s, true);
+                release_slot(&entry, s, &self.idle_notify);
+                note_abandoned(&entry, -1);
+            }
+        }
     }
 
     pub fn remove(&self, id: u32) {

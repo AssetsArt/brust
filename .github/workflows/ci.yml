@@ -89,6 +89,12 @@ jobs:
       - run: bun install --frozen-lockfile
       # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
       - run: cargo test --workspace --exclude bun_react_compiler
+      # F604: loom models of the slot completion cell (done vs drop, re-arm, done twice, exit). Own target dir: the cfg
+      # rebuilds brust-server's dependencies.
+      - run: cargo test -p brust-server --release --lib call_cell::loom_tests
+        env:
+          RUSTFLAGS: --cfg brust_loom
+          CARGO_TARGET_DIR: target/loom
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
       - run: sccache --show-stats
         if: always()
@@ -445,6 +451,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/job-values-dev.test.ts
       # F604: a worker that exits mid-call: the request gets 500 at once, not at the deadline.
       - run: bun test --timeout 120000 tests/server/worker-exit.test.ts
+      # F604: under load with clients giving up mid-call, every answer is its own request's; nothing hangs.
+      - run: bun test --timeout 120000 tests/server/call-done.test.ts
       - run: bun test --timeout 120000 tests/server/island-in-inlined.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/named-export-islands.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-children.chromium.test.ts

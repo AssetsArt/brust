@@ -60,6 +60,19 @@ pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
     })
 }
 
+/// F604: the worker `worker` completed the call of `generation` on `slot` with `len` (napi
+/// `callDone`, on its JS thread). `false` = ignored (unknown worker or slot, stale or finished
+/// generation).
+pub fn call_done(s: &Server, worker: u32, slot: u32, generation: u64, len: u32) -> bool {
+    s.core.host.pool.call_done(worker, slot, generation, len)
+}
+
+/// F604: the worker `worker` exited: its waiting calls fail at once, its abandoned slots are
+/// released, its later `callDone`s are ignored.
+pub fn close_worker_calls(s: &Server, worker: u32) {
+    s.core.host.pool.close_calls(worker);
+}
+
 /// L10: [`plan_in_call`] for a loader response too large for the slot (napi `planJobsBuf(slot,
 /// buf)`): the worker hands the bytes over directly. Declines (like any failure) when `buf` is
 /// empty or over `max_loader_response_bytes`.
