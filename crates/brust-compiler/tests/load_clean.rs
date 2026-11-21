@@ -1358,3 +1358,79 @@ fn f599_a_tsx_module_is_still_tsx() {
         case(&[("lib/g.tsx", "export const id = <T>(l: T): T => l\n")]),
     )]);
 }
+
+/// F599: the seven modules an app report still had unclean after alpha.59, as one- and two-module trees of the same
+/// shapes (generic names; `as const`, a type predicate and a template with a split, as the report's code writes them).
+#[test]
+fn f599_the_reported_module_shapes_are_clean() {
+    let theme = "export const SHOP_THEME = {\n  shadow: { soft: 9, hard: 12 },\n  radius: { sm: 4, md: 8 },\n  page: { maxW: 1200, side: { l: 16, r: 16 } },\n} as const\n";
+    let pages = "export const SYSTEM_PAGES = [\n  { key: 'a', path: '/x/a', named: true },\n  { key: 'b', path: '/x/b' },\n] as const\n";
+    let unrouted = "export const UNROUTED_PAGES = [{ key: 'u', path: '/u/1' }, { key: 'v', path: '/v/2' }] as const\nexport const pageDefOf = (k: string) => UNROUTED_PAGES.find((p) => p.key === k)\n";
+    assert_cases_clean(vec![
+        // box-css: a member read of an imported object, in arithmetic and in a literal
+        case(&[
+            ("lib/box.ts", theme),
+            (
+                "lib/box-css.ts",
+                "import { SHOP_THEME } from './box'\nexport const FIXED = {\n  soft: { y: Math.round(SHOP_THEME.shadow.soft / 3), blur: SHOP_THEME.shadow.soft },\n  hard: { y: Math.round(SHOP_THEME.shadow.hard / 3), blur: SHOP_THEME.shadow.hard },\n}\n",
+            ),
+        ]),
+        // style: reads and a spread of a nested imported object
+        case(&[
+            ("lib/box.ts", theme),
+            (
+                "lib/style.ts",
+                "import { SHOP_THEME } from './box'\nexport const STYLE_DEFAULTS = {\n  radius: { sm: SHOP_THEME.radius.sm, md: SHOP_THEME.radius.md },\n  maxW: SHOP_THEME.page.maxW,\n  side: { ...SHOP_THEME.page.side },\n}\n",
+            ),
+        ]),
+        // box: a computed read with a parameter index, called at load with a literal (arrow and function forms)
+        case(&[(
+            "lib/box.ts",
+            "export const BOX_RANGES = { gap: [0, 64], pad: [0, 32] } as const\nconst rangeText = (k: keyof typeof BOX_RANGES) => `${BOX_RANGES[k][0]}\u{2013}${BOX_RANGES[k][1]}`\nfunction rangeText2(k: keyof typeof BOX_RANGES) {\n  return `${BOX_RANGES[k][0]}-${BOX_RANGES[k][1]}`\n}\nexport const BOX_VALUE_HELP = { gap: rangeText('gap'), pad: rangeText2('pad') }\n",
+        )]),
+        // page-names: `in` with a type predicate, then a map
+        case(&[
+            ("lib/pages.ts", pages),
+            (
+                "lib/page-names.ts",
+                "import { SYSTEM_PAGES } from './pages'\ntype Named = { key: string; named: true }\nexport const NAMED = SYSTEM_PAGES.filter((p): p is Named => 'named' in p).map((p) => p.key)\n",
+            ),
+        ]),
+        // reserved: an imported array its exporter reads with .find, a split in a callback, `in`, a spread of the results
+        case(&[
+            ("lib/unrouted.ts", unrouted),
+            ("lib/pages.ts", pages),
+            (
+                "lib/reserved.ts",
+                "import { UNROUTED_PAGES } from './unrouted'\nimport { SYSTEM_PAGES } from './pages'\nconst UNROUTED_PATHS = UNROUTED_PAGES.map((p) => p.path)\nconst SYSTEM_PREFIXES = [...new Set(SYSTEM_PAGES.map((p) => `/${p.path.split('/')[1]}`))]\nconst NAMED_PAGES = SYSTEM_PAGES.filter((p) => 'named' in p)\nexport const RESERVED = [...SYSTEM_PREFIXES, ...UNROUTED_PATHS, NAMED_PAGES.length]\n",
+            ),
+        ]),
+        // style: an imported array whose exporter reads it with .find, mapped into a Set, then spread
+        case(&[
+            (
+                "lib/tokens.ts",
+                "export const SHOP_TOKENS = [{ id: 't1', k: 1 }, { id: 't2', k: 2 }] as const\nexport const shopToken = (k: string) => SHOP_TOKENS.find((t) => t.id === k)\n",
+            ),
+            (
+                "lib/style.ts",
+                "import { SHOP_TOKENS } from './tokens'\nexport const TOKEN_IDS = new Set<string>(SHOP_TOKENS.map((t) => t.id))\nexport const ALL = new Set<string>([...TOKEN_IDS, 'extra'])\n",
+            ),
+        ]),
+        // product: copies of imported objects
+        case(&[
+            (
+                "lib/card.ts",
+                "export const BADGE_FG = { a: '#111', b: '#222' }\nexport const SLIDE_BASE = { dot: { c: { on: '#fff', off: '#000' } } }\n",
+            ),
+            (
+                "lib/product.ts",
+                "import { BADGE_FG, SLIDE_BASE } from './card'\nexport const BADGE_INK = { ...BADGE_FG }\nexport const DOT_C = { ...SLIDE_BASE.dot.c }\nexport const DOT_ON = SLIDE_BASE.dot.c.on\n",
+            ),
+        ]),
+        // list-filters: a generic arrow without a trailing comma, never called at load
+        case(&[(
+            "lib/list-filters.ts",
+            "const toggle = <T>(l: readonly T[], v: T): T[] => (l.includes(v) ? l.filter((x) => x !== v) : [...l, v])\nexport const API = { toggle }\n",
+        )]),
+    ]);
+}
