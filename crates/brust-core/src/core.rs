@@ -127,6 +127,8 @@ impl<H: Host> Core<H> {
     /// policy. Every failure is an `Err` with the prefix `start` reports: `"routes: …"`,
     /// `"render: …"`, `"manifest: …"`, `"cors: …"`, `"actions: …"`, `"csp: …"`.
     pub fn new(host: H, loaded: Loaded, cfg: CoreConfig) -> Result<Self, String> {
+        // F585: the `brust dev` print warning for an object-like job value goes to the server's log.
+        brust_jinja::devwarn::set_logger(|m| tracing::warn!("{m}"));
         let routes =
             RouteTable::from_manifest(&loaded.manifest).map_err(|e| format!("routes: {e}"))?;
         let renderer =

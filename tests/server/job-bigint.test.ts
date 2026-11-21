@@ -1,7 +1,7 @@
 // F585 (AMENDMENT 2): a job value that is a bigint no longer fails the page with a 500: the reply carries it as its
-// decimal digits, so text and attributes print what React prints. Known difference, kept: in a test the digits are a
-// non-empty string, so `0n` is truthy on the server where JS reads it as false. Loader data is NOT converted: a page
-// computing on a loader bigint would print a wrong value, so it keeps the loud 500.
+// decimal digits, so text and attributes print what React prints; the value itself crosses tagged (`{"\u0000js":"0n"}`),
+// so `0n` is falsy in a test as in JS. Loader data is NOT converted: a page computing on a loader bigint would print a
+// wrong value, so it keeps the loud 500.
 // Run alone: `bun test --timeout 120000 tests/server/job-bigint.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync, writeFileSync } from 'node:fs'
@@ -53,13 +53,14 @@ test('a bigint prints its digits in text, attribute, array item and nested membe
   expect(firstDifference(normalise(root(await res.text())), normalise(react('big')))).toBeNull()
 }, 60_000)
 
-test('0n prints 0 but is truthy in a test (the known difference, kept)', async () => {
+test('0n prints 0 and is falsy in a test, as in JS', async () => {
   const res = await fetch(`${base}/p/zerobig`)
   expect(res.status).toBe(200)
   const html = root(await res.text())
   expect(html).toContain('>0</p>')
-  expect(html).toContain('<b>T</b>') // JS: 0n is falsy, React renders <i>F</i>
-  expect(react('zerobig')).toContain('<i>F</i>')
+  expect(html).toContain('<i>F</i>')
+  expect(html).not.toContain('<b>T</b>')
+  expect(firstDifference(normalise(html), normalise(react('zerobig')))).toBeNull()
 }, 60_000)
 
 test('a bigint in loader data keeps the loud failure (never a wrong value with 200)', async () => {
