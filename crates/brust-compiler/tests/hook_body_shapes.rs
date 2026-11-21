@@ -473,38 +473,24 @@ fn a_returned_function_declares_the_hook_local_function_and_derived_value_it_rea
     declares_what_it_reads(&[("s.ts", hook), ("C.tsx", c)]);
 }
 
-// ---- D6: the cells a returned handler may not read yet (refused, named) ----
+// ---- D6 cells 7 and 8 (F580): a returned handler reading a store or a context value is native (served proof:
+// tests/server/hook-handler-store-ctx.chromium.test.ts) ----
 
 const CART: &str = "import { defineStore, signal } from 'brust/store'\nexport const cart = defineStore('cart', () => ({ count: signal(0) }))\n";
 
 #[test]
-fn a_returned_handler_reading_a_store_or_a_context_value_refuses_by_name() {
+fn a_returned_handler_reading_a_store_or_a_context_value_is_native() {
     let store = "import { useState } from 'react'\nimport { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nexport function useS() { const [v, setV] = useState(''); const n = useStore(cart).count; const run = () => setV(String(n)); return { v, run } }\n";
     let ctx = "import { useState, useContext, createContext } from 'react'\nexport const Ctx = createContext('dflt')\nexport function useS() { const [v, setV] = useState(''); const c = useContext(Ctx); const label = c + '!'; const run = () => setV(label); return { v, run } }\n";
-    for (hook, what) in [(store, "reads a store"), (ctx, "reads a context value")] {
+    for hook in [store, ctx] {
         for c in [
             "import { useS } from './h'\nexport default function C() { const s = useS(); return <button onClick={s.run}>{s.v}</button> }",
             "import { useS } from './h'\nexport default function C() { const { v, run } = useS(); return <button onClick={run}>{v}</button> }",
+            "import { useS } from './h'\nexport default function C() { const s = useS(); return <button onClick={() => s.run()}>{s.v}</button> }",
         ] {
             let ir = analyze_tree(&[("cart.ts", CART), ("h.ts", hook), ("C.tsx", c)]);
-            refused(
-                &ir,
-                "hook-shape",
-                &format!(
-                    "custom hook useS: `run` (from the hook `useS`), used as an event handler by name, {what}"
-                ),
-            );
+            accepted(&ir, Tier::Native);
         }
-        // called from an inline handler it is a hoisted handler's read (unchanged)
-        let c = "import { useS } from './h'\nexport default function C() { const s = useS(); return <button onClick={() => s.run()}>{s.v}</button> }";
-        let ir = analyze_tree(&[("cart.ts", CART), ("h.ts", hook), ("C.tsx", c)]);
-        assert!(
-            fallbacks(&ir)
-                .iter()
-                .all(|(_, m)| !m.contains("used as an event handler by name")),
-            "{:?}",
-            ir.diagnostics
-        );
     }
 }
 
