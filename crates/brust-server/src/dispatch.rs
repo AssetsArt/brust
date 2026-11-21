@@ -34,6 +34,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::call_cell;
 use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerEntry, WorkerPool};
 use crate::protocol::{
     CacheReplyMeta, CacheRequest, CacheSetMeta, FetchMeta, FetchRequest, FetchResponse,
@@ -83,6 +84,29 @@ pub trait RenderDispatch: Send + Sync + 'static {
         request_json: String,
         slot: u32,
     ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>>;
+
+    /// F604: `true` = this dispatcher completes a call through the slot's completion cell
+    /// ([`crate::call_cell::CallCell`]): the server arms the cell, [`RenderDispatch::send`]s the call
+    /// with the cell's generation, and the worker answers with `callDone(worker, slot, gen, len)`
+    /// ([`crate::pool::WorkerPool::call_done`]). `false` (the default) = the future of
+    /// [`RenderDispatch::call`] completes it.
+    fn completes_by_cell(&self) -> bool {
+        false
+    }
+
+    /// F604: enqueue the call of `generation` on `slot` (only when [`RenderDispatch::completes_by_cell`]).
+    /// An `Err` means the call never reached the worker.
+    fn send(
+        &self,
+        _kind: CallKind,
+        _request_json: String,
+        _slot: u32,
+        _generation: u64,
+    ) -> Result<(), DispatchError> {
+        Err(DispatchError::EnqueueFailed(
+            "this dispatcher completes through its call future".into(),
+        ))
+    }
 
     /// Number of render slots this worker holds. Each slot is an independent
     /// in-flight render reservation backed by a disjoint sub-region of the SAB
@@ -538,7 +562,12 @@ where
     let call: Pin<Box<dyn Future<Output = PlannedResult<R>> + Send>> = Box::pin(async move {
         let entry = Arc::clone(claim.entry());
         let slot = claim.slot();
-        let len = match entry.dispatch.call(kind, json, slot).await {
+        let sent = if entry.dispatch.completes_by_cell() {
+            send_by_cell(&entry, kind, json, slot).await
+        } else {
+            entry.dispatch.call(kind, json, slot).await
+        };
+        let len = match sent {
             Ok(n) => n,
             Err(DispatchError::EnqueueFailed(m)) => {
                 tracing::error!(worker_id = entry.id(), ?kind, error = %m, "enqueue failed — worker dead, removing from pool");
@@ -566,7 +595,10 @@ where
     // phase gets `call_timeout` from its own start, as the old separate jobs call did. The claim
     // is still held by `call` while it is pending, so the stamp is this request's. M3-P P7 (R3):
     // the deadline lives in the claimed slot and the pool's sweeper wakes it — no tokio timer per call.
-    let mut fut = Detach(Some(call));
+    // F604: a cell-completed call needs no detached remainder: dropping it leaves the cell
+    // ABANDONED and the slot claimed until the worker answers (`RenderClaim::drop`).
+    let detach = !stamped.dispatch.completes_by_cell();
+    let mut fut = Detach(Some(call), detach);
     let mut deadline = SlotDeadline {
         at: stream.as_ref().map_or_else(
             || std::time::Instant::now() + call_timeout,
@@ -592,11 +624,68 @@ where
             "worker call panicked: {}",
             panic_message(&*payload)
         ))),
-        // `Detach` was dropped by the timeout: the remainder now runs as its own
-        // task and keeps the claim until JS settles (the `RenderClaim` drop rule
-        // in `pool.rs`); its late result is dropped, so nothing from this call
-        // reaches a cache.
+        // `Detach` was dropped by the timeout: for a cell-completed call the claim's drop
+        // left the cell ABANDONED and the slot claimed until the worker's late `callDone`;
+        // otherwise the remainder runs as its own task and keeps the claim until JS settles
+        // (the `RenderClaim` drop rule in `pool.rs`). Either way the late result is dropped,
+        // so nothing from this call reaches a cache.
         Err(Elapsed) => Err(CallError::Deadline),
+    }
+}
+
+/// F604: arm the slot's cell, send the call with its generation, await the worker's `callDone`.
+/// The outcomes keep today's mapping: never sent = `EnqueueFailed` (the caller removes the
+/// worker), the handler failed (`len` = [`call_cell::FAILED`] or with
+/// [`call_cell::FAILED_WITH_TEXT`] and its message in the slot) or the worker exited mid-call =
+/// `PromiseRejected`.
+async fn send_by_cell(
+    entry: &Arc<WorkerEntry>,
+    kind: CallKind,
+    json: String,
+    slot: u32,
+) -> Result<u32, DispatchError> {
+    let cell = &entry.slots[slot as usize].call;
+    let generation = match cell.arm() {
+        Ok(g) => g,
+        Err(call_cell::ArmError::Closed) => {
+            return Err(DispatchError::EnqueueFailed("worker exited".into()));
+        }
+        Err(call_cell::ArmError::Exhausted) => {
+            return Err(DispatchError::PromiseRejected(
+                "this slot used up its call ids (2^53 - 1); it is closed".into(),
+            ));
+        }
+        Err(call_cell::ArmError::Busy) => {
+            return Err(DispatchError::PromiseRejected(
+                "the slot's call cell is busy".into(),
+            ));
+        }
+    };
+    if let Err(e) = entry.dispatch.send(kind, json, slot, generation) {
+        cell.disarm(generation);
+        return Err(e);
+    }
+    let outcome = std::future::poll_fn(|cx| cell.poll_outcome(generation, cx)).await;
+    match outcome {
+        call_cell::Outcome::Closed => Err(DispatchError::PromiseRejected(
+            "worker exited mid-call".into(),
+        )),
+        call_cell::Outcome::Len(call_cell::FAILED) => Err(DispatchError::PromiseRejected(
+            "the worker's handler failed".into(),
+        )),
+        call_cell::Outcome::Len(n) if n & call_cell::FAILED_WITH_TEXT != 0 => {
+            let n = (n & !call_cell::FAILED_WITH_TEXT) as usize;
+            let (ptr, cap) = entry.dispatch.buf_slot(slot);
+            let text = if n <= cap {
+                // SAFETY: the worker wrote these `n` bytes before its `callDone` (the cell's
+                // Release/Acquire pair orders them); `n` is bounds-checked; the claim is held.
+                String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, n) }).into_owned()
+            } else {
+                "the worker's handler failed".into()
+            };
+            Err(DispatchError::PromiseRejected(text))
+        }
+        call_cell::Outcome::Len(n) => Ok(n),
     }
 }
 
@@ -656,7 +745,11 @@ impl SlotDeadline {
 /// The inner future is already pinned on the heap, so `Detach` itself is
 /// `Unpin` and `drop` can move the `Pin<Box<_>>` into a new task without ever
 /// unpinning it.
-struct Detach<T: Send + 'static>(Option<Pin<Box<dyn Future<Output = T> + Send>>>);
+///
+/// F604: with the flag `false` (a call completed through the slot's cell) a dropped remainder is
+/// simply dropped: the cell keeps the slot claimed until the worker answers, so nothing needs to
+/// run on.
+struct Detach<T: Send + 'static>(Option<Pin<Box<dyn Future<Output = T> + Send>>>, bool);
 
 impl<T: Send + 'static> Future for Detach<T> {
     type Output = Result<T, Box<dyn std::any::Any + Send>>;
@@ -686,6 +779,9 @@ impl<T: Send + 'static> Future for Detach<T> {
 impl<T: Send + 'static> Drop for Detach<T> {
     fn drop(&mut self) {
         if let Some(rest) = self.0.take() {
+            if !self.1 {
+                return;
+            }
             match tokio::runtime::Handle::try_current() {
                 Ok(h) => {
                     h.spawn(rest);
@@ -1267,6 +1363,251 @@ mod tests {
             assert!(t0.elapsed() < Duration::from_secs(2), "slot never released");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    /// F604: a dispatcher that completes through the slot's cell, like the napi binding: `send`
+    /// records (slot, generation) and the test plays the worker (writes the slot, calls
+    /// `pool.call_done`).
+    type Sent = Arc<parking_lot::Mutex<Vec<(u32, u64)>>>;
+
+    struct CellDispatch {
+        inner: MockDispatch,
+        sent: Sent,
+        refuse: bool,
+    }
+
+    impl RenderDispatch for CellDispatch {
+        fn call(
+            &self,
+            _kind: CallKind,
+            _request_json: String,
+            _slot: u32,
+        ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+            unreachable!("a cell dispatcher is never called through its future")
+        }
+        fn completes_by_cell(&self) -> bool {
+            true
+        }
+        fn send(
+            &self,
+            _kind: CallKind,
+            _request_json: String,
+            slot: u32,
+            generation: u64,
+        ) -> Result<(), DispatchError> {
+            if self.refuse {
+                return Err(DispatchError::EnqueueFailed("closing".into()));
+            }
+            self.sent.lock().push((slot, generation));
+            Ok(())
+        }
+        fn slot_count(&self) -> usize {
+            self.inner.slots
+        }
+        fn buf(&self) -> (*mut u8, usize) {
+            self.inner.buf()
+        }
+    }
+
+    fn cell_pool(refuse: bool) -> (Arc<WorkerPool>, u32, Sent) {
+        let pool = Arc::new(WorkerPool::new());
+        let sent = Sent::default();
+        let id = pool.register(Box::new(CellDispatch {
+            inner: MockDispatch::new(),
+            sent: Arc::clone(&sent),
+            refuse,
+        }));
+        (pool, id, sent)
+    }
+
+    /// The `after`th (slot, generation) the cell dispatcher was sent, waiting for it.
+    async fn next_sent(sent: &Sent, after: usize) -> (u32, u64) {
+        let t0 = std::time::Instant::now();
+        loop {
+            if let Some(v) = sent.lock().get(after).copied() {
+                return v;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(2), "never sent");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    /// Play the worker: write `body` into `slot`, then complete `generation`.
+    fn answer(pool: &WorkerPool, id: u32, slot: u32, generation: u64, body: &[u8]) -> bool {
+        let entry = pool.entry(id).expect("registered");
+        let (ptr, cap) = entry.dispatch.buf_slot(slot);
+        assert!(body.len() <= cap);
+        // SAFETY: the slot is claimed by the call under test; the buffer is the mock's leaked one.
+        unsafe { std::ptr::copy_nonoverlapping(body.as_ptr(), ptr, body.len()) };
+        pool.call_done(id, slot, generation, body.len() as u32)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_cell_call_round_trips_through_call_done() {
+        let (pool, id, sent) = cell_pool(false);
+        let p2 = Arc::clone(&pool);
+        let call = tokio::spawn(async move { call_with(&p2, 100, 2_000, CallKind::Loader).await });
+        let (slot, g) = next_sent(&sent, 0).await;
+        assert!(answer(&pool, id, slot, g, br#"{"ok":true,"data":{"n":1}}"#));
+        let v = call.await.unwrap().expect("round trip");
+        assert_eq!(v, serde_json::json!({"ok": true, "data": {"n": 1}}));
+        wait_claimable(&pool).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stale_or_foreign_call_done_is_ignored() {
+        let (pool, id, sent) = cell_pool(false);
+        let p2 = Arc::clone(&pool);
+        let call = tokio::spawn(async move { call_with(&p2, 100, 2_000, CallKind::Loader).await });
+        let (slot, g) = next_sent(&sent, 0).await;
+        assert!(!pool.call_done(id, slot, g + 1, 5), "another generation");
+        assert!(!pool.call_done(id, slot + 7, g, 5), "no such slot");
+        assert!(!pool.call_done(id + 9, slot, g, 5), "no such worker");
+        assert!(answer(&pool, id, slot, g, br#"{"ok":true,"data":2}"#));
+        assert!(!pool.call_done(id, slot, g, 5), "a second done");
+        assert_eq!(
+            call.await.unwrap().expect("ok"),
+            serde_json::json!({"ok": true, "data": 2})
+        );
+    }
+
+    /// The deadline fires while the worker still holds the call: the slot STAYS claimed until the
+    /// worker's late `callDone`, which then releases it without disturbing the next call.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_deadline_keeps_the_slot_until_the_late_call_done() {
+        let (pool, id, sent) = cell_pool(false);
+        let r = {
+            let p2 = Arc::clone(&pool);
+            let call = tokio::spawn(async move { call_with(&p2, 100, 30, CallKind::Loader).await });
+            let sent = next_sent(&sent, 0).await;
+            (call.await.unwrap(), sent)
+        };
+        let (res, (slot, g)) = r;
+        assert!(matches!(res, Err(CallError::Deadline)), "{res:?}");
+        assert!(
+            matches!(pool.try_claim_render_lockfree(), ClaimResult::AllBusy),
+            "the worker may still write the slot: it stays claimed"
+        );
+        assert!(answer(&pool, id, slot, g, br#"{"ok":true,"data":"late"}"#));
+        wait_claimable(&pool).await;
+        // The next call on that slot gets its own answer, not the late one.
+        let p2 = Arc::clone(&pool);
+        let call = tokio::spawn(async move { call_with(&p2, 100, 2_000, CallKind::Loader).await });
+        let (slot2, g2) = next_sent(&sent, 1).await;
+        assert_eq!(slot2, slot);
+        assert_eq!(g2, g + 1);
+        assert!(
+            !pool.call_done(id, slot, g, 5),
+            "the late id does not complete the next call"
+        );
+        assert!(answer(
+            &pool,
+            id,
+            slot2,
+            g2,
+            br#"{"ok":true,"data":"mine"}"#
+        ));
+        assert_eq!(
+            call.await.unwrap().expect("ok"),
+            serde_json::json!({"ok": true, "data": "mine"})
+        );
+    }
+
+    /// A caller that goes away (hyper dropping the request future) leaves the slot claimed too.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_dropped_cell_call_keeps_the_slot_until_the_worker_answers() {
+        let (pool, id, sent) = cell_pool(false);
+        let r = tokio::time::timeout(
+            Duration::from_millis(20),
+            call_with(&pool, 100, 5_000, CallKind::Loader),
+        )
+        .await;
+        assert!(r.is_err(), "still pending when dropped");
+        let (slot, g) = next_sent(&sent, 0).await;
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::AllBusy
+        ));
+        assert!(pool.call_done(id, slot, g, 3));
+        wait_claimable(&pool).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_worker_exiting_fails_a_waiting_call_and_frees_abandoned_slots() {
+        let (pool, id, sent) = cell_pool(false);
+        let p2 = Arc::clone(&pool);
+        let call = tokio::spawn(async move { call_with(&p2, 100, 2_000, CallKind::Loader).await });
+        let (slot, g) = next_sent(&sent, 0).await;
+        pool.close_calls(id);
+        match call.await.unwrap() {
+            Err(CallError::Rejected(m)) => assert!(m.contains("worker exited"), "{m}"),
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+        assert!(
+            !pool.call_done(id, slot, g, 3),
+            "a done after the exit is ignored"
+        );
+        // The next call reaches a closed cell: the worker is gone (removed like a failed enqueue).
+        let r = call_with(&pool, 50, 2_000, CallKind::Loader).await;
+        assert!(matches!(r, Err(CallError::Enqueue(_))), "{r:?}");
+        assert!(pool.entry(id).is_none(), "removed from the pool");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn close_releases_an_abandoned_slot() {
+        let (pool, id, _sent) = cell_pool(false);
+        let r = call_with(&pool, 100, 20, CallKind::Loader).await;
+        assert!(matches!(r, Err(CallError::Deadline)));
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::AllBusy
+        ));
+        pool.close_calls(id);
+        let e = pool.entry(id).unwrap();
+        assert!(e.slot(0).is_idle(), "the exit released the abandoned slot");
+        assert_eq!(e.in_flight.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_handler_is_a_rejection_with_its_message() {
+        let (pool, id, sent) = cell_pool(false);
+        let p2 = Arc::clone(&pool);
+        let call = tokio::spawn(async move { call_with(&p2, 100, 2_000, CallKind::Loader).await });
+        let (slot, g) = next_sent(&sent, 0).await;
+        let entry = pool.entry(id).unwrap();
+        let (ptr, _) = entry.dispatch.buf_slot(slot);
+        let msg = b"Error: boom";
+        // SAFETY: the claimed slot of the mock's leaked buffer.
+        unsafe { std::ptr::copy_nonoverlapping(msg.as_ptr(), ptr, msg.len()) };
+        assert!(pool.call_done(
+            id,
+            slot,
+            g,
+            crate::call_cell::FAILED_WITH_TEXT | msg.len() as u32
+        ));
+        match call.await.unwrap() {
+            Err(CallError::Rejected(m)) => assert_eq!(m, "Error: boom"),
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+        let p2 = Arc::clone(&pool);
+        let call = tokio::spawn(async move { call_with(&p2, 100, 2_000, CallKind::Loader).await });
+        let (slot, g) = next_sent(&sent, 1).await;
+        assert!(pool.call_done(id, slot, g, crate::call_cell::FAILED));
+        assert!(matches!(call.await.unwrap(), Err(CallError::Rejected(_))));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_refused_send_is_an_enqueue_failure_and_disarms_the_cell() {
+        let (pool, id, _sent) = cell_pool(true);
+        let entry = pool.entry(id).unwrap();
+        let r = call_with(&pool, 100, 2_000, CallKind::Loader).await;
+        assert!(matches!(r, Err(CallError::Enqueue(_))), "{r:?}");
+        assert!(entry.slot(0).is_idle());
+        assert_eq!(
+            entry.slot(0).call.arm(),
+            Ok(2),
+            "the cell went back to idle (gen 1 was disarmed)"
+        );
     }
 
     fn l2_page() -> L2Page {

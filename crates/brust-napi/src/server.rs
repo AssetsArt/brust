@@ -13,10 +13,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use napi::Env;
+use napi::bindgen_prelude::JsObjectValue;
 use napi::bindgen_prelude::{
-    AsyncBlock, AsyncBlockBuilder, Either, FnArgs, Function, Promise, Uint8Array,
+    AsyncBlock, AsyncBlockBuilder, Either, FnArgs, FromNapiValue, Function, Object, Uint8Array,
+    Undefined, Unknown,
 };
+use napi::{Env, JsValue};
 use napi_derive::napi;
 use parking_lot::RwLock;
 
@@ -26,7 +28,7 @@ use brust_server::{
     InvalidateArgs, Server, StreamConfig, StreamRoute, Tuning, start,
 };
 
-use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
+use crate::dispatch::{BufPtr, TsfnDispatch, WorkerTsfn};
 
 static SERVER: RwLock<Option<Arc<Server>>> = RwLock::new(None);
 /// F529: the current server's socket sink (`registerSockets` adds each worker's handler to it).
@@ -437,33 +439,121 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
 /// worker id.
 #[napi]
 pub fn register_worker(
-    mut buf: Uint8Array,
+    env: Env,
+    #[napi(ts_arg_type = "Uint8Array")] buf: Unknown<'_>,
     slots: u32,
-    f: Function<FnArgs<(String, String, u32)>, Promise<u32>>,
+    #[napi(ts_arg_type = "(kind: string, requestJson: string, slot: number) => Promise<number>")]
+    f: Unknown<'_>,
 ) -> napi::Result<u32> {
     let s = current()?;
+    let slots = slots.max(1);
+    // SAFETY: `buf` is the value JS passed; converting it borrows the same typed array.
+    let mut view = unsafe { Uint8Array::from_napi_value(env.raw(), buf.raw())? };
     // SAFETY: the SAB backing store outlives every call (owned by the main
     // thread for the process lifetime — see `BufPtr`); Rust only reads it after
-    // a call's Promise resolved.
+    // a call's `callDone`.
     let (buf_ptr, buf_len) = unsafe {
-        let sl = buf.as_mut();
+        let sl = view.as_mut();
         (BufPtr(sl.as_mut_ptr()), sl.len())
     };
-    // The JS-facing declaration keeps `kind: string`; the tsfn's data type is
-    // the allocation-free `KindArg` (see `dispatch::KindArg`).
-    let tsfn: WorkerTsfn = f
-        .build_threadsafe_function::<FnArgs<(KindArg, String, u32)>>()
+    // F604: the worker completes each call with ONE native call. `callDone` is created ONCE per
+    // registration (not per call) and the wrapper that calls it is plain JS, so a call builds no
+    // native function, no wrap and no Rust-side Promise.
+    let server = Arc::downgrade(&s);
+    let done = env.create_function_from_closure::<FnArgs<(u32, u32, i64, u32)>, bool, _>(
+        "callDone",
+        move |ctx| {
+            let worker: u32 = ctx.get(0)?;
+            let slot: u32 = ctx.get(1)?;
+            let generation: i64 = ctx.get(2)?;
+            let len: u32 = ctx.get(3)?;
+            Ok(match server.upgrade() {
+                Some(s) if generation > 0 => {
+                    brust_server::call_done(&s, worker, slot, generation as u64, len)
+                }
+                _ => false,
+            })
+        },
+    )?;
+    let mut ids = Object::new(&env)?;
+    ids.set_named_property("id", -1)?;
+    let factory: WrapperFactory = env.run_script(CALL_WRAPPER)?;
+    let wrapper = factory.call((f, done, buf, slots, ids).into())?;
+    // SAFETY: the factory returns a function (CALL_WRAPPER below).
+    let wrapper: Function<FnArgs<(u32, String, u32, i64)>, Undefined> =
+        unsafe { Function::from_napi_value(env.raw(), wrapper.raw())? };
+    let tsfn: WorkerTsfn = wrapper
+        .build_threadsafe_function::<FnArgs<(u32, String, u32, i64)>>()
         .build_callback(|ctx| Ok(ctx.value))?;
     let id = s.register_worker(Box::new(TsfnDispatch {
         tsfn: Arc::new(tsfn),
         buf_ptr,
         buf_len,
-        slots: slots.max(1) as usize,
+        slots: slots as usize,
     }));
+    ids.set_named_property("id", id)?;
+    // F604 (D5'): when this worker's env goes away (exit, terminate), its calls can no longer
+    // complete: close its cells so a waiting call fails at once instead of at its deadline.
+    let server = Arc::downgrade(&s);
+    env.add_env_cleanup_hook(id, move |id| {
+        if let Some(s) = server.upgrade() {
+            brust_server::close_worker_calls(&s, id);
+        }
+    })?;
     BOUND.with_borrow_mut(|b| bind(b, &s, id));
     REGISTERED.fetch_add(1, Ordering::SeqCst);
     Ok(id)
 }
+
+/// The `callDone(worker, slot, gen, len)` function handed to [`CALL_WRAPPER`].
+type CallDoneFn<'a> = Function<'a, FnArgs<(u32, u32, i64, u32)>, bool>;
+/// [`CALL_WRAPPER`]'s factory: `(fn, callDone, buf, slots, ids) => wrapper`.
+type WrapperFactory<'a> =
+    Function<'a, FnArgs<(Unknown<'a>, CallDoneFn<'a>, Unknown<'a>, u32, Object<'a>)>, Unknown<'a>>;
+
+/// F604: builds, once per registration, the JS function the worker's tsfn calls:
+/// `(kindIndex, requestJson, slot, gen)`. It runs the handler `fn(kind, requestJson, slot)` and
+/// completes the call EXACTLY once with `callDone(worker, slot, gen, len)`: `len` = the byte length
+/// the handler resolved with; on a throw, a rejection or a non-length result, the error text is
+/// written into the slot and `len` = `0x80000000 | bytes` (or `0xFFFFFFFF` when even that fails):
+/// Rust reports it as a rejected call (`DispatchError::PromiseRejected`), as it did for a rejected
+/// Promise. It never throws (an exception here would be fatal to the worker).
+const CALL_WRAPPER: &str = r#"(function (fn, done, buf, slots, ids) {
+  'use strict';
+  var KINDS = ['loader', 'jobs', 'fetch', 'cache', 'component'];
+  var sub = Math.floor(buf.length / slots);
+  var TEXT = 0x80000000;
+  var enc = null;
+  function fail(slot, gen, e) {
+    var len = 0xFFFFFFFF;
+    try {
+      if (enc === null) enc = new TextEncoder();
+      var r = enc.encodeInto(String(e), buf.subarray(slot * sub, slot * sub + sub));
+      len = (TEXT | r.written) >>> 0;
+    } catch (_) {}
+    try { done(ids.id, slot, gen, len); } catch (_) {}
+  }
+  function ok(slot, gen, n) {
+    if (typeof n === 'number' && n === n >>> 0 && n < TEXT) {
+      try { done(ids.id, slot, gen, n); } catch (_) {}
+    } else {
+      fail(slot, gen, new TypeError('the worker handler resolved with ' + (typeof n === 'number' ? n : typeof n) + ', not a byte length'));
+    }
+  }
+  return function (kind, json, slot, gen) {
+    var p;
+    try { p = fn(KINDS[kind], json, slot); } catch (e) { fail(slot, gen, e); return; }
+    var then;
+    try {
+      then = p !== null && (typeof p === 'object' || typeof p === 'function') ? p.then : undefined;
+      if (typeof then === 'function') {
+        then.call(p, function (n) { ok(slot, gen, n); }, function (e) { fail(slot, gen, e); });
+        return;
+      }
+    } catch (e) { fail(slot, gen, e); return; }
+    ok(slot, gen, p);
+  };
+})"#;
 
 /// M3-P P6: plan the calling worker's in-flight loader call for `slot` from the `len` bytes it
 /// just wrote there. Returns the misses' `JobsRequest` JSON, `""` when every job hit, or `"!"`
@@ -706,6 +796,17 @@ pub fn csp_header(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_call_wrapper_maps_kind_indexes_like_the_dispatcher() {
+        let table = format!(
+            "var KINDS = [{}];",
+            crate::dispatch::KIND_NAMES
+                .map(|k| format!("'{k}'"))
+                .join(", ")
+        );
+        assert!(CALL_WRAPPER.contains(&table), "{table}");
+    }
 
     #[test]
     fn a_second_live_registration_on_one_thread_for_the_same_server_makes_the_binding_ambiguous() {
