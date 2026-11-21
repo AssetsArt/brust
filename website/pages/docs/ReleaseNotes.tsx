@@ -25,6 +25,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-57', title: '2.0.0-alpha.57' },
       { id: 'alpha-56', title: '2.0.0-alpha.56' },
       { id: 'alpha-55', title: '2.0.0-alpha.55' },
       { id: 'alpha-54', title: '2.0.0-alpha.54' },
@@ -88,6 +89,66 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
+      <h2 id="alpha-57">2.0.0-alpha.57 · 21 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.56: #522 (ledger F564), #524 (F588), #525 (F580, the rest) and #526 (F589) */}
+      <p>This version fixes a click that threw a <code>ReferenceError</code> when an inline handler called a function a custom hook returns, lets such a function be an event handler in every spelling the tests prove, and lets a module-level table built from a table another module exports keep its component off React.</p>
+
+      <h3>Upgrading: what you must change</h3>
+      <ul>
+        {/* source: PR #526 (F589); crates/brust-compiler/src/analyze/expr.rs (captured: a hook object read as t.key captures what that member reads); crates/brust-compiler/tests/hook_body_shapes.rs (an_inline_handler_or_an_effect_calling_a_hook_function_through_the_object_declares_it); tests/browser/cases/hook-returned-matrix.test.ts; the alpha.55 entry of this page (the advice it gave) */}
+        <li>
+          <strong>If you wrote <code>{'onClick={() => s.run()}'}</code> after the alpha.55 notes advised it, upgrade: before this version the click threw a <code>ReferenceError</code> (#526).</strong> Here <code>s</code> is what a custom hook returns, as in <code>{'const s = useS(); … onClick={() => s.run()}'}</code>, and <code>run</code> is one of its functions. The component compiled without React, but the page script did not contain <code>run</code>, so a click threw in the browser console and the build printed nothing. Nothing to change in your code: rebuild with this version. The destructured form, <code>{'const { run } = useS(); onClick={() => run()}'}</code>, was not affected. The same fix covers an effect with an expression body, <code>{'useEffect(() => s.run(), [])'}</code>.
+        </li>
+        {/* source: PR #525 (F580, the rest); PR #522 (F564); packages/brust/src/build/tiers.ts (checkTiers: a lighter component prints one line and the file is kept; --update-tiers rewrites it); packages/brust/test/tiers.test.ts (snapshot: lighter prints and keeps the file) */}
+        <li>
+          <strong>Some components compile lighter than before, and a <code>[tiers]</code> snapshot reports it without failing the build (#522, #525).</strong> A component whose custom hook returns a function that is used as an event handler by name and reads a store or a context value is no longer refused with <code>hook-shape</code> (#525). A component whose module builds a table from an imported table is no longer refused with <code>module-side-effect</code> (#522). If <code>brust.toml</code> has <code>[tiers] snapshot</code>, the build prints one line for each, such as <code>{'tiers: components/views/Card.tsx#default react -> native'}</code>, and passes; the snapshot file is left as it is until you run <code>brust build --update-tiers</code>. A <code>[tiers.max]</code> rule fails the build only for a component that compiles heavier than the rule allows, so no rule of yours fails because a component got lighter.
+        </li>
+        {/* source: PR #522 (F564); crates/brust-compiler/src/analyze/hooks.rs (follow_export / find_export; exports_locally: a name a module exports itself ends the walk before its export *) */}
+        <li>
+          <strong>A custom hook imported through <code>{'export *'}</code> is looked up as JavaScript looks it up (#522).</strong> When a module has <code>{"export * from './x'"}</code> and also exports the hook&rsquo;s name itself, in any form, that export is the one JavaScript uses. brust used to follow <code>{'export *'}</code> past it and use a hook declared in <code>./x</code>; now the search stops at the module&rsquo;s own export, and the component renders with React when that export is not a hook function brust can read. Rare: it needs one name exported twice.
+        </li>
+        {/* source: PR #524 (F588); packages/brust/src/routes.ts (RenderContext.notNow is a function property); packages/brust/test/rc-island-render.test.ts */}
+        <li>
+          <strong>TypeScript only: <code>RenderContext.notNow</code> is typed as a function property, not a method (#524).</strong> Nothing to change. Code that calls <code>ctx.notNow()</code> compiles as before.
+        </li>
+      </ul>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #522 (F564, D1 and D3); crates/brust-compiler/src/analyze/module_effects.rs (module_effect, Values::why, plain_import_read); crates/brust-compiler/tests/module_effects.rs; tests/browser/cases/module-table-import.test.ts; scripts/battery/rows.ts (e-module-* rows); the Rendering tiers page, paragraph Module-level code; the task notes of module-effects (one app of about 550 components, before and after) */}
+        <li>
+          <strong>A module-level table built from a table another module exports no longer makes the component a React island (#522).</strong> <code>{'const NAV = [{ label: "Home", icon: ICON.overview }]'}</code> is accepted when <code>ICON</code> is <code>{'export const ICON = { … }'}</code> in a module of your app (an object or array literal, also through a re-export), with no getter, spread or computed key on the way to the value, and nothing in the app changes it. Also accepted at module scope: template strings and operators over accepted values, regex literals without the <code>g</code> or <code>y</code> flag, and <code>{'Array.from({ length: 24 }, (_, i) => `${i}:00`)'}</code>. Still React, with the finding: a class, a <code>let</code> or <code>var</code> that a function changes, a statement that runs at load, a call of your own function at load, and a mutating call such as <code>push</code>, <code>delete</code> or <code>fill</code> on a value brust cannot name, for example <code>{'(c ? a : b)(…).delete(id)'}</code> or <code>{'new Array(n).fill(0)'}</code>. On one app of about 550 components the <code>module-side-effect</code> findings went from 55 to 18, 6 components that rendered with React now compile without it, and none got heavier. See <a href="/docs/rendering-tiers">Rendering tiers</a>.
+        </li>
+        {/* source: PR #525 (F580, the rest); PR #526 (F589); crates/brust-compiler/src/analyze/component.rs (hook_fn_handler_refusals removed); crates/brust-compiler/src/analyze/expr.rs (captured); crates/brust-compiler/src/analyze/component.rs (hook-return-shape); tests/server/hook-handler-store-ctx.chromium.test.ts; tests/browser/cases/hook-returned-matrix.test.ts; crates/brust-compiler/tests/hook_body_shapes.rs; scripts/battery/rows.ts (c-custom-hook-handler-reads-store, c-custom-hook-handler-reads-context); the task notes of hook-handler-store-ctx and hook-member-inline */}
+        <li>
+          <strong>A function a custom hook returns can be an event handler in every spelling the tests prove (#525, #526).</strong> By name, <code>{'onClick={s.run}'}</code> or a destructured <code>{'onClick={run}'}</code>, also when the function reads a store or a context value (#525): the served tests click each case in Chromium and compare with React for a direct read, a derived value, a store action, a store another component changes between clicks, two instances of the hook, two Providers, a nested Provider and the context default. Inline with an expression body, <code>{'() => s.run()'}</code>, <code>{'() => run()'}</code> and <code>{'go(s.run)'}</code> (#526). The function may read hook state, its parameters, props, derived values, a hook-local function, a store or a context. Still React, with the finding <code>hook-return-shape</code> (&ldquo;an object a custom hook returns is used as a whole &hellip;&rdquo;): a block body through the hook object, <code>{'() => { s.run() }'}</code>, the object read as a whole, <code>{"s['run']()"}</code>, <code>{'const f = s.run; f()'}</code> and <code>{'s.run?.()'}</code>. Write an expression body, or destructure the hook&rsquo;s result.
+        </li>
+        {/* source: PR #524 (F588); packages/brust/src/routes.ts (notNow does not read this; one value compared by identity); packages/brust/test/rc-island-render.test.ts (a detached call answers not now; a copy does not); the Runtime components page, section island */}
+        <li>
+          <strong><code>ctx.notNow()</code> may be called detached, and its value must be returned as it is (#524).</strong> <code>{'const { notNow } = ctx; return notNow()'}</code> answers &ldquo;not now&rdquo;. The answer is one value that brust compares by identity, so a copy, <code>{'{ ...ctx.notNow() }'}</code>, is not a not-now answer: it fails with <code>components.render returned object, not a string or null</code>. See <a href="/docs/runtime-components#island">Runtime components</a>.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #526 (F589); crates/brust-compiler/src/analyze/expr.rs (captured); tests/fixtures/hook-returned-inline and hook-returned-effect (goldens); tests/browser/cases/hook-returned-matrix.test.ts (fails on the base with ReferenceError) */}
+        <li>
+          <strong>An inline handler or an effect that calls a hook function through the hook object no longer throws <code>ReferenceError</code> (#526).</strong> <code>{'() => s.run()'}</code>, <code>{'go(s.run)'}</code> and <code>{'useEffect(() => s.run(), [])'}</code> now declare <code>run</code> in the page script, and the props the function reads reach the client. A browser case with both spellings, inline through the object and destructured, failed on the previous version with the <code>ReferenceError</code> and passes now.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #522 (F564, D3 and the read-before-declared rule); crates/brust-compiler/tests/module_effects.rs (the messages quoted here); crates/brust-compiler/src/analyze/passes/mod.rs (module-side-effect); tests/fixtures/module-const-call/expected.diag.txt */}
+        <li>
+          <strong>The <code>module-side-effect</code> finding names the declaration or the function, its line and what was not proven (#522).</strong> For example <code>{"this module's `const STAMP = …` (line 1) may run code when the module loads: it calls `Date.now(…)`"}</code> or <code>{"this module's function `add` (line 3) may change a module binding: `LIST.push(…)`"}</code>. A module <code>const</code> that reads another <code>const</code> declared below it is now refused as well, with <code>{'it reads `B` before it is declared'}</code>; JavaScript throws at that line when the module loads.
+        </li>
+        {/* source: PR #524 (F588); packages/brust/src/build/index.ts and swap.ts (the build is written beside the output directory and replaces it when it has finished); packages/brust/test/build-large-template.test.ts (a failed build leaves an existing dist as it was); the CLI docs page, section Large templates */}
+        <li>
+          <strong>The CLI page says that a failed build publishes nothing (#524).</strong> The build is written beside the output directory and replaces it only when it has finished, so an existing <code>dist/</code> stays as the last good build left it. A test now covers it for a build that fails with <code>template-size</code>. See <a href="/docs/cli#large-templates">Large templates</a>.
+        </li>
+      </ul>
+
       <h2 id="alpha-56">2.0.0-alpha.56 · 21 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.55: #519 (ledger F572) and #520 (F570, part 1); the two docs sentences of F582 */}
       <p>This version lets the <code>render</code> of your runtime components answer &ldquo;not now&rdquo; instead of returning <code>null</code> or throwing, and lets you set a size budget for a template so the build fails when one grows past it.</p>
@@ -127,7 +188,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <ul>
         {/* source: PR #517 (F578 D6, F580 input); crates/brust-compiler/src/analyze/component.rs (hook_fn_handler_refusals); crates/brust-compiler/tests/hook_body_shapes.rs (a_returned_handler_reading_a_store_or_a_context_value_refuses_by_name; a_returned_handler_reading_a_prop_carries_it_in_x_props); packages/brust/src/build/tiers.ts (a component heavier than its rule or snapshot fails the build) */}
         <li>
-          <strong>A component whose custom hook returns a function that is used as an event handler by name, and that function reads a store or a context value, now renders with React (#517).</strong> That is <code>{'onClick={q.find}'}</code>, or <code>{'const { say } = useSay(); … onClick={say}'}</code>, where the function reads a store or a context inside the hook. The build prints a <code>hook-shape</code> finding that names the hook and the function and says <code>used as an event handler by name, reads a store</code> (or <code>reads a context value</code>); brust does not check that read on the client yet. The output is the same as before for a component that works, and the page may be heavier. If your <code>brust.toml</code> has a <code>[tiers]</code> snapshot or a <code>[tiers.max]</code> rule that covers such a component, the build now fails with a <code>tier</code> error: check the component, then run <code>brust build --update-tiers</code> to accept the change or relax the rule. To keep the component light, call the function from an inline handler, <code>{'onClick={() => q.find()}'}</code>. To find these components, build once and search the output for <code>hook-shape</code>.
+          <strong>A component whose custom hook returns a function that is used as an event handler by name, and that function reads a store or a context value, now renders with React (#517).</strong> That is <code>{'onClick={q.find}'}</code>, or <code>{'const { say } = useSay(); … onClick={say}'}</code>, where the function reads a store or a context inside the hook. The build prints a <code>hook-shape</code> finding that names the hook and the function and says <code>used as an event handler by name, reads a store</code> (or <code>reads a context value</code>); brust does not check that read on the client yet. The output is the same as before for a component that works, and the page may be heavier. If your <code>brust.toml</code> has a <code>[tiers]</code> snapshot or a <code>[tiers.max]</code> rule that covers such a component, the build now fails with a <code>tier</code> error: check the component, then run <code>brust build --update-tiers</code> to accept the change or relax the rule. To keep the component light, call the function from an inline handler, <code>{'onClick={() => q.find()}'}</code>. To find these components, build once and search the output for <code>hook-shape</code>. Update for <a href="#alpha-57">2.0.0-alpha.57</a>: the refusal is lifted there, and the inline form above threw a <code>ReferenceError</code> on click before that version.
         </li>
         {/* source: PR #514 (F575); packages/brust/src/build/config.ts:554 parseDevWatch (called from loadBuildConfig; version alpha.54 had no [dev] handling) */}
         <li>
