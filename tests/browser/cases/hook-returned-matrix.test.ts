@@ -40,3 +40,39 @@ test('hook-returned-matrix: each returned handler shows what React shows', async
   expect($('#d9').textContent).toBe('3')
   expect(m.warnings).toEqual([])
 })
+
+// F589: the same cells called from an INLINE handler, through the hook object (I-M `m*`: `() => s.run()`) and
+// destructured (I-D `d*`: `() => run()`), plus the member passed on (`go(s.run)`). Same expected text as the by-name
+// cells. (Reading the member as a value inside the handler or calling it in a nested arrow is refused by name:
+// crates/brust-compiler/tests/hook_body_shapes.rs.)
+const INLINE: [string, string][] = [
+  ...CLICKS,
+  ['#ma', 'T#1'], //        go(s.run)
+]
+
+test('hook-returned-inline: each returned function called from an inline handler shows what React shows', async () => {
+  const m = await load(build('hook-returned-inline'))
+  expect(m.warnings).toEqual([])
+  expect(m.after).toBe(m.before)
+  const seen: [string, string | null][] = []
+  for (const [sel, want] of INLINE) {
+    try {
+      $<HTMLButtonElement>(sel).click()
+    } catch (e) {
+      seen.push([sel, `threw: ${(e as Error).message}`])
+      continue
+    }
+    seen.push([sel, $(sel).textContent === want ? want : `${$(sel).textContent} (want ${want})`])
+  }
+  const rows = [...document.querySelectorAll<HTMLButtonElement>('li:not([hidden]) .m10')]
+  seen.push(['row-text', rows.map((b) => b.textContent).join(',')])
+  rows[1]?.click()
+  const counted = [...document.querySelectorAll<HTMLButtonElement>('li:not([hidden]) .d10')]
+  counted[0]?.click()
+  counted[1]?.click()
+  seen.push(['rows', `${$('#m1').textContent}|${$('#d9').textContent}`])
+  expect({ seen, warnings: m.warnings }).toEqual({
+    seen: [...INLINE.map(([s, w]) => [s, w] as [string, string]), ['row-text', 'x,y'], ['rows', 'lit!|3']],
+    warnings: [],
+  })
+})
