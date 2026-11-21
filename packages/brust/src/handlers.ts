@@ -117,16 +117,17 @@ export interface ManifestLike {
   actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; stream?: string[] } | null
 }
 
-/** F585: a bigint (a job value or loader data; JSON has none) is written as its decimal digits instead of failing the
- * whole reply. The normal path is unchanged: the replacer runs only after a plain stringify threw for a bigint. */
+/** F585: in a JOB reply (`jobDigits`: job results only), a bigint (JSON has none) is written as its decimal digits
+ * instead of failing the whole reply. The normal path is unchanged: the replacer runs only after a plain stringify threw
+ * for a bigint. Any other reply (loader data, actions) keeps the loud failure: there the page would compute on a string. */
 const bigintDigits = (_k: string, v: unknown): unknown => (typeof v === 'bigint' ? v.toString() : v)
 
-export function toJson(out: unknown): string {
+export function toJson(out: unknown, jobDigits = false): string {
   try {
     return JSON.stringify(out)
   } catch (e) {
     try {
-      if (e instanceof TypeError && /BigInt/i.test(e.message)) return JSON.stringify(out, bigintDigits)
+      if (jobDigits && e instanceof TypeError && /BigInt/i.test(e.message)) return JSON.stringify(out, bigintDigits)
     } catch (e2) {
       e = e2
     }
@@ -460,10 +461,10 @@ export function makeHandlers(opts: {
 
 /** Wraps an async handler for a JSON-string boundary: parses, calls, serialises; NEVER rejects
  * (a parse error or a throwing handler resolves `{"error":…}`, like `makeDispatch`). */
-export function jsonCall<Q, R>(fn: (q: Q) => Promise<R>): (json: string) => Promise<string> {
+export function jsonCall<Q, R>(fn: (q: Q) => Promise<R>, opts: { jobDigits?: boolean } = {}): (json: string) => Promise<string> {
   return async (json) => {
     try {
-      return toJson(await fn(JSON.parse(json)))
+      return toJson(await fn(JSON.parse(json)), opts.jobDigits === true)
     } catch (e) {
       return toJson({ error: String(e) })
     }

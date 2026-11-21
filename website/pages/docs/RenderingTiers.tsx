@@ -219,7 +219,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       {/* source: packages/brust/src/handlers.ts (toJson), tests/server/job-bigint.test.ts (F585) */}
       <p>
         A precomputed value travels from the worker to the server as JSON. A <code>bigint</code> is sent as its decimal digits, so text and attributes print what React prints; in a test the digits are a non-empty string, so{' '}
-        <code>0n</code> counts as true there where JavaScript reads it as false. <code>NaN</code> and <code>Infinity</code> arrive as <code>null</code> and print nothing.
+        <code>0n</code> counts as true there where JavaScript reads it as false. <code>NaN</code> and <code>Infinity</code> arrive as <code>null</code> and print nothing. A <code>bigint</code> in loader data is not converted: the page answers 500.
       </p>
       {/* source: crates/brust-compiler/src/analyze/passes/children.rs (nested-instance -> island-client-only), recursion.rs (islands_client_only), tests/server/rc-client-islands.chromium.test.ts (F548) */}
       <p>
