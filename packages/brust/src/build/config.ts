@@ -5,6 +5,7 @@
 //   expose = ["shop/sdk.ts"]                    # F517: modules a runtime component imports; each gets its own browser file
 //   expose_isolated = true                      # F549: build them apart, so a built component keeps its own chunk (default false)
 //   islands = ["shop/sdk.tsx#Motion"]           # F548: exports of exposed modules built as islands a runtime component may place (client-only)
+//   component_scripts = "route"                 # F591: every component chunk the route can print, not only the drawn ones (default "drawn")
 // `server_only` is the app config `serverOnly` of the compiler spec (§8.2): the compiler refuses
 // such an import in client code, and every browser bundle refuses to include it.
 import { statSync } from 'node:fs'
@@ -154,6 +155,8 @@ export interface BuildConfig {
   tiers: TiersConfig | null
   /** `[build] template_max_bytes` (F570): a template the build writes that is larger than this many bytes fails the build; `0` = no budget (the default). */
   templateMaxBytes: number
+  /** `[build] component_scripts` (F591): `drawn` (the default) = a response carries the chunk of a native component only when it printed one of the component's hosts; `route` = every chunk the route can print, as before. Baked into the manifest. */
+  componentScripts: ComponentScripts
   /** `[dev] watch` (F575): files or directories, as written (relative to the app root), that `brust dev` also reloads for. Watch only: the build ignores it. */
   devWatch: string[]
 }
@@ -571,6 +574,15 @@ export function parseTemplateMaxBytes(file: string, v: unknown): number {
   return v
 }
 
+export type ComponentScripts = 'drawn' | 'route'
+
+/** F591 `[build] component_scripts`: `"drawn"` (absent) or `"route"`. */
+export function parseComponentScripts(file: string, v: unknown): ComponentScripts {
+  if (v === undefined) return 'drawn'
+  if (v !== 'drawn' && v !== 'route') throw new BuildError('config', `${file}: build.component_scripts must be "drawn" or "route"`)
+  return v
+}
+
 /** F549 `[build] expose_isolated`: a boolean; absent = `false`. */
 export function parseExposeIsolated(file: string, v: unknown): boolean {
   if (v === undefined) return false
@@ -581,7 +593,7 @@ export function parseExposeIsolated(file: string, v: unknown): boolean {
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict', tiers: null, devWatch: [], templateMaxBytes: 0 }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath: '', trailingSlash: 'strict', tiers: null, devWatch: [], templateMaxBytes: 0, componentScripts: 'drawn' }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -600,15 +612,16 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   const devWatch = parseDevWatch(file, root.dev)
   const build = root.build
   const templateMaxBytes = isTable(build) ? parseTemplateMaxBytes(file, build.template_max_bytes) : 0
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash, tiers, devWatch, templateMaxBytes }
+  const componentScripts = isTable(build) ? parseComponentScripts(file, build.component_scripts) : 'drawn'
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [], expose: [], exposeIsolated: false, islands: [], basePath, trailingSlash, tiers, devWatch, templateMaxBytes, componentScripts }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
   const expose = parseExpose(file, appRoot, sourceRoots, (build as Record<string, unknown>).expose)
   const islands = parseIslands(file, appRoot, expose, (build as Record<string, unknown>).islands)
   const exposeIsolated = parseExposeIsolated(file, (build as Record<string, unknown>).expose_isolated)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch, templateMaxBytes }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch, templateMaxBytes, componentScripts }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch, templateMaxBytes }
+  return { serverOnly: so.map((p: string) => posixOf(p.trim()).replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, devWatch, templateMaxBytes, componentScripts }
 }

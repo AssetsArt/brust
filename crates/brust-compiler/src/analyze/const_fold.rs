@@ -290,6 +290,40 @@ pub fn imported_const(
     })
 }
 
+/// F591 rule (e): the app module `path` (relative to `opts.root`) runs nothing when it loads beyond what the F215
+/// allowlist accepts in its load-time mode (`module_effects::module_effect` with `load_only`: its own consts fold or are
+/// plain; an app-import read is not followed). Its imports are not judged here: each imported app module is judged on
+/// its own. A module that does not read or parse is not clean.
+pub fn load_clean(path: &str, opts: &AnalyzeOptions) -> bool {
+    let Ok(bytes) = std::fs::read(opts.root.join(path)) else {
+        return false;
+    };
+    let Ok(parsed) = crate::parse::parse_cached(path, bytes) else {
+        return false;
+    };
+    parsed.with_ast(|ast| {
+        let dummy = js_ast::G::Fn::default();
+        let mut names = NameTable::new(ast, &dummy);
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(&parsed, ast, a, js);
+        let mut reader = Reader::new(&mut names, &print);
+        let (_, decls) = reader.module_scope(ast);
+        let none = |_: &str| false;
+        let no_imports = |_: &str, _: &str| None;
+        let folded = Folder::new(&decls, &none, &no_imports).all();
+        let evaluated = crate::analyze::module_effects::fold_env_accepts(&decls);
+        let plain = crate::analyze::plain_fn::plain_fns(ast, &names);
+        crate::analyze::module_effects::module_effect(
+            ast,
+            &names,
+            parsed.text(),
+            &|n| folded.contains_key(n) || evaluated.contains(n) || plain.iter().any(|p| p == n),
+            &|_, _, _| false,
+            true,
+        )
+        .is_none()
+    })
+}
+
 /// F362 (PR2, Mellow F3): the initializer of the `export const imported` of the relative module `source`, read from the
 /// source as written (nothing is run), when it is declared on its own and its module never writes it. Whether its value is
 /// a list the chunk can project is `lower::module_projection`'s to decide.
@@ -337,6 +371,7 @@ pub fn imported_literal(
             parsed.text(),
             &|n| folded.contains_key(n) || evaluated.contains(n) || plain.iter().any(|p| p == n),
             &|_, _, _| false,
+            false,
         );
         (!imports && effect.is_none()).then(|| (path.clone(), c.value.clone()))
     })

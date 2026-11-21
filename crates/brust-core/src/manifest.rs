@@ -31,6 +31,19 @@ pub struct Manifest {
     /// F517/F519: the runtime-component block (`[build] expose`). Absent = the feature is off.
     #[serde(default)]
     pub runtime: Option<RuntimeBlock>,
+    /// F591 `[build] component_scripts`: which component chunks a response carries. Absent = `drawn`.
+    #[serde(default)]
+    pub component_scripts: ComponentScripts,
+}
+
+/// F591: `drawn` = a native chunk whose component names its `hosts` is left out of a response that printed none of
+/// them (a component without `hosts` is always carried); `route` = every chunk the route can print, as before.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComponentScripts {
+    #[default]
+    Drawn,
+    Route,
 }
 
 /// F517 (R1.3): what a runtime component may use of this build.
@@ -110,6 +123,10 @@ pub struct ComponentRecord {
     /// F519 (R4.4): this component's own template (after inlining) holds a `<Dynamic>` slot.
     #[serde(default)]
     pub dynamic: bool,
+    /// F591: every `x-data` value that mounts this component's `client` chunk, as the build saw the compiler print it.
+    /// Empty = not proven: the chunk is carried whenever the route can print the component.
+    #[serde(default)]
+    pub hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

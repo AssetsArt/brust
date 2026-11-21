@@ -273,6 +273,20 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       <p>
         The build works out the set for each component and the server links the modules of a route, preloaded in the page head. A static page with no island loads none of it. If a template uses a directive that no feature binds, the build stops with <code>runtime-feature-missing</code> instead of shipping a page that does nothing. Before, every page with a native component loaded the whole runtime (about 6 KB gzipped).
       </p>
+      {/* source: crates/brust-core/src/render.rs (inject_document_assets_full_into, printed_hosts), packages/brust/src/build/manifest.ts (chunkHosts), crates/brust-compiler/src/analyze/const_fold.rs (load_clean), tests/server/drawn-scripts.chromium.test.ts (F591) */}
+      <h3 id="drawn">Only the components the page drew</h3>
+      <p>
+        Each native component has its own chunk. A response carries the chunk of a native component only when the page it sends contains that component: the server looks for the component&rsquo;s element in the finished HTML before it writes the
+        script tags. A page whose loader picks one widget out of six loads the chunk of that one. Markup the browser may still show later is part of the HTML too, so its chunks stay: the other branch of a condition over state or over a prop that
+        can change, and the row of a list that is empty on the server (it is sent as a hidden template). A client-side navigation loads the chunks the next page lists before it swaps the page in.
+      </p>
+      <p>
+        A chunk is always sent, as before, when it bundles an app module that runs code when it loads (a statement at the top level, a call of the app&rsquo;s own code, a class, <code>new</code>), so that code runs on every page of the
+        route, as it would in React. A function the module declares runs nothing until it is called and does not count, but handing one to a package call at load does (the package may run it then). Code outside the app root and its{' '}
+        <code>[build] source_roots</code> (packages) is not checked: such a module imported only by components a page does not draw is not loaded on that page, and a package call your module makes at load with data only runs only on pages that carry the chunk. React
+        islands, the runtime and its feature modules are linked as before. <code>[build] component_scripts = &quot;route&quot;</code> in <code>brust.toml</code> sends every chunk the route can draw, as earlier versions did (see{' '}
+        <a href="/docs/configuration#other">Configuration</a>).
+      </p>
       {/* source: packages/runtime-dom/src/island.ts (idle hydrate, IDLE_TIMEOUT_MS), hydration-timing plan §2.2 and ruling Q3, tests/server/hydration-timing.chromium.test.ts (R42.2, R42.3) */}
       <Note>
         Before an island hydrates, its server HTML is visible but not interactive. The island hydrates once its chunk has loaded and the browser is idle (waiting at most 250 ms for an idle moment). A click on an island&apos;s server HTML in that window is dropped, not replayed; the same control works on the next click. A React server-rendered page behaves the same way, because React attaches no listeners before <code>hydrateRoot</code>. On a slow connection the window is longer: in our measurements (slow 4G, a 4x slower CPU) it was about half a second, and with no throttling about 20 ms.
