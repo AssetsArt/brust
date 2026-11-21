@@ -585,13 +585,23 @@ impl WorkerPool {
     }
 }
 
-/// F601: claim a free slot on the worker with the FEWEST calls in flight; a tie goes to the lowest index (registration
-/// order), so a single sequential client still uses worker 0 only while concurrent calls spread over the workers.
-/// Before, the scan was first-fit over workers x slots: up to K (= min(cores, 16)) concurrent calls all landed on worker 0.
-/// `in_flight` is a hint (Relaxed); exclusivity is the per-slot `idle` CAS (Acquire, paired with the Release in
-/// `RenderClaim::drop`). A worker whose free slot was taken between the read and the CAS is left for the next least busy
-/// one. No allocation: the tried workers are a bitmask (workers past 64 fall back to the old first-fit scan).
+/// F601 (AMENDMENT 3): a worker takes calls while it has fewer than [`spill_at`] (T) in flight: the LOWEST index with
+/// fewer than T wins. When every worker has T or more, the worker with the FEWEST in flight (ties: the lowest index).
+/// T = 1 spreads at the first call; T = K is the old first-fit. `in_flight` is a hint (Relaxed); exclusivity is the
+/// per-slot `idle` CAS (Acquire, paired with the Release in `RenderClaim::drop`), so a worker whose free slot was
+/// taken between the read and the CAS is left for the next one. No allocation: tried workers are a bitmask (workers
+/// past 64 fall back to the first-fit scan).
 fn claim_least_busy(entries: &[Arc<WorkerEntry>]) -> Option<(&Arc<WorkerEntry>, usize)> {
+    let t = spill_at();
+    // Pass 1: the lowest index under T.
+    for e in entries.iter().take(64) {
+        if e.in_flight.load(Ordering::Relaxed) < t
+            && let Some(i) = claim_slot(e)
+        {
+            return Some((e, i));
+        }
+    }
+    // Pass 2: every worker at T or more (or its free slot just went): the fewest in flight.
     let mut tried: u64 = 0;
     loop {
         let mut best: Option<(u32, usize)> = None;
@@ -619,6 +629,18 @@ fn claim_least_busy(entries: &[Arc<WorkerEntry>]) -> Option<(&Arc<WorkerEntry>, 
         .iter()
         .skip(64)
         .find_map(|e| claim_slot(e).map(|i| (e, i)))
+}
+
+/// T of [`claim_least_busy`]. MEASUREMENT ONLY (F601 AMENDMENT 3): `BRUST_SPREAD_T`, read once; replaced by a constant
+/// before review.
+fn spill_at() -> u32 {
+    static T: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *T.get_or_init(|| {
+        std::env::var("BRUST_SPREAD_T")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1)
+    })
 }
 
 /// Lock-free exclusivity on one worker: CAS a slot's `idle` true -> false, then count the call in flight.
