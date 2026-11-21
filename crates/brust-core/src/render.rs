@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use brust_jinja::ctx::Node;
 
-use crate::manifest::{Manifest, Tier};
+use crate::manifest::{ComponentScripts, Manifest, Tier};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
@@ -914,6 +914,9 @@ pub fn inject_document_assets_full_into(
     let mut react: Vec<&str> = Vec::new();
     let mut features: BTreeSet<&str> = BTreeSet::new();
     let mut any_dynamic = false;
+    // F591: the hosts this document printed, read before any tag goes in. A native chunk whose component names its
+    // hosts is carried only when one of them is here; everything else is decided exactly as before.
+    let drawn = (m.component_scripts == ComponentScripts::Drawn).then(|| printed_hosts(html));
     let mut visit = |id: &str| {
         if let Some(c) = m.components.get(id) {
             if c.tier != Tier::Static {
@@ -921,13 +924,18 @@ pub fn inject_document_assets_full_into(
             }
             features.extend(c.features.iter().map(String::as_str));
             if let Some(cl) = &c.client {
-                let bucket = if c.tier == Tier::React {
-                    &mut react
-                } else {
-                    &mut chunks
-                };
-                if !bucket.contains(&cl.as_str()) {
-                    bucket.push(cl);
+                if c.tier == Tier::React {
+                    if !react.contains(&cl.as_str()) {
+                        react.push(cl);
+                    }
+                } else if !chunks.contains(&cl.as_str()) {
+                    let undrawn = !c.hosts.is_empty()
+                        && drawn
+                            .as_ref()
+                            .is_some_and(|p| !c.hosts.iter().any(|h| p.contains(h.as_str())));
+                    if !undrawn {
+                        chunks.push(cl);
+                    }
                 }
             }
         }
@@ -1046,6 +1054,22 @@ pub fn inject_document_assets_full_into(
     if let Some(at) = preload_insert_at(html) {
         html.insert_str(at, &links);
     }
+}
+
+/// F591: every value the document prints as `x-data="…"`. One pass over the bytes; a host the compiler prints is always
+/// this exact spelling (`lower/template.rs` `host_attrs`), and a text or attribute value that only looks like one is
+/// escaped by the template (`&quot;`), so it never matches; raw HTML that does spell one only keeps a chunk.
+pub fn printed_hosts(html: &str) -> std::collections::HashSet<&str> {
+    const MARK: &str = "x-data=\"";
+    let mut out = std::collections::HashSet::new();
+    let mut rest = html;
+    while let Some(i) = rest.find(MARK) {
+        rest = &rest[i + MARK.len()..];
+        let end = rest.find('"').unwrap_or(rest.len());
+        out.insert(&rest[..end]);
+        rest = &rest[end..];
+    }
+    out
 }
 
 /// Features that are preloaded but not linked as a script: modules the component chunks import themselves.
@@ -2134,5 +2158,130 @@ mod tests {
             generator_meta_tag("a\"b&c<d>e"),
             "<meta name=\"generator\" content=\"a&quot;b&amp;c&lt;d&gt;e\">"
         );
+    }
+
+    /// F591: a page whose chain can print `a` (hosts), `b` (hosts), `c` (no hosts: not proven) and the island `r`.
+    fn drawn_manifest(mode: &str) -> Manifest {
+        let j = format!(
+            r#"{{"version":3,"jobs_module":"jobs.js","component_scripts":"{mode}",
+            "routes":[{{"id":"p","pattern":"/","chain":["page"],"loaders":[],"cache":null,"catch_all":false}}],
+            "assets":{{"runtime":"client/runtime-0.js","features":{{"basics":"client/rt-basics-0.js","if":"client/rt-if-0.js"}},"react":"client/react-0.js"}},
+            "components":{{
+              "page":{{"tier":"static","template":"jinja/page.jinja","children":[{{"id":"a","instances":"static","props":{{}}}},{{"id":"b","instances":"static","props":{{}}}},{{"id":"c","instances":"static","props":{{}}}},{{"id":"r","instances":"static","props":{{}}}}]}},
+              "a":{{"tier":"native","template":"jinja/a.jinja","client":"client/a-0.js","features":["basics"],"hosts":["a"]}},
+              "b":{{"tier":"native","template":"jinja/b.jinja","client":"client/b-0.js","features":["if"],"hosts":["b","b_h1"]}},
+              "c":{{"tier":"native","template":"jinja/c.jinja","client":"client/c-0.js","features":["basics"]}},
+              "r":{{"tier":"react","template":"jinja/r.jinja","client":"client/r-0.js"}}
+            }}}}"#
+        );
+        serde_json::from_str(&j).unwrap()
+    }
+
+    fn module_scripts(d: &str) -> Vec<&str> {
+        d.split("<script type=\"module\" src=\"/_brust/")
+            .skip(1)
+            .map(|t| &t[..t.find('"').unwrap()])
+            .collect()
+    }
+
+    #[test]
+    fn printed_hosts_reads_every_x_data_value_and_no_escaped_lookalike() {
+        let h = printed_hosts(
+            "<div x-data=\"a\"><p title=\"x-data=&quot;b&quot;\">x-data=&quot;c&quot;</p><i x-data=\"d_h1\" x-data=\"\"></i>",
+        );
+        let mut v: Vec<&str> = h.into_iter().collect();
+        v.sort();
+        assert_eq!(v, vec!["", "a", "d_h1"]);
+        assert!(printed_hosts("x-data=\"unterminated").contains("unterminated"));
+    }
+
+    #[test]
+    fn drawn_carries_a_hosted_chunk_only_when_one_of_its_hosts_is_printed() {
+        let m = drawn_manifest("drawn");
+        let chain = vec!["page".to_string()];
+        let mut none = "<body><p>nothing</p></body>".to_string();
+        inject_document_assets_into(&mut none, &chain, &m, None, None);
+        // `c` has no hosts (always carried); features and the island bucket are decided as before.
+        assert_eq!(
+            module_scripts(&none),
+            vec![
+                "client/runtime-0.js",
+                "client/rt-basics-0.js",
+                "client/rt-if-0.js",
+                "client/c-0.js",
+                "client/react-0.js",
+                "client/r-0.js"
+            ]
+        );
+        let mut b = "<body><b x-data=\"b_h1\"></b></body>".to_string();
+        inject_document_assets_into(&mut b, &chain, &m, None, None);
+        assert_eq!(
+            module_scripts(&b),
+            vec![
+                "client/runtime-0.js",
+                "client/rt-basics-0.js",
+                "client/rt-if-0.js",
+                "client/b-0.js",
+                "client/c-0.js",
+                "client/react-0.js",
+                "client/r-0.js"
+            ]
+        );
+        // A hidden template copy is printed markup like any other: its host keeps the chunk.
+        let mut a = "<body><template><i x-data=\"a\"></i></template><b x-data=\"b\"></b></body>"
+            .to_string();
+        inject_document_assets_into(&mut a, &chain, &m, None, None);
+        assert_eq!(
+            &module_scripts(&a)[3..6],
+            &["client/a-0.js", "client/b-0.js", "client/c-0.js"]
+        );
+    }
+
+    #[test]
+    fn route_mode_carries_every_chunk_as_before() {
+        let m = drawn_manifest("route");
+        let mut d = "<body><p>nothing</p></body>".to_string();
+        inject_document_assets_into(&mut d, &["page".to_string()], &m, None, None);
+        assert_eq!(
+            &module_scripts(&d)[3..6],
+            &["client/a-0.js", "client/b-0.js", "client/c-0.js"]
+        );
+        // A manifest written before the field (no `component_scripts`, no `hosts`) is today's list too.
+        let old: Manifest = serde_json::from_str(
+            r#"{"version":3,"jobs_module":"jobs.js","routes":[],"assets":{"runtime":"client/runtime-0.js"},
+            "components":{"a":{"tier":"native","template":"jinja/a.jinja","client":"client/a-0.js"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            old.component_scripts,
+            crate::manifest::ComponentScripts::Drawn
+        );
+        let mut e = "<body></body>".to_string();
+        inject_document_assets_into(&mut e, &["a".to_string()], &old, None, None);
+        assert_eq!(
+            module_scripts(&e),
+            vec!["client/runtime-0.js", "client/a-0.js"]
+        );
+    }
+
+    /// F591 measurement (not a bench claim): the scan's cost per MiB of document, printed by `--nocapture`.
+    #[test]
+    fn printed_hosts_scan_cost_per_mib() {
+        for mib in [1usize, 4] {
+            let unit = "<div class=\"row\"><button x-data=\"card_2f26c029\" x-props='{}' type=\"button\"><span x-text=\"_c1\">label</span></button><p>some text, some text</p></div>";
+            let mut d = String::with_capacity(mib << 20);
+            while d.len() < mib << 20 {
+                d.push_str(unit);
+            }
+            let t = std::time::Instant::now();
+            let runs = 20;
+            let mut n = 0;
+            for _ in 0..runs {
+                n += printed_hosts(std::hint::black_box(&d)).len();
+            }
+            let per = t.elapsed().as_nanos() / runs / mib as u128;
+            assert_eq!(n, runs as usize);
+            println!("printed_hosts: {mib} MiB document, {per} ns per MiB");
+        }
     }
 }

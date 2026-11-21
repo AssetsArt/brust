@@ -7,7 +7,7 @@
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import { BrustRouteError, checkBasePath, type FlatRoute, validateRoutes } from '../routes'
 import { assertRoutesInstallable, type CheckPatterns, nativeCheckPatterns } from './route-conflicts'
 import { type BrowserCtx, brustRoot, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, nestedOf, storeModules } from './bundle'
@@ -24,7 +24,7 @@ import { escapes, relPosix } from './posix'
 import { swapDist } from './swap'
 import { importsStore } from './features'
 import { exposedModules, exposedStores } from './expose'
-import { type CacheRecord, type ManifestJson, needsWorkers, reachedJobs, renderedTemplates, tierOf, writeManifest } from './manifest'
+import { type CacheRecord, chunkHosts, type ManifestJson, needsWorkers, reachedJobs, renderedTemplates, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 import { checkTiers, reportTiers, type TierCheck, type TiersConfig, writeTierSnapshot } from './tiers'
 import { type ExprReads, prepareStatic, writeStatic } from './static'
@@ -134,7 +134,7 @@ export async function runBuild(opts: {
   process.env.BRUST_BASE_PATH = built.basePath
   if (opts.actionsOnly)
     return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
-  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, templateMaxBytes } = built
+  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, tiers, templateMaxBytes, componentScripts } = built
   // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
   // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
   const remote =
@@ -206,7 +206,7 @@ export async function runBuild(opts: {
   // F569 (D5): the tier snapshot is written once the whole build succeeded.
   const tierCheck: { done?: TierCheck } = {}
   try {
-    await buildInto(tmp, { tiers, templateMaxBytes, updateTiers: opts.updateTiers === true, tierCheck, target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { tiers, templateMaxBytes, updateTiers: opts.updateTiers === true, tierCheck, target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, componentScripts, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -269,6 +269,8 @@ async function buildInto(
     basePath: string
     /** `[server] trailing_slash` (F506); `strict` = the default (not written). */
     trailingSlash: import('../config').TrailingSlash
+    /** `[build] component_scripts` (F591); `drawn` = the default (not written). */
+    componentScripts: import('./config').ComponentScripts
     /** L16 R16.4b: the prefix of an actions app deployed elsewhere (a page-only build); absent = a local app or none. */
     actionsRemote: string | null
     /** `--target static` with `[actions]`: the worker is built without the cache (static pages are never cached). */
@@ -296,7 +298,7 @@ async function buildInto(
   // Where a React island renders, the load-time writers run first: every one in the SSR jobs bundle (server code the
   // worker runs anyway); in an island's browser chunk only a writer of a module that island's code imports (Mellow F1:
   // a writer is often a server-side setup module), with a warning.
-  const scanned = JSON.parse(loadWrites) as { writers: [string, string[]][] }
+  const scanned = JSON.parse(loadWrites) as { writers: [string, string[]][]; load_clean?: string[] }
   const real = (f: string) => {
     try {
       return realpathSync(f)
@@ -398,7 +400,16 @@ async function buildInto(
   const exposedMods = exposedModules(appRoot, o.expose)
   const client = await buildClientChunks(out, compiled, ctx, runtimeUrls, exposedMods, o.exposeIsolated, o.log)
   const chunks = new Map([...client.chunks, ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writersFor))])
-  const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store }, nav: runtime.nav }, chunks })
+  // F591: the native chunks a response may leave out when it printed none of their hosts (D1 a, rule e).
+  const loadClean = new Set((scanned.load_clean ?? []).map((f) => real(resolve(appRoot, f))))
+  const writerFiles = new Set(writers)
+  const roots = [appRoot, ...o.sourceRoots.map((r) => resolve(appRoot, r))].map(real)
+  const own = real(out)
+  const isApp = (f: string) => !f.includes(`${sep}node_modules${sep}`) && !f.startsWith(own + sep) && roots.some((r) => f.startsWith(r + sep))
+  const hosts = chunkHosts({ compiled, chunks: client.chunks, graph: client.graph, isApp, clean: (f) => loadClean.has(f) && !writerFiles.has(f) })
+  const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store }, nav: runtime.nav }, chunks, hosts })
+  if (o.componentScripts === 'route') manifest.component_scripts = 'route'
+
   // F559: the server looks a template up by name only for a member of a route's chain; every other component is
   // printed inside the template of the component that places it, so its own template is never read. Only the chain
   // members' templates are written (`components[id].template` of the others names no file). `BRUST_BUILD_ALL_TEMPLATES=1`

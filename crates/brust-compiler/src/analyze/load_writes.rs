@@ -62,6 +62,10 @@ pub struct LoadWrites {
     /// first where a React island renders (the SSR jobs bundle; the browser chunk of an island whose import graph
     /// reaches a module it writes), so the island sees what React's app sees.
     pub writers: Vec<(String, Vec<String>)>,
+    /// F591 rule (e): the scanned modules that run nothing at load beyond what the F215 allowlist accepts
+    /// (`const_fold::load_clean`), sorted. A module not listed (unclean, or not scanned) keeps the native chunk that
+    /// bundles it on every page its route can print it.
+    pub load_clean: Vec<String>,
 }
 
 impl LoadWrites {
@@ -83,7 +87,7 @@ impl LoadWrites {
         let mut rows: Vec<(&String, &String, &String)> =
             self.written.iter().map(|((m, e), w)| (m, e, w)).collect();
         rows.sort();
-        serde_json::json!({ "written": rows, "writers": self.writers }).to_string()
+        serde_json::json!({ "written": rows, "writers": self.writers, "load_clean": self.load_clean }).to_string()
     }
 
     pub fn from_json(text: &str) -> serde_json::Result<Self> {
@@ -92,11 +96,14 @@ impl LoadWrites {
             written: Vec<(String, String, String)>,
             #[serde(default)]
             writers: Vec<(String, Vec<String>)>,
+            #[serde(default)]
+            load_clean: Vec<String>,
         }
         let j: J = serde_json::from_str(text)?;
         Ok(LoadWrites {
             written: j.written.into_iter().map(|(m, e, w)| ((m, e), w)).collect(),
             writers: j.writers,
+            load_clean: j.load_clean,
         })
     }
 }
@@ -134,6 +141,7 @@ struct Scanned {
 pub fn scan(paths: &[String], opts: &AnalyzeOptions) -> LoadWrites {
     let _aliases = crate::analyze::aliases::Scope::enter(&opts.root, &opts.path_aliases);
     let mut scanned = Vec::new();
+    let mut clean = Vec::new();
     for path in paths {
         let Ok(source) = std::fs::read(opts.root.join(path)) else {
             continue;
@@ -142,8 +150,15 @@ pub fn scan(paths: &[String], opts: &AnalyzeOptions) -> LoadWrites {
             continue;
         };
         scanned.push(parsed.with_ast(|ast| scan_module(path, ast, opts)));
+        if crate::analyze::const_fold::load_clean(path, opts) {
+            clean.push(path.clone());
+        }
     }
-    propagate(&scanned)
+    let mut out = propagate(&scanned);
+    clean.sort();
+    clean.dedup();
+    out.load_clean = clean;
+    out
 }
 
 fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scanned {

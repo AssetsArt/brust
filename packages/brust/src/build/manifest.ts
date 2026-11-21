@@ -54,6 +54,9 @@ export interface ComponentRecord {
   dynamic?: true
   /** L33: the client runtime feature modules (`assets.features` keys) this component's output needs, in load order. */
   features: string[]
+  /** F591: every `x-data` value that mounts `client` (see `chunkHosts`); absent = not proven, the chunk is carried
+   * whenever the route can print the component. */
+  hosts?: string[]
 }
 
 export interface RouteRecord {
@@ -117,6 +120,8 @@ export interface ManifestJson {
   base_path?: string
   /** F506 `[server] trailing_slash`: set only when it is not `strict` (`redirect` | `ignore`). */
   trailing_slash?: 'redirect' | 'ignore'
+  /** F591 `[build] component_scripts`: set only when it is not `drawn` (the default). */
+  component_scripts?: 'route'
   /** L16 R16.4b: a page-only build: no local actions app, `base_url` points at the deployment that has it. */
   actions_remote?: { prefix: string }
   /** `[cache]` (cache adapters); absent without one (the manifest is then byte-identical). */
@@ -381,6 +386,8 @@ export function writeManifest(opts: {
   /** component id → `client/<file>` (client chunk or react island chunk). */
   chunks: Map<string, string>
   actions?: ActionsRecord | null
+  /** F591: component id → its `hosts` (`chunkHosts`); an id not in it gets none. */
+  hosts?: Map<string, string[]>
 }): ManifestJson {
   const { compiled } = opts
   const known = (id: string) => compiled.has(id)
@@ -399,6 +406,7 @@ export function writeManifest(opts: {
       stores: storesOf(compiled, c.id),
       features: featuresOf(c.id, c.jinja, tierOf(c.ir) === 'react'),
       ...(c.ir.dynamic === true ? { dynamic: true as const } : {}),
+      ...(opts.hosts?.has(c.id) ? { hosts: opts.hosts.get(c.id)! } : {}),
     }
     for (const f of components[c.id]!.features)
       if (!(f in opts.runtime.features)) throw new BuildError('runtime-feature-missing', `${c.id}: needs the client runtime feature ${f}, which the build did not ship`)
@@ -424,6 +432,44 @@ export function writeManifest(opts: {
   })
   linkNativeChunks(routes, compiled, components)
   return { version: MANIFEST_VERSION, routes, components, assets: { runtime: opts.runtime.core, features: opts.runtime.features, ...(opts.runtime.nav === undefined ? {} : { nav: opts.runtime.nav }) }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
+}
+
+/** F591 (D1 a, rule e): component id → the `x-data` values that mount its native chunk, for the chunks the server may
+ * leave out of a response that printed none of them. A chunk gets hosts only when all hold:
+ * - the compiler made it (`clientJs`) for this id, so it registers the behaviour named by the id and nothing else
+ *   (`lower/client.rs`: `defineBehavior(<id>, …)`), and the compiler printed `x-data="<id>"` in some template (every
+ *   host it prints is `x-data="<IR id>"`, `lower/template.rs` `host_attrs`); a template printing an `x-data` value
+ *   that is not a plain name proves nothing, and no chunk gets hosts;
+ * - every app module its file and the chunks it imports bundle (`graph`) runs nothing at load that the page would
+ *   miss: not a load writer (F230) and load-clean by the F215 allowlist. Packages are trusted (ledger N1); a module
+ *   that is data to the bundler (CSS, an asset, JSON) runs nothing. */
+export function chunkHosts(opts: {
+  compiled: Map<string, Compiled>
+  chunks: Map<string, string>
+  /** entry stem (= component id) → real paths of the modules it bundles; an id without an entry gets no hosts. */
+  graph: Map<string, Set<string>>
+  /** Whether the real path `f` is an app module (not a package). */
+  isApp: (f: string) => boolean
+  /** Whether the app module `f` (real path) may be left unloaded: load-clean and not a load writer. */
+  clean: (f: string) => boolean
+}): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  const printed = new Set<string>()
+  for (const c of opts.compiled.values())
+    for (const m of c.jinja.matchAll(/x-data="([^"]*)"/g)) {
+      if (!/^[\w$-]+$/.test(m[1]!)) return out
+      printed.add(m[1]!)
+    }
+  const script = /\.[cm]?[jt]sx?$/
+  for (const c of opts.compiled.values()) {
+    if (c.clientJs === undefined || tierOf(c.ir) === 'react' || !opts.chunks.has(c.id) || !printed.has(c.id)) continue
+    if (!c.clientJs.includes(JSON.stringify(c.id))) continue
+    const mods = opts.graph.get(c.id)
+    if (mods === undefined) continue
+    if ([...mods].some((f) => script.test(f) && opts.isApp(f) && !opts.clean(f))) continue
+    out.set(c.id, [c.id])
+  }
+  return out
 }
 
 /** F559: the components whose template the server renders by name: the members of some route's chain, sorted. Every

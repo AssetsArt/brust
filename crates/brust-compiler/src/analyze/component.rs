@@ -563,6 +563,7 @@ fn read_function_as(
         parsed.text(),
         &|n| folded.contains_key(n) || evaluated.contains(n) || ir.plain_fns.iter().any(|p| p == n),
         &import_read,
+        false,
     );
     let from = parsed.path();
     // React's element builders (and the namespace or default import that carries them), or an app module that may

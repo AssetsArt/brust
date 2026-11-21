@@ -289,6 +289,8 @@ async function browserBuild(
   config: Omit<Parameters<typeof Bun.build>[0], 'outdir' | 'target' | 'format' | 'naming'> & { splitting?: boolean },
   /** F549: given, the build also reports the real path of every module it bundled (the metafile's inputs). */
   inputs?: Set<string>,
+  /** F591: given, entry stem → the real path of every module the entry's file and the chunks it imports bundle. */
+  graph?: Map<string, Set<string>>,
 ): Promise<Map<string, string>> {
   const violations: string[] = []
   const fail = () => new BuildError('server-only-in-client', `${what}: ${violations.join('; ')} (server-only code in a browser bundle)`)
@@ -296,7 +298,7 @@ async function browserBuild(
   try {
     res = await Bun.build({
       ...config,
-      ...(inputs ? { metafile: true } : {}),
+      ...(inputs || graph ? { metafile: true } : {}),
       plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir, ctx.basePath), ...(config.plugins ?? [])],
       target: 'browser',
       format: 'esm',
@@ -312,6 +314,7 @@ async function browserBuild(
   if (violations.length > 0) throw fail()
   if (!res.success) throw new BuildError('bundle', `${what}: ${res.logs.map(String).join('\n')}`)
   if (inputs && res.metafile) for (const k of Object.keys(res.metafile.inputs)) inputs.add(realPath(k))
+  if (graph && res.metafile) entryGraph(res.metafile, graph)
   const outs = await Promise.all(res.outputs.map(async (o) => ({ o, name: basename(o.path), text: await o.text() })))
   const rename = new Map<string, string>()
   for (const { name, text } of outs) {
@@ -328,6 +331,30 @@ async function browserBuild(
     if (o.kind === 'entry-point') entries.set(/^(.*)-[^-]+\.js$/.exec(name)![1]!, `client/${file}`)
   }
   return entries
+}
+
+/** F591: for each entry output of `meta`, the modules its own file and every chunk it imports (transitively) bundle. */
+function entryGraph(meta: NonNullable<Awaited<ReturnType<typeof Bun.build>>['metafile']>, graph: Map<string, Set<string>>) {
+  const outs = new Map(Object.entries(meta.outputs).map(([k, o]) => [basename(k), o]))
+  for (const [name, o] of outs) {
+    if (!o.entryPoint) continue
+    const m = /^(.*)-[^-]+\.js$/.exec(name)
+    if (!m) continue
+    const mods = new Set<string>()
+    const seen = new Set<string>()
+    const stack = [name]
+    while (stack.length > 0) {
+      const n = stack.pop()!
+      if (seen.has(n)) continue
+      seen.add(n)
+      const out = outs.get(n)
+      if (!out) continue
+      for (const k of Object.keys(out.inputs)) mods.add(realPath(k))
+      // An import of a file this build did not write (the runtime URL) is not in `outs`, so it is skipped above.
+      for (const i of out.imports) stack.push(basename(i.path))
+    }
+    graph.set(m[1]!, mods)
+  }
 }
 
 /** The client runtime's URLs (L33): the core every page loads, the `store` module (`defineStore` + the reactive
@@ -475,8 +502,9 @@ export async function buildClientChunks(
   isolated = false,
   /** Build warnings (`[brust] warning …`). */
   log: (line: string) => void = () => {},
-): Promise<{ chunks: Map<string, string>; exposed: Record<string, string> }> {
+): Promise<{ chunks: Map<string, string>; exposed: Record<string, string>; graph: Map<string, Set<string>> }> {
   const entrypoints: string[] = []
+  const graph = new Map<string, Set<string>>()
   const shared = new Map<string, string>()
   // F362 PR2: a chunk that declares an imported list projected keeps it only while its data module is out of the client
   // graph: another importer (a module that pushes into the list) would hold the real one, which the copy never sees.
@@ -522,7 +550,7 @@ export async function buildClientChunks(
       files[m.rel] = f
       urls.set(m.abs, `${brustRoot(ctx)}/${f}`)
     }
-    if (entrypoints.length === 0) return { chunks: new Map(), exposed: files }
+    if (entrypoints.length === 0) return { chunks: new Map(), exposed: files, graph }
     const chunkInputs = new Set<string>()
     const built = await browserBuild(
       dist,
@@ -534,18 +562,18 @@ export async function buildClientChunks(
     const twice = duplicatedModules(exposedInputs, chunkInputs, ctx.appRoot, dist)
     if (twice.length > 0)
       log(`[brust] warning expose-isolated-duplicate ${namedCapped(twice, 8)}: bundled into both the exposed modules and the component chunks, so the page holds two copies of ${twice.length > 1 ? 'each' : 'it'}. A module holding state (a store, a cache, a singleton) must be reached through an exposed module, or be exposed itself`)
-    return { chunks: built, exposed: files }
+    return { chunks: built, exposed: files, graph }
   }
   entrypoints.push(...wrappers)
-  if (entrypoints.length === 0) return { chunks: new Map(), exposed: {} }
-  const built = await browserBuild(dist, 'client chunks', ctx, { entrypoints, splitting: true, external: [`${brustRoot(ctx)}/*`], plugins })
+  if (entrypoints.length === 0) return { chunks: new Map(), exposed: {}, graph }
+  const built = await browserBuild(dist, 'client chunks', ctx, { entrypoints, splitting: true, external: [`${brustRoot(ctx)}/*`], plugins }, undefined, graph)
   for (const m of exposed) {
     const f = built.get(`x-${m.stem}`)
     if (f === undefined) throw new BuildError('expose', `build.expose ${m.rel}: the bundler wrote no entry for it`)
     files[m.rel] = f
     built.delete(`x-${m.stem}`)
   }
-  return { chunks: built, exposed: files }
+  return { chunks: built, exposed: files, graph }
 }
 
 /** F362 PR2: the ids of the chunks that must import their lists as written. A probe build (metafile only, nothing
