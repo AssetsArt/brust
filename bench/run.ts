@@ -22,6 +22,7 @@ import { type Encoding, runOha, validateRun } from './lib/oha'
 import { checkJsonParity, checkParity, type JsonResponse } from './lib/parity'
 import { probe as probeOf, type ProbeId, serves } from './lib/probes'
 import { type Machine, writeResults } from './lib/report'
+import { mulberry32, shuffle } from './lib/random'
 import { defaultSweep, generatorShare, interleave } from './lib/stats'
 import { cpuList, readTopology, splitCores } from './lib/topology'
 
@@ -114,6 +115,8 @@ const ns: number[] = sweeping
     ? defaultSweep(serverLogical)
     : f.sweep!.split(',').map((s) => int(s.trim(), 'sweep', 1))
   : [f.workers !== undefined ? int(f.workers, 'workers', 1) : defaultN]
+// Sweep: the N blocks run in a seeded shuffled order, so host drift does not line up with the N axis (review N2).
+if (sweeping) ns.splice(0, ns.length, ...shuffle(ns, mulberry32(seed)))
 
 // 3. Build every app (production mode).
 for (const a of apps) {
@@ -255,7 +258,7 @@ async function calibrate(running: Map<AppId, RunningApp>): Promise<number> {
   const url = `${running.get(a)!.base}${probeOf(p).path}`
   for (const c of [64, 48, 32, 24, 16, 8, 4]) {
     const r = await runOha(url, { conn: c, dur: '3s', enc: 'identity', method: probeOf(p).method, ...(probeOf(p).body !== undefined ? { body: probeOf(p).body } : {}) }, { prefix: genPrefix })
-    const share = r.genCpu === null ? 0 : generatorShare(r.genCpu, r.wall, genCpus.length)
+    const share = r.genCpu === null ? 0 : generatorShare(r.genCpu, 3, genCpus.length)
     say(`calibrate ${a} ${p} c=${c}: generator ${(share * 100).toFixed(0)}% of its CPUs`)
     if (share < 0.8) return c
   }
@@ -301,7 +304,7 @@ try {
       const before = spec.multiProcess ? groupCpu(a.proc.pid) : null
       const r = await runOha(url, { ...o, dur }, { prefix: genPrefix })
       const after = spec.multiProcess ? groupCpu(a.proc.pid) : null
-      const { raw: _raw, genCpu, wall, ...nums } = r
+      const { raw: _raw, genCpu, ...nums } = r
       try {
         validateRun(nums, label)
       } catch (e) {
@@ -309,7 +312,7 @@ try {
       }
       // The copies of a multi-process app, not its launcher (the group leader).
       const procCpu = before && after ? [...cpuDelta(before, after)].filter(([pid]) => pid !== a.proc.pid).map(([, c]) => c) : []
-      const gen = genCpu === null || !genCpus ? null : generatorShare(genCpu, wall, genCpus.length)
+      const gen = genCpu === null || !genCpus ? null : generatorShare(genCpu, secs(dur), genCpus.length)
       const k = keyOf(cell)
       const slot = runs.get(k) ?? { key: cell, runs: [] }
       slot.runs.push({ round, nums, gen, procCpu })

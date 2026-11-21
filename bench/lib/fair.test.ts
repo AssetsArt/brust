@@ -2,6 +2,7 @@
 // best N, the "not compressed" cell, Next's runtime choice without node, the /proc readers.
 import { afterEach, expect, test } from 'bun:test'
 import { nextRuntime } from './apps'
+import { cpuSecondsOf } from './oha'
 import { parseStat } from './cpu'
 import { aggregate, bodyNote, type CellRun, type FairResults, legacyResults, renderRun, sweepTable, verdicts } from './fair'
 import { evaluateGuards } from './guard'
@@ -71,6 +72,11 @@ test('median, spread, noisy; generator share and its mark; balance and its mark'
   expect(generatorLimited(0.9)).toBe(true)
   expect(generatorLimited(0.89)).toBe(false)
   expect(generatorShare(1, 0, 4)).toBe(0)
+  // review F1: the share divides by oha's -z window, not the process wall time (3.15 s for a 3 s run)
+  expect(generatorShare(5.36, 3, 4)).toBeCloseTo(0.4467, 3)
+  expect(cpuSecondsOf({ user: 886593n, system: 123710n })).toBeCloseTo(1.010303, 6)
+  expect(cpuSecondsOf({ user: 2_000_000, system: 500_000 })).toBe(2.5)
+  expect(cpuSecondsOf(undefined)).toBeNull()
   expect(balanceRatio([2, 4])).toBe(2)
   expect(unbalanced(2)).toBe(false)
   expect(unbalanced(2.01)).toBe(true)
@@ -106,10 +112,12 @@ test('a cell: median and [min-max], and every mark from its runs', () => {
   const marked = aggregate({ app: 'bun-serve', probe: 'D', enc: 'gzip', conn: 120, n: 8 }, [run(100, { gen: 0.95, procCpu: [1, 3] }), run(120)], false)
   expect(marked.marks).toEqual(['noisy', 'generator-limited', 'unbalanced', 'not compressed'])
   expect(marked.balance).toBe(3)
-  // c=8 on 8 copies: the ratio is reported, never marked
-  const low = aggregate({ app: 'next', probe: 'D', enc: 'identity', conn: 8, n: 8 }, [run(100, { procCpu: [9, 0.1, 1, 1, 1, 1, 1, 1] })], null)
-  expect(low.balance).toBe(90)
-  expect(low.marks).toEqual([])
+  // c=8 on 8 copies: not "unbalanced" (the port hash), but named: fewer copies did the work
+  const low = aggregate({ app: 'next', probe: 'D', enc: 'identity', conn: 8, n: 8 }, [run(100, { procCpu: [9, 0, 1, 1, 1, 1, 1, 1] })], null)
+  expect(low.balance).toBe(Number.POSITIVE_INFINITY)
+  expect(low.marks).toEqual(['copies idle'])
+  // even copies at low c: no mark
+  expect(aggregate({ app: 'next', probe: 'D', enc: 'identity', conn: 8, n: 2 }, [run(100, { procCpu: [1, 1.5] })], null).marks).toEqual([])
   // identity is never "not compressed"; an unmeasured compression is not a mark
   expect(aggregate({ app: 'next', probe: 'D', enc: 'identity', conn: 120, n: 8 }, [run(1)], false).marks).toEqual([])
   expect(aggregate({ app: 'next', probe: 'D', enc: 'gzip', conn: 120, n: 8 }, [run(1)], null).marks).toEqual([])

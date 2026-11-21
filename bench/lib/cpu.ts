@@ -1,5 +1,4 @@
-// bench/lib/cpu.ts — F595 D3/D6: CPU time of processes from /proc (Linux), to measure the generator's share of its
-// cores and how evenly the copies of a multi-process app worked. Elsewhere every reader answers null ("not measured").
+// bench/lib/cpu.ts — F595 D3/D5: CPU time of processes from /proc (Linux), to measure how evenly the copies of a multi-process app worked. Elsewhere every reader answers null ("not measured").
 import { readdirSync, readFileSync } from 'node:fs'
 
 const TICK = (() => {
@@ -28,12 +27,6 @@ const read = (p: string): string | null => {
   } catch {
     return null
   }
-}
-
-/** CPU seconds of one process, or null. */
-export function cpuOf(pid: number): number | null {
-  const t = read(`/proc/${pid}/stat`)
-  return t === null ? null : (parseStat(t)?.cpu ?? null)
 }
 
 /** pid → CPU seconds of every process in the process group `pgrp` (the group the runner created for an app). */

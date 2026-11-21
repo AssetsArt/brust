@@ -21,9 +21,10 @@ export function spreadOf(xs: number[]): Spread {
   return { median: m, min, max, spread: m === 0 ? 0 : (max - min) / m }
 }
 export const noisy = (s: Spread): boolean => s.spread > NOISY_SPREAD
-/** The generator used `cpuSeconds` of CPU over `wallSeconds` on `genCpus` logical CPUs. */
-export const generatorShare = (cpuSeconds: number, wallSeconds: number, genCpus: number): number =>
-  wallSeconds <= 0 || genCpus <= 0 ? 0 : cpuSeconds / (wallSeconds * genCpus)
+/** The generator used `cpuSeconds` of CPU during a load window of `durSeconds` (oha's `-z`, not the process's wall time,
+ * which adds spawn and JSON output) on `genCpus` logical CPUs. */
+export const generatorShare = (cpuSeconds: number, durSeconds: number, genCpus: number): number =>
+  durSeconds <= 0 || genCpus <= 0 ? 0 : cpuSeconds / (durSeconds * genCpus)
 export const generatorLimited = (share: number): boolean => share >= GENERATOR_LIMIT
 
 /** Per-process work of one multi-process app (CPU seconds or request counts): busiest / idlest. */

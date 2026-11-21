@@ -58,7 +58,13 @@ data is `apps/_shared/data.json` (regenerate with `bun bench/apps/_shared/gen-da
   Bodies that differ by more than 10% are named under the table.
 - **Marks, never silent:** `noisy` (rps (max-min)/median over 5%), `generator-limited` (`oha` used 90% or more of its
   CPUs: the number is the generator's ceiling, not the server's), `unbalanced` (busiest / idlest copy over 2:1 by CPU
-  time from `/proc`, judged only at 4 or more connections per copy), `not compressed` (a gzip request got identity).
+  time from `/proc`, judged at 4 or more connections per copy), `copies idle` (the same ratio below 4 connections per
+  copy: the kernel's port hash left copies without work, so fewer copies were measured), `not compressed` (a gzip
+  request got identity). The generator's share is its exact CPU time (rusage, user + system) over the `-z` window.
+- **What the low count measures.** For a multi-process app the calibrated low count (c=8 with N=8 on the build host)
+  leaves some copies idle, a different number each round: those cells measure fewer working copies and carry `copies
+  idle`. On a host where c=120 is generator-limited for an app and the low count leaves its copies idle (elysia-bun on
+  A1/A2 on the build host), that app has no fully comparable row.
 - Parity runs before any load: `<main>` of every page is normalized (scripts/links/styles/comments dropped, island
   wrappers unwrapped, attributes ignored, whitespace collapsed) and compared by tag sequence + text; a mismatch aborts.
 
@@ -70,6 +76,11 @@ given explicitly still wins. The header prints the minutes planned and taken.
 The same cells at c=120, identity, for each N (default: 1, 2, 3, then up to the server set's CPUs, at most 8 points).
 Per (app, probe) the table names the best N: the highest median rps whose p99 is within 20% of the best p99 of the
 sweep, next to the N brust would pick by default in the same CPU set.
+
+N compares an app with itself. brust's N is Bun workers only (its tokio threads stay at the server set's CPUs), while
+Bun.serve's and Elysia's N is whole processes: do not compare apps at the same N. Each N is one block (its rounds
+interleave inside the block); the blocks run in a seeded shuffled order so host drift does not line up with N, but
+drift between blocks still lands on the N axis.
 
 ## Actions (A1/A2)
 

@@ -16,7 +16,7 @@ export interface CellRun {
   /** per-process CPU seconds of a multi-process app during the run, [] = one process or not measured */
   procCpu: number[]
 }
-export type Mark = 'noisy' | 'generator-limited' | 'unbalanced' | 'not compressed'
+export type Mark = 'noisy' | 'generator-limited' | 'unbalanced' | 'copies idle' | 'not compressed'
 export interface Cell {
   key: CellKey
   runs: CellRun[]
@@ -73,6 +73,8 @@ export function aggregate(key: CellKey, runs: CellRun[], compressed: boolean | n
   if (noisy(rps)) marks.push('noisy')
   if (gen !== null && generatorLimited(gen)) marks.push('generator-limited')
   if (balance !== null && markable && unbalanced(balance)) marks.push('unbalanced')
+  // Below 4 connections per copy the port hash leaves copies without work: fewer copies measured, named as such.
+  if (balance !== null && !markable && unbalanced(balance)) marks.push('copies idle')
   if (key.enc === 'gzip' && compressed === false) marks.push('not compressed')
   const med = (f: (r: CellRun) => number) => spreadOf(runs.map(f)).median
   return { key, runs, rps, p50: med((r) => r.nums.p50), p99, bytes: med((r) => r.nums.bytes), gen, balance, marks }
@@ -126,7 +128,7 @@ export function renderRun(r: FairResults): string {
     `${h.rounds} rounds, interleaved, seed ${h.seed} · \`oha -z ${h.dur}\` at c=${h.conns.join(' and c=')} · warm-up ${h.warmup} discarded per cell · load minutes planned ${h.estimateMin}, taken ${h.tookMin ?? '—'}`,
   ]
   if (h.skipped.length) L.push(`skipped: ${h.skipped.map((s) => `${s.app} (${s.reason})`).join(', ')}`)
-  L.push('', 'Cells show the median of the rounds and [min-max]. Marks: noisy = (max-min)/median > 5%; generator-limited = oha used >= 90% of its CPUs (the number is the generator\'s ceiling); unbalanced = busiest / idlest process > 2:1 (only at 4+ connections per process); not compressed = the gzip request got an identity body.')
+  L.push('', 'Cells show the median of the rounds and [min-max]. Marks: noisy = (max-min)/median > 5%; generator-limited = oha used >= 90% of its CPUs (the number is the generator\'s ceiling); unbalanced = busiest / idlest process > 2:1 at 4+ connections per process; copies idle = the same below 4 connections per process (the port hash left copies without work, so fewer copies were measured); not compressed = the gzip request got an identity body.')
   for (const p of PROBES) {
     const cells = r.cells.filter((c) => c.key.probe === p.id)
     if (cells.length === 0) continue
