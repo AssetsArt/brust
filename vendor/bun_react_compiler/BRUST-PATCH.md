@@ -1,4 +1,4 @@
-# brust patch over oven-sh/bun src/react_compiler @ 38afee6c84fcf48c0edb2466aa4b27d287a59c30 (bun-v1.4.4)
+# brust patch over oven-sh/bun src/react_compiler @ a7733435cf40429e3b35c36072769df2052b80f1 (bun-v1.4.5)
 
 Purpose: let an external crate run lowering + HIR passes and read the reactive
 function and scopes without codegen (spec §10.3). No brust logic lives here.

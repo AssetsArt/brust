@@ -1,4 +1,4 @@
-// VERBATIM COPY of oven-sh/bun src/sema/standalone/native.rs at rev 38afee6c (bun-v1.4.4). Do not edit; re-copy on bump.
+// VERBATIM COPY of oven-sh/bun src/sema/standalone/native.rs at rev a7733435 (bun-v1.4.5). Do not edit; re-copy on bump.
 //! Stand-ins for the native symbols that Bun's C and C++ code provides to the parser, for binaries that link only the
 //! parser: this crate's command line tool and `bun_sema`'s tests. They use plain loops instead of SIMD and a bump
 //! allocator instead of mimalloc. Never part of the real build.

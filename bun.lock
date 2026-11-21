@@ -17,7 +17,7 @@
         "elysia": "2.0.0-rc.4",
       },
       "devDependencies": {
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "typescript": "^7.0.2",
       },
     },
@@ -31,7 +31,7 @@
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "@types/react": "^19.2.0",
         "typescript": "^7.0.2",
       },
@@ -44,7 +44,7 @@
         "react-dom": "^19.2.0",
       },
       "devDependencies": {
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "typescript": "^7.0.2",
@@ -78,7 +78,7 @@
       "devDependencies": {
         "@tailwindcss/node": "4.3.3",
         "@tailwindcss/oxide": "4.3.3",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "@types/react": "^19.2.0",
         "tailwindcss": "4.3.3",
         "typescript": "^7.0.2",
@@ -134,7 +134,7 @@
         "@radix-ui/react-presence": "1.1.11",
         "@radix-ui/react-slot": "1.5.0",
         "@radix-ui/react-use-layout-effect": "1.1.4",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "@types/react": "^19.2.0",
         "elysia": "2.0.0-rc.4",
         "lucide-react": "1.55.0",
@@ -168,7 +168,7 @@
       "version": "2.0.0-alpha.58",
       "devDependencies": {
         "@brust/core": "workspace:*",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "typescript": "^7.0.2",
       },
       "peerDependencies": {
@@ -180,7 +180,7 @@
       "version": "2.0.0-alpha.58",
       "devDependencies": {
         "@brust/core": "workspace:*",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "typescript": "^7.0.2",
       },
       "peerDependencies": {
@@ -194,7 +194,7 @@
         "create-app": "./bin/create-app.ts",
       },
       "devDependencies": {
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "typescript": "^7.0.2",
       },
     },
@@ -203,7 +203,7 @@
       "version": "2.0.0-alpha.58",
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.0.0",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",
         "happy-dom": "^20.0.0",
@@ -317,7 +317,7 @@
       "devDependencies": {
         "@tailwindcss/node": "4.3.3",
         "@tailwindcss/oxide": "4.3.3",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "@types/pngjs": "6.0.5",
         "@types/react": "^19.2.0",
         "pixelmatch": "8.0.0",
@@ -827,7 +827,7 @@
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.4", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A=="],
 
-    "@types/bun": ["@types/bun@1.4.4", "", { "dependencies": { "bun-types": "1.4.4" } }, "sha512-9wkRDXUXK124pEnAutE6n/l18j+i9GC5IAHK8TmX/2nlySETmky0OU6yL5U8pW1AoKh++AN9auDCr647BfurjQ=="],
+    "@types/bun": ["@types/bun@1.4.5", "", { "dependencies": { "bun-types": "1.4.5" } }, "sha512-DpgwNI9z0L1S0gtb45QLCWgwCUcMLnsHYMJHQvpNj7erGiCGBvpggltAIeARrtobNMKMuy0UP7i56tKKgwFs/Q=="],
 
     "@types/d3-array": ["@types/d3-array@3.2.2", "", {}, "sha512-hOLWVbm7uRza0BYXpIIW5pxfrKe0W+D5lrFiAEYR+pb6w3N2SwSMaJbXdUfSEv+dT4MfHBLtn5js0LAWaO6otw=="],
 
@@ -919,7 +919,7 @@
 
     "buffer-image-size": ["buffer-image-size@0.6.4", "", { "dependencies": { "@types/node": "*" } }, "sha512-nEh+kZOPY1w+gcCMobZ6ETUp9WfibndnosbpwB1iJk/8Gt5ZF2bhS6+B6bPYz424KtwsR6Rflc3tCz1/ghX2dQ=="],
 
-    "bun-types": ["bun-types@1.4.4", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-yjrJh5oGX7mMPKGd19YXyIjmEuj4G4zNC30bs7PM9Az7NQ3ndF3j6hbeRdvJTRQEhJ/FYQwW0a2moweEi2hMxQ=="],
+    "bun-types": ["bun-types@1.4.5", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-ECHn+9dhL3wv0G6u0+7dQvrnaimXiRDxxerYBmhTaLyJEEuvTPWk2Fye3XIf5Y++JIIiHKfQw4Z7V5D8KuiXbg=="],
 
     "caniuse-lite": ["caniuse-lite@1.0.30001815", "", {}, "sha512-uDybUEyfgbyJJ93J1vikTylBX31AkdVYeVPeffMQpf8XN7hSfr0oZOn4VFOIMNvtU5+rHvC5Udg2TgtJKHm23Q=="],
 

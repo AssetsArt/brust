@@ -14,7 +14,7 @@ pub extern "Rust" fn __bun_run_file_poll(_poll: *mut core::ffi::c_void, _size_or
     std::process::abort();
 }
 
-/// What `bun_core` (bun-v1.4.4) declares for Bun's C++ side (ICU, WTF) that the parser, printer and
+/// What `bun_core` (bun-v1.4.5) declares for Bun's C++ side (ICU, WTF) that the parser, printer and
 /// React Compiler never call: `String.prototype.normalize`, `Date` parsing and `Number.prototype.toFixed`
 /// and friends. Same reason as above: the cdylib keeps their callers, so glibc needs a definition.
 fn not_linked(name: &str) -> ! {
