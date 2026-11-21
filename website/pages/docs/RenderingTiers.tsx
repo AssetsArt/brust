@@ -216,6 +216,11 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         <code>nested-fed-child</code> warning on the inner component. Everywhere else the inner component keeps its own tier. Before 2.0.0-alpha.53 the outer component became the island (<code>nested-instance</code>), which it still does when the
         copy would not help, for example when the inner component is given a function.
       </p>
+      {/* source: packages/brust/src/handlers.ts (toJson), tests/server/job-bigint.test.ts (F585) */}
+      <p>
+        A precomputed value travels from the worker to the server as JSON. A <code>bigint</code> is sent as its decimal digits, so text and attributes print what React prints; in a test the digits are a non-empty string, so{' '}
+        <code>0n</code> counts as true there where JavaScript reads it as false. <code>NaN</code> and <code>Infinity</code> arrive as <code>null</code> and print nothing.
+      </p>
       {/* source: crates/brust-compiler/src/analyze/passes/children.rs (nested-instance -> island-client-only), recursion.rs (islands_client_only), tests/server/rc-client-islands.chromium.test.ts (F548) */}
       <p>
         A React island with per-row props in nested lists, or in the rows of a component inlined into its callers, cannot be server-rendered row by row, so the component around it becomes one React island (<code>nested-instance</code>). Two cases cannot
