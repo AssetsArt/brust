@@ -264,7 +264,7 @@ impl Drop for RenderClaim {
         // in_flight first, then publishing `idle = true` with Release, means the
         // next claimer's Acquire CAS observes a fully-clean worker — slot empty,
         // in_flight already decremented. (in_flight is a Relaxed load hint for
-        // pick_least_busy; ordering it before the Release store avoids a
+        // `claim_least_busy`; ordering it before the Release store avoids a
         // transient +1 skew where a new claim is taken before this decrement
         // lands.)
         //
@@ -454,14 +454,6 @@ impl WorkerPool {
         &self.idle_notify
     }
 
-    pub fn pick_least_busy(&self) -> Option<Arc<WorkerEntry>> {
-        let entries = self.entries.read();
-        entries
-            .iter()
-            .min_by_key(|e| e.in_flight.load(Ordering::Relaxed))
-            .cloned()
-    }
-
     /// Atomically reserve an idle render slot and install the chunk
     /// sender. Returns Claimed/PoolEmpty/AllBusy.
     ///
@@ -475,30 +467,17 @@ impl WorkerPool {
         if entries.is_empty() {
             return ClaimResult::PoolEmpty;
         }
-        for entry in entries.iter() {
-            for (i, slot) in entry.slots.iter().enumerate() {
-                // Lock-free exclusivity: CAS idle true→false. Acquire pairs with
-                // the Release store in RenderClaim::drop so the next claimer sees
-                // a clean slot. The mutex below is touched ONLY to store chunk_tx
-                // (the streaming path needs it for napi_render_chunk).
-                if slot
-                    .idle
-                    .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                    .is_err()
-                {
-                    continue;
-                }
-                entry.in_flight.fetch_add(1, Ordering::Relaxed);
-                *slot.render_slot.lock() = Some(RenderSlot { chunk_tx });
-                return ClaimResult::Claimed(RenderClaim {
-                    entry: Arc::clone(entry),
-                    slot: i as u32,
-                    lockfree: false,
-                    idle_notify: Arc::clone(&self.idle_notify),
-                });
-            }
-        }
-        ClaimResult::AllBusy
+        let Some((entry, i)) = claim_least_busy(&entries) else {
+            return ClaimResult::AllBusy;
+        };
+        // The mutex is touched ONLY to store chunk_tx (the streaming path needs it for napi_render_chunk).
+        *entry.slots[i].render_slot.lock() = Some(RenderSlot { chunk_tx });
+        ClaimResult::Claimed(RenderClaim {
+            entry: Arc::clone(entry),
+            slot: i as u32,
+            lockfree: false,
+            idle_notify: Arc::clone(&self.idle_notify),
+        })
     }
 
     /// F529: the server's socket hub (`None` for a pool `start` did not build).
@@ -527,25 +506,15 @@ impl WorkerPool {
         if entries.is_empty() {
             return ClaimResult::PoolEmpty;
         }
-        for entry in entries.iter() {
-            for (i, slot) in entry.slots.iter().enumerate() {
-                if slot
-                    .idle
-                    .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                    .is_err()
-                {
-                    continue;
-                }
-                entry.in_flight.fetch_add(1, Ordering::Relaxed);
-                return ClaimResult::Claimed(RenderClaim {
-                    entry: Arc::clone(entry),
-                    slot: i as u32,
-                    lockfree: true,
-                    idle_notify: Arc::clone(&self.idle_notify),
-                });
-            }
-        }
-        ClaimResult::AllBusy
+        let Some((entry, i)) = claim_least_busy(&entries) else {
+            return ClaimResult::AllBusy;
+        };
+        ClaimResult::Claimed(RenderClaim {
+            entry: Arc::clone(entry),
+            slot: i as u32,
+            lockfree: true,
+            idle_notify: Arc::clone(&self.idle_notify),
+        })
     }
 
     /// The D5 claim: workers in order of open sockets (fewest first, registration order on a tie).
@@ -616,6 +585,57 @@ impl WorkerPool {
     }
 }
 
+/// F601: claim a free slot on the worker with the FEWEST calls in flight; a tie goes to the lowest index (registration
+/// order), so a single sequential client still uses worker 0 only while concurrent calls spread over the workers.
+/// Before, the scan was first-fit over workers x slots: up to K (= min(cores, 16)) concurrent calls all landed on worker 0.
+/// `in_flight` is a hint (Relaxed); exclusivity is the per-slot `idle` CAS (Acquire, paired with the Release in
+/// `RenderClaim::drop`). A worker whose free slot was taken between the read and the CAS is left for the next least busy
+/// one. No allocation: the tried workers are a bitmask (workers past 64 fall back to the old first-fit scan).
+fn claim_least_busy(entries: &[Arc<WorkerEntry>]) -> Option<(&Arc<WorkerEntry>, usize)> {
+    let mut tried: u64 = 0;
+    loop {
+        let mut best: Option<(u32, usize)> = None;
+        for (w, e) in entries.iter().enumerate().take(64) {
+            if tried & (1 << w) != 0 {
+                continue;
+            }
+            let f = e.in_flight.load(Ordering::Relaxed);
+            // A full worker cannot take the call: skip it without touching its slots.
+            if f as usize >= e.slots.len() {
+                tried |= 1 << w;
+                continue;
+            }
+            if best.is_none_or(|(bf, _)| f < bf) {
+                best = Some((f, w));
+            }
+        }
+        let Some((_, w)) = best else { break };
+        tried |= 1 << w;
+        if let Some(i) = claim_slot(&entries[w]) {
+            return Some((&entries[w], i));
+        }
+    }
+    entries
+        .iter()
+        .skip(64)
+        .find_map(|e| claim_slot(e).map(|i| (e, i)))
+}
+
+/// Lock-free exclusivity on one worker: CAS a slot's `idle` true -> false, then count the call in flight.
+fn claim_slot(entry: &Arc<WorkerEntry>) -> Option<usize> {
+    for (i, slot) in entry.slots.iter().enumerate() {
+        if slot
+            .idle
+            .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            entry.in_flight.fetch_add(1, Ordering::Relaxed);
+            return Some(i);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -656,6 +676,150 @@ mod tests {
         c.put_plan(Box::new(8u32));
         drop(c); // never taken: the claim's drop clears it
         assert!(entry.slot(slot as usize).plan.lock().is_none());
+    }
+
+    /// F601: the worker id of a lock-free claim (the claim is returned so the test holds it).
+    fn claim_on(pool: &WorkerPool) -> RenderClaim {
+        match pool.try_claim_render_lockfree() {
+            ClaimResult::Claimed(c) => c,
+            _ => panic!("expected a claim"),
+        }
+    }
+
+    #[test]
+    fn idle_workers_claim_index_0() {
+        let pool = WorkerPool::new();
+        let ids: Vec<u32> = (0..3).map(|_| register_k_for_test(&pool, 4)).collect();
+        // A sequential client: each call ends before the next, so every call goes to worker 0.
+        for _ in 0..5 {
+            let c = claim_on(&pool);
+            assert_eq!(c.entry().id, ids[0]);
+        }
+    }
+
+    #[test]
+    fn a_busy_worker_sends_the_next_call_to_the_least_busy_one() {
+        let pool = WorkerPool::new();
+        let ids: Vec<u32> = (0..3).map(|_| register_k_for_test(&pool, 4)).collect();
+        let a = claim_on(&pool);
+        assert_eq!(a.entry().id, ids[0]);
+        // worker 0 has one call in flight: the next goes to worker 1 (0 in flight, the lowest such index)
+        let b = claim_on(&pool);
+        assert_eq!(b.entry().id, ids[1]);
+        let c = claim_on(&pool);
+        assert_eq!(c.entry().id, ids[2]);
+        // all tied at 1: the lowest index again
+        let d = claim_on(&pool);
+        assert_eq!(d.entry().id, ids[0]);
+        // concurrent calls spread: 2, 1, 1 in flight
+        let held = [&a, &b, &c, &d];
+        let on = |id| held.iter().filter(|x| x.entry().id == id).count();
+        assert_eq!((on(ids[0]), on(ids[1]), on(ids[2])), (2, 1, 1));
+    }
+
+    #[test]
+    fn a_released_slot_is_reused_and_the_least_busy_worker_wins() {
+        let pool = WorkerPool::new();
+        let ids: Vec<u32> = (0..2).map(|_| register_k_for_test(&pool, 2)).collect();
+        let a = claim_on(&pool); // w0
+        let b = claim_on(&pool); // w1
+        let slot_a = a.slot();
+        drop(a); // w0 back to 0 in flight
+        let c = claim_on(&pool);
+        assert_eq!(c.entry().id, ids[0]);
+        assert_eq!(c.slot(), slot_a, "the released slot is reused");
+        drop(b);
+        let d = claim_on(&pool); // w1 has 0 in flight now, w0 has 1
+        assert_eq!(d.entry().id, ids[1]);
+    }
+
+    #[test]
+    fn all_slots_full_is_all_busy_and_a_release_frees_one() {
+        let pool = WorkerPool::new();
+        let ids: Vec<u32> = (0..2).map(|_| register_k_for_test(&pool, 2)).collect();
+        let held: Vec<RenderClaim> = (0..4).map(|_| claim_on(&pool)).collect();
+        let per = |id| held.iter().filter(|x| x.entry().id == id).count();
+        assert_eq!((per(ids[0]), per(ids[1])), (2, 2));
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::AllBusy
+        ));
+        let (tx, _rx) = mpsc::channel::<RenderChunk>(1);
+        assert!(matches!(pool.try_claim_render(tx), ClaimResult::AllBusy));
+        let mut held = held;
+        let freed = held.pop().unwrap();
+        let id = freed.entry().id;
+        drop(freed);
+        assert_eq!(claim_on(&pool).entry().id, id);
+    }
+
+    /// F601 (AMENDMENT 1): the worker choice is advisory, the per-slot CAS is the claim. Many threads claim and release
+    /// as fast as they can over 4 workers x 3 slots; every claim marks its (worker, slot) owned and must find it free.
+    #[test]
+    fn stress_no_double_claim_under_least_busy() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        const W: usize = 4;
+        const K: usize = 3;
+        const THREADS: usize = 16;
+        const ROUNDS: usize = 20_000;
+        let pool = Arc::new(WorkerPool::new());
+        let ids: Vec<u32> = (0..W).map(|_| register_k_for_test(&pool, K)).collect();
+        let owned: Arc<Vec<AtomicBool>> =
+            Arc::new((0..W * K).map(|_| AtomicBool::new(false)).collect());
+        let doubles = Arc::new(AtomicUsize::new(0));
+        let claims = Arc::new(AtomicUsize::new(0));
+        let ids = Arc::new(ids);
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let (pool, owned, doubles, claims, ids) = (
+                    Arc::clone(&pool),
+                    Arc::clone(&owned),
+                    Arc::clone(&doubles),
+                    Arc::clone(&claims),
+                    Arc::clone(&ids),
+                );
+                std::thread::spawn(move || {
+                    for _ in 0..ROUNDS {
+                        if let ClaimResult::Claimed(c) = pool.try_claim_render_lockfree() {
+                            let w = ids.iter().position(|&id| id == c.entry().id).unwrap();
+                            let cell = &owned[w * K + c.slot() as usize];
+                            if cell.swap(true, Ordering::AcqRel) {
+                                doubles.fetch_add(1, Ordering::Relaxed);
+                            }
+                            claims.fetch_add(1, Ordering::Relaxed);
+                            std::hint::spin_loop();
+                            cell.store(false, Ordering::Release);
+                            drop(c);
+                        }
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(
+            doubles.load(Ordering::Relaxed),
+            0,
+            "a slot was claimed twice at once"
+        );
+        assert!(
+            claims.load(Ordering::Relaxed) > THREADS * ROUNDS / 2,
+            "claims mostly succeed"
+        );
+        for entry in pool.entries.read().iter() {
+            assert_eq!(
+                entry.in_flight.load(Ordering::Relaxed),
+                0,
+                "worker {} in_flight not drained",
+                entry.id
+            );
+            assert!(
+                entry.slots.iter().all(|s| s.idle.load(Ordering::Acquire)),
+                "worker {} slot left claimed",
+                entry.id
+            );
+        }
     }
 
     #[test]
