@@ -3,7 +3,7 @@ import { probe, PROBES, serves } from './probes'
 
 describe('probes', () => {
   test('ids in run order', () => {
-    expect(PROBES.map((p) => p.id)).toEqual(['S', 'D', 'I', 'A1', 'A2'])
+    expect(PROBES.map((p) => p.id)).toEqual(['S', 'S-render', 'D', 'I', 'A1', 'A2'])
   })
   test('A2 is a JSON POST served by brust and elysia-bun only', () => {
     expect(probe('A2')).toMatchObject({ kind: 'json', method: 'POST', path: '/_brust/action/team', body: '{"id":25}', apps: ['brust', 'elysia-bun'] })

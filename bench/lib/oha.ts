@@ -1,4 +1,7 @@
 // bench/lib/oha.ts — one oha run → numbers. Pure parse (`parseOha`) + the spawn (`runOha`).
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { cpuOf } from './cpu'
 export type Encoding = 'identity' | 'gzip'
 export interface OhaOpts { conn: number; dur: string; enc: Encoding; method?: 'GET' | 'POST'; body?: string }
 export interface OhaNums { rps: number; p50: number; p95: number; p99: number; total: number; errors: number; /** status code → count, as oha saw it */ status: Record<string, number>; /** mean response body bytes (oha sizePerRequest) */ bytes: number }
@@ -44,11 +47,36 @@ export function parseOha(json: unknown): OhaResult {
 const RUNNING = new Set<{ kill(sig?: number | NodeJS.Signals): void }>()
 process.on('exit', () => { for (const p of RUNNING) p.kill('SIGKILL') }) // an interrupted run never leaves oha hammering a port
 
-export async function runOha(url: string, o: OhaOpts): Promise<OhaResult> {
-  const p = Bun.spawn(['oha', ...ohaArgs(url, o)], { stdout: 'pipe', stderr: 'pipe' })
+/** F595 D1: `oha` on PATH, else cargo's install dir; null when neither has it. */
+export function ohaPath(): string | null {
+  const onPath = Bun.which('oha')
+  if (onPath) return onPath
+  const home = process.env.HOME
+  return home && existsSync(join(home, '.cargo/bin/oha')) ? join(home, '.cargo/bin/oha') : null
+}
+
+export interface OhaRun extends OhaResult {
+  /** F595 D6: CPU seconds the oha process used (Linux /proc; null elsewhere) and the wall time of the run. */
+  genCpu: number | null
+  wall: number
+}
+
+/** One oha run. `prefix` pins it (`taskset -c <L>`, which execs oha in the same pid, so its CPU is read from that pid). */
+export async function runOha(url: string, o: OhaOpts, run: { prefix?: string[] } = {}): Promise<OhaRun> {
+  const bin = ohaPath()
+  if (!bin) throw new Error('oha not found on PATH or in ~/.cargo/bin (cargo install oha)')
+  const t0 = performance.now()
+  const p = Bun.spawn([...(run.prefix ?? []), bin, ...ohaArgs(url, o)], { stdout: 'pipe', stderr: 'pipe' })
   RUNNING.add(p)
+  let genCpu: number | null = cpuOf(p.pid)
+  const poll = setInterval(() => {
+    const c = cpuOf(p.pid)
+    if (c !== null) genCpu = c
+  }, 200)
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+  clearInterval(poll)
+  const wall = (performance.now() - t0) / 1000
   RUNNING.delete(p)
   if (code !== 0) throw new Error(`oha exited ${code} for ${url}:\n${err}`)
-  return parseOha(JSON.parse(out))
+  return { ...parseOha(JSON.parse(out)), genCpu, wall }
 }

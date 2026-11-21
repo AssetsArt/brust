@@ -20,6 +20,17 @@ const sh = (cmd: string[], cwd: string, log?: (s: string) => void): void => {
 const out = (cmd: string[], cwd = ROOT): string => { const r = Bun.spawnSync(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' }); return r.exitCode === 0 ? r.stdout.toString().trim() : '?' }
 const workers = () => process.env.BENCH_WORKERS ?? String(availableParallelism())
 
+/** F595 D1: the runtime Next is built and served with. `node` only when it is on PATH and not overridden; otherwise Bun
+ * (`bun --bun`). The label is the version the runtime itself reports, never a guess. */
+export function nextRuntime(): { name: 'node' | 'bun'; version: string } {
+  const want = process.env.BENCH_NEXT_RUNTIME
+  if (want !== undefined && want !== 'node' && want !== 'bun') throw new Error(`BENCH_NEXT_RUNTIME must be node or bun (got ${want})`)
+  const node = want === 'bun' ? null : Bun.which('node', { PATH: process.env.PATH ?? '' })
+  if (want === 'node' && !node) throw new Error('BENCH_NEXT_RUNTIME=node but node is not on PATH')
+  if (node) return { name: 'node', version: out([node, '--version']).replace(/^v/, '') }
+  return { name: 'bun', version: Bun.version }
+}
+
 /** Standalone output lands under `.next/standalone/<path from outputFileTracingRoot>/server.js`. */
 export function nextServerJs(cwd: string): string {
   const candidates = [join(cwd, '.next/standalone/bench/apps/next/server.js'), join(cwd, '.next/standalone/server.js')]
@@ -40,6 +51,10 @@ export async function brustSanity(base: string, probe: ProbeId): Promise<void> {
     await call()
     const second = await call()
     if (second !== null) throw new Error(`brust sanity ${probe}: second action call answered x-brust-cache=${second}; actions must bypass L1`)
+  } else if (probe === 'S-render') {
+    await hdr('/types?nocache=1')
+    const second = await hdr('/types?nocache=1')
+    if (second === 'HIT') throw new Error(`brust sanity S-render: /types?nocache=1 answered HIT on the second request — bypass: 'query(nocache)' is not in effect`)
   } else if (probe === 'S') {
     await hdr('/types')
     const second = await hdr('/types')
@@ -79,6 +94,7 @@ const bunServe: AppSpec = {
   startCmd: () => ({ cmd: ['bun', 'cluster.ts'], env: { BENCH_PORT: String(P(2)), BENCH_PROCS: workers(), BENCH_CTRL_BASE: String(P(20)), NODE_ENV: 'production' } }),
   ready: /\[bun-serve\] listening on http:\/\/127\.0\.0\.1:(\d+) procs=/,
   version: async () => Bun.version,
+  multiProcess: true,
   distribution: async () => {
     const n = Number.parseInt(workers(), 10)
     return Promise.all(Array.from({ length: n }, async (_, i) => ((await (await fetch(`http://127.0.0.1:${P(20) + i}/_count`)).json()) as { count: number }).count))
@@ -93,24 +109,42 @@ const elysiaBun: AppSpec = {
   startCmd: () => ({ cmd: ['bun', 'cluster.ts'], env: { BENCH_PORT: String(P(5)), BENCH_PROCS: workers(), BENCH_CTRL_BASE: String(P(40)), NODE_ENV: 'production' } }),
   ready: /\[elysia-bun\] listening on http:\/\/127\.0\.0\.1:(\d+) procs=/,
   version: async () => `elysia ${(await Bun.file(join(ROOT, 'bench/node_modules/elysia/package.json')).json()).version} · bun ${Bun.version}`,
+  multiProcess: true,
   distribution: async () => {
     const n = Number.parseInt(workers(), 10)
     return Promise.all(Array.from({ length: n }, async (_, i) => ((await (await fetch(`http://127.0.0.1:${P(40) + i}/_count`)).json()) as { count: number }).count))
   },
 }
 
+const NEXT_DIR = join(ROOT, 'bench/apps/next')
 const next: AppSpec = {
-  id: 'next', label: 'Next.js 16.4.0 (standalone, Node)', cwd: join(ROOT, 'bench/apps/next'), port: P(3),
-  available: () => ({ ok: true }),
-  build: async (log) => {
-    const cwd = join(ROOT, 'bench/apps/next')
-    sh(['bun', 'run', 'build'], cwd, log)
-    const server = nextServerJs(cwd)
-    cpSync(join(cwd, '.next/static'), join(server, '../.next/static'), { recursive: true, force: true })
+  id: 'next', label: 'Next.js 16.4.0 (standalone)', cwd: NEXT_DIR, port: P(3),
+  available: () => {
+    try {
+      nextRuntime()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message }
+    }
   },
-  startCmd: () => ({ cmd: ['node', nextServerJs(join(ROOT, 'bench/apps/next'))], env: { PORT: String(P(3)), HOSTNAME: '127.0.0.1', NODE_ENV: 'production' } }),
-  ready: /Ready in|Local:\s+http:\/\/\S+/,
-  version: async () => (await Bun.file(join(ROOT, 'bench/apps/next/node_modules/next/package.json')).json()).version,
+  build: async (log) => {
+    // F595 D1: built with the runtime it is served with.
+    sh(nextRuntime().name === 'bun' ? ['bun', '--bun', 'next', 'build'] : ['bun', 'run', 'build'], NEXT_DIR, log)
+    const server = nextServerJs(NEXT_DIR)
+    cpSync(join(NEXT_DIR, '.next/static'), join(server, '../.next/static'), { recursive: true, force: true })
+  },
+  // F595 D3: N copies on one port through node:cluster (cluster.mjs), like the other apps' N processes.
+  startCmd: () => {
+    const rt = nextRuntime()
+    const cmd = rt.name === 'bun' ? ['bun', '--bun', join(NEXT_DIR, 'cluster.mjs')] : [Bun.which('node') ?? 'node', join(NEXT_DIR, 'cluster.mjs')]
+    return { cmd, env: { PORT: String(P(3)), HOSTNAME: '127.0.0.1', NODE_ENV: 'production', BENCH_PROCS: workers(), BENCH_NEXT_SERVER: nextServerJs(NEXT_DIR) } }
+  },
+  ready: /\[next\] listening on http:\/\/\S+ procs=/,
+  version: async () => {
+    const rt = nextRuntime()
+    return `${(await Bun.file(join(NEXT_DIR, 'node_modules/next/package.json')).json()).version} (${rt.name} ${rt.version})`
+  },
+  multiProcess: true,
 }
 
 const brust01x: AppSpec = {
