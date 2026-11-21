@@ -4,6 +4,7 @@
 #![deny(clippy::all)]
 mod actions;
 pub mod cache;
+pub mod call_cell;
 pub mod config;
 pub mod dispatch;
 mod host;
@@ -33,7 +34,7 @@ pub use config::{
     Stats, StreamConfig, StreamRoute,
 };
 pub use dispatch::{CallKind, DispatchError, RenderDispatch};
-pub use pipeline::{PLAN_DECLINED, plan_in_call, plan_in_call_buf};
+pub use pipeline::{PLAN_DECLINED, call_done, close_worker_calls, plan_in_call, plan_in_call_buf};
 pub use server::{Tuning, start};
 pub use stream_body::{Pull, StreamBody};
 pub use ws::{SocketId, WsData, WsEvent, WsHub, WsSink};

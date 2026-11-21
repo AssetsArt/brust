@@ -261,3 +261,45 @@ test('F507: a mode and token that do not go together is a boot error naming stat
   expect(boot({ stats: 'public', statsToken: 'x' })).toThrow(/^stats: a stats token belongs to stats = "token"/)
   expect(boot({ stats: 'sometimes' })).toThrow(/^stats: stats must be "off", "public" or "token"/)
 })
+
+// F604 (AMENDMENT 3): a handler that throws SYNCHRONOUSLY fails its call like a rejection (500) and the worker STAYS
+// in the pool: the next request on it answers 200. (Before F604 a synchronous throw removed the worker.)
+test('F604: a synchronous throw is a rejected call, the worker stays', async () => {
+  startServer({ host: '127.0.0.1', port: 0, distDir: dist, workers: 1, claimTimeoutMs: 500 })
+  let throwNext = true
+  const raw = (kind: string, json: string, slot: number): Promise<number> => {
+    if (throwNext) {
+      throwNext = false
+      throw new Error('sync boom')
+    }
+    return handler(kind, json, slot)
+  }
+  registerWorker(sab, SLOTS, raw)
+  await untilReady(2000)
+  const base = `http://${localAddr()}`
+  expect((await fetch(`${base}/pokemon/bulbasaur`)).status).toBe(500)
+  const ok = await fetch(`${base}/pokemon/bulbasaur`)
+  expect(ok.status).toBe(200)
+  expect(await ok.text()).toContain('<p>HP 35</p>')
+  await beginDrain(1000)
+})
+
+// F604: a handler that resolves with something that is not a byte length (or rejects) is a rejected call too; the
+// worker stays.
+test('F604: a rejection or a non-length result is a rejected call, the worker stays', async () => {
+  startServer({ host: '127.0.0.1', port: 0, distDir: dist, workers: 1, claimTimeoutMs: 500 })
+  let n = 0
+  const raw = async (kind: string, json: string, slot: number): Promise<number> => {
+    n++
+    if (n === 1) throw new Error('async boom')
+    if (n === 2) return undefined as unknown as number
+    return handler(kind, json, slot)
+  }
+  registerWorker(sab, SLOTS, raw)
+  await untilReady(2000)
+  const base = `http://${localAddr()}`
+  expect((await fetch(`${base}/pokemon/ivysaur`)).status).toBe(500)
+  expect((await fetch(`${base}/pokemon/ivysaur`)).status).toBe(500)
+  expect((await fetch(`${base}/pokemon/ivysaur`)).status).toBe(200)
+  await beginDrain(1000)
+})

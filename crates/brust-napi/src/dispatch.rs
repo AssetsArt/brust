@@ -10,26 +10,22 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use napi::bindgen_prelude::{FnArgs, Promise, ToNapiValue};
-use napi::threadsafe_function::ThreadsafeFunction;
+use napi::bindgen_prelude::{FnArgs, ToNapiValue, Undefined};
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 
 use brust_server::{CallKind, DispatchError, RenderDispatch};
 
-/// Worker signature: `(kind, requestJson, slot) => Promise<number>`.
-///
-/// The worker writes the response as plain JSON (no framing) into its slot's
-/// sub-region `[slot*sub, slot*sub+sub)` with `sub = floor(len / slots)` and
-/// resolves with the byte length (> 0, ≤ sub). `FnArgs` spreads the tuple as
-/// positional JS arguments; CalleeHandled = false matches
-/// `Function::build_threadsafe_function::<T>().build_callback(|ctx| Ok(ctx.value))`
-/// (what `.build()` does, with the data type decoupled from the declared
-/// args). `kind` is a `&'static str` on the Rust side (no per-call allocation;
-/// napi copies it into a JS string on the worker thread), wrapped in
-/// [`KindArg`].
+/// F604: the tsfn calls the per-registration JS wrapper (`server.rs` `CALL_WRAPPER`)
+/// `(kindIndex, requestJson, slot, gen) => undefined`: it runs the worker's handler and completes
+/// the call with ONE native call, `callDone(worker, slot, gen, len)`. Nothing comes back through the
+/// tsfn (no Promise conversion, no per-call native functions or wraps). The kind crosses as its
+/// [`kind_index`]; `gen` is the slot cell's generation, exact as a JS number (<= 2^53 - 1).
+/// CalleeHandled = false matches
+/// `Function::build_threadsafe_function::<T>().build_callback(|ctx| Ok(ctx.value))`.
 pub type WorkerTsfn = ThreadsafeFunction<
-    FnArgs<(KindArg, String, u32)>,
-    Promise<u32>,
-    FnArgs<(KindArg, String, u32)>,
+    FnArgs<(u32, String, u32, i64)>,
+    Undefined,
+    FnArgs<(u32, String, u32, i64)>,
     napi::Status,
     false,
 >;
@@ -53,7 +49,23 @@ impl ToNapiValue for KindArg {
     }
 }
 
-/// The JS-facing name of a call kind (the tsfn's first argument).
+/// F604: the index the call kind crosses as; the wrapper maps it back with [`KIND_NAMES`].
+pub fn kind_index(k: CallKind) -> u32 {
+    match k {
+        CallKind::Loader => 0,
+        CallKind::Jobs => 1,
+        CallKind::Fetch => 2,
+        CallKind::Cache => 3,
+        CallKind::Component => 4,
+    }
+}
+
+/// The handler-facing names, in [`kind_index`] order (the JS wrapper's table).
+#[cfg(test)]
+pub const KIND_NAMES: [&str; 5] = ["loader", "jobs", "fetch", "cache", "component"];
+
+/// The JS-facing name of a call kind (the handler's first argument).
+#[cfg(test)]
 pub fn kind_str(k: CallKind) -> &'static str {
     match k {
         CallKind::Loader => "loader",
@@ -66,7 +78,7 @@ pub fn kind_str(k: CallKind) -> &'static str {
 
 /// Raw pointer to the worker's SharedArrayBuffer backing store. Send+Sync
 /// because the backing store lives outside the GC heap and Rust reads it only
-/// AFTER the worker's Promise resolved (the tsfn await is the happens-before).
+/// AFTER the worker's `callDone` (the slot cell's Release/Acquire pair is the happens-before).
 ///
 /// Lifetime invariant: the pointer stays valid for as long as the pool may
 /// hold this dispatcher, i.e. the process lifetime. `brust start`
@@ -90,7 +102,7 @@ pub struct BufPtr(pub *mut u8);
 
 // SAFETY: see BufPtr docstring — the backing store outlives every dispatcher
 // that can read it (main-thread owned for the process lifetime), and reads are
-// ordered after the worker's write by the resolved Promise.
+// ordered after the worker's write by its `callDone` (the cell's Release store).
 unsafe impl Send for BufPtr {}
 unsafe impl Sync for BufPtr {}
 
@@ -107,24 +119,39 @@ pub struct TsfnDispatch {
 impl RenderDispatch for TsfnDispatch {
     fn call(
         &self,
+        _kind: CallKind,
+        _request_json: String,
+        _slot: u32,
+    ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+        // Never used: `completes_by_cell` routes every call through `send`.
+        Box::pin(async {
+            Err(DispatchError::EnqueueFailed(
+                "the napi dispatcher completes through callDone".into(),
+            ))
+        })
+    }
+
+    fn completes_by_cell(&self) -> bool {
+        true
+    }
+
+    fn send(
+        &self,
         kind: CallKind,
         request_json: String,
         slot: u32,
-    ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
-        let tsfn = Arc::clone(&self.tsfn);
-        Box::pin(async move {
-            match tsfn
-                .call_async((KindArg(kind_str(kind)), request_json, slot).into())
-                .await
-            {
-                // Bridge enqueue failed → worker dead.
-                Err(e) => Err(DispatchError::EnqueueFailed(e.to_string())),
-                // Enqueued; now await the worker's Promise.
-                Ok(promise) => promise
-                    .await
-                    .map_err(|e| DispatchError::PromiseRejected(e.to_string())),
-            }
-        })
+        generation: u64,
+    ) -> Result<(), DispatchError> {
+        // `generation` <= 2^53 - 1 (the cell's cap), so the i64 is exact and positive.
+        let status = self.tsfn.call(
+            (kind_index(kind), request_json, slot, generation as i64).into(),
+            ThreadsafeFunctionCallMode::NonBlocking,
+        );
+        match status {
+            napi::Status::Ok => Ok(()),
+            // Closing / queue gone: the worker is dead.
+            s => Err(DispatchError::EnqueueFailed(format!("{s:?}"))),
+        }
     }
 
     fn slot_count(&self) -> usize {
@@ -139,6 +166,19 @@ impl RenderDispatch for TsfnDispatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kind_indexes_match_the_wrapper_table() {
+        for k in [
+            CallKind::Loader,
+            CallKind::Jobs,
+            CallKind::Fetch,
+            CallKind::Cache,
+            CallKind::Component,
+        ] {
+            assert_eq!(KIND_NAMES[kind_index(k) as usize], kind_str(k));
+        }
+    }
 
     #[test]
     fn kind_names_match_the_wire() {

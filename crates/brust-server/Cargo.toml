@@ -50,6 +50,10 @@ libc.workspace = true
 # F529: the WebSocket tests drive a real client.
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 
+# F604: the completion cell's models (`RUSTFLAGS="--cfg brust_loom" cargo test -p brust-server --release --lib call_cell::loom_tests`).
+[target.'cfg(brust_loom)'.dev-dependencies]
+loom = { version = "0.7", features = ["futures"] }
+
 # Render-path micro-bench on the real pokedex templates (plan m2p Task 1).
 # `cargo bench -p brust-server --bench render`
 [[bench]]
