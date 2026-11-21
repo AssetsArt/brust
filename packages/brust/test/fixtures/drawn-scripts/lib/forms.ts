@@ -19,7 +19,7 @@ export const BY = new Map([
 export const ALL = [...BASE, 'z']
 // D3: array methods with inline callbacks; D4: a call of a pure function of this module.
 export const GRANTABLE = AREAS.filter((a) => !a.soon).flatMap((a) => a.scopes)
-export const LABELS = GRANTABLE.map((s) => label(s))
+export const LABELS = AREAS.map((a) => label(a.id))
 // Extra rule 1: a template of an imported primitive const.
 export const TERMS = `${SITE}/terms`
 

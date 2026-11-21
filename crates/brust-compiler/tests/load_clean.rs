@@ -390,10 +390,6 @@ fn amendment_3_every_accepted_row_of_both_review_probes() {
 const F597_ACCEPTED: &[(&str, &str)] = &[
     // Review F1/F2: what stays accepted after the tightening.
     (
-        "map returning data is data",
-        "const XS = [1, 2]\nconst YS = XS.map((x) => ({ x }))\nexport const Z = YS.filter((y) => y.x > 1).map((y) => y.x)\n",
-    ),
-    (
         "sort of a module copy of an imported array",
         "import { BASE } from './base'\nexport const S = BASE.slice().sort()\nexport const T = [...BASE].reverse()\n",
     ),
@@ -486,10 +482,6 @@ const F597_ACCEPTED: &[(&str, &str)] = &[
         "function policy(remote: string, img = '') {\n  if (!remote) return ['default-src none']\n  return ['default-src none', `img-src self${img}`, `script-src ${remote}`]\n}\nexport const CSP = policy('x')\n",
     ),
     (
-        "D4 for…of over a fresh array and a local let",
-        "function total(xs: number[]) {\n  let n = 0\n  for (const x of [1, 2, 3]) n += x\n  return n\n}\nexport const T = total([])\n",
-    ),
-    (
         "D4 a helper calling a helper",
         "const a = (x: number) => x + 1\nconst b = (x: number) => a(x) * 2\nexport const B = b(1)\n",
     ),
@@ -517,6 +509,48 @@ const F597_ACCEPTED: &[(&str, &str)] = &[
 ];
 
 const F597_REFUSED: &[(&str, &str)] = &[
+    // Review e9d3bcf8 F4 / F5 (closed by AMENDMENT 1: no `let`, assignment or loop in a judged body).
+    (
+        "review F4 loop with a later local",
+        "function f() {\n  let g = undefined\n  for (const i of [1, 2]) {\n    [2, 1].sort(g)\n    g = () => {\n      (globalThis as any).hit = 1\n      return 0\n    }\n    let h = 1\n  }\n  return 1\n}\nexport const r = f()\n",
+    ),
+    (
+        "review F4 loop with an inner loop",
+        "function f() {\n  let g = undefined\n  for (const i of [1, 2]) {\n    [2, 1].sort(g)\n    g = () => {\n      (globalThis as any).hit = 1\n      return 0\n    }\n    for (const j of [1]) {\n    }\n  }\n  return 1\n}\nexport const r = f()\n",
+    ),
+    (
+        "review F5 a callback returning a local it assigned a function",
+        "function g() {\n  (globalThis as any).hit = 1\n  return 0\n}\nconst fs = [0].map(() => {\n  let x = 0\n  x = g\n  return x\n})\nexport const r = [2, 1].sort(fs[0])\n",
+    ),
+    (
+        "review F5 the same under an if",
+        "function g() {\n  (globalThis as any).hit = 1\n  return 0\n}\nconst fs = [0].map((i) => {\n  let x = 0\n  if (i === 0) x = g\n  return x\n})\nexport const r = [2, 1].sort(fs[0])\n",
+    ),
+    // AMENDMENT 1 rows.
+    (
+        "amendment let in a callback",
+        "const XS = [1]\nexport const YS = XS.map((x) => {\n  let y = x\n  return y\n})\n",
+    ),
+    (
+        "amendment assignment in a followed function",
+        "function f() {\n  const o = { a: 1 }\n  o.a = 2\n  return o\n}\nexport const r = f()\n",
+    ),
+    (
+        "amendment for…of in a followed function",
+        "function f() {\n  const out = [1]\n  for (const x of [1, 2]) out.includes(x)\n  return out\n}\nexport const r = f()\n",
+    ),
+    (
+        "amendment sort with a const arrow comparator",
+        "const cmp = (a: number, b: number) => a - b\nexport const S = [2, 1].sort(cmp)\n",
+    ),
+    (
+        "amendment a member in a callback position",
+        "const fs = [(x: number) => x]\nexport const r = [1].map(fs[0])\n",
+    ),
+    (
+        "amendment a call in a callback position",
+        "const mk = () => (x: number) => x\nexport const r = [1].map(mk())\n",
+    ),
     // Review f9df7a4e F1: a map / flatMap result holds what the callback returned, functions included.
     (
         "review F1a map result handed as a callback",
