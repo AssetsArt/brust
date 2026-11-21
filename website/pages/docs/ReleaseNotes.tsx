@@ -25,6 +25,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-63', title: '2.0.0-alpha.63' },
       { id: 'alpha-62', title: '2.0.0-alpha.62' },
       { id: 'alpha-61', title: '2.0.0-alpha.61' },
       { id: 'alpha-60', title: '2.0.0-alpha.60' },
@@ -93,6 +94,34 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-63">2.0.0-alpha.63 · 22 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.62: #541 (ledger F604) and #543 (F605); #544 (F606) is a fix to #541 made before any release, so it has no entry of its own */}
+      <p>This version makes every call from the server to its JavaScript workers cheaper, and builds an action&rsquo;s reply with less work. Nothing in an app changes. Two log lines are worth knowing: one for a worker that exits while it is answering, and one new warning for calls a worker never finishes.</p>
+
+      <h3>Upgrading: what you must change</h3>
+      <ul>
+        {/* source: PR #541 (F604); crates/brust-server/src/dispatch.rs (send_by_cell: the Closed outcome is the rejected call "worker exited mid-call"); crates/brust-core/src/host.rs (CallError::Rejected prints as "worker rejected: …"); crates/brust-core/src/actions.rs and pipeline.rs (the "action call failed", "loader call failed" and "jobs call failed" lines print the error); packages/brust/test/worker-exit.test.ts (the answer is a 500 long before the call deadline) */}
+        <li>
+          <strong>Nothing to change: a worker that exits in the middle of a call is logged as <code>worker exited mid-call</code> (#541).</strong> The request that was waiting for it still gets a 500 at once, not after the call deadline, and the log line for the failed call (<code>action call failed</code>, <code>loader call failed</code> or <code>jobs call failed</code>) carries <code>worker rejected: worker exited mid-call</code> as its error.
+        </li>
+        {/* source: PR #541 (F604) and PR #544 (F606, the final form of the warning); crates/brust-server/src/pool.rs (warn_stale_abandoned, STALE_ABANDONED, STALE_WARN_EVERY: the text and its fields) and crates/brust-server/src/call_cell.rs (the abandoned state: the slot stays claimed until the worker answers or exits) */}
+        <li>
+          <strong>Nothing to change: a new warning when a worker has not finished calls that were given up for more than 10 seconds (#541).</strong> It reads <code>N of K slots have held a call for more than 10 s after its caller gave up; the worker has not finished them</code> and carries the fields <code>worker_id</code>, <code>stale</code>, <code>slots</code> and <code>oldest_s</code> (the age in seconds of the oldest). It appears at most once a minute for each worker. It means that a handler is still running, or never returns, for requests whose client has already gone, and that each such slot stays out of use until the handler answers or the worker exits. The line does not name the route. A burst of clients disconnecting does not trigger it: the worker finishes those calls at once, and the warning counts only calls still unfinished after 10 seconds.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #541 (F604); crates/brust-server/src/call_cell.rs (the completion cell of each worker slot) and crates/brust-napi/src/server.rs (CALL_WRAPPER: one native call, callDone, completes a call); the PR #541 table (median of 12 paired runs of the previous build and this one, per cell, 8 workers); the task notes of call-done (the review rounds and the paired table); tests/server/call-done.test.ts (2,000 requests at 32 at a time, every fifth client giving up mid-call) */}
+        <li>
+          <strong>A call from the server to a JavaScript worker costs less CPU and makes less garbage (#541).</strong> Before, every call to a worker (a loader, an action, the values a component computes on the server) turned the handler&rsquo;s promise into a Rust future, which made two native functions, two wrappers and two derived promises to learn that the call had finished. Now the worker reports that a call is finished with one native call into a cell that each worker slot reuses, so nothing is allocated for it. Measured once, on our benchmark app with 8 workers (the median of 12 paired runs of the previous build and this one; actions at 8 and at 120 connections at once, pages at 120): CPU per request was 12% to 13% lower for an action read and 10% to 13% lower for an action write, with the JavaScript threads 18% to 21% lower; 13% lower for a page with a React island; 8% lower for a small page rendered on every request; and unchanged, within 1%, for a page that renders a long list, because its cost is the render. Requests per second for actions were 1.13 to 1.20 times as high. Requests per second moved more between runs than CPU per request did, so read the CPU figures. Pages served from the page cache and static pages make no worker call and gain nothing: the control cell read 1.000. One app on one machine, not a promise. <strong>Why a late answer cannot land in another request&rsquo;s reply:</strong> a request whose client went away keeps its worker slot until the worker reports back or exits, and a report for any other call is ignored, so the slot is never handed to a new request while the worker may still write to it. The served test sends 2,000 requests, 32 at a time, with every fifth client giving up within a few milliseconds, and checks that every answer carries the marker of its own request and that nothing hangs. A slot that stays held is what the warning under Upgrading reports.
+        </li>
+        {/* source: PR #543 (F605); packages/brust/src/actions-bridge.ts (writeReply: the reply meta is built once); packages/brust/test/actions-reply-frame.test.ts (6,000 generated replies compared with the previous path); the PR #543 table (12 pairs per cell, 8 workers) */}
+        <li>
+          <strong>An action&rsquo;s reply headers are built once instead of twice (#543).</strong> The status and headers of an action&rsquo;s reply were turned into JSON twice, once to measure them and once to send them. Now one copy does both. The bytes sent are the same: a test compares 6,000 generated replies (up to 40 headers each, with repeated and non-ASCII values, and bodies from empty to over the limit) with the previous path and finds the same frame, the same return value and the same log lines. Measured the same way, CPU per request was 2% lower for an action read and 4% to 6% lower for an action write. The control, a cached page, read 1% lower, which is the noise of the measurement.
+        </li>
+      </ul>
 
       <h2 id="alpha-62">2.0.0-alpha.62 · 22 November 2026</h2>
       {/* source: the pull request merged after v2.0.0-alpha.61: #539 (ledger F599) */}
