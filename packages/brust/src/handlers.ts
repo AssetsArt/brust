@@ -117,10 +117,20 @@ export interface ManifestLike {
   actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; stream?: string[] } | null
 }
 
+/** F585: a bigint JSON cannot hold (one the job wrapper does not tag: nested in a slot value, or in loader data) is
+ * written as its decimal digits instead of failing the whole reply; the replacer runs only after a plain stringify threw,
+ * so a reply without one pays nothing. */
+const bigintDigits = (_k: string, v: unknown): unknown => (typeof v === 'bigint' ? v.toString() : v)
+
 export function toJson(out: unknown): string {
   try {
     return JSON.stringify(out)
   } catch (e) {
+    try {
+      if (e instanceof TypeError && /BigInt/i.test(e.message)) return JSON.stringify(out, bigintDigits)
+    } catch (e2) {
+      e = e2
+    }
     return JSON.stringify({ error: `response not serialisable: ${String(e)}` })
   }
 }

@@ -438,6 +438,9 @@ jobs:
       - run: bun test --timeout 120000 tests/server/external-island.chromium.test.ts tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
       # F562: a destructured item and a block body of row consts / an early return null: native, served == React, clicks per row.
       - run: bun test --timeout 120000 tests/server/list-shapes.chromium.test.ts
+      # F585: NaN / ±Infinity / -0 / bigint job values print as React prints them; no first-paint mismatch.
+      - run: bun test --timeout 120000 tests/server/job-values.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/job-values-dev.test.ts
       - run: bun test --timeout 120000 tests/server/island-in-inlined.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/named-export-islands.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-children.chromium.test.ts
