@@ -1,6 +1,6 @@
 {
   "name": "@brust/native-darwin-arm64",
-  "version": "2.0.0-alpha.62",
+  "version": "2.0.0-alpha.63",
   "cpu": [
     "arm64"
   ],
