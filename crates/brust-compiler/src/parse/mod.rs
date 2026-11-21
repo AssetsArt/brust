@@ -148,7 +148,7 @@ pub fn run_on_compiler_thread<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     })
 }
 
-/// Parses one `.tsx` module. Call it inside [`run_on_compiler_thread`].
+/// Parses one module: `.tsx` (and any other name) as TSX, `.ts` / `.mts` / `.cts` as TypeScript. Call it inside [`run_on_compiler_thread`].
 pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
     crate::stats::parsed(path);
     #[cfg(feature = "bun-stubs")]
@@ -172,7 +172,14 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
         // `arena` / `ast_alloc` and is closed before we return, so a second
         // parse on this thread starts from a clean thread-local.
         let _scope = ast_alloc.enter();
-        let mut opts = bun_js_parser::ParserOptions::init(Default::default(), js_ast::Loader::Tsx);
+        // F599 (O3): a `.ts` module is TypeScript, not TSX: in TSX `<T>(l: T): T => l` opens a JSX element, so a generic
+        // arrow written without a trailing comma did not parse as an arrow. A `.tsx` module (and any other name) is TSX.
+        let loader = if [".ts", ".mts", ".cts"].iter().any(|e| path.ends_with(e)) {
+            js_ast::Loader::Ts
+        } else {
+            js_ast::Loader::Tsx
+        };
+        let mut opts = bun_js_parser::ParserOptions::init(Default::default(), loader);
         opts.features.no_macros = true;
         opts.features.react_compiler = js_ast::runtime::ReactCompilerMode::Disabled;
         // Lower JSX to `jsx`/`jsxs(tag, props[, key])`, never the 6-arg `jsxDEV`.
