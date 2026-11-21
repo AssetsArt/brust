@@ -1,12 +1,13 @@
 // F604 Step 0 (c): what a request sees when its worker exits while the call is in flight. Pins today's outcome
 // so the call-done change (completion through callDone instead of the worker's Promise) keeps it.
-// Run alone: `bun test --timeout 120000 tests/server/worker-exit.test.ts`.
+// Runs on Linux and Windows (the per-file loops in ci.yml): the close of a worker's calls when its env goes away is
+// platform code (napi env cleanup hook). Run alone: `cd packages/brust && bun test --timeout 120000 test/worker-exit.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 
-const app = join(import.meta.dir, '../../packages/brust/test/fixtures/worker-exit')
-const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
+const app = join(import.meta.dir, 'fixtures/worker-exit')
+const bin = join(import.meta.dir, '../bin/brust')
 let proc: ReturnType<typeof Bun.spawn>
 let base = ''
 let out = ''
