@@ -1,0 +1,245 @@
+{
+  "id": "input_a11a57a9",
+  "source": "tests/fixtures/hook-returned-effect/input.tsx",
+  "tier": "Native",
+  "native_because": [
+    "state `v_usePlain1` is set (line 7)",
+    "state `v_useDerived1` is set (line 8)",
+    "an effect (line 9)",
+    "an effect (line 10)"
+  ],
+  "props": [],
+  "state": [
+    {
+      "name": "v_usePlain1",
+      "setter": "setV_usePlain1",
+      "init": {
+        "Server": {
+          "loc": 324,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "v_useDerived1",
+      "setter": "setV_useDerived1",
+      "init": {
+        "Server": {
+          "loc": 361,
+          "kind": {
+            "Lit": {
+              "Str": ""
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "sel_usePlain1",
+      "expr": {
+        "ClientOnly": {
+          "js": "\"eff\""
+        }
+      }
+    },
+    {
+      "name": "run_usePlain1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_usePlain1(`${sel_usePlain1}!`)"
+        }
+      }
+    },
+    {
+      "name": "n_useDerived1",
+      "expr": {
+        "ClientOnly": {
+          "js": "\"fx\""
+        }
+      }
+    },
+    {
+      "name": "label_useDerived1",
+      "expr": {
+        "ClientOnly": {
+          "js": "`${n_useDerived1}#${n_useDerived1.length}`"
+        }
+      }
+    },
+    {
+      "name": "run_useDerived1",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setV_useDerived1(label_useDerived1)"
+        }
+      }
+    }
+  ],
+  "effects": [
+    {
+      "body": {
+        "loc": 390,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 396,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 396,
+                      "kind": {
+                        "Ident": {
+                          "name": "run_usePlain1",
+                          "kind": "Local"
+                        }
+                      }
+                    },
+                    "args": []
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "run_usePlain1",
+                "Local"
+              ]
+            ]
+          }
+        }
+      },
+      "deps": [],
+      "layout": false
+    },
+    {
+      "body": {
+        "loc": 421,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 427,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 427,
+                      "kind": {
+                        "Ident": {
+                          "name": "run_useDerived1",
+                          "kind": "Local"
+                        }
+                      }
+                    },
+                    "args": []
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "run_useDerived1",
+                "Local"
+              ]
+            ]
+          }
+        }
+      },
+      "deps": [],
+      "layout": false
+    }
+  ],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 453,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 465,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "em"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 477,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_usePlain1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 492,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "ed"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 504,
+                    "kind": {
+                      "Ident": {
+                        "name": "v_useDerived1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

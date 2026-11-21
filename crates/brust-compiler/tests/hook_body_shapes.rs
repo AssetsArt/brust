@@ -513,3 +513,52 @@ fn a_returned_handler_reading_a_prop_carries_it_in_x_props() {
         assert!(j.contains("\"title\": title"), "{j}");
     }
 }
+
+// ---- F589: a returned function reached through the hook object from code the chunk runs ----
+
+const USE_S: &str = "import { useState } from 'react'\nexport function useS(sel: string) { const [v, setV] = useState(''); const run = () => setV(sel + '!'); return { v, run } }\n";
+
+#[test]
+fn an_inline_handler_or_an_effect_calling_a_hook_function_through_the_object_declares_it() {
+    for c in [
+        // I-M, and the member passed on as an argument
+        "import { useS } from './h'\nexport default function C({ t }: any) { const s = useS(t); return <button onClick={() => s.run()}>{s.v}</button> }",
+        "import { useS } from './h'\nconst go = (f: () => void) => f()\nexport default function C({ t }: any) { const s = useS(t); return <button onClick={() => go(s.run)}>{s.v}</button> }",
+        // an effect with an expression body
+        "import { useEffect } from 'react'\nimport { useS } from './h'\nexport default function C({ t }: any) { const s = useS(t); useEffect(() => s.run(), []); return <p>{s.v}</p> }",
+    ] {
+        let files = [("h.ts", USE_S), ("C.tsx", c)];
+        let ir = analyze_tree(&files);
+        accepted(&ir, Tier::Native);
+        // the prop the function reads is a client prop (analyze side)
+        assert!(
+            ir.client_props.iter().any(|p| p == "t"),
+            "{c}\n{:?}",
+            ir.client_props
+        );
+        let (_, _, client) = lower_tree(&files);
+        assert!(client.contains("const run_useS1 = "), "{c}\n{client}");
+    }
+}
+
+#[test]
+fn the_hook_object_read_in_code_printed_as_written_stays_refused() {
+    // a block body (an inline handler, the value read and called, a nested arrow, an effect) and a ref callback
+    for c in [
+        "import { useS } from './h'\nexport default function C({ t }: any) { const s = useS(t); return <button onClick={() => { s.run() }}>{s.v}</button> }",
+        "import { useS } from './h'\nexport default function C({ t }: any) { const s = useS(t); return <button onClick={() => { const f = s.run; f() }}>{s.v}</button> }",
+        "import { useS } from './h'\nexport default function C({ t }: any) { const s = useS(t); return <button onClick={() => { const later = () => s.run(); later() }}>{s.v}</button> }",
+        "import { useEffect } from 'react'\nimport { useS } from './h'\nexport default function C({ t }: any) { const s = useS(t); useEffect(() => { s.run() }, []); return <p>{s.v}</p> }",
+        "import { useS } from './h'\nexport default function C({ t }: any) { const s = useS(t); return <p ref={(el) => { if (el) s.run() }}>{s.v}</p> }",
+    ] {
+        let ir = analyze_tree(&[("h.ts", USE_S), ("C.tsx", c)]);
+        assert!(
+            fallbacks(&ir)
+                .iter()
+                .any(|(_, m)| m.contains("an object a custom hook returns is used as a whole")),
+            "{c}\n{:?}",
+            ir.diagnostics
+        );
+        assert!(matches!(ir.tier, Tier::React { .. }), "{c}\n{:?}", ir.tier);
+    }
+}

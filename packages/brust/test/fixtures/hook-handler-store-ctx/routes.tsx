@@ -21,6 +21,14 @@ import P8e_m from './pages/8e-m'
 import P8e_d from './pages/8e-d'
 import P8f_m from './pages/8f-m'
 import P8f_d from './pages/8f-d'
+import P7a_im from './pages/7a-im'
+import P7a_id from './pages/7a-id'
+import P7d_im from './pages/7d-im'
+import P7d_id from './pages/7d-id'
+import P8a_im from './pages/8a-im'
+import P8a_id from './pages/8a-id'
+import P8d_im from './pages/8d-im'
+import P8d_id from './pages/8d-id'
 
 const who = ({ req }: { req: { search: Record<string, string> } }) => ({ who: req.search.who ?? 'nobody' })
 
@@ -47,4 +55,12 @@ export const routes = defineRoutes([
   { path: '/8e-d', Component: P8e_d },
   { path: '/8f-m', Component: P8f_m },
   { path: '/8f-d', Component: P8f_d },
+  { path: '/7a-im', Component: P7a_im },
+  { path: '/7a-id', Component: P7a_id },
+  { path: '/7d-im', Component: P7d_im },
+  { path: '/7d-id', Component: P7d_id },
+  { path: '/8a-im', Component: P8a_im },
+  { path: '/8a-id', Component: P8a_id },
+  { path: '/8d-im', Component: P8d_im },
+  { path: '/8d-id', Component: P8d_id },
 ])

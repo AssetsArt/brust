@@ -76,3 +76,11 @@ test('hook-returned-inline: each returned function called from an inline handler
     warnings: [],
   })
 })
+
+test('hook-returned-effect: a returned function called from an effect, as a member and destructured', async () => {
+  const m = await load(build('hook-returned-effect'))
+  // React: first paint empty, then each effect sets its hook's state
+  expect(m.before).toContain('<p id="em"></p>')
+  expect([$('#em').textContent, $('#ed').textContent]).toEqual(['eff!', 'fx#2'])
+  expect(m.warnings).toEqual([])
+})

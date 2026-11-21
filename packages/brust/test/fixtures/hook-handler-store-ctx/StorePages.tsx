@@ -106,3 +106,39 @@ export function S7eD() {
     </main>
   )
 }
+
+// F589: the same cells called from an INLINE handler, through the hook object (IM) and destructured (ID).
+export function S7aIM() {
+  const s = useRead()
+  return (
+    <main>
+      <button type="button" data-testid="run" onClick={() => s.run()}>{s.v}</button>
+    </main>
+  )
+}
+export function S7aID() {
+  const { v, run } = useRead()
+  return (
+    <main>
+      <button type="button" data-testid="run" onClick={() => run()}>{v}</button>
+    </main>
+  )
+}
+export function S7dIM() {
+  const s = useRead()
+  return (
+    <main>
+      <Bump />
+      <button type="button" data-testid="run" onClick={() => s.run()}>{s.v}</button>
+    </main>
+  )
+}
+export function S7dID() {
+  const { v, run } = useRead()
+  return (
+    <main>
+      <Bump />
+      <button type="button" data-testid="run" onClick={() => run()}>{v}</button>
+    </main>
+  )
+}

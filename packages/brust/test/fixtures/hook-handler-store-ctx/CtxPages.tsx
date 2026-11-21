@@ -57,3 +57,25 @@ export function C8fM() {
 export function C8fD() {
   return <main><RD tid="a" /></main>
 }
+
+// F589: the same cells called from an INLINE handler, through the hook object (IM) and destructured (ID).
+function RIM({ tid }: { tid: string }) {
+  const s = useCtxRead()
+  return <button type="button" data-testid={tid} onClick={() => s.run()}>{s.v}</button>
+}
+function RID({ tid }: { tid: string }) {
+  const { v, run } = useCtxRead()
+  return <button type="button" data-testid={tid} onClick={() => run()}>{v}</button>
+}
+export function C8aIM() {
+  return <main><Frame value="alpha"><RIM tid="a" /></Frame></main>
+}
+export function C8aID() {
+  return <main><Frame value="alpha"><RID tid="a" /></Frame></main>
+}
+export function C8dIM() {
+  return <main><Frame value="one"><RIM tid="a" /></Frame><Frame value="two"><RIM tid="b" /></Frame></main>
+}
+export function C8dID() {
+  return <main><Frame value="one"><RID tid="a" /></Frame><Frame value="two"><RID tid="b" /></Frame></main>
+}
