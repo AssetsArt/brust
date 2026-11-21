@@ -216,10 +216,16 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         <code>nested-fed-child</code> warning on the inner component. Everywhere else the inner component keeps its own tier. Before 2.0.0-alpha.53 the outer component became the island (<code>nested-instance</code>), which it still does when the
         copy would not help, for example when the inner component is given a function.
       </p>
-      {/* source: packages/brust/src/handlers.ts (toJson), tests/server/job-bigint.test.ts (F585) */}
+      {/* source: packages/brust/src/build/bundle.ts (SLOTS_HELPER: the tag), crates/brust-jinja/src/ctx.rs (decode_slot), packages/brust/src/handlers.ts (toJson), crates/brust-jinja/tests/js_values.rs and js_values_table.rs (every filter equals JavaScript), tests/server/job-bigint.test.ts and tests/server/job-values.chromium.test.ts (F585) */}
       <p>
-        A precomputed value travels from the worker to the server as JSON. A <code>bigint</code> is sent as its decimal digits, so text and attributes print what React prints; in a test the digits are a non-empty string, so{' '}
-        <code>0n</code> counts as true there where JavaScript reads it as false. <code>NaN</code> and <code>Infinity</code> arrive as <code>null</code> and print nothing. A <code>bigint</code> in loader data is not converted: the page answers 500.
+        A precomputed value travels from the worker to the server as JSON. JSON has no <code>NaN</code>, <code>Infinity</code> or <code>bigint</code>, so the worker marks those values and the server reads them back as what they were: a top-level
+        value of a job, and each item of a top-level array, keeps its meaning in text, in an attribute, in a condition and in arithmetic. <code>NaN</code>, <code>Infinity</code>, <code>-Infinity</code> and <code>10n</code> print as JavaScript
+        prints them, <code>NaN</code> and <code>0n</code> are false in a test, <code>Infinity</code> is true. A value nested deeper (a member of an object) is not marked: a <code>NaN</code> there arrives as <code>null</code>, and a{' '}
+        <code>bigint</code> arrives as its decimal digits. A <code>bigint</code> in loader data is not converted: the page answers 500.
+      </p>
+      <p>
+        Under <code>brust dev</code>, a job that returns an object, a <code>Date</code>, a <code>Map</code>, a <code>Set</code> or a <code>Promise</code> for a position that prints it (text or an attribute) gets a warning naming the
+        component and the value: React prints those differently from the JSON image brust has. Production prints the same bytes and says nothing.
       </p>
       {/* source: crates/brust-compiler/src/analyze/passes/children.rs (nested-instance -> island-client-only), recursion.rs (islands_client_only), tests/server/rc-client-islands.chromium.test.ts (F548) */}
       <p>

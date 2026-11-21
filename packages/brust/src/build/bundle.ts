@@ -948,12 +948,59 @@ export function jobImportPlugin(fileOf: (id: string) => string | undefined, isJo
 
 /** F512: JSON drops an `undefined` property, so brust-core would read a missed `find` (a top-level output that is
  * `undefined`) as a slot the job never wrote. The job returns `null` for it instead: React renders both nothing and
- * both are falsy. Top-level outputs only; nested values are left as they are. */
-export const SLOTS_HELPER = `const __slots = (f: (p: any) => any) => (p: any) => {
+ * both are falsy. Top-level outputs only; nested values are left as they are.
+ *
+ * F585: a number JSON cannot carry (NaN, Infinity, -Infinity) and a bigint are sent as a one-key object of the reserved
+ * key `"\u0000js"` holding their JS text (`{"\u0000js": "NaN"}`, `{"\u0000js": "10n"}`), which brust-core decodes back
+ * (`brust_jinja::ctx::decode_slot`); an app object that has that key itself is escaped (`{"\u0000js": {o: <it>}}`) so
+ * it decodes to itself. Both at the same depths: a top-level output and each item of a top-level array output (an array
+ * is copied, never changed in place, when one of its items is). A nested value is left to JSON (`toJson` turns a nested
+ * bigint into its digits). The work is one `typeof` per output, and per item of an array output. */
+export const SLOTS_HELPER = slotsHelper(false)
+
+/** F585 (AMENDMENT 1): the `brust dev` wrapper also sends an object-like top-level output (an object, a `Date`, a `Map`,
+ * a `Set`, a `Promise`) as `{"\u0000js": {k: <kind>, v: <it>}}`: brust-core decodes it to the same value as production
+ * and warns when a printing position prints it. The production wrapper is exactly the one above. */
+export const DEV_SLOTS_HELPER = slotsHelper(true)
+
+function slotsHelper(dev: boolean): string {
+  // Dev only, top-level outputs only (an array's items keep the production encoding).
+  const dev_ = dev
+    ? `
+const __dev = (v: any): any => {
+  if (v === null || typeof v !== 'object' || Array.isArray(v) || Object.hasOwn(v, __T)) return __enc(v)
+  const k = v instanceof Date ? 'Date' : v instanceof Map ? 'Map' : v instanceof Set ? 'Set' : v instanceof Promise ? 'Promise' : 'object'
+  return { [__T]: { k, v } }
+}`
+    : ''
+  return `const __T = '\\u0000js'
+const __enc = (v: any): any => {
+  const t = typeof v
+  if (t === 'number') return v === v && v !== Infinity && v !== -Infinity ? v : { [__T]: String(v) }
+  if (t === 'bigint') return { [__T]: v + 'n' }
+  if (t === 'object' && v !== null && Object.hasOwn(v, __T)) return { [__T]: { o: v } }
+  return v
+}${dev_}
+const __slots = (f: (p: any) => any) => (p: any) => {
   const r = f(p)
-  if (r !== null && typeof r === 'object' && !Array.isArray(r)) for (const k of Object.keys(r)) if (r[k] === undefined) r[k] = null
+  if (r !== null && typeof r === 'object' && !Array.isArray(r))
+    for (const k of Object.keys(r)) {
+      const v = r[k]
+      if (v === undefined) r[k] = null
+      else if (Array.isArray(v)) {
+        let c: any[] | undefined
+        for (let i = 0; i < v.length; i++) {
+          const x = v[i]
+          if (typeof x !== 'object' && typeof x !== 'number' && typeof x !== 'bigint') continue
+          const y = __enc(x)
+          if (y !== x) (c ??= v.slice())[i] = y
+        }
+        if (c !== undefined) r[k] = c
+      } else r[k] = ${dev ? '__dev' : '__enc'}(v)
+    }
   return r
 }`
+}
 
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
@@ -971,6 +1018,8 @@ export async function buildJobs(
   writers: string[] = [],
   /** F495: `[server] base_path`: an imported asset's URL carries it. */
   basePath = '',
+  /** F585: `brust dev` (the wrapper that also tags object-like outputs for the print warning). */
+  dev = false,
 ): Promise<void> {
   const imports: string[] = [writerImports(writers).trimEnd(), "import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"].filter((l) => l !== '')
   const entries: string[] = []
@@ -1019,7 +1068,7 @@ export async function buildJobs(
     n++
   }
   const entry = join(dist, '.stage', 'jobs.ts')
-  write(entry, `${imports.join('\n')}\n${SLOTS_HELPER}\nexport default {\n${entries.join('\n')}\n}\n${storesTable(storePaths)}`)
+  write(entry, `${imports.join('\n')}\n${dev ? DEV_SLOTS_HELPER : SLOTS_HELPER}\nexport default {\n${entries.join('\n')}\n}\n${storesTable(storePaths)}`)
   const res = await Bun.build({
     entrypoints: [entry],
     target: 'bun',

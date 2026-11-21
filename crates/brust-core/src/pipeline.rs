@@ -910,8 +910,17 @@ fn apply_job_results<H: Host>(
         note_missing_slots(s, &plans[i], v);
     }
     let mut rejected = false;
-    for (v, &i) in fresh.into_iter().zip(misses.iter()) {
+    for (mut v, &i) in fresh.into_iter().zip(misses.iter()) {
         let p = &plans[i];
+        // F585: the values JSON cannot carry (NaN, ±Infinity, a bigint) arrive tagged by the job wrapper; decoded once
+        // here, before the job cache, so a cached value is the decoded one (server and Cloudflare alike).
+        if matches!(p.kind, JobKind::Precompute)
+            && let Some(m) = v.map_mut()
+        {
+            for (name, slot) in m.iter_mut() {
+                brust_jinja::ctx::decode_slot_of(slot, p.component_id, name);
+            }
+        }
         let v = Arc::new(v);
         if !s.jobs.insert(
             p.key.clone(),
