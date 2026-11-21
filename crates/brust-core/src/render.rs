@@ -269,7 +269,7 @@ fn marker_safe(id: &str) -> bool {
 fn level_hash(html: &str, child: Option<&str>, root: bool) -> String {
     let mut cut: Vec<(usize, usize)> = Vec::new();
     if let Some(c) = child.filter(|c| !c.is_empty()) {
-        cut.extend(html.match_indices(c).map(|(i, m)| (i, i + m.len())));
+        child_ranges(html, c, &mut cut);
     }
     if root && let Some(r) = head_range(html) {
         cut.push(r);
@@ -290,6 +290,32 @@ fn level_hash(html: &str, child: Option<&str>, root: bool) -> String {
     }
     seg(&html[at..]);
     h.finalize().to_hex().as_str()[..16].to_string()
+}
+
+/// The longest prefix of the child searched for first: building a substring searcher costs time in the needle's length,
+/// and a child level's whole markup can be most of the page.
+const CHILD_PREFIX: usize = 32;
+
+/// Every non-overlapping, left-to-right occurrence of `c` in `html`, pushed as byte ranges: what
+/// `html.match_indices(c)` finds, without building a searcher over the whole of `c`. A short prefix of `c` (at most
+/// [`CHILD_PREFIX`] bytes, cut at a char boundary) is searched for, and each hit is checked against the full `c`; after
+/// a match the search goes on at its end, after a hit that is not one at the next char.
+fn child_ranges(html: &str, c: &str, out: &mut Vec<(usize, usize)>) {
+    let mut cut = c.len().min(CHILD_PREFIX);
+    while !c.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let prefix = &c[..cut];
+    let mut from = 0;
+    while let Some(rel) = html[from..].find(prefix) {
+        let i = from + rel;
+        if html[i..].starts_with(c) {
+            out.push((i, i + c.len()));
+            from = i + c.len();
+        } else {
+            from = i + html[i..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
 }
 
 /// The byte range of the first `<head …>…</head>` element (not `<header>`), end tag included.
@@ -1768,6 +1794,149 @@ mod tests {
             )
             .unwrap();
         assert_eq!(plain, html);
+    }
+
+    /// F602: the code `level_hash` had before `child_ranges` (a searcher over the child's whole markup), kept as the
+    /// reference the new one must equal.
+    fn level_hash_ref(html: &str, child: Option<&str>, root: bool) -> String {
+        let mut cut: Vec<(usize, usize)> = Vec::new();
+        if let Some(c) = child.filter(|c| !c.is_empty()) {
+            cut.extend(html.match_indices(c).map(|(i, m)| (i, i + m.len())));
+        }
+        if root && let Some(r) = head_range(html) {
+            cut.push(r);
+        }
+        cut.sort_unstable();
+        let mut h = blake3::Hasher::new();
+        let mut seg = |s: &str| {
+            h.update(&(s.len() as u64).to_le_bytes());
+            h.update(s.as_bytes());
+        };
+        let mut at = 0;
+        for (a, b) in cut {
+            if b <= at {
+                continue;
+            }
+            seg(&html[at..a.max(at)]);
+            at = b;
+        }
+        seg(&html[at..]);
+        h.finalize().to_hex().as_str()[..16].to_string()
+    }
+
+    fn same_hash(html: &str, child: Option<&str>) {
+        for root in [false, true] {
+            assert_eq!(
+                level_hash(html, child, root),
+                level_hash_ref(html, child, root),
+                "html={html:?} child={child:?} root={root}"
+            );
+        }
+        if let Some(c) = child.filter(|c| !c.is_empty()) {
+            let mut got = Vec::new();
+            child_ranges(html, c, &mut got);
+            let want: Vec<_> = html
+                .match_indices(c)
+                .map(|(i, m)| (i, i + m.len()))
+                .collect();
+            assert_eq!(got, want, "html={html:?} child={c:?}");
+        }
+    }
+
+    /// F602: `level_hash` finds the child exactly where `match_indices` does: absent, once, several times, adjacent,
+    /// overlapping itself, a long child whose 32-byte prefix occurs without the rest, multi-byte text at the cut,
+    /// child == html, an empty child, a root with and without a head.
+    #[test]
+    fn level_hash_equals_the_match_indices_reference_on_the_named_shapes() {
+        let long: String = format!("<section>{}</section>", "x".repeat(80));
+        let near = format!("{}Z", &long[..long.len() - 1]);
+        let cases: Vec<(String, Option<String>)> = vec![
+            ("<p>a</p>".into(), None),
+            ("<p>a</p>".into(), Some(String::new())),
+            ("<p>a</p>".into(), Some("<b>".into())),
+            (format!("<main>{long}</main>"), Some(long.clone())),
+            (
+                format!("<a>{long}</a><b>{long}</b><c>{long}{long}</c>"),
+                Some(long.clone()),
+            ),
+            (format!("{long}{long}{long}"), Some(long.clone())),
+            (format!("{near}{long}{near}"), Some(long.clone())),
+            (format!("{}{}", &long[..40], long), Some(long.clone())),
+            ("aaaaa".into(), Some("aaa".into())),
+            ("ababab".into(), Some("abab".into())),
+            (format!("{0}{0}x", "a".repeat(40)), Some("a".repeat(36))),
+            (
+                format!("{}b", "a".repeat(100)),
+                Some(format!("{}b", "a".repeat(40))),
+            ),
+            // multi-byte text across the 32-byte cut
+            ("é".repeat(40), Some("é".repeat(20))),
+            (
+                format!("x{}", "日本語".repeat(30)),
+                Some("日本語".repeat(12)),
+            ),
+            (
+                format!("{0}{0}", "日本語".repeat(20)),
+                Some("日本語".repeat(20)),
+            ),
+            ("same".into(), Some("same".into())),
+            (
+                "<html><head><title>t</title></head><body>B</body></html>".into(),
+                Some("<body>B</body>".into()),
+            ),
+            (
+                "<html><body>B</body></html>".into(),
+                Some("<body>B</body>".into()),
+            ),
+            (
+                "<html><head></head><HEAD>x</HEAD>B</html>".into(),
+                Some("B".into()),
+            ),
+        ];
+        for (html, child) in &cases {
+            same_hash(html, child.as_deref());
+        }
+    }
+
+    /// F602: the same, on generated pages: random small alphabets so that repeats, overlaps and near misses are common.
+    #[test]
+    fn level_hash_equals_the_match_indices_reference_on_generated_cases() {
+        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let alphabet: [&str; 8] = ["a", "b", "<", ">", "é", "日", "<head>", "</head>"];
+        let word = |n: &mut dyn FnMut() -> u64, max: u64| -> String {
+            let len = n() % max;
+            (0..len).map(|_| alphabet[(n() % 8) as usize]).collect()
+        };
+        for _ in 0..20_000 {
+            let child = word(&mut next, 70);
+            let mut html = word(&mut next, 60);
+            // paste the child (or a prefix of it) a few times so there is something to find
+            for _ in 0..(next() % 4) {
+                let at = (next() % (html.len() as u64 + 1)) as usize;
+                let at = (0..=at)
+                    .rev()
+                    .find(|&k| html.is_char_boundary(k))
+                    .unwrap_or(0);
+                let piece = if next().is_multiple_of(3) {
+                    let cut = (next() % (child.len() as u64 + 1)) as usize;
+                    let cut = (0..=cut)
+                        .rev()
+                        .find(|&k| child.is_char_boundary(k))
+                        .unwrap_or(0);
+                    child[..cut].to_string()
+                } else {
+                    child.clone()
+                };
+                html.insert_str(at, &piece);
+            }
+            same_hash(&html, Some(&child));
+        }
     }
 
     #[test]

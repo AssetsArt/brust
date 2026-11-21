@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     AttrKind, attr_kind, attr_name, attr_string, escape_attr, escape_text, is_refused_attr,
-    js_number, present, present_plain, present_str, safe_url, style_obj_to_css, truthy,
+    js_number, present, present_plain, present_str, safe_url, truthy,
 };
 
 /// React prop names a spread never turns into attributes.
@@ -126,10 +126,7 @@ pub fn render_attr(react_name: &str, v: &Value) -> String {
         if v.kind() != ValueKind::Map {
             return String::new();
         }
-        return format!(
-            " style=\"{}\"",
-            escape_text(&style_obj_to_css(&map_pairs(v)))
-        );
+        return crate::style_attr_of_map(v, true);
     }
     match attr_kind(&html) {
         AttrKind::Boolean => {

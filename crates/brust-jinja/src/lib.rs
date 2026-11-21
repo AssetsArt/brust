@@ -138,16 +138,9 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_function(
         "css_decls",
         |args: minijinja::value::Rest<Value>| -> String {
-            let pairs: Vec<(String, Value)> = args
-                .chunks(2)
-                .map(|kv| {
-                    (
-                        kv[0].as_str().unwrap_or_default().to_string(),
-                        kv.get(1).cloned().unwrap_or(Value::UNDEFINED),
-                    )
-                })
-                .collect();
-            style_obj_to_css(&pairs)
+            let mut out = String::new();
+            push_style_decls(&mut out, arg_pairs(&args));
+            out
         },
     );
     // F296 C3: the whole ` style="…"` attribute, or nothing when no declaration is left (react-dom omits an
@@ -155,41 +148,24 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_function(
         "css_attr",
         |args: minijinja::value::Rest<Value>| -> String {
-            let pairs: Vec<(String, Value)> = args
-                .chunks(2)
-                .map(|kv| {
-                    (
-                        kv[0].as_str().unwrap_or_default().to_string(),
-                        kv.get(1).cloned().unwrap_or(Value::UNDEFINED),
-                    )
-                })
-                .collect();
-            style_attr_text(&style_obj_to_css(&pairs))
+            let mut out = String::new();
+            push_style_attr(&mut out, arg_pairs(&args), false);
+            out
         },
     );
     env.add_filter("style_attr", |v: Value| {
         if v.kind() != ValueKind::Map {
             return String::new();
         }
-        style_attr_text(&style_obj_to_css(&style_pairs(&v)))
+        style_attr_of_map(&v, false)
     });
     env.add_filter("style_css", |v: Value| {
         // Only a style object has declarations (React throws on a string).
         if v.kind() != ValueKind::Map {
             return String::new();
         }
-        style_obj_to_css(&style_pairs(&v))
+        style_css_of_map(&v)
     });
-}
-
-/// The declarations of a style object in the order React prints them: an object parsed from the worker's JSON text keeps
-/// that text order (F318, `CtxMap::each_ordered`), an `obj_lit` object its insertion order, any other map the order it
-/// iterates (sorted).
-fn style_pairs(v: &Value) -> Vec<(String, Value)> {
-    map_entries(v)
-        .into_iter()
-        .map(|(k, val)| (k.to_string(), val))
-        .collect()
 }
 
 /// JS `ToNumber` for the operands of the arithmetic operators and `<` / `>`: `undefined` is `NaN`, `null` is 0, a boolean
@@ -1114,10 +1090,23 @@ pub fn css_key(k: &str) -> bool {
 /// `backgroundColor` → `background-color`; `--custom` stays; `msTransform` → `-ms-transform` (react-dom's
 /// `hyphenateStyleName`: the `ms` prefix is lowercase, so hyphenating alone leaves it without its leading dash).
 pub fn css_property(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    push_css_property(&mut out, name);
+    out
+}
+
+/// [`css_property`] written onto the end of `out`, with no String of its own.
+fn push_css_property(out: &mut String, name: &str) {
     if name.starts_with("--") {
-        return name.to_string();
+        out.push_str(name);
+        return;
     }
-    let mut out = String::new();
+    // `ms` followed by an uppercase letter (hyphenated to `ms-x`) or by a dash is the vendor prefix that gets a dash
+    // in front; the check is on the name, so the text is written once.
+    let b = name.as_bytes();
+    if b.starts_with(b"ms") && matches!(b.get(2), Some(b'-' | b'A'..=b'Z')) {
+        out.push('-');
+    }
     for c in name.chars() {
         if c.is_ascii_uppercase() {
             out.push('-');
@@ -1126,45 +1115,125 @@ pub fn css_property(name: &str) -> String {
             out.push(c);
         }
     }
-    if out.starts_with("ms-") {
-        out.insert(0, '-');
-    }
-    out
 }
 
 /// A style value as React prints it: numbers get `px` unless unitless or 0.
 pub fn css_value(prop: &str, v: &Value) -> String {
-    match number_of(v) {
-        Some(n) if v.kind() == ValueKind::Number => {
-            if n == 0.0 || is_unitless(prop) || prop.starts_with("--") {
-                js_number(n)
-            } else {
-                format!("{}px", js_number(n))
-            }
-        }
-        _ => {
-            // A string must not end the declaration or open another construct
-            // (CSS injection into the server-rendered style attribute; React
-            // sets each property on its own, so nothing like it exists there).
-            // react-dom prints `('' + value).trim()`
-            let s = paint(v).trim().to_string();
-            let lower = s.to_ascii_lowercase();
-            let breaks = s.contains([';', '{', '}', '\\', '\n', '\r'])
-                || lower.contains("/*")
-                || lower.contains("expression(")
-                || lower.contains("@import");
-            if breaks { String::new() } else { s }
-        }
+    let mut out = String::new();
+    push_css_value(&mut out, prop, v);
+    out
+}
+
+/// `n` as [`js_number`] prints it, written onto the end of `out` (an integer below 1e15, the common case, with no
+/// intermediate String).
+fn push_js_number(out: &mut String, n: f64) {
+    use std::fmt::Write;
+    if n == 0.0 {
+        out.push('0');
+    } else if n.fract() == 0.0 && n.abs() < 1e15 {
+        let _ = write!(out, "{}", n as i64);
+    } else {
+        out.push_str(&js_number(n));
     }
 }
 
-/// ` style="decls"`, or nothing for no declarations.
-fn style_attr_text(css: &str) -> String {
-    if css.is_empty() {
-        String::new()
-    } else {
-        format!(" style=\"{}\"", escape_attr(css))
+/// Whether `s` holds `needle` (given in lowercase ASCII) at any position, ignoring the ASCII case of `s`: the same
+/// answer as `s.to_ascii_lowercase().contains(needle)`, with no lowercase copy.
+fn contains_ci(s: &str, needle: &[u8]) -> bool {
+    let h = s.as_bytes();
+    h.len() >= needle.len()
+        && (0..=h.len() - needle.len()).any(|k| h[k..k + needle.len()].eq_ignore_ascii_case(needle))
+}
+
+/// [`css_value`] written onto the end of `out`; nothing is written for a string that must not reach a style attribute
+/// (see below) or one that is empty once trimmed.
+fn push_css_value(out: &mut String, prop: &str, v: &Value) {
+    if v.kind() == ValueKind::Number
+        && let Some(n) = number_of(v)
+    {
+        push_js_number(out, n);
+        if !(n == 0.0 || is_unitless(prop) || prop.starts_with("--")) {
+            out.push_str("px");
+        }
+        return;
     }
+    // A string must not end the declaration or open another construct
+    // (CSS injection into the server-rendered style attribute; React
+    // sets each property on its own, so nothing like it exists there).
+    // react-dom prints `('' + value).trim()`
+    let painted;
+    let s = match (v.kind() == ValueKind::String)
+        .then(|| v.as_str())
+        .flatten()
+    {
+        Some(s) => s,
+        None => {
+            painted = paint(v);
+            painted.as_str()
+        }
+    }
+    .trim();
+    let breaks = s
+        .bytes()
+        .any(|b| matches!(b, b';' | b'{' | b'}' | b'\\' | b'\n' | b'\r'))
+        || contains_ci(s, b"/*")
+        || contains_ci(s, b"expression(")
+        || contains_ci(s, b"@import");
+    if !breaks {
+        out.push_str(s);
+    }
+}
+
+/// The declarations of a style object, `prop:value` separated by `;`, written onto the end of `out` in one pass: a
+/// property is dropped when its value is null, undefined, false, or a string that is empty or could end the
+/// declaration. Returns whether any declaration was written.
+fn push_style_decls<'a>(
+    out: &mut String,
+    pairs: impl IntoIterator<Item = (&'a str, &'a Value)>,
+) -> bool {
+    let first = out.len();
+    for (k, v) in pairs {
+        if !(present(v) && css_key(k)) {
+            continue;
+        }
+        let mark = out.len();
+        if mark > first {
+            out.push(';');
+        }
+        push_css_property(out, k);
+        out.push(':');
+        let value_at = out.len();
+        push_css_value(out, k, v);
+        if out.len() == value_at {
+            out.truncate(mark);
+        }
+    }
+    out.len() > first
+}
+
+/// ` style="decls"` written onto the end of `out`, the declarations escaped as they are written; with `keep_empty` an
+/// object with no declaration leaves ` style=""`, without it nothing is written.
+fn push_style_attr<'a>(
+    out: &mut String,
+    pairs: impl IntoIterator<Item = (&'a str, &'a Value)>,
+    keep_empty: bool,
+) {
+    let mark = out.len();
+    out.push_str(" style=\"");
+    let at = out.len();
+    if !push_style_decls(out, pairs) && !keep_empty {
+        out.truncate(mark);
+        return;
+    }
+    // the declarations are written as they are; the few that hold an escapable byte are rewritten in place
+    if out.as_bytes()[at..]
+        .iter()
+        .any(|b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''))
+    {
+        let raw = out.split_off(at);
+        out.push_str(&escape_text(&raw));
+    }
+    out.push('"');
 }
 
 /// A literal style object as CSS text (`color:red;font-size:12px`).
@@ -1172,15 +1241,44 @@ fn style_attr_text(css: &str) -> String {
 /// property is dropped when its value is null, undefined, false, or a string
 /// that is empty or could end the declaration.
 pub fn style_obj_to_css(pairs: &[(String, Value)]) -> String {
-    pairs
-        .iter()
-        .filter(|(k, v)| present(v) && css_key(k))
-        .filter_map(|(k, v)| {
-            let val = css_value(k, v);
-            (!val.is_empty()).then(|| format!("{}:{val}", css_property(k)))
-        })
-        .collect::<Vec<_>>()
-        .join(";")
+    let mut out = String::new();
+    push_style_decls(&mut out, pairs.iter().map(|(k, v)| (k.as_str(), v)));
+    out
+}
+
+/// `key, value, key, value, …` as the compiled `css_decls` / `css_attr` calls pass them: a key that is not a string is
+/// the empty key (dropped), a missing last value is undefined.
+/// (A missing last value would be undefined, which is dropped, so the pair is left out.)
+fn arg_pairs(args: &[Value]) -> impl Iterator<Item = (&str, &Value)> {
+    args.chunks(2)
+        .filter_map(|kv| Some((kv[0].as_str().unwrap_or_default(), kv.get(1)?)))
+}
+
+/// The same for an object's entries as [`map_entries`] gives them, with `keep_empty` as in [`push_style_attr`].
+pub(crate) fn style_attr_of_map(v: &Value, keep_empty: bool) -> String {
+    let entries = map_entries(v);
+    let mut out = String::new();
+    push_style_attr(
+        &mut out,
+        entries
+            .iter()
+            .filter_map(|(k, val)| Some((k.as_str()?, val))),
+        keep_empty,
+    );
+    out
+}
+
+/// The declarations of an object's entries as [`map_entries`] gives them.
+fn style_css_of_map(v: &Value) -> String {
+    let entries = map_entries(v);
+    let mut out = String::new();
+    push_style_decls(
+        &mut out,
+        entries
+            .iter()
+            .filter_map(|(k, val)| Some((k.as_str()?, val))),
+    );
+    out
 }
 
 #[cfg(test)]
@@ -1244,6 +1342,247 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ok, "ab");
+    }
+
+    /// F602: the style code as it was before the one-buffer rewrite (a Vec of Strings joined, a String per name and per
+    /// value, a lowercase copy for the injection check), kept as the reference the new code must equal byte for byte.
+    mod old {
+        use super::*;
+
+        pub fn css_property(name: &str) -> String {
+            if name.starts_with("--") {
+                return name.to_string();
+            }
+            let mut out = String::new();
+            for c in name.chars() {
+                if c.is_ascii_uppercase() {
+                    out.push('-');
+                    out.push(c.to_ascii_lowercase());
+                } else {
+                    out.push(c);
+                }
+            }
+            if out.starts_with("ms-") {
+                out.insert(0, '-');
+            }
+            out
+        }
+
+        pub fn css_value(prop: &str, v: &Value) -> String {
+            match number_of(v) {
+                Some(n) if v.kind() == ValueKind::Number => {
+                    if n == 0.0 || is_unitless(prop) || prop.starts_with("--") {
+                        js_number(n)
+                    } else {
+                        format!("{}px", js_number(n))
+                    }
+                }
+                _ => {
+                    let s = paint(v).trim().to_string();
+                    let lower = s.to_ascii_lowercase();
+                    let breaks = s.contains([';', '{', '}', '\\', '\n', '\r'])
+                        || lower.contains("/*")
+                        || lower.contains("expression(")
+                        || lower.contains("@import");
+                    if breaks { String::new() } else { s }
+                }
+            }
+        }
+
+        pub fn style_attr_text(css: &str) -> String {
+            if css.is_empty() {
+                String::new()
+            } else {
+                format!(" style=\"{}\"", escape_attr(css))
+            }
+        }
+
+        pub fn style_obj_to_css(pairs: &[(String, Value)]) -> String {
+            pairs
+                .iter()
+                .filter(|(k, v)| present(v) && css_key(k))
+                .filter_map(|(k, v)| {
+                    let val = css_value(k, v);
+                    (!val.is_empty()).then(|| format!("{}:{val}", css_property(k)))
+                })
+                .collect::<Vec<_>>()
+                .join(";")
+        }
+    }
+
+    const STYLE_KEYS: &[&str] = &[
+        "color",
+        "fontSize",
+        "backgroundColor",
+        "WebkitLineClamp",
+        "msTransform",
+        "ms-flex",
+        "msFlex",
+        "MsX",
+        "mozAppearance",
+        "--gap",
+        "--Custom-Prop",
+        "--",
+        "-x",
+        "1a",
+        "",
+        "a b",
+        "a;b",
+        "lineHeight",
+        "zIndex",
+        "opacity",
+        "margin",
+        "width",
+        "gridColumn",
+        "OTransition",
+        "strokeWidth",
+        "flexGrow",
+        "borderRadius",
+        "ms",
+        "ms-",
+        "msA",
+    ];
+
+    fn gen_style_value(r: &mut Rng) -> Value {
+        const STRS: &[&str] = &[
+            "red",
+            " red ",
+            "  ",
+            "",
+            "10px",
+            "calc(1px + 2px)",
+            "a;b",
+            "a{b",
+            "a}b",
+            "a\\b",
+            "a\nb",
+            "a\rb",
+            "/* c */",
+            "x/*y",
+            "EXPRESSION(1)",
+            "Expression (x)",
+            "@IMPORT url(x)",
+            "@Import",
+            "url(\"x\")",
+            "'Foo', serif",
+            "a&b<c>",
+            "é日本",
+            "\t tab \t",
+            "ex pression(",
+            "/",
+            "*",
+            "@impor",
+            "expressio",
+        ];
+        match r.below(14) {
+            0 => Value::from(FLOATS[r.below(FLOATS.len() as u64) as usize]),
+            1 => Value::from(r.below(2000) as i64 - 1000),
+            2 => Value::from(0),
+            3 => Value::from(-0.0_f64),
+            4 => Value::from(f64::NAN),
+            5 => Value::from(if r.below(2) == 0 {
+                f64::INFINITY
+            } else {
+                f64::NEG_INFINITY
+            }),
+            6 => Value::from(()),
+            7 => Value::UNDEFINED,
+            8 => Value::from(false),
+            9 => Value::from(true),
+            10 => Value::from(1.5e300),
+            11 => Value::from(STRS[r.below(STRS.len() as u64) as usize]),
+            12 => Value::from_safe_string(STRS[r.below(STRS.len() as u64) as usize].to_string()),
+            _ => Value::from(gen_string(r)),
+        }
+    }
+
+    /// F602: `style_obj_to_css`, `css_value`, `css_property` and the attribute forms equal the code they replaced on
+    /// 20,000+ generated style objects: camelCase, custom and invalid keys; numbers (0, -0, NaN, ±Infinity, floats,
+    /// unitless properties), strings with every character the injection check names, mixed case, spaces, empty, null,
+    /// undefined and booleans; a repeated key; an odd argument count.
+    #[test]
+    fn style_output_equals_the_previous_implementation_on_generated_objects() {
+        let mut r = Rng(0xC0FF_EE15_BADC_0DE5);
+        for case in 0..25_000 {
+            let n = r.below(7) as usize;
+            let pairs: Vec<(String, Value)> = (0..n)
+                .map(|_| {
+                    let k = if r.below(8) == 0 {
+                        gen_string(&mut r)
+                    } else {
+                        STYLE_KEYS[r.below(STYLE_KEYS.len() as u64) as usize].to_string()
+                    };
+                    (k, gen_style_value(&mut r))
+                })
+                .collect();
+            let want = old::style_obj_to_css(&pairs);
+            assert_eq!(style_obj_to_css(&pairs), want, "case {case}: {pairs:?}");
+            // the attribute forms: `css_attr` (omitted when empty), the map form used by `render_attr` (kept)
+            let mut attr = String::new();
+            push_style_attr(&mut attr, pairs.iter().map(|(k, v)| (k.as_str(), v)), false);
+            assert_eq!(attr, old::style_attr_text(&want), "case {case}: {pairs:?}");
+            let mut kept = String::new();
+            push_style_attr(&mut kept, pairs.iter().map(|(k, v)| (k.as_str(), v)), true);
+            assert_eq!(
+                kept,
+                format!(" style=\"{}\"", escape_text(&want)),
+                "case {case}: {pairs:?}"
+            );
+            // the compiled call shape: flat key, value arguments (the last value may be missing)
+            let mut flat: Vec<Value> = pairs
+                .iter()
+                .flat_map(|(k, v)| [Value::from(k.as_str()), v.clone()])
+                .collect();
+            if r.below(10) == 0 {
+                flat.pop();
+            }
+            let want_flat = {
+                let ps: Vec<(String, Value)> = flat
+                    .chunks(2)
+                    .map(|kv| {
+                        (
+                            kv[0].as_str().unwrap_or_default().to_string(),
+                            kv.get(1).cloned().unwrap_or(Value::UNDEFINED),
+                        )
+                    })
+                    .collect();
+                old::style_obj_to_css(&ps)
+            };
+            let mut got = String::new();
+            push_style_decls(&mut got, arg_pairs(&flat));
+            assert_eq!(got, want_flat, "case {case}: {flat:?}");
+            // each value and each name on its own
+            for (k, v) in &pairs {
+                assert_eq!(
+                    css_value(k, v),
+                    old::css_value(k, v),
+                    "case {case}: {k} {v:?}"
+                );
+                assert_eq!(css_property(k), old::css_property(k), "case {case}: {k}");
+            }
+        }
+    }
+
+    /// F602: the vendor-prefix dash and the other `css_property` shapes, against the reference.
+    #[test]
+    fn css_property_equals_the_previous_implementation() {
+        for k in STYLE_KEYS.iter().copied().chain([
+            "msTransformOrigin",
+            "ms-transform",
+            "Ms",
+            "MS",
+            "mS",
+            "m",
+            "s",
+            "ms1",
+            "msa",
+            "msAb",
+            "a-ms-b",
+            "É",
+            "fooBarBaz",
+        ]) {
+            assert_eq!(css_property(k), old::css_property(k), "{k}");
+        }
     }
 
     /// F296 C3: style declarations print as react-dom prints them (values read off react-dom 19 by
