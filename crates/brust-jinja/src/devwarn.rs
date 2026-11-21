@@ -86,11 +86,18 @@ fn react_does(kind: &str, sink: &str) -> &'static str {
     }
 }
 
-/// Called by a printing sink (`sink` = "text" or "attribute") with the value it prints.
+/// Called by a printing sink (`sink` = "text" or "attribute") with the value it prints: one relaxed load unless a dev
+/// value is registered.
+#[inline]
 pub fn printed(v: &Value, sink: &str, shown: &str) {
-    if !ACTIVE.load(Ordering::Relaxed) {
-        return;
+    if ACTIVE.load(Ordering::Relaxed) {
+        printed_slow(v, sink, shown);
     }
+}
+
+#[cold]
+#[inline(never)]
+fn printed_slow(v: &Value, sink: &str, shown: &str) {
     let ptr = if let Some(m) = v.downcast_object_ref::<CtxMap>() {
         std::ptr::from_ref(m) as usize
     } else if let Some(s) = v.as_str() {

@@ -63,27 +63,27 @@ fn js_values_through_filters_equal_javascript() {
 
 #[test]
 fn decode_reads_each_tag() {
-    assert!(matches!(decoded(tag("NaN")), Node::Js(JsVal::Float(f)) if f.is_nan()));
-    assert_eq!(
-        decoded(tag("Infinity")),
-        Node::Js(JsVal::Float(f64::INFINITY))
+    let js = |v: JsVal| Node::Js(std::sync::Arc::new(v));
+    assert!(
+        matches!(decoded(tag("NaN")), Node::Js(j) if matches!(*j, JsVal::Float(f) if f.is_nan()))
     );
+    assert_eq!(decoded(tag("Infinity")), js(JsVal::Float(f64::INFINITY)));
     assert_eq!(
         decoded(tag("-Infinity")),
-        Node::Js(JsVal::Float(f64::NEG_INFINITY))
+        js(JsVal::Float(f64::NEG_INFINITY))
     );
     assert_eq!(
         decoded(tag("123456789012345678901234567890n")),
-        Node::Js(JsVal::BigInt("123456789012345678901234567890".into()))
+        js(JsVal::BigInt("123456789012345678901234567890".into()))
     );
-    assert_eq!(decoded(tag("-0n")), Node::Js(JsVal::BigInt("-0".into())));
+    assert_eq!(decoded(tag("-0n")), js(JsVal::BigInt("-0".into())));
 }
 
 #[test]
 fn decode_covers_top_level_array_items_only() {
     let n = decoded(json!([1, tag("NaN"), [tag("NaN")], { "x": tag("10n") }]));
     let a = n.as_arr().unwrap();
-    assert!(matches!(a.0[1], Node::Js(JsVal::Float(f)) if f.is_nan()));
+    assert!(matches!(&a.0[1], Node::Js(j) if matches!(**j, JsVal::Float(f) if f.is_nan())));
     // Nested deeper: left as parsed (the wrapper never tags there).
     assert_eq!(a.0[2], Node::from(json!([tag("NaN")])));
     assert_eq!(a.0[3], Node::from(json!({ "x": tag("10n") })));
@@ -134,5 +134,16 @@ fn json_attr_writes_what_the_client_can_parse() {
     assert!(
         got.contains("null") && got.contains("10") && got.contains("-3"),
         "{got}"
+    );
+}
+
+#[test]
+fn the_new_kind_does_not_grow_the_node() {
+    // Every parse and render walks `Node`: the decoded scalar is boxed so the node keeps the size of its widest
+    // existing variant (serde_json::Number, 16 bytes, plus the tag).
+    assert!(
+        std::mem::size_of::<Node>() <= 24,
+        "{}",
+        std::mem::size_of::<Node>()
     );
 }

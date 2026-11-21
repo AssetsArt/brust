@@ -27,7 +27,8 @@ pub enum Node {
     Map(Arc<CtxMap>),
     /// F585: a JS value JSON cannot carry, as a job slot returned it (decoded by [`decode_slot`] only at a slot of a
     /// precompute result and the items of a top-level array slot; nothing else ever builds one).
-    Js(JsVal),
+    /// Boxed: a decoded scalar is rare, and the tree's node stays the size it was (every parse and render walks it).
+    Js(Arc<JsVal>),
 }
 
 /// F585: what the job's `__slots` wrapper tagged (`{"\u0000js": "NaN"}`): a non-finite number or a bigint.
@@ -89,6 +90,26 @@ fn dev_tagged(v: &Node) -> Option<(Node, String)> {
     ))
 }
 
+/// Out of line: [`Node::to_value`] and [`write_node`] run for every value of every render, a decoded scalar almost
+/// never; keeping its arm cold keeps those two small enough to inline.
+#[cold]
+#[inline(never)]
+fn js_value(j: &JsVal) -> Value {
+    match j {
+        JsVal::Float(f) => Value::from(*f),
+        JsVal::BigInt(d) => Value::from_object(crate::bigint::JsBigInt(Arc::clone(d))),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn write_js(out: &mut String, j: &JsVal) {
+    match j {
+        JsVal::Float(_) => out.push_str("null"),
+        JsVal::BigInt(d) => crate::write_json_attr_str(out, d),
+    }
+}
+
 fn tagged(v: &Node) -> Option<&Node> {
     let m = v.as_map()?;
     if m.0.len() != 1 {
@@ -100,16 +121,16 @@ fn tagged(v: &Node) -> Option<&Node> {
 fn decode_one(v: &Node) -> Option<Node> {
     match tagged(v)? {
         Node::Str(t) => Some(match &**t {
-            "NaN" => Node::Js(JsVal::Float(f64::NAN)),
-            "Infinity" => Node::Js(JsVal::Float(f64::INFINITY)),
-            "-Infinity" => Node::Js(JsVal::Float(f64::NEG_INFINITY)),
+            "NaN" => Node::Js(Arc::new(JsVal::Float(f64::NAN))),
+            "Infinity" => Node::Js(Arc::new(JsVal::Float(f64::INFINITY))),
+            "-Infinity" => Node::Js(Arc::new(JsVal::Float(f64::NEG_INFINITY))),
             d => {
                 let digits = d.strip_suffix('n')?;
                 let body = digits.strip_prefix('-').unwrap_or(digits);
                 if body.is_empty() || !body.bytes().all(|c| c.is_ascii_digit()) {
                     return None;
                 }
-                Node::Js(JsVal::BigInt(Arc::from(digits)))
+                Node::Js(Arc::new(JsVal::BigInt(Arc::from(digits))))
             }
         }),
         // The escape of an app object that carries the reserved key itself.
@@ -265,10 +286,7 @@ impl Node {
             Node::Str(s) => Value::from(Arc::clone(s)),
             Node::Arr(a) => Value::from_dyn_object(Arc::clone(a)),
             Node::Map(m) => Value::from_dyn_object(Arc::clone(m)),
-            Node::Js(JsVal::Float(f)) => Value::from(*f),
-            Node::Js(JsVal::BigInt(d)) => {
-                Value::from_object(crate::bigint::JsBigInt(Arc::clone(d)))
-            }
+            Node::Js(j) => js_value(j),
         }
     }
     /// `map` minus its `hidden` top-level keys, as a value (O(1); no copy).
@@ -376,8 +394,7 @@ pub(crate) fn write_node(out: &mut String, n: &Node) {
         Node::Map(m) => write_map(out, m, &[]),
         // F585: what the client's `JSON.parse` can hold: a non-finite number is `null` (as JS's own JSON writes it), a
         // bigint its digits as a string (JSON has no bigint; `JSON.stringify` would throw).
-        Node::Js(JsVal::Float(_)) => out.push_str("null"),
-        Node::Js(JsVal::BigInt(d)) => crate::write_json_attr_str(out, d),
+        Node::Js(j) => write_js(out, j),
     }
 }
 
@@ -421,8 +438,10 @@ impl Serialize for Node {
             Node::Str(x) => s.serialize_str(x),
             Node::Arr(a) => s.collect_seq(a.0.iter()),
             Node::Map(m) => s.collect_map(m.0.iter().map(|(k, v)| (&**k, v))),
-            Node::Js(JsVal::Float(_)) => s.serialize_unit(),
-            Node::Js(JsVal::BigInt(d)) => s.serialize_str(d),
+            Node::Js(j) => match &**j {
+                JsVal::Float(_) => s.serialize_unit(),
+                JsVal::BigInt(d) => s.serialize_str(d),
+            },
         }
     }
 }
@@ -637,8 +656,10 @@ impl From<&Node> for serde_json::Value {
                     .map(|(k, v)| (k.to_string(), J::from(v)))
                     .collect(),
             ),
-            Node::Js(JsVal::Float(_)) => J::Null,
-            Node::Js(JsVal::BigInt(d)) => J::String(d.to_string()),
+            Node::Js(j) => match &**j {
+                JsVal::Float(_) => J::Null,
+                JsVal::BigInt(d) => J::String(d.to_string()),
+            },
         }
     }
 }
