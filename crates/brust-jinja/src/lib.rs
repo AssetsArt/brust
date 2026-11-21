@@ -852,6 +852,10 @@ fn keys(v: Value) -> Value {
 /// the order the map yields.
 pub(crate) fn map_entries(v: &Value) -> Vec<(Value, Value)> {
     if let Some(m) = v.downcast_object_ref::<ctx::CtxMap>() {
+        // F585: a decoded NaN / Infinity / bigint is a number to JS, which has no keys: never the tag's own key
+        if ctx::js_scalar(m).is_some() {
+            return Vec::new();
+        }
         let mut out = Vec::with_capacity(m.0.len());
         m.each_ordered(|k, n| out.push((Value::from(std::sync::Arc::clone(k)), n.to_value())));
         return out;

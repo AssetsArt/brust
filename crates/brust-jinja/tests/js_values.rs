@@ -172,3 +172,70 @@ fn the_new_kind_does_not_grow_the_node() {
         std::mem::size_of::<Node>()
     );
 }
+
+/// F585 (N1): a decoded NaN / Infinity / bigint is a number to JS and has no keys: `Object.keys`, `Object.entries`,
+/// `Object.assign` and a props spread see nothing of it (as on a build without the tag, where it was `null`), never the
+/// tag's internal key. One position per assertion.
+#[test]
+fn a_tagged_scalar_has_no_keys_in_any_position() {
+    let mut env = minijinja::Environment::new();
+    brust_jinja::register(&mut env);
+    let ctx = ctx();
+    let render = |t: &str| env.render_str(t, ctx.clone()).unwrap();
+    for v in ["nan", "inf", "ninf", "b10", "b0", "bneg"] {
+        // Object.keys
+        assert_eq!(
+            render(&format!("{{{{ {v} | keys | length }}}}")),
+            "0",
+            "keys of {v}"
+        );
+        assert_eq!(
+            render(&format!("{{{{ {v} | keys | js_string }}}}")),
+            "",
+            "keys of {v}"
+        );
+        // Object.entries
+        assert_eq!(
+            render(&format!("{{{{ {v} | entries | length }}}}")),
+            "0",
+            "entries of {v}"
+        );
+        // Object.assign({}, v) adds nothing, alone and next to a real object
+        assert_eq!(
+            render(&format!("{{{{ obj_assign({v}) | keys | length }}}}")),
+            "0",
+            "obj_assign of {v}"
+        );
+        assert_eq!(
+            render(&format!(
+                "{{{{ obj_assign(obj_lit('a', 1), {v}) | keys | js_string }}}}"
+            )),
+            "a",
+            "obj_assign beside an object, {v}"
+        );
+        // <div {...v}> prints no attribute (React: a number spreads nothing)
+        assert_eq!(
+            render(&format!("<div{{{{ spread_attrs({v}) }}}}>")),
+            "<div>",
+            "spread of {v}"
+        );
+        assert_eq!(
+            render(&format!(
+                "<div{{{{ spread_attrs(obj_lit('id', 'x'), {v}) }}}}>"
+            )),
+            "<div id=\"x\">",
+            "spread beside an object, {v}"
+        );
+        // the style forms read the same entries
+        assert_eq!(
+            render(&format!("{{{{ {v} | style_attr }}}}")),
+            "",
+            "style_attr of {v}"
+        );
+        assert_eq!(
+            render(&format!("{{{{ {v} | style_css }}}}")),
+            "",
+            "style_css of {v}"
+        );
+    }
+}
