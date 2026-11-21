@@ -585,14 +585,14 @@ impl WorkerPool {
     }
 }
 
-/// F601 (AMENDMENT 3): a worker takes calls while it has fewer than [`spill_at`] (T) in flight: the LOWEST index with
+/// F601 (AMENDMENT 3): a worker takes calls while it has fewer than [`SPILL_AT`] (T) in flight: the LOWEST index with
 /// fewer than T wins. When every worker has T or more, the worker with the FEWEST in flight (ties: the lowest index).
 /// T = 1 spreads at the first call; T = K is the old first-fit. `in_flight` is a hint (Relaxed); exclusivity is the
 /// per-slot `idle` CAS (Acquire, paired with the Release in `RenderClaim::drop`), so a worker whose free slot was
 /// taken between the read and the CAS is left for the next one. No allocation: tried workers are a bitmask (workers
 /// past 64 fall back to the first-fit scan).
 fn claim_least_busy(entries: &[Arc<WorkerEntry>]) -> Option<(&Arc<WorkerEntry>, usize)> {
-    let t = spill_at();
+    let t = SPILL_AT;
     // Pass 1: the lowest index under T.
     for e in entries.iter().take(64) {
         if e.in_flight.load(Ordering::Relaxed) < t
@@ -631,17 +631,13 @@ fn claim_least_busy(entries: &[Arc<WorkerEntry>]) -> Option<(&Arc<WorkerEntry>, 
         .find_map(|e| claim_slot(e).map(|i| (e, i)))
 }
 
-/// T of [`claim_least_busy`]. MEASUREMENT ONLY (F601 AMENDMENT 3): `BRUST_SPREAD_T`, read once; replaced by a constant
-/// before review.
-fn spill_at() -> u32 {
-    static T: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *T.get_or_init(|| {
-        std::env::var("BRUST_SPREAD_T")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1)
-    })
-}
+/// T of [`claim_least_busy`]: a worker takes up to 2 calls before the next one is woken. Chosen by paired measurements
+/// (F601, `--workers 8`, 12 main/lane pairs per cell, CPU per request from /proc): T = 1 (spread at the first call) cost
+/// +27% CPU per request on an island page and +26% on an action POST at 8 calls in flight; T = 4 lost the action gain;
+/// T = 2 gave the action GET x1.34 rps at c=8 (10 of 12 pairs) and the page with an island x1.16 (12 of 12) within +5%
+/// CPU per request, and +3% / -2% at c=120. Known price: at moderate load (32 calls in flight) the action path uses up
+/// to about a fifth more CPU per call (+16%) for x1.11 rps: more JS threads half busy instead of three kept hot.
+const SPILL_AT: u32 = 2;
 
 /// Lock-free exclusivity on one worker: CAS a slot's `idle` true -> false, then count the call in flight.
 fn claim_slot(entry: &Arc<WorkerEntry>) -> Option<usize> {
@@ -720,39 +716,51 @@ mod tests {
     }
 
     #[test]
-    fn a_busy_worker_sends_the_next_call_to_the_least_busy_one() {
+    fn below_t_the_lowest_index_then_the_least_busy() {
+        assert_eq!(SPILL_AT, 2, "the expectations below are written for T = 2");
         let pool = WorkerPool::new();
         let ids: Vec<u32> = (0..3).map(|_| register_k_for_test(&pool, 4)).collect();
-        let a = claim_on(&pool);
-        assert_eq!(a.entry().id, ids[0]);
-        // worker 0 has one call in flight: the next goes to worker 1 (0 in flight, the lowest such index)
-        let b = claim_on(&pool);
-        assert_eq!(b.entry().id, ids[1]);
-        let c = claim_on(&pool);
-        assert_eq!(c.entry().id, ids[2]);
-        // all tied at 1: the lowest index again
-        let d = claim_on(&pool);
-        assert_eq!(d.entry().id, ids[0]);
-        // concurrent calls spread: 2, 1, 1 in flight
-        let held = [&a, &b, &c, &d];
-        let on = |id| held.iter().filter(|x| x.entry().id == id).count();
-        assert_eq!((on(ids[0]), on(ids[1]), on(ids[2])), (2, 1, 1));
+        let on = |held: &[RenderClaim], id| held.iter().filter(|x| x.entry().id == id).count();
+        let mut held = Vec::new();
+        // worker 0 takes calls while it has fewer than T in flight
+        held.push(claim_on(&pool));
+        held.push(claim_on(&pool));
+        assert_eq!(on(&held, ids[0]), 2);
+        // worker 0 at T: the lowest index under T is worker 1, then worker 2
+        held.push(claim_on(&pool));
+        held.push(claim_on(&pool));
+        assert_eq!((on(&held, ids[1]), on(&held, ids[2])), (2, 0));
+        held.push(claim_on(&pool));
+        held.push(claim_on(&pool));
+        assert_eq!(on(&held, ids[2]), 2);
+        // every worker at T: the fewest in flight, ties to the lowest index -> 0, 1, 2 in turn
+        let next: Vec<u32> = (0..3)
+            .map(|_| {
+                let c = claim_on(&pool);
+                let id = c.entry().id;
+                held.push(c);
+                id
+            })
+            .collect();
+        assert_eq!(next, ids);
     }
 
     #[test]
-    fn a_released_slot_is_reused_and_the_least_busy_worker_wins() {
+    fn a_released_slot_is_reused_and_worker_0_takes_calls_again_below_t() {
         let pool = WorkerPool::new();
-        let ids: Vec<u32> = (0..2).map(|_| register_k_for_test(&pool, 2)).collect();
+        let ids: Vec<u32> = (0..2).map(|_| register_k_for_test(&pool, 3)).collect();
         let a = claim_on(&pool); // w0
-        let b = claim_on(&pool); // w1
+        let b = claim_on(&pool); // w0 (below T)
+        let c = claim_on(&pool); // w0 at T -> w1
+        assert_eq!(
+            (a.entry().id, b.entry().id, c.entry().id),
+            (ids[0], ids[0], ids[1])
+        );
         let slot_a = a.slot();
-        drop(a); // w0 back to 0 in flight
-        let c = claim_on(&pool);
-        assert_eq!(c.entry().id, ids[0]);
-        assert_eq!(c.slot(), slot_a, "the released slot is reused");
-        drop(b);
-        let d = claim_on(&pool); // w1 has 0 in flight now, w0 has 1
-        assert_eq!(d.entry().id, ids[1]);
+        drop(a); // w0 back under T
+        let d = claim_on(&pool);
+        assert_eq!(d.entry().id, ids[0]);
+        assert_eq!(d.slot(), slot_a, "the released slot is reused");
     }
 
     #[test]
