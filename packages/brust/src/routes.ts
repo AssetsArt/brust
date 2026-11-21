@@ -234,8 +234,10 @@ export interface RenderContext {
    * are not called and do not count), for a per-page budget. */
   page: { id: string; total: number }
   /** F572: return this (`return ctx.notNow()`, directly or through a promise) when the HTML is not ready yet: the slot is an
-   * empty host the client mounts, nothing is cached, the page is not stored, no log line; the next page render asks again. */
-  notNow(): RenderNotNow
+   * empty host the client mounts, nothing is cached, the page is not stored, no log line; the next page render asks again.
+   * It does not read `this`, so a detached call (`const { notNow } = ctx; return notNow()`) works. It returns one value
+   * that is compared by identity: return it as it is, a copy (`{ ...ctx.notNow() }`) is not a not-now answer. (F588) */
+  notNow: () => RenderNotNow
 }
 
 /** F519 (R5.1): the routes entry's `export const components`. `resolve` returns the artifact a `<Dynamic component={ref}>`

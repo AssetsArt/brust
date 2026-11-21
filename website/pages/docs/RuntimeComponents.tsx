@@ -497,6 +497,11 @@ export default function RuntimeComponents({ blocks }: RuntimeComponentsData) {
         Return <code>ctx.notNow()</code> (directly or from a promise) when the HTML is not ready yet, for example while your renderer warms up: it is the answer
         for &ldquo;no HTML this time, ask again&rdquo;, where a throw would log a failure and <code>null</code> would be kept.
       </p>
+      {/* source: packages/brust/src/handlers.ts (notNow is a module-level function that reads no `this`; the answer is compared by identity with out === NOT_NOW), packages/brust/test/rc-island-render.test.ts (a detached call answers not-now; a copy is the error) */}
+      <p>
+        <code>ctx.notNow</code> does not read <code>this</code>, so <code>{'const { notNow } = ctx; return notNow()'}</code> works. Return the value as it is: brust compares it by identity, so a copy such as <code>{'{ ...ctx.notNow() }'}</code> is an ordinary
+        object, and <code>render</code> fails with <code>components.render returned object, not a string or null</code>.
+      </p>
       <ul>
         <li>
           <strong>
