@@ -25,13 +25,11 @@ pub enum Node {
     Str(Arc<str>),
     Arr(Arc<CtxArr>),
     Map(Arc<CtxMap>),
-    /// F585: a JS value JSON cannot carry, as a job slot returned it (decoded by [`decode_slot`] only at a slot of a
-    /// precompute result and the items of a top-level array slot; nothing else ever builds one).
-    /// Boxed: a decoded scalar is rare, and the tree's node stays the size it was (every parse and render walks it).
-    Js(Arc<JsVal>),
 }
 
-/// F585: what the job's `__slots` wrapper tagged (`{"\u0000js": "NaN"}`): a non-finite number or a bigint.
+/// F585: what the job's `__slots` wrapper tagged (`{"\u0000js": "NaN"}`): a non-finite number or a bigint. Not a node
+/// kind (a new kind cost every page about 1% in the D bench, task challenge 564d1bdf): a decoded value stays in the
+/// tree as the tag's one-key map, MARKED by its order hint (see [`js_scalar`]); the JS-semantics filters read it there.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsVal {
     /// `NaN`, `Infinity` or `-Infinity`.
@@ -44,6 +42,45 @@ pub enum JsVal {
 /// app built with that exact key, and the wrapper escapes such an object (`{TAG: {o: <it>}}`) at the positions it
 /// tags, so a one-key object of this key at those positions always came from the wrapper.
 pub const JS_TAG: &str = "\u{0}js";
+
+/// F585: the value a decoded tag stands for, when `m` is one. A map is a decoded tag only when its order hint is
+/// exactly [`JS_TAG`]: a parse never gives a hint to a map whose key holds a `\0` (see [`CtxMap`]), so only
+/// [`decode_slot`] makes one, and an app object of the same shape anywhere in the tree is never read as a number.
+pub fn js_scalar(m: &CtxMap) -> Option<JsVal> {
+    if m.1.as_deref() != Some(JS_TAG) {
+        return None;
+    }
+    let Some(Node::Str(t)) = m.0.get(JS_TAG) else {
+        return None;
+    };
+    parse_tag(t)
+}
+
+fn parse_tag(t: &str) -> Option<JsVal> {
+    Some(match t {
+        "NaN" => JsVal::Float(f64::NAN),
+        "Infinity" => JsVal::Float(f64::INFINITY),
+        "-Infinity" => JsVal::Float(f64::NEG_INFINITY),
+        d => {
+            let digits = d.strip_suffix('n')?;
+            let body = digits.strip_prefix('-').unwrap_or(digits);
+            if body.is_empty() || !body.bytes().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            JsVal::BigInt(Arc::from(digits))
+        }
+    })
+}
+
+impl JsVal {
+    /// The template value: a float, or a [`crate::bigint::JsBigInt`].
+    pub fn to_value(&self) -> Value {
+        match self {
+            JsVal::Float(f) => Value::from(*f),
+            JsVal::BigInt(d) => Value::from_object(crate::bigint::JsBigInt(Arc::clone(d))),
+        }
+    }
+}
 
 /// F585: decodes the wrapper's tags in one precompute result slot value: the value itself, and when it is an array,
 /// each item (the same depths the wrapper tags and escapes). Anything else is left as parsed.
@@ -90,26 +127,6 @@ fn dev_tagged(v: &Node) -> Option<(Node, String)> {
     ))
 }
 
-/// Out of line: [`Node::to_value`] and [`write_node`] run for every value of every render, a decoded scalar almost
-/// never; keeping its arm cold keeps those two small enough to inline.
-#[cold]
-#[inline(never)]
-fn js_value(j: &JsVal) -> Value {
-    match j {
-        JsVal::Float(f) => Value::from(*f),
-        JsVal::BigInt(d) => Value::from_object(crate::bigint::JsBigInt(Arc::clone(d))),
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn write_js(out: &mut String, j: &JsVal) {
-    match j {
-        JsVal::Float(_) => out.push_str("null"),
-        JsVal::BigInt(d) => crate::write_json_attr_str(out, d),
-    }
-}
-
 fn tagged(v: &Node) -> Option<&Node> {
     let m = v.as_map()?;
     if m.0.len() != 1 {
@@ -120,19 +137,14 @@ fn tagged(v: &Node) -> Option<&Node> {
 
 fn decode_one(v: &Node) -> Option<Node> {
     match tagged(v)? {
-        Node::Str(t) => Some(match &**t {
-            "NaN" => Node::Js(Arc::new(JsVal::Float(f64::NAN))),
-            "Infinity" => Node::Js(Arc::new(JsVal::Float(f64::INFINITY))),
-            "-Infinity" => Node::Js(Arc::new(JsVal::Float(f64::NEG_INFINITY))),
-            d => {
-                let digits = d.strip_suffix('n')?;
-                let body = digits.strip_prefix('-').unwrap_or(digits);
-                if body.is_empty() || !body.bytes().all(|c| c.is_ascii_digit()) {
-                    return None;
-                }
-                Node::Js(Arc::new(JsVal::BigInt(Arc::from(digits))))
-            }
-        }),
+        // Kept as the tag's map, marked (the hint is the map's one key: harmless to `each_ordered`).
+        Node::Str(t) => {
+            parse_tag(t)?;
+            Some(Node::Map(Arc::new(CtxMap(
+                v.as_map()?.0.clone(),
+                Some(Box::from(JS_TAG)),
+            ))))
+        }
         // The escape of an app object that carries the reserved key itself.
         Node::Map(m) if m.0.len() == 1 => m.0.get("o").cloned(),
         _ => None,
@@ -286,7 +298,6 @@ impl Node {
             Node::Str(s) => Value::from(Arc::clone(s)),
             Node::Arr(a) => Value::from_dyn_object(Arc::clone(a)),
             Node::Map(m) => Value::from_dyn_object(Arc::clone(m)),
-            Node::Js(j) => js_value(j),
         }
     }
     /// `map` minus its `hidden` top-level keys, as a value (O(1); no copy).
@@ -394,7 +405,6 @@ pub(crate) fn write_node(out: &mut String, n: &Node) {
         Node::Map(m) => write_map(out, m, &[]),
         // F585: what the client's `JSON.parse` can hold: a non-finite number is `null` (as JS's own JSON writes it), a
         // bigint its digits as a string (JSON has no bigint; `JSON.stringify` would throw).
-        Node::Js(j) => write_js(out, j),
     }
 }
 
@@ -410,6 +420,17 @@ pub(crate) fn write_arr(out: &mut String, a: &CtxArr) {
 }
 
 pub(crate) fn write_map(out: &mut String, m: &CtxMap, hidden: &[&str]) {
+    // F585: a decoded tag is what the client's `JSON.parse` can hold: `null` (JS's own JSON for a non-finite number),
+    // or a bigint's digits as a string. Only a map with an order hint can be one.
+    if m.1.is_some()
+        && let Some(j) = js_scalar(m)
+    {
+        match j {
+            JsVal::Float(_) => out.push_str("null"),
+            JsVal::BigInt(d) => crate::write_json_attr_str(out, &d),
+        }
+        return;
+    }
     out.push('{');
     let mut first = true;
     m.each_ordered(|k, v| {
@@ -437,10 +458,11 @@ impl Serialize for Node {
             Node::Num(n) => n.serialize(s),
             Node::Str(x) => s.serialize_str(x),
             Node::Arr(a) => s.collect_seq(a.0.iter()),
-            Node::Map(m) => s.collect_map(m.0.iter().map(|(k, v)| (&**k, v))),
-            Node::Js(j) => match &**j {
-                JsVal::Float(_) => s.serialize_unit(),
-                JsVal::BigInt(d) => s.serialize_str(d),
+            Node::Map(m) => match js_scalar(m) {
+                // F585: what JSON holds for it (a job input written back to JS, a cache key).
+                Some(JsVal::Float(_)) => s.serialize_unit(),
+                Some(JsVal::BigInt(d)) => s.serialize_str(&d),
+                None => s.collect_map(m.0.iter().map(|(k, v)| (&**k, v))),
             },
         }
     }
@@ -456,6 +478,7 @@ impl Serialize for Ordered<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self.0 {
             Node::Arr(a) => s.collect_seq(a.0.iter().map(Ordered)),
+            Node::Map(m) if js_scalar(m).is_some() => self.0.serialize(s),
             Node::Map(m) => {
                 let mut map = s.serialize_map(Some(m.0.len()))?;
                 let mut err = None;
@@ -651,15 +674,15 @@ impl From<&Node> for serde_json::Value {
             Node::Num(x) => J::Number(x.clone()),
             Node::Str(s) => J::String(s.to_string()),
             Node::Arr(a) => J::Array(a.0.iter().map(J::from).collect()),
+            Node::Map(m) if js_scalar(m).is_some() => match js_scalar(m) {
+                Some(JsVal::BigInt(d)) => J::String(d.to_string()),
+                _ => J::Null,
+            },
             Node::Map(m) => J::Object(
                 m.0.iter()
                     .map(|(k, v)| (k.to_string(), J::from(v)))
                     .collect(),
             ),
-            Node::Js(j) => match &**j {
-                JsVal::Float(_) => J::Null,
-                JsVal::BigInt(d) => J::String(d.to_string()),
-            },
         }
     }
 }

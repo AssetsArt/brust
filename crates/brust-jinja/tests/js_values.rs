@@ -1,6 +1,6 @@
 //! F585: NaN, ±Infinity and bigint job values, decoded from the job wrapper's tag ([`brust_jinja::ctx::decode_slot`]),
 //! through every template filter equal JS (`gen-js-values.ts`); the decode itself and its escape.
-use brust_jinja::ctx::{JS_TAG, JsVal, Node, decode_slot};
+use brust_jinja::ctx::{JS_TAG, JsVal, Node, decode_slot, js_scalar};
 use serde_json::json;
 
 mod table {
@@ -61,49 +61,73 @@ fn js_values_through_filters_equal_javascript() {
     );
 }
 
+fn scalar(n: &Node) -> Option<JsVal> {
+    n.as_map().and_then(js_scalar)
+}
+
 #[test]
 fn decode_reads_each_tag() {
-    let js = |v: JsVal| Node::Js(std::sync::Arc::new(v));
-    assert!(
-        matches!(decoded(tag("NaN")), Node::Js(j) if matches!(*j, JsVal::Float(f) if f.is_nan()))
-    );
-    assert_eq!(decoded(tag("Infinity")), js(JsVal::Float(f64::INFINITY)));
+    assert!(matches!(scalar(&decoded(tag("NaN"))), Some(JsVal::Float(f)) if f.is_nan()));
     assert_eq!(
-        decoded(tag("-Infinity")),
-        js(JsVal::Float(f64::NEG_INFINITY))
+        scalar(&decoded(tag("Infinity"))),
+        Some(JsVal::Float(f64::INFINITY))
     );
     assert_eq!(
-        decoded(tag("123456789012345678901234567890n")),
-        js(JsVal::BigInt("123456789012345678901234567890".into()))
+        scalar(&decoded(tag("-Infinity"))),
+        Some(JsVal::Float(f64::NEG_INFINITY))
     );
-    assert_eq!(decoded(tag("-0n")), js(JsVal::BigInt("-0".into())));
+    assert_eq!(
+        scalar(&decoded(tag("123456789012345678901234567890n"))),
+        Some(JsVal::BigInt("123456789012345678901234567890".into()))
+    );
+    assert_eq!(
+        scalar(&decoded(tag("-0n"))),
+        Some(JsVal::BigInt("-0".into()))
+    );
 }
 
 #[test]
 fn decode_covers_top_level_array_items_only() {
     let n = decoded(json!([1, tag("NaN"), [tag("NaN")], { "x": tag("10n") }]));
     let a = n.as_arr().unwrap();
-    assert!(matches!(&a.0[1], Node::Js(j) if matches!(**j, JsVal::Float(f) if f.is_nan())));
-    // Nested deeper: left as parsed (the wrapper never tags there).
-    assert_eq!(a.0[2], Node::from(json!([tag("NaN")])));
-    assert_eq!(a.0[3], Node::from(json!({ "x": tag("10n") })));
+    assert!(matches!(scalar(&a.0[1]), Some(JsVal::Float(f)) if f.is_nan()));
+    // Nested deeper: left as parsed (the wrapper never tags there), never read as a number.
+    assert_eq!(scalar(&a.0[2].as_arr().unwrap().0[0]), None);
+    assert_eq!(scalar(a.0[3].get("x").unwrap()), None);
     // An object slot's members are not decoded.
     assert_eq!(
-        decoded(json!({ "a": tag("NaN") })),
-        Node::from(json!({ "a": tag("NaN") }))
+        scalar(decoded(json!({ "a": tag("NaN") })).get("a").unwrap()),
+        None
     );
 }
 
 #[test]
 fn an_app_object_carrying_the_key_round_trips() {
-    // The wrapper escapes it as {TAG: {o: <it>}}; decoding gives the app's object back, at both depths.
+    // The wrapper escapes it as {TAG: {o: <it>}}; decoding gives the app's object back, at both depths, unmarked.
     let own = json!({ JS_TAG: "NaN" });
-    assert_eq!(
-        decoded(json!({ JS_TAG: { "o": own } })),
-        Node::from(own.clone())
-    );
+    let top = decoded(json!({ JS_TAG: { "o": own } }));
+    assert_eq!(top, Node::from(own.clone()));
+    assert_eq!(scalar(&top), None);
     let n = decoded(json!([{ JS_TAG: { "o": own } }]));
     assert_eq!(n, Node::from(json!([own])));
+    assert_eq!(scalar(&n.as_arr().unwrap().0[0]), None);
+}
+
+#[test]
+fn a_parsed_object_shaped_like_a_tag_is_never_read_as_one() {
+    // Anywhere the wrapper did not tag (a nested value, loader data), the same JSON is a plain object to every filter.
+    let mut env = minijinja::Environment::new();
+    brust_jinja::register(&mut env);
+    let mut m = brust_jinja::ctx::MapInner::new();
+    m.insert("x".into(), Node::from(tag("NaN")));
+    let got = env
+        .render_str(
+            "{{ x | e }}|{{ x | truthy }}|{{ x | js_add(1) | js_string }}",
+            Node::map(m).to_value(),
+        )
+        .unwrap();
+    assert!(!got.starts_with("NaN|"), "{got}");
+    assert!(got.to_lowercase().contains("|true|"), "{got}");
 }
 
 #[test]
@@ -116,7 +140,9 @@ fn malformed_tags_are_left_as_parsed() {
         json!({ JS_TAG: 1 }),
         json!({ JS_TAG: "NaN", "b": 1 }),
     ] {
-        assert_eq!(decoded(v.clone()), Node::from(v));
+        let d = decoded(v.clone());
+        assert_eq!(d, Node::from(v));
+        assert_eq!(scalar(&d), None);
     }
 }
 
@@ -139,8 +165,7 @@ fn json_attr_writes_what_the_client_can_parse() {
 
 #[test]
 fn the_new_kind_does_not_grow_the_node() {
-    // Every parse and render walks `Node`: the decoded scalar is boxed so the node keeps the size of its widest
-    // existing variant (serde_json::Number, 16 bytes, plus the tag).
+    // Every parse and render walks `Node`: F585 adds no kind to it (a new kind cost every page about 1%).
     assert!(
         std::mem::size_of::<Node>() <= 24,
         "{}",
