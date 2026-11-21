@@ -3,7 +3,7 @@
   "source": "tests/fixtures/module-const-mutated-container/input.tsx",
   "tier": {
     "React": {
-      "reason": "this module has a module-level expression statement; the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
+      "reason": "this module's statement at line 3 runs code when the module loads. The code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
       "client_only": false
     }
   },
@@ -107,7 +107,7 @@
     {
       "class": "Fallback",
       "rule": "module-side-effect",
-      "message": "this module has a module-level expression statement; the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
+      "message": "this module's statement at line 3 runs code when the module loads. The code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
       "loc": 135,
       "line": 8,
       "col": 8,

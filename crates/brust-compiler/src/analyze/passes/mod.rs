@@ -302,7 +302,7 @@ fn run_passes_with(
             ir.diagnostics.push(crate::ir::Diagnostic::fallback(
                 "module-side-effect",
                 format!(
-                    "this module has {what}; the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's"
+                    "{what}. The code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's"
                 ),
                 loc,
                 "keep module scope to imports, functions and constants (move other code into the function that needs it), or keep this component in React",

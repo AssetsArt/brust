@@ -330,10 +330,14 @@ pub fn imported_literal(
         let folded = Folder::new(&decls, &none, &no_imports).all();
         let evaluated = crate::analyze::module_effects::fold_env_accepts(&decls);
         let plain = crate::analyze::plain_fn::plain_fns(ast, &names);
-        let effect =
-            crate::analyze::module_effects::module_effect(ast, &names, parsed.text(), &|n| {
-                folded.contains_key(n) || evaluated.contains(n) || plain.iter().any(|p| p == n)
-            });
+        // F564: an app-import read is not followed here (the projection keeps today's rule).
+        let effect = crate::analyze::module_effects::module_effect(
+            ast,
+            &names,
+            parsed.text(),
+            &|n| folded.contains_key(n) || evaluated.contains(n) || plain.iter().any(|p| p == n),
+            &|_, _, _| false,
+        );
         (!imports && effect.is_none()).then(|| (path.clone(), c.value.clone()))
     })
 }

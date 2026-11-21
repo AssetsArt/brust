@@ -3,7 +3,7 @@
   "source": "tests/fixtures/module-const-call/input.tsx",
   "tier": {
     "React": {
-      "reason": "this module has a declaration the compiler cannot prove runs nothing (only `const`s it folds or proves plain, and functions); the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
+      "reason": "this module's `const STAMP = …` (line 1) may run code when the module loads: it calls `Date.now(…)`. The code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
       "client_only": false
     }
   },
@@ -80,7 +80,7 @@
     {
       "class": "Fallback",
       "rule": "module-side-effect",
-      "message": "this module has a declaration the compiler cannot prove runs nothing (only `const`s it folds or proves plain, and functions); the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
+      "message": "this module's `const STAMP = …` (line 1) may run code when the module loads: it calls `Date.now(…)`. The code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
       "loc": 118,
       "line": 7,
       "col": 8,
