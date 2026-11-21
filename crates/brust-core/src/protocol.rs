@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use brust_jinja::ctx::Node;
+use brust_jinja::ctx::{Node, NodeSeed, OptNodeSeed, ShapeInterner};
 use serde::{Deserialize, Serialize};
 
 use crate::manifest::JobKind;
@@ -82,10 +82,13 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
         let mut content_type = None::<String>;
         let (mut planned, mut results) = (None::<bool>, None::<Vec<JobResult>>);
         let mut store = None::<Node>;
+        // one interner for the whole reply: the rows of `data` share their keys and order hints, and `store` and the
+        // job `results` share them with it (it is dropped with this call)
+        let mut int = ShapeInterner::new();
         while let Some(k) = m.next_key::<std::borrow::Cow<'de, str>>()? {
             match &*k {
                 "ok" => ok = Some(m.next_value()?),
-                "data" => data = Some(m.next_value()?),
+                "data" => data = Some(m.next_value_seed(NodeSeed(&mut int))?),
                 "headers" => headers = Some(m.next_value()?),
                 "verdict" => verdict = Some(m.next_value()?),
                 "location" => location = Some(m.next_value()?),
@@ -94,8 +97,8 @@ impl<'de> serde::de::Visitor<'de> for LoaderVisitor {
                 "contentType" => content_type = m.next_value::<Option<String>>()?,
                 "error" => error = Some(m.next_value()?),
                 "planned" => planned = Some(m.next_value()?),
-                "results" => results = Some(m.next_value()?),
-                "store" => store = m.next_value::<Option<Node>>()?,
+                "results" => results = Some(m.next_value_seed(ResultsSeed(&mut int))?),
+                "store" => store = m.next_value_seed(OptNodeSeed(&mut int))?,
                 _ => {
                     m.next_value::<serde::de::IgnoredAny>()?;
                 }
@@ -314,18 +317,121 @@ fn ordered_inputs<S: serde::Serializer>(n: &&Node, s: S) -> Result<S::Ok, S::Err
 }
 
 /// `jobs` call response: `{ results: [{ id, value | error }] }`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct JobsResponse {
     pub results: Vec<JobResult>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct JobResult {
     pub id: String,
-    #[serde(default)]
     pub value: Option<Node>,
-    #[serde(default)]
     pub error: Option<String>,
+}
+
+/// A list of job results decoded with the caller's interner (the values of many rows share their keys).
+struct ResultsSeed<'a>(&'a mut ShapeInterner);
+
+impl<'de> serde::de::DeserializeSeed<'de> for ResultsSeed<'_> {
+    type Value = Vec<JobResult>;
+    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Vec<JobResult>, D::Error> {
+        struct V<'a>(&'a mut ShapeInterner);
+        impl<'de> serde::de::Visitor<'de> for V<'_> {
+            type Value = Vec<JobResult>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a list of job results")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Vec<JobResult>, A::Error> {
+                let mut out = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
+                while let Some(r) = seq.next_element_seed(JobResultSeed(&mut *self.0))? {
+                    out.push(r);
+                }
+                Ok(out)
+            }
+        }
+        d.deserialize_seq(V(self.0))
+    }
+}
+
+/// One `{ id, value, error }` (`id` required; `value` and `error` may be absent or null; any other field ignored), the
+/// value decoded with the caller's interner.
+struct JobResultSeed<'a>(&'a mut ShapeInterner);
+
+impl<'de> serde::de::DeserializeSeed<'de> for JobResultSeed<'_> {
+    type Value = JobResult;
+    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<JobResult, D::Error> {
+        struct V<'a>(&'a mut ShapeInterner);
+        impl<'de> serde::de::Visitor<'de> for V<'_> {
+            type Value = JobResult;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a job result")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut m: A,
+            ) -> Result<JobResult, A::Error> {
+                use serde::de::Error as _;
+                let (mut id, mut value, mut error) = (None::<String>, None::<Node>, None::<String>);
+                while let Some(k) = m.next_key::<std::borrow::Cow<'de, str>>()? {
+                    match &*k {
+                        "id" => id = Some(m.next_value()?),
+                        "value" => value = m.next_value_seed(OptNodeSeed(&mut *self.0))?,
+                        "error" => error = m.next_value::<Option<String>>()?,
+                        _ => {
+                            m.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(JobResult {
+                    id: id.ok_or_else(|| A::Error::missing_field("id"))?,
+                    value,
+                    error,
+                })
+            }
+        }
+        d.deserialize_map(V(self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for JobResult {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        serde::de::DeserializeSeed::deserialize(JobResultSeed(&mut ShapeInterner::new()), d)
+    }
+}
+
+impl<'de> Deserialize<'de> for JobsResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = JobsResponse;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a jobs response object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut m: A,
+            ) -> Result<JobsResponse, A::Error> {
+                use serde::de::Error as _;
+                let mut int = ShapeInterner::new();
+                let mut results = None::<Vec<JobResult>>;
+                while let Some(k) = m.next_key::<std::borrow::Cow<'de, str>>()? {
+                    match &*k {
+                        "results" => results = Some(m.next_value_seed(ResultsSeed(&mut int))?),
+                        _ => {
+                            m.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(JobsResponse {
+                    results: results.ok_or_else(|| A::Error::missing_field("results"))?,
+                })
+            }
+        }
+        d.deserialize_map(V)
+    }
 }
 
 /// F519 `component` call request (R5.2): every cold ref of one render, in one call. F546 (R4): plus the island

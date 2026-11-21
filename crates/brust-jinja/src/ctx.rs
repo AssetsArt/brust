@@ -39,7 +39,7 @@ pub enum Node {
 /// key carries no hint (sorted). A key written after the parse (a map edited in place) is not in
 /// it and follows the hinted ones, sorted.
 #[derive(Debug, Clone, Default)]
-pub struct CtxMap(pub MapInner, pub Option<Box<str>>);
+pub struct CtxMap(pub MapInner, pub Option<Arc<str>>);
 
 impl PartialEq for CtxMap {
     /// The content, not the text order: two maps with the same entries are equal.
@@ -356,28 +356,167 @@ impl Serialize for Ordered<'_> {
     }
 }
 
-/// A map key: one allocation, straight into the `Arc`.
-struct Key(Arc<str>);
+/// A cheap hasher for the interner's tables (FNV-1a over the bytes): the keys are short, and these tables never see an
+/// attacker-chosen key for long (a table gives up after a run of misses and stops growing at its cap).
+#[derive(Default, Clone, Copy)]
+struct FnvBuild;
 
-impl<'de> Deserialize<'de> for Key {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct KeyVisitor;
-        impl Visitor<'_> for KeyVisitor {
-            type Value = Key;
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("a string key")
-            }
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<Key, E> {
-                Ok(Key(Arc::from(v)))
-            }
-        }
-        d.deserialize_str(KeyVisitor)
+struct Fnv(u64);
+
+impl std::hash::BuildHasher for FnvBuild {
+    type Hasher = Fnv;
+    fn build_hasher(&self) -> Fnv {
+        Fnv(0xcbf2_9ce4_8422_2325)
     }
 }
 
-struct NodeVisitor;
+impl std::hash::Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0 ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+}
 
-impl<'de> Visitor<'de> for NodeVisitor {
+/// One table of the interner: strings seen in this decode, looked up by content.
+struct Table {
+    seen: std::collections::HashSet<Arc<str>, FnvBuild>,
+    cap: usize,
+    /// Consecutive lookups that found nothing. After [`GIVE_UP`] the table stops looking and stops adding: data used as
+    /// a dictionary with unique keys must not pay a hash per key for nothing.
+    misses: u32,
+}
+
+const GIVE_UP: u32 = 64;
+/// At most this many distinct keys / order hints / short values are remembered in one decode.
+const KEY_CAP: usize = 512;
+const VALUE_CAP: usize = 1024;
+/// A string value longer than this is never interned.
+const VALUE_MAX: usize = 32;
+
+impl Table {
+    fn new(cap: usize) -> Table {
+        Table {
+            seen: std::collections::HashSet::with_hasher(FnvBuild),
+            cap,
+            misses: 0,
+        }
+    }
+
+    /// The `Arc` this decode already made for `s`, or a new one (remembered while there is room and the table has not
+    /// given up).
+    fn get(&mut self, s: &str) -> Arc<str> {
+        if self.misses >= GIVE_UP {
+            return Arc::from(s);
+        }
+        if let Some(a) = self.seen.get(s) {
+            self.misses = 0;
+            return Arc::clone(a);
+        }
+        self.misses += 1;
+        let a: Arc<str> = Arc::from(s);
+        if self.seen.len() < self.cap {
+            self.seen.insert(Arc::clone(&a));
+        }
+        a
+    }
+}
+
+/// What ONE decode of a worker reply shares: the same key (`"id"` in 151 rows) is one `Arc<str>`, and two maps whose
+/// keys came in the same order share one order hint. It lives for the decode only (the caller makes it, the seeds
+/// borrow it, it is dropped with the reply): nothing global, nothing that grows with traffic, bounded per decode.
+pub struct ShapeInterner {
+    keys: Table,
+    hints: Table,
+    values: Option<Table>,
+    /// Scratch strings for the order hint under construction, one per map being decoded (maps nest), given back when
+    /// the map is done and never shrunk, so a reply of many maps allocates them once.
+    scratch: Vec<String>,
+}
+
+impl Default for ShapeInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ShapeInterner {
+    pub fn new() -> ShapeInterner {
+        ShapeInterner {
+            keys: Table::new(KEY_CAP),
+            hints: Table::new(KEY_CAP),
+            values: INTERN_VALUES.then(|| Table::new(VALUE_CAP)),
+            scratch: Vec::new(),
+        }
+    }
+}
+
+/// D3: short string values are interned too (measured; see the lane's notes).
+const INTERN_VALUES: bool = true;
+
+/// A map key, taken from the decode's interner.
+struct KeySeed<'a>(&'a mut ShapeInterner);
+
+impl<'de> de::DeserializeSeed<'de> for KeySeed<'_> {
+    type Value = Arc<str>;
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Arc<str>, D::Error> {
+        struct KeyVisitor<'a>(&'a mut ShapeInterner);
+        impl Visitor<'_> for KeyVisitor<'_> {
+            type Value = Arc<str>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a string key")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Arc<str>, E> {
+                Ok(self.0.keys.get(v))
+            }
+        }
+        d.deserialize_str(KeyVisitor(self.0))
+    }
+}
+
+/// A JSON value decoded into a [`Node`], sharing repeated keys, order hints and short strings through `.0` (see
+/// [`ShapeInterner`]). `Node`'s own `Deserialize` is this seed over a fresh interner.
+pub struct NodeSeed<'a>(pub &'a mut ShapeInterner);
+
+impl<'de> de::DeserializeSeed<'de> for NodeSeed<'_> {
+    type Value = Node;
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Node, D::Error> {
+        d.deserialize_any(NodeVisitor(self.0))
+    }
+}
+
+/// `Option<Node>` for a field that may be `null` (null is `None`, as `Option<Node>`'s own decode).
+pub struct OptNodeSeed<'a>(pub &'a mut ShapeInterner);
+
+impl<'de> de::DeserializeSeed<'de> for OptNodeSeed<'_> {
+    type Value = Option<Node>;
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Option<Node>, D::Error> {
+        struct V<'a>(&'a mut ShapeInterner);
+        impl<'de> Visitor<'de> for V<'_> {
+            type Value = Option<Node>;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("any valid JSON value or null")
+            }
+            fn visit_none<E>(self) -> Result<Option<Node>, E> {
+                Ok(None)
+            }
+            fn visit_unit<E>(self) -> Result<Option<Node>, E> {
+                Ok(None)
+            }
+            fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Option<Node>, D::Error> {
+                de::DeserializeSeed::deserialize(NodeSeed(self.0), d).map(Some)
+            }
+        }
+        d.deserialize_option(V(self.0))
+    }
+}
+
+struct NodeVisitor<'a>(&'a mut ShapeInterner);
+
+impl<'de> Visitor<'de> for NodeVisitor<'_> {
     type Value = Node;
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("any valid JSON value")
@@ -396,9 +535,19 @@ impl<'de> Visitor<'de> for NodeVisitor {
         Ok(serde_json::Number::from_f64(v).map_or(Node::Null, Node::Num))
     }
     fn visit_str<E>(self, v: &str) -> Result<Node, E> {
+        if v.len() <= VALUE_MAX
+            && let Some(t) = &mut self.0.values
+        {
+            return Ok(Node::Str(t.get(v)));
+        }
         Ok(Node::str(v))
     }
     fn visit_string<E>(self, v: String) -> Result<Node, E> {
+        if v.len() <= VALUE_MAX
+            && let Some(t) = &mut self.0.values
+        {
+            return Ok(Node::Str(t.get(&v)));
+        }
         Ok(Node::Str(Arc::from(v)))
     }
     fn visit_unit<E>(self) -> Result<Node, E> {
@@ -408,71 +557,72 @@ impl<'de> Visitor<'de> for NodeVisitor {
         Ok(Node::Null)
     }
     fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Node, D::Error> {
-        Node::deserialize(d)
+        de::DeserializeSeed::deserialize(NodeSeed(self.0), d)
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Node, A::Error> {
         let mut v = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
-        while let Some(x) = seq.next_element()? {
+        while let Some(x) = seq.next_element_seed(NodeSeed(&mut *self.0))? {
             v.push(x);
         }
         Ok(Node::arr(v))
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
+        let int = self.0;
         let mut m = MapInner::new();
         // F318: the text order, recorded only once a key breaks the sorted order (the keys so far were ascending, so
         // they are exactly the map's keys at that point). A repeated key keeps its first place, its last value. The
-        // sorted case (a key above the map's last) costs one comparison against the last key, nothing else.
-        let mut order: Option<String> = None;
+        // sorted case (a key above the map's last) costs one comparison against the last key, nothing else. The text
+        // is built in a scratch string of the interner (maps nest, so each map takes its own and gives it back).
+        let mut buf = int.scratch.pop().unwrap_or_default();
+        buf.clear();
+        let mut ordered = false;
         let mut pushed = 0usize;
         let mut skip = false; // a key holds the separator: no hint for this object
-        while let Some((Key(k), v)) = map.next_entry::<Key, Node>()? {
-            match &mut order {
-                Some(o) => {
-                    // a repeated key is pushed too; the end of the object drops the repeats
-                    skip |= k.contains('\0');
-                    o.push('\0');
-                    o.push_str(&k);
-                    pushed += 1;
-                }
-                None => {
-                    if let Some((last, _)) = m.last_key_value()
-                        && **last >= *k
-                        && **last != *k
-                    {
-                        let mut o = String::with_capacity(64);
-                        for (i, key) in m.keys().enumerate() {
-                            skip |= key.contains('\0');
-                            if i > 0 {
-                                o.push('\0');
-                            }
-                            o.push_str(key);
-                        }
-                        if !m.contains_key(&k) {
-                            skip |= k.contains('\0');
-                            o.push('\0');
-                            o.push_str(&k);
-                        }
-                        pushed = m.len() + usize::from(!m.contains_key(&k));
-                        order = Some(o);
+        loop {
+            let Some(k) = map.next_key_seed(KeySeed(&mut *int))? else {
+                break;
+            };
+            let v = map.next_value_seed(NodeSeed(&mut *int))?;
+            if ordered {
+                // a repeated key is pushed too; the end of the object drops the repeats
+                skip |= k.contains('\0');
+                buf.push('\0');
+                buf.push_str(&k);
+                pushed += 1;
+            } else if let Some((last, _)) = m.last_key_value()
+                && **last >= *k
+                && **last != *k
+            {
+                for (i, key) in m.keys().enumerate() {
+                    skip |= key.contains('\0');
+                    if i > 0 {
+                        buf.push('\0');
                     }
-                    // (a repeat of the last key keeps the sorted order: its place is the same)
+                    buf.push_str(key);
                 }
+                if !m.contains_key(&k) {
+                    skip |= k.contains('\0');
+                    buf.push('\0');
+                    buf.push_str(&k);
+                }
+                pushed = m.len() + usize::from(!m.contains_key(&k));
+                ordered = true;
             }
+            // (a repeat of the last key keeps the sorted order: its place is the same)
             // Last value wins on a repeated key, as serde_json::Map does.
             m.insert(k, v);
         }
         // Repeats (a key written twice) keep their first place: only an object that repeated pays this.
-        if let Some(o) = &mut order
-            && pushed != m.len()
-        {
+        if ordered && pushed != m.len() {
             let mut seen = std::collections::HashSet::new();
-            *o = o
+            buf = buf
                 .split('\0')
                 .filter(|k| seen.insert(*k))
                 .collect::<Vec<_>>()
                 .join("\0");
         }
-        let mut order = order.filter(|_| !skip).map(String::into_boxed_str);
+        let mut text: Option<std::borrow::Cow<'_, str>> =
+            (ordered && !skip).then(|| std::borrow::Cow::Borrowed(buf.as_str()));
         // F321: JS enumerates array-index keys ("2", "10") first, ascending, whatever order the text gave them. Text
         // from `JSON.stringify` is already in that order; text from anywhere else (a literal written in insertion
         // order) is brought to it. Only an object with such a key pays for it.
@@ -481,7 +631,7 @@ impl<'de> Visitor<'de> for NodeVisitor {
                 .any(|k| k.as_bytes().first().is_some_and(u8::is_ascii_digit))
             && m.keys().any(|k| crate::spread::is_array_index(k))
         {
-            let keys: Vec<&str> = match &order {
+            let keys: Vec<&str> = match &text {
                 Some(o) => o.split('\0').collect(),
                 None => m.keys().map(|k| &**k).collect(),
             };
@@ -492,15 +642,18 @@ impl<'de> Visitor<'de> for NodeVisitor {
             idx.extend(rest);
             // the hint is needed only when this differs from the sorted order
             let sorted = idx.iter().zip(m.keys()).all(|(a, b)| *a == &**b);
-            order = (!sorted).then(|| idx.join("\0").into_boxed_str());
+            let joined = (!sorted).then(|| idx.join("\0"));
+            text = joined.map(std::borrow::Cow::Owned);
         }
-        Ok(Node::Map(Arc::new(CtxMap(m, order))))
+        let hint = text.map(|t| int.hints.get(&t));
+        int.scratch.push(buf);
+        Ok(Node::Map(Arc::new(CtxMap(m, hint))))
     }
 }
 
 impl<'de> Deserialize<'de> for Node {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        d.deserialize_any(NodeVisitor)
+        de::DeserializeSeed::deserialize(NodeSeed(&mut ShapeInterner::new()), d)
     }
 }
 
@@ -543,6 +696,429 @@ impl From<&Node> for serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- F603: the decode-scoped interner. The decode as it was before it is kept below as the reference; the trees
+    // must be equal in content, order hints and serialisation. ----
+    mod reference {
+        use super::*;
+        /// A map key: one allocation, straight into the `Arc`.
+        struct RefKey(Arc<str>);
+
+        impl<'de> Deserialize<'de> for RefKey {
+            fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                struct KeyVisitor;
+                impl Visitor<'_> for KeyVisitor {
+                    type Value = RefKey;
+                    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        f.write_str("a string key")
+                    }
+                    fn visit_str<E: de::Error>(self, v: &str) -> Result<RefKey, E> {
+                        Ok(RefKey(Arc::from(v)))
+                    }
+                }
+                d.deserialize_str(KeyVisitor)
+            }
+        }
+
+        struct RefVisitor;
+
+        impl<'de> Visitor<'de> for RefVisitor {
+            type Value = Node;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("any valid JSON value")
+            }
+            fn visit_bool<E>(self, v: bool) -> Result<Node, E> {
+                Ok(Node::Bool(v))
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<Node, E> {
+                Ok(Node::Num(v.into()))
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<Node, E> {
+                Ok(Node::Num(v.into()))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Node, E> {
+                // As serde_json::Value's visitor: a non-finite float is null.
+                Ok(serde_json::Number::from_f64(v).map_or(Node::Null, Node::Num))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Node, E> {
+                Ok(Node::str(v))
+            }
+            fn visit_string<E>(self, v: String) -> Result<Node, E> {
+                Ok(Node::Str(Arc::from(v)))
+            }
+            fn visit_unit<E>(self) -> Result<Node, E> {
+                Ok(Node::Null)
+            }
+            fn visit_none<E>(self) -> Result<Node, E> {
+                Ok(Node::Null)
+            }
+            fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Node, D::Error> {
+                RefNode::deserialize(d).map(|n| n.0)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Node, A::Error> {
+                let mut v = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
+                while let Some(x) = seq.next_element::<RefNode>()? {
+                    v.push(x.0);
+                }
+                Ok(Node::arr(v))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
+                let mut m = MapInner::new();
+                // F318: the text order, recorded only once a key breaks the sorted order (the keys so far were ascending, so
+                // they are exactly the map's keys at that point). A repeated key keeps its first place, its last value. The
+                // sorted case (a key above the map's last) costs one comparison against the last key, nothing else.
+                let mut order: Option<String> = None;
+                let mut pushed = 0usize;
+                let mut skip = false; // a key holds the separator: no hint for this object
+                while let Some((RefKey(k), RefNode(v))) = map.next_entry::<RefKey, RefNode>()? {
+                    match &mut order {
+                        Some(o) => {
+                            // a repeated key is pushed too; the end of the object drops the repeats
+                            skip |= k.contains('\0');
+                            o.push('\0');
+                            o.push_str(&k);
+                            pushed += 1;
+                        }
+                        None => {
+                            if let Some((last, _)) = m.last_key_value()
+                                && **last >= *k
+                                && **last != *k
+                            {
+                                let mut o = String::with_capacity(64);
+                                for (i, key) in m.keys().enumerate() {
+                                    skip |= key.contains('\0');
+                                    if i > 0 {
+                                        o.push('\0');
+                                    }
+                                    o.push_str(key);
+                                }
+                                if !m.contains_key(&k) {
+                                    skip |= k.contains('\0');
+                                    o.push('\0');
+                                    o.push_str(&k);
+                                }
+                                pushed = m.len() + usize::from(!m.contains_key(&k));
+                                order = Some(o);
+                            }
+                            // (a repeat of the last key keeps the sorted order: its place is the same)
+                        }
+                    }
+                    // Last value wins on a repeated key, as serde_json::Map does.
+                    m.insert(k, v);
+                }
+                // Repeats (a key written twice) keep their first place: only an object that repeated pays this.
+                if let Some(o) = &mut order
+                    && pushed != m.len()
+                {
+                    let mut seen = std::collections::HashSet::new();
+                    *o = o
+                        .split('\0')
+                        .filter(|k| seen.insert(*k))
+                        .collect::<Vec<_>>()
+                        .join("\0");
+                }
+                let mut order = order.filter(|_| !skip).map(String::into_boxed_str);
+                // F321: JS enumerates array-index keys ("2", "10") first, ascending, whatever order the text gave them. Text
+                // from `JSON.stringify` is already in that order; text from anywhere else (a literal written in insertion
+                // order) is brought to it. Only an object with such a key pays for it.
+                if !skip
+                    && m.keys()
+                        .any(|k| k.as_bytes().first().is_some_and(u8::is_ascii_digit))
+                    && m.keys().any(|k| crate::spread::is_array_index(k))
+                {
+                    let keys: Vec<&str> = match &order {
+                        Some(o) => o.split('\0').collect(),
+                        None => m.keys().map(|k| &**k).collect(),
+                    };
+                    let (mut idx, rest): (Vec<&str>, Vec<&str>) = keys
+                        .into_iter()
+                        .partition(|k| crate::spread::is_array_index(k));
+                    idx.sort_by_key(|k| k.parse::<u64>().unwrap_or(0));
+                    idx.extend(rest);
+                    // the hint is needed only when this differs from the sorted order
+                    let sorted = idx.iter().zip(m.keys()).all(|(a, b)| *a == &**b);
+                    order = (!sorted).then(|| idx.join("\0").into_boxed_str());
+                }
+                Ok(Node::Map(Arc::new(CtxMap(m, order.map(Arc::<str>::from)))))
+            }
+        }
+
+        /// The reference's `Node`: decoded by the code as it was before the interner.
+        pub(super) struct RefNode(pub(super) Node);
+
+        impl<'de> Deserialize<'de> for RefNode {
+            fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                d.deserialize_any(RefVisitor).map(RefNode)
+            }
+        }
+    }
+
+    /// The two trees are the same in everything a reader can see: entries, every map's order hint AS TEXT (`PartialEq
+    /// for CtxMap` ignores it), `each_ordered`, both serialisations.
+    fn assert_same(a: &Node, b: &Node, at: &str) {
+        if let Err(why) = same(a, b) {
+            panic!("trees differ at {at}: {why}");
+        }
+    }
+
+    /// The first difference, as text built only when there is one (the sweep compares a million nodes).
+    fn same(a: &Node, b: &Node) -> Result<(), String> {
+        match (a, b) {
+            (Node::Map(x), Node::Map(y)) => {
+                if x.1.as_deref() != y.1.as_deref() {
+                    return Err(format!("hint {:?} vs {:?}", x.1, y.1));
+                }
+                let (mut ox, mut oy) = (Vec::new(), Vec::new());
+                x.each_ordered(|k, _| ox.push(Arc::clone(k)));
+                y.each_ordered(|k, _| oy.push(Arc::clone(k)));
+                if ox != oy {
+                    return Err(format!("each_ordered {ox:?} vs {oy:?}"));
+                }
+                if x.0.len() != y.0.len() {
+                    return Err("map len".into());
+                }
+                for ((kx, vx), (ky, vy)) in x.0.iter().zip(y.0.iter()) {
+                    if kx != ky {
+                        return Err(format!("key {kx} vs {ky}"));
+                    }
+                    same(vx, vy).map_err(|e| format!("/{kx}{e}"))?;
+                }
+                Ok(())
+            }
+            (Node::Arr(x), Node::Arr(y)) => {
+                if x.0.len() != y.0.len() {
+                    return Err("arr len".into());
+                }
+                for (i, (vx, vy)) in x.0.iter().zip(y.0.iter()).enumerate() {
+                    same(vx, vy).map_err(|e| format!("[{i}]{e}"))?;
+                }
+                Ok(())
+            }
+            _ if a == b => Ok(()),
+            _ => Err(format!("{a:?} vs {b:?}")),
+        }
+    }
+
+    fn check_decode(text: &str) {
+        let old = serde_json::from_str::<reference::RefNode>(text);
+        let new = serde_json::from_str::<Node>(text);
+        match (old, new) {
+            (Ok(o), Ok(n)) => {
+                assert_eq!(o.0, n, "content of {text}");
+                assert_same(&o.0, &n, "$");
+                assert_eq!(
+                    serde_json::to_string(&o.0).unwrap(),
+                    serde_json::to_string(&n).unwrap()
+                );
+                assert_eq!(
+                    serde_json::to_string(&Ordered(&o.0)).unwrap(),
+                    serde_json::to_string(&Ordered(&n)).unwrap(),
+                    "ordered serialisation of {text}"
+                );
+            }
+            (Err(_), Err(_)) => {}
+            (o, n) => panic!(
+                "one decode failed, the other did not: {:?} / {:?} for {text}",
+                o.is_ok(),
+                n.is_ok()
+            ),
+        }
+    }
+
+    fn json_str(s: &str) -> String {
+        serde_json::to_string(s).unwrap()
+    }
+
+    fn gen_key(r: &mut crate::tests_support::Rng, pool: &[&str]) -> String {
+        match r.below(12) {
+            0 => json_str(""),
+            1 => json_str("a\0b"),
+            2 => json_str(&crate::tests_support::gen_string(r)),
+            3 => json_str(["2", "10", "1", "0", "007"][r.below(5) as usize]),
+            _ => json_str(pool[r.below(pool.len() as u64) as usize]),
+        }
+    }
+
+    fn gen_value(
+        r: &mut crate::tests_support::Rng,
+        depth: u32,
+        pool: &[&str],
+        shapes: &[String],
+    ) -> String {
+        match r.below(if depth == 0 { 9 } else { 14 }) {
+            0 => "null".into(),
+            1 => "true".into(),
+            2 => "false".into(),
+            3 => (r.below(2_000_000) as i64 - 1_000_000).to_string(),
+            4 => [
+                "18446744073709551615",
+                "-9223372036854775808",
+                "1e21",
+                "1.5",
+                "-0.0",
+                "0.1",
+                "1E2",
+                "123456789012345678901234567890",
+            ][r.below(8) as usize]
+                .into(),
+            5 => json_str(["red", "grass", "", "x"][r.below(4) as usize]),
+            6 => json_str(&"long value ".repeat(1 + r.below(6) as usize)),
+            7 => json_str(&crate::tests_support::gen_string(r)),
+            8 => json_str("é日本\u{1F600}"),
+            9 | 10 => gen_object(r, depth - 1, pool, shapes),
+            11 => shapes[r.below(shapes.len() as u64) as usize].clone(),
+            _ => {
+                let n = r.below(5);
+                let items: Vec<String> = (0..n)
+                    .map(|_| gen_value(r, depth - 1, pool, shapes))
+                    .collect();
+                format!("[{}]", items.join(","))
+            }
+        }
+    }
+
+    fn gen_object(
+        r: &mut crate::tests_support::Rng,
+        depth: u32,
+        pool: &[&str],
+        shapes: &[String],
+    ) -> String {
+        let n = if r.below(40) == 0 {
+            520 + r.below(100)
+        } else {
+            r.below(8)
+        };
+        let mut keys: Vec<String> = (0..n)
+            .map(|i| {
+                if n > 100 {
+                    json_str(&format!("k{i}"))
+                } else {
+                    gen_key(r, pool)
+                }
+            })
+            .collect();
+        match r.below(4) {
+            0 => keys.sort(),
+            1 => keys.reverse(),
+            _ => {}
+        }
+        if !keys.is_empty() && r.below(6) == 0 {
+            let k = keys[r.below(keys.len() as u64) as usize].clone();
+            keys.push(k); // a repeated key: first place, last value
+        }
+        let items: Vec<String> = keys
+            .iter()
+            .map(|k| format!("{k}:{}", gen_value(r, depth, pool, shapes)))
+            .collect();
+        format!("{{{}}}", items.join(","))
+    }
+
+    /// F603: the interned decode equals the previous one on 20,000+ generated documents: nested objects and arrays,
+    /// repeated shapes, sorted and unsorted keys, a repeated key, a `\0` in a key, empty keys, array-index keys, more
+    /// than 512 distinct keys, unicode and escaped strings, numbers of every kind.
+    #[test]
+    fn interned_decode_equals_the_previous_decode_on_generated_documents() {
+        let mut r = crate::tests_support::Rng(0xD3C0_DE5_1A9E_0001);
+        let pool = [
+            "id", "name", "type", "types", "a", "b", "zeta", "Alpha", "x y", "é", "日本",
+        ];
+        for _ in 0..22_000 {
+            let shapes: Vec<String> = (0..3)
+                .map(|_| gen_object(&mut r, 1, &pool, &["null".to_string()]))
+                .collect();
+            let doc = gen_value(&mut r, 4, &pool, &shapes);
+            check_decode(&doc);
+            // many rows of one shape, as a loader list
+            if r.below(10) == 0 {
+                let row = gen_object(&mut r, 1, &pool, &shapes);
+                let rows = vec![row; 1 + r.below(30) as usize];
+                check_decode(&format!("[{}]", rows.join(",")));
+            }
+        }
+    }
+
+    /// F603: malformed text fails the same way (the decoders report the same document as bad).
+    #[test]
+    fn interned_decode_rejects_what_the_previous_one_rejected() {
+        for t in [
+            "",
+            "{",
+            "[1,",
+            "{\"a\"}",
+            "{\"a\":}",
+            "{1:2}",
+            "nul",
+            "\"x",
+            "{\"a\":1,}",
+            "[1 2]",
+        ] {
+            check_decode(t);
+        }
+    }
+
+    fn first_map(n: &Node) -> &CtxMap {
+        n.as_arr().unwrap().0[0].as_map().unwrap()
+    }
+
+    /// F603: two rows of the same shape share their key allocations and their order hint; a decode never reuses another
+    /// decode's allocations (the interner lives for one decode: no static, no thread-local).
+    #[test]
+    fn rows_of_one_shape_share_keys_and_hints_and_the_interner_does_not_outlive_the_decode() {
+        let text =
+            r#"[{"type":"x","name":"a","id":1},{"type":"y","name":"b","id":2},{"zz":"c","id":3}]"#;
+        let n: Node = serde_json::from_str(text).unwrap();
+        let rows: Vec<&CtxMap> = n
+            .as_arr()
+            .unwrap()
+            .0
+            .iter()
+            .map(|r| r.as_map().unwrap())
+            .collect();
+        // row 0 and 1: the same keys in an unsorted order: one hint, one allocation per key
+        let (h0, h1) = (rows[0].1.as_ref().unwrap(), rows[1].1.as_ref().unwrap());
+        assert!(Arc::ptr_eq(h0, h1));
+        for k in ["id", "name", "type"] {
+            let (a, _) = rows[0].0.get_key_value(k).unwrap();
+            let (b, _) = rows[1].0.get_key_value(k).unwrap();
+            assert!(Arc::ptr_eq(a, b), "key {k}");
+        }
+        // row 2 has other keys: its own hint, the shared `id`
+        assert!(!Arc::ptr_eq(h0, rows[2].1.as_ref().unwrap()));
+        assert!(Arc::ptr_eq(
+            rows[0].0.get_key_value("id").unwrap().0,
+            rows[2].0.get_key_value("id").unwrap().0
+        ));
+        // a second decode of the same text shares nothing with the first
+        let m: Node = serde_json::from_str(text).unwrap();
+        assert!(!Arc::ptr_eq(
+            first_map(&n).0.get_key_value("id").unwrap().0,
+            first_map(&m).0.get_key_value("id").unwrap().0
+        ));
+        assert!(!Arc::ptr_eq(
+            first_map(&n).1.as_ref().unwrap(),
+            first_map(&m).1.as_ref().unwrap()
+        ));
+        // and holds the only references: the key is held by the maps of this decode, not by a table that survived
+        assert_eq!(
+            Arc::strong_count(rows[0].0.get_key_value("id").unwrap().0),
+            3
+        );
+    }
+
+    /// F603: a dictionary of unique keys (5,000 of them) decodes to the same tree, and the interner stays within its
+    /// caps (it gives up after a run of misses).
+    #[test]
+    fn a_dictionary_of_unique_keys_decodes_the_same() {
+        let body: Vec<String> = (0..5000)
+            .map(|i| format!("\"key-{i}\":{{\"v\":\"val-{i}\"}}"))
+            .collect();
+        check_decode(&format!("{{{}}}", body.join(",")));
+        let rev: Vec<String> = (0..5000)
+            .rev()
+            .map(|i| format!("\"key-{i}\":\"val-{i}\""))
+            .collect();
+        check_decode(&format!("{{{}}}", rev.join(",")));
+    }
     use crate::tests_support::{Rng, gen_json, gen_number_json as gen_number};
     use minijinja::Environment;
     use serde_json::json;
