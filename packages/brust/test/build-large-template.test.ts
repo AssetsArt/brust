@@ -3,7 +3,7 @@
 // build printed nothing.
 // F570: `[build] template_max_bytes` turns that warning into a build error above a budget the app states.
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { LARGE_TEMPLATE_BYTES, largeTemplateWarning, runBuild, templateBudgetViolations } from '../src/build'
 import { loadBuildConfig, parseTemplateMaxBytes } from '../src/build/config'
@@ -97,6 +97,17 @@ test('a budget below the size fails the build with the id, bytes, budget and sou
   expect(lines[0]).toMatch(/^a_[0-9a-f]+\.jinja is \d+ bytes \(0\.0 MB\), over \[build\] template_max_bytes = 1000 \(A\.tsx\)$/)
   expect(lines[1]).toBe('a template grows with what a page inlines; see https://brust.dev/docs/cli#large-templates')
   expect(existsSync(join(dir, 'dist'))).toBe(false)
+}, 120_000)
+
+test('a failed build leaves an existing dist as it was', async () => {
+  const dir = budgetApp({ A: 5000 }, null)
+  await budgetBuild(dir)
+  const manifest = join(dir, 'dist', 'manifest.json')
+  const before = readFileSync(manifest, 'utf8')
+  writeFileSync(join(dir, 'brust.toml'), '[build]\ntemplate_max_bytes = 1000\n')
+  await expect(budgetBuild(dir)).rejects.toMatchObject({ rule: 'template-size' })
+  expect(readFileSync(manifest, 'utf8')).toBe(before)
+  expect(existsSync(join(dir, '.dist.brust-tmp'))).toBe(false)
 }, 120_000)
 
 test('every template over the budget is listed in one error, largest first, once each', async () => {

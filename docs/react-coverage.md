@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 71 | 46 | 16 | 9 | 0 | 0 | 0 | 0 |
 | B Composition | 246 | 131 | 20 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 253 | 86 | 80 | 87 | 0 | 0 | 0 | 0 |
+| C Hooks | 251 | 86 | 78 | 87 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 77 | 34 | 16 | 23 | 3 | 1 | 0 | 0 |
-| **Total** | 680 | 310 | 133 | 233 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 82 | 36 | 16 | 26 | 3 | 1 | 0 | 0 |
+| **Total** | 683 | 312 | 131 | 236 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -371,8 +371,6 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-body-destructure-array-call | an array pattern over a call in the component body (`const [th, , en] = greeting(h)`) | static | static | precompute | ok | 0 | — | F578 D1: one derived value under a generated name holds the call; each name reads off it (one call) |
 | c-custom-hook-reexport | custom hook a module only re-exports (`import { useL } from …; export { useL }`) | static | static | 0 | ok | 0 | — | F578 D2: followed to the declaring module (also `export { x } from`, `export *`; four hops) |
 | c-custom-hook-param-default | custom hook with a defaulted plain parameter the call omits | static | static | 0 | ok | 0 | — | F578 D3: the default when omitted, else `arg === undefined ? default : arg` |
-| c-custom-hook-handler-reads-store | a function a custom hook returns, used as an event handler by name, reads a store | native | native | 0 | ok | 5.1 | — | F580 cell 7: was hook-shape; proven in Chromium (served test hook-handler-store-ctx: direct, derived, store action, a write by another component, two instances) |
-| c-custom-hook-handler-reads-context | a function a custom hook returns, used as an event handler by name, reads a context value | native | native | 0 | ok | 5.1 | — | F580 cell 8: was hook-shape; proven in Chromium (served test hook-handler-store-ctx: direct, derived, two Providers, a nested Provider, the default) |
 | c-custom-hook-store-own-module | custom hook of another module that reads a store declared in that same module | react | react | ssr | ok | 4.5 | fallback:hook-shape | F560: a handle the hook's module declares is not one the component can import; the finding names it |
 | c-local-arrow-call | a const arrow with an expression body, declared in the component and called in the markup | static | static | 0 | ok | 0 | — | F560: the call is replaced by the arrow's expression (was react, client-function-in-job) |
 | c-local-arrow-call-in-list | a const arrow that reads a prop, called in the rows of a list | static | static | 0 | ok | 0 | — | F560: the call is the arrow's expression in the row (the row binds `x`, the arrow reads the prop `lang`) |
@@ -653,6 +651,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-lucide-icon-rest-spread | a lucide icon spread with the component's rest props | static | static | ssr | ok | 4.5 | — | R34.77: the rest lands on the inlined svg, after the icon's own attributes; parity in tests/server/icon-shapes.test.ts |
 | e-lucide-icon-rest-spread-size | a call site hands the spread icon a key the icon reads (size) | static | static | ssr | ok | 4.5 | — | R34.77: brustc alone leaves the icon an island; after `brust build` renders it the call site is refused (spread-props, page React): crates/brust-compiler/tests/icon_shapes.rs pins size, className, color |
 | e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | 4.5 | fallback:external-component, fallback:spread-props, fallback:module-side-effect, warning:icon-dynamic-prop, warning:island-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
+| e-module-table-import-member | a module table whose members read an imported literal table (`icon: ICON.overview`) | static | static | precompute | ok | 0 | — | F564 D1 (ruling 5e9842ab): a data-property read of an object literal an app module exports and nothing writes runs no code; was module-side-effect |
+| e-module-alias-import | a module const that aliases an imported table | static | static | precompute | ok | 0 | — | F564 D1: naming an import runs nothing; a member of an imported literal is a data read |
+| e-module-writer-on-call-result | module functions call `.delete()` on the result of a conditional callee of imported actions, and of a module arrow that returns an imported call | react | react | ssr | ok | 4.5 | fallback:module-side-effect | F564: the writer rule stays base's (AMENDMENT 4): a conditional callee cannot be named and a module arrow is this module's code, so both stay module-side-effect, now named with the function and its line; a sound receiver rule is ledger F587 |
+| e-module-let-state | a module `let` a function writes | react | react | ssr | ok | 4.5 | fallback:jsx-const-child, fallback:module-side-effect | F564: really effectful, stays module-side-effect; the finding names `let` / `var` `seq` and its line |
+| e-module-class | a module class and an instance of it | react | react | ssr | ok | 4.5 | fallback:jsx-const-child, fallback:module-side-effect | F564: a class declaration runs code; stays module-side-effect, named with its line |
 | b-cn-fold-literal | a literal variant on a cva + cn component (shadcn Badge) | static | static | 0 | ok | 0 | — | F149 R34.88/R34.89: a candidate; `brust build` runs the job once and prints the class (R34.90) |
 | b-cn-fold-omitted | a cva + cn component with no props | static | static | 0 | ok | 0 | — | F149 R34.88: an omitted prop is an absent input |
 | b-cn-fold-module-const | a variant from a module const | static | static | 0 | ok | 0 | — | F149 R34.88: the call-site literal folds with the module consts (the constant folder) |

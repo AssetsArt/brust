@@ -1,0 +1,409 @@
+{
+  "id": "input_672b4e82",
+  "source": "tests/fixtures/module-table-import/input.tsx",
+  "tier": "Native",
+  "native_because": [
+    "state `on` is set",
+    "an event handler (line 19)",
+    "an event handler (line 22)",
+    "an expression depends on state (line 16)"
+  ],
+  "props": [
+    {
+      "name": "title",
+      "local": "title",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "on",
+      "setter": "setOn",
+      "init": {
+        "Precomputed": {
+          "slot": "_s6",
+          "js": "OVERVIEW.id",
+          "client_js": null,
+          "inputs": [],
+          "state_dependent": false,
+          "per_item": null
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 914,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 920,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 920,
+                      "kind": {
+                        "Ident": {
+                          "name": "setOn",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 926,
+                        "kind": {
+                          "Member": {
+                            "target": {
+                              "loc": 926,
+                              "kind": {
+                                "Ident": {
+                                  "name": "OVERVIEW",
+                                  "kind": "Local"
+                                }
+                              }
+                            },
+                            "name": "id",
+                            "optional": false
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setOn",
+                "Setter"
+              ],
+              [
+                "OVERVIEW",
+                "Local"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    },
+    {
+      "name": "_h2",
+      "body": {
+        "loc": 1023,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 1029,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 1029,
+                      "kind": {
+                        "Ident": {
+                          "name": "setOn",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 1035,
+                        "kind": {
+                          "Member": {
+                            "target": {
+                              "loc": 1035,
+                              "kind": {
+                                "Ident": {
+                                  "name": "APPS",
+                                  "kind": "Local"
+                                }
+                              }
+                            },
+                            "name": "id",
+                            "optional": false
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setOn",
+                "Setter"
+              ],
+              [
+                "APPS",
+                "Local"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 670,
+      "tag": "nav",
+      "attrs": [
+        {
+          "Dynamic": {
+            "name": "data-label",
+            "value": {
+              "Precomputed": {
+                "slot": "_s1",
+                "js": "LABEL",
+                "client_js": null,
+                "inputs": [],
+                "state_dependent": false,
+                "per_item": null
+              }
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 701,
+            "tag": "h1",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "t"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 713,
+                    "kind": {
+                      "Ident": {
+                        "name": "title",
+                        "kind": "Prop"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 731,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "cur"
+                }
+              },
+              {
+                "Dynamic": {
+                  "name": "data-icon",
+                  "value": {
+                    "Precomputed": {
+                      "slot": "_s2",
+                      "js": "on === OVERVIEW.id ? OVERVIEW.icon : APPS.icon",
+                      "client_js": "on() === OVERVIEW.id ? OVERVIEW.icon : APPS.icon",
+                      "inputs": [],
+                      "state_dependent": true,
+                      "per_item": null
+                    }
+                  }
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Precomputed": {
+                    "slot": "_s3",
+                    "js": "on === APPS.id ? \"apps\" : \"overview\"",
+                    "client_js": "on() === APPS.id ? \"apps\" : \"overview\"",
+                    "inputs": [],
+                    "state_dependent": true,
+                    "per_item": null
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 867,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "b0"
+                }
+              },
+              {
+                "Dynamic": {
+                  "name": "title",
+                  "value": {
+                    "Precomputed": {
+                      "slot": "_s4",
+                      "js": "OVERVIEW.icon",
+                      "client_js": null,
+                      "inputs": [],
+                      "state_dependent": false,
+                      "per_item": null
+                    }
+                  }
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "overview"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 980,
+            "tag": "button",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "b1"
+                }
+              },
+              {
+                "Dynamic": {
+                  "name": "title",
+                  "value": {
+                    "Precomputed": {
+                      "slot": "_s5",
+                      "js": "APPS.icon",
+                      "client_js": null,
+                      "inputs": [],
+                      "state_dependent": false,
+                      "per_item": null
+                    }
+                  }
+                }
+              },
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h2"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "apps"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [],
+      "outputs": [
+        "_s1",
+        "_s2",
+        "_s3",
+        "_s4",
+        "_s5",
+        "_s6"
+      ],
+      "per_item": null
+    }
+  ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-table-import/input.tsx@687",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 14,
+      "col": 22
+    },
+    {
+      "key": "tests/fixtures/module-table-import/input.tsx@890",
+      "slot": "_s4",
+      "build_time": false,
+      "line": 19,
+      "col": 30
+    },
+    {
+      "key": "tests/fixtures/module-table-import/input.tsx@1003",
+      "slot": "_s5",
+      "build_time": false,
+      "line": 22,
+      "col": 30
+    },
+    {
+      "key": "tests/fixtures/module-table-import/input.tsx@642",
+      "slot": "_s6",
+      "build_time": false,
+      "line": 12,
+      "col": 32
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [
+    [
+      "./icons",
+      "ICON"
+    ]
+  ],
+  "client_module_locals": [
+    "APPS",
+    "OVERVIEW"
+  ],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

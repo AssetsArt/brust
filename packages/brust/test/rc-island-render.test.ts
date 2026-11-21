@@ -104,4 +104,27 @@ test('ctx.notNow() answers notNow for that pair, sync and async', async () => {
   const fake: RuntimeComponents = { resolve: () => null, render: () => ({ __brustRenderNotNow: true }) as never }
   const f = await resolveComponents(fake, 'b1', { refs: [], page: 'p', renders: [{ ref: 'x', key: 'k', props: {} }] })
   expect(f.html).toEqual([{ ref: 'x', key: 'k', error: 'components.render returned object, not a string or null' }])
+  // F588: `notNow` does not read `this`: a detached call answers not-now, and a copy of the value is the error above
+  const detached: RuntimeComponents = {
+    resolve: () => null,
+    render(ref, _props, ctx) {
+      if (ref === 'detached') {
+        const { notNow } = ctx
+        return notNow()
+      }
+      return { ...ctx.notNow() }
+    },
+  }
+  const d = await resolveComponents(detached, 'b1', {
+    refs: [],
+    page: 'p',
+    renders: [
+      { ref: 'detached', key: 'k1', props: {} },
+      { ref: 'copy', key: 'k2', props: {} },
+    ],
+  })
+  expect(d.html).toEqual([
+    { ref: 'detached', key: 'k1', notNow: true },
+    { ref: 'copy', key: 'k2', error: 'components.render returned object, not a string or null' },
+  ])
 })

@@ -72,8 +72,8 @@ One line per thing that keeps a row or a library component off the static/native
 | 34 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
 | 35 | composeRefs | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 77 | ref shapes other than ref={x}: fallback:ref-shape |
 | 36 | Slot / asChild | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 58 | no battery row: cloneElement-based |
-| 37 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 54 | `module-side-effect` diagnostic (docs/react-coverage.md) |
-| 38 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
+| 37 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
+| 38 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 47 | `module-side-effect` diagnostic (docs/react-coverage.md) |
 | 39 | DOM globals (document / window) | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 45 | fallback:browser-global in render |
 | 40 | Presence | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 27 | external component |
 | 41 | isValidElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 22 | no battery row: not analysable |
@@ -1035,9 +1035,9 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/cartesian/CartesianAxis.tsx | TickItem | function | not exported | cloneElement, isValidElement, rest-props spread |
 | webpack:/Recharts/src/cartesian/CartesianAxis.tsx | Ticks | forwardRef | not exported | forwardRef, rest-props spread |
 | webpack:/Recharts/src/cartesian/CartesianAxis.tsx | CartesianAxisComponent | forwardRef | not exported | forwardRef, Context.Provider / *Provider, useImperativeHandle, rest-props spread, useState, useRef, useMemo / useCallback, DOM globals (document / window) |
-| webpack:/Recharts/src/cartesian/CartesianAxis.tsx | CartesianAxis | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, rest-props spread |
+| webpack:/Recharts/src/cartesian/CartesianAxis.tsx | CartesianAxis | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
 | webpack:/Recharts/src/cartesian/ErrorBar.tsx | ErrorBarImpl | function | not exported | useContext / use*Context, rest-props spread |
-| webpack:/Recharts/src/cartesian/ErrorBar.tsx | ErrorBar | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | rest-props spread |
+| webpack:/Recharts/src/cartesian/ErrorBar.tsx | ErrorBar | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:spread-props) | rest-props spread |
 | webpack:/Recharts/src/cartesian/Funnel.tsx | SetFunnelTooltipEntrySettings | memo | not exported | — |
 | webpack:/Recharts/src/cartesian/Funnel.tsx | FunnelLabelListProvider | function | not exported | Context.Provider / *Provider, useMemo / useCallback |
 | webpack:/Recharts/src/cartesian/Funnel.tsx | FunnelTrapezoids | function | not exported | rest-props spread |
@@ -1057,11 +1057,11 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/cartesian/Line.tsx | LineFn | function | not exported | rest-props spread |
 | webpack:/Recharts/src/cartesian/LineDrawShape.tsx | LineDrawShape | function | react (fallback:control-flow, fallback:let-var) | rest-props spread |
 | webpack:/Recharts/src/cartesian/ReferenceArea.tsx | ReferenceAreaImpl | function | not exported | Context.Provider / *Provider |
-| webpack:/Recharts/src/cartesian/ReferenceArea.tsx | ReferenceArea | function | react (fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | rest-props spread |
+| webpack:/Recharts/src/cartesian/ReferenceArea.tsx | ReferenceArea | function | react (fallback:island-prop, fallback:spread-props) | rest-props spread |
 | webpack:/Recharts/src/cartesian/ReferenceDot.tsx | ReferenceDotImpl | function | not exported | Context.Provider / *Provider |
-| webpack:/Recharts/src/cartesian/ReferenceDot.tsx | ReferenceDot | function | react (fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | rest-props spread |
+| webpack:/Recharts/src/cartesian/ReferenceDot.tsx | ReferenceDot | function | react (fallback:island-prop, fallback:spread-props) | rest-props spread |
 | webpack:/Recharts/src/cartesian/ReferenceLine.tsx | ReferenceLineImpl | function | not exported | Context.Provider / *Provider |
-| webpack:/Recharts/src/cartesian/ReferenceLine.tsx | ReferenceLine | function | react (fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | rest-props spread |
+| webpack:/Recharts/src/cartesian/ReferenceLine.tsx | ReferenceLine | function | react (fallback:island-prop, fallback:spread-props) | rest-props spread |
 | webpack:/Recharts/src/cartesian/Scatter.tsx | SetScatterTooltipEntrySettings | memo | not exported | — |
 | webpack:/Recharts/src/cartesian/Scatter.tsx | ScatterLine | function | not exported | cloneElement, isValidElement, rest-props spread |
 | webpack:/Recharts/src/cartesian/Scatter.tsx | ScatterLabelListProvider | function | not exported | Context.Provider / *Provider, useMemo / useCallback |
@@ -1159,7 +1159,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/polar/PolarGrid.tsx | ConcentricCircle | function | not exported | rest-props spread |
 | webpack:/Recharts/src/polar/PolarGrid.tsx | ConcentricPolygon | function | not exported | rest-props spread |
 | webpack:/Recharts/src/polar/PolarGrid.tsx | ConcentricGridPath | function | not exported | rest-props spread |
-| webpack:/Recharts/src/polar/PolarGrid.tsx | PolarGrid | function | react (fallback:body-shape, fallback:hook-unsupported, fallback:jsx-expression, fallback:module-side-effect, fallback:spread-props) | rest-props spread |
+| webpack:/Recharts/src/polar/PolarGrid.tsx | PolarGrid | function | react (fallback:body-shape, fallback:hook-unsupported, fallback:jsx-expression, fallback:spread-props) | rest-props spread |
 | webpack:/Recharts/src/polar/PolarRadiusAxis.tsx | PolarRadiusAxisWrapper | function | react (fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:spread-props) | Context.Provider / *Provider |
 | webpack:/Recharts/src/polar/PolarRadiusAxis.tsx | PolarRadiusAxis | function | react (fallback:island-prop, fallback:spread-props) | rest-props spread |
 | webpack:/Recharts/src/polar/Radar.tsx | SetRadarTooltipEntrySettings | memo | not exported | — |
@@ -1170,7 +1170,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/polar/Radar.tsx | RenderPolygon | function | not exported | useRef |
 | webpack:/Recharts/src/polar/Radar.tsx | RadarWithState | function | not exported | rest-props spread |
 | webpack:/Recharts/src/polar/Radar.tsx | RadarImpl | function | not exported | rest-props spread |
-| webpack:/Recharts/src/polar/Radar.tsx | Radar | function | react (fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:jsx-expression, fallback:module-side-effect, fallback:spread-props) | rest-props spread |
+| webpack:/Recharts/src/polar/Radar.tsx | Radar | function | react (fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:jsx-expression, fallback:spread-props) | rest-props spread |
 | webpack:/Recharts/src/polar/RadialBar.tsx | RadialBarLabelListProvider | function | not exported | Context.Provider / *Provider |
 | webpack:/Recharts/src/polar/RadialBar.tsx | RadialBarSectors | function | not exported | Context.Provider / *Provider, rest-props spread |
 | webpack:/Recharts/src/polar/RadialBar.tsx | SectorsWithAnimation | function | not exported | — |
