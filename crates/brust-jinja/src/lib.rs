@@ -11,7 +11,9 @@
 use minijinja::value::{Kwargs, Value, ValueKind};
 use minijinja::{Environment, Error, ErrorKind};
 
+pub mod bigint;
 pub mod ctx;
+pub mod devwarn;
 
 #[path = "filters/project.rs"]
 mod project;
@@ -30,10 +32,14 @@ pub fn register(env: &mut Environment<'_>) {
     env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
     // `a.b` on a missing value is undefined (paints empty), never an error.
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Chainable);
-    env.add_filter("e", |v: Value| match v.kind() {
-        // A string paints as itself: escape it in place, no painted copy.
-        ValueKind::String => escape_text(v.as_str().unwrap_or_default()),
-        _ => escape_text(&paint(&v)),
+    env.add_filter("e", |v: Value| {
+        let out = match v.kind() {
+            // A string paints as itself: escape it in place, no painted copy.
+            ValueKind::String => escape_text(v.as_str().unwrap_or_default()),
+            _ => escape_text(&paint(&v)),
+        };
+        devwarn::printed(&v, "text", &out);
+        out
     });
     // The ONE unescaped sink: `dangerouslySetInnerHTML` (React's contract: the
     // author owns the markup). null/undefined paint empty, anything else is
@@ -56,7 +62,11 @@ pub fn register(env: &mut Environment<'_>) {
     );
     env.add_filter("js_str", |v: Value| paint(&v));
     env.add_filter("js_string", |v: Value| js_string(&v));
-    env.add_filter("attr_str", |v: Value| attr_string(&v));
+    env.add_filter("attr_str", |v: Value| {
+        let out = attr_string(&v);
+        devwarn::printed(&v, "attribute", &out);
+        out
+    });
     env.add_filter("present", |v: Value| present(&v));
     env.add_filter("present_plain", |v: Value| present_plain(&v));
     env.add_filter("present_str", |v: Value| present_str(&v));
@@ -71,23 +81,34 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("textarea_text", |v: Value| textarea_text(&v));
     env.add_filter("url_ok", |v: Value| safe_url(&attr_string(&v)));
     env.add_filter("json_attr", json_attr);
+    // F585: a bigint operand follows JS (`bigint::arith`): a bigint result, or the TypeError / RangeError JS throws.
     env.add_filter("js_mod", |a: Value, b: Value| {
-        js_arith(&a, &b, |x, y| x % y)
+        js_arith_big(&a, &b, '%', |x, y| x % y)
     });
     env.add_filter("js_div", |a: Value, b: Value| {
-        js_arith(&a, &b, |x, y| x / y)
+        js_arith_big(&a, &b, '/', |x, y| x / y)
     });
-    env.add_filter("js_add", |a: Value, b: Value| js_add(&a, &b));
+    env.add_filter("js_add", |a: Value, b: Value| js_add_checked(&a, &b));
     env.add_filter("js_sub", |a: Value, b: Value| {
-        js_arith(&a, &b, |x, y| x - y)
+        js_arith_big(&a, &b, '-', |x, y| x - y)
     });
     env.add_filter("js_mul", |a: Value, b: Value| {
-        js_arith(&a, &b, |x, y| x * y)
+        js_arith_big(&a, &b, '*', |x, y| x * y)
     });
-    env.add_filter("js_neg", |a: Value| {
-        js_arith(&a, &Value::from(0), |x, _| -x)
+    env.add_filter("js_neg", |a: Value| match bigint::digits(&a) {
+        Some(d) => bigint::neg(&d),
+        None => Ok(js_arith(&a, &Value::from(0), |x, _| -x)),
     });
-    env.add_filter("js_num", |a: Value| js_arith(&a, &Value::from(0), |x, _| x));
+    env.add_filter("js_num", |a: Value| {
+        if bigint::is_bigint(&a) {
+            Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "TypeError: Cannot convert a BigInt value to a number",
+            ))
+        } else {
+            Ok(js_arith(&a, &Value::from(0), |x, _| x))
+        }
+    });
     env.add_filter("js_cmp", |a: Value, b: Value, op: String| {
         js_cmp(&a, &b, &op)
     });
@@ -245,6 +266,37 @@ pub fn js_add(a: &Value, b: &Value) -> Value {
     js_arith(a, b, |x, y| x + y)
 }
 
+/// F585: [`js_add`] with a bigint operand as JS adds it: a string (or an object / array, its string) on the other side
+/// concatenates; another bigint sums; anything else is JS's TypeError.
+pub fn js_add_checked(a: &Value, b: &Value) -> Result<Value, minijinja::Error> {
+    if !bigint::is_bigint(a) && !bigint::is_bigint(b) {
+        return Ok(js_add(a, b));
+    }
+    let text = |v: &Value| {
+        matches!(
+            v.kind(),
+            ValueKind::String | ValueKind::Seq | ValueKind::Iterable | ValueKind::Map
+        )
+    };
+    if text(a) || text(b) {
+        return Ok(Value::from(format!("{}{}", js_string(a), js_string(b))));
+    }
+    bigint::arith(a, b, '+')
+}
+
+/// F585: `-`, `*`, `/`, `%` with JS semantics, a bigint operand included.
+fn js_arith_big(
+    a: &Value,
+    b: &Value,
+    op: char,
+    f: fn(f64, f64) -> f64,
+) -> Result<Value, minijinja::Error> {
+    if bigint::is_bigint(a) || bigint::is_bigint(b) {
+        return bigint::arith(&js_primitive(a), &js_primitive(b), op);
+    }
+    Ok(js_arith(a, b, f))
+}
+
 /// `ToPrimitive` for the operators: an object or array is its string.
 fn js_primitive(v: &Value) -> Value {
     match v.kind() {
@@ -258,7 +310,18 @@ fn js_primitive(v: &Value) -> Value {
 pub fn js_cmp(a: &Value, b: &Value, op: &str) -> bool {
     use std::cmp::Ordering;
     let (a, b) = (js_primitive(a), js_primitive(b));
-    let ord = if a.kind() == ValueKind::String && b.kind() == ValueKind::String {
+    // F585: a bigint against anything compares the mathematical values (`undefined` and a non-numeric string: false).
+    let big = match (bigint::digits(&a), bigint::digits(&b)) {
+        (Some(x), _) => Some(bigint::cmp_with(&x, &b)),
+        (None, Some(y)) => Some(bigint::cmp_with(&y, &a).map(Ordering::reverse)),
+        _ => None,
+    };
+    let ord = if let Some(o) = big {
+        match o {
+            Some(o) => o,
+            None => return false,
+        }
+    } else if a.kind() == ValueKind::String && b.kind() == ValueKind::String {
         a.to_string()
             .encode_utf16()
             .cmp(b.to_string().encode_utf16())
@@ -289,6 +352,12 @@ fn is_container(v: &Value) -> bool {
 
 /// JS `a === b`. Two arrays or objects are never equal here (JS compares identity, which a template cannot see).
 pub fn js_strict_eq(a: &Value, b: &Value) -> bool {
+    // F585: a bigint is `===` only an equal bigint.
+    match (bigint::digits(a), bigint::digits(b)) {
+        (Some(x), Some(y)) => return bigint::cmp_big(&x, &y) == Some(std::cmp::Ordering::Equal),
+        (Some(_), None) | (None, Some(_)) => return false,
+        _ => {}
+    }
     match (a.kind(), b.kind()) {
         (ValueKind::Undefined, ValueKind::Undefined) | (ValueKind::None, ValueKind::None) => true,
         (ValueKind::Bool, ValueKind::Bool) => a.is_true() == b.is_true(),
@@ -308,6 +377,12 @@ pub fn js_loose_eq(a: &Value, b: &Value) -> bool {
         return false;
     }
     let (a, b) = (js_primitive(a), js_primitive(b));
+    // F585: a bigint equals a bigint, a number, a numeric string or a boolean of the same mathematical value.
+    match (bigint::digits(&a), bigint::digits(&b)) {
+        (Some(x), _) => return bigint::cmp_with(&x, &b) == Some(std::cmp::Ordering::Equal),
+        (None, Some(y)) => return bigint::cmp_with(&y, &a) == Some(std::cmp::Ordering::Equal),
+        _ => {}
+    }
     match (a.kind(), b.kind()) {
         (ValueKind::String, ValueKind::String) => a.to_string() == b.to_string(),
         (ValueKind::Bool, ValueKind::Bool) => a.is_true() == b.is_true(),
@@ -397,7 +472,8 @@ pub fn truthy(v: &Value) -> bool {
         ValueKind::Bool => v.is_true(),
         ValueKind::Number => number_of(v).is_some_and(|n| n != 0.0 && !n.is_nan()),
         ValueKind::String => v.as_str().is_some_and(|s| !s.is_empty()),
-        _ => true,
+        // F585: `0n` is the one falsy bigint.
+        _ => bigint::digits(v).is_none_or(|d| bigint::truthy(&d)),
     }
 }
 

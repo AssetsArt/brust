@@ -442,7 +442,7 @@ async function buildInto(
   // R1.3/R1.4: the exposed modules and the stores they define; the worker's store table holds those modules too, so it can touch and snapshot them.
   const exposedRt = exposedStores(appRoot, exposedMods)
   if (exposedMods.length > 0) manifest.runtime = { exposed: client.exposed, stores: exposedRt.stores, ...listedIslands(appRoot, compiled, o.islands) }
-  await buildJobs(out, compiled, ctx.sourceOf, appRoot, [...new Set([...storeModules(manifest), ...exposedRt.storeModules])].sort(), css.maps, routeRoots, reachedJobs(manifest), writers, o.basePath)
+  await buildJobs(out, compiled, ctx.sourceOf, appRoot, [...new Set([...storeModules(manifest), ...exposedRt.storeModules])].sort(), css.maps, routeRoots, reachedJobs(manifest), writers, o.basePath, o.dev)
   // F495: absent without a base path, so an app at the root writes the manifest it always did.
   if (o.basePath !== '') manifest.base_path = o.basePath
   // F506: absent when strict (the default), so an app that sets nothing writes the manifest it always did.

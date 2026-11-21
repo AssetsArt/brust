@@ -25,6 +25,97 @@ pub enum Node {
     Str(Arc<str>),
     Arr(Arc<CtxArr>),
     Map(Arc<CtxMap>),
+    /// F585: a JS value JSON cannot carry, as a job slot returned it (decoded by [`decode_slot`] only at a slot of a
+    /// precompute result and the items of a top-level array slot; nothing else ever builds one).
+    Js(JsVal),
+}
+
+/// F585: what the job's `__slots` wrapper tagged (`{"\u0000js": "NaN"}`): a non-finite number or a bigint.
+#[derive(Debug, Clone, PartialEq)]
+pub enum JsVal {
+    /// `NaN`, `Infinity` or `-Infinity`.
+    Float(f64),
+    /// A bigint: its decimal digits with an optional leading `-` (no `n`).
+    BigInt(Arc<str>),
+}
+
+/// F585: the reserved key of the wire tag (U+0000 then `js`): `JSON.stringify` writes it only for an object that the
+/// app built with that exact key, and the wrapper escapes such an object (`{TAG: {o: <it>}}`) at the positions it
+/// tags, so a one-key object of this key at those positions always came from the wrapper.
+pub const JS_TAG: &str = "\u{0}js";
+
+/// F585: decodes the wrapper's tags in one precompute result slot value: the value itself, and when it is an array,
+/// each item (the same depths the wrapper tags and escapes). Anything else is left as parsed.
+pub fn decode_slot(v: &mut Node) {
+    decode_slot_of(v, "", "");
+}
+
+/// [`decode_slot`] for the slot `slot` of `component`: a `brust dev` object-like output (`{TAG: {k, v}}`) becomes its
+/// image, registered for the print warning ([`crate::devwarn`]).
+pub fn decode_slot_of(v: &mut Node, component: &str, slot: &str) {
+    if let Some((image, kind)) = dev_tagged(v) {
+        crate::devwarn::register(&image, component, slot, &kind);
+        *v = image;
+        return;
+    }
+    if let Some(d) = decode_one(v) {
+        *v = d;
+        return;
+    }
+    if let Node::Arr(a) = v
+        && a.0.iter().any(|x| tagged(x).is_some())
+    {
+        for x in Arc::make_mut(a).0.iter_mut() {
+            if let Some(d) = decode_one(x) {
+                *x = d;
+            }
+        }
+    }
+}
+
+fn dev_tagged(v: &Node) -> Option<(Node, String)> {
+    let Node::Map(m) = tagged(v)? else {
+        return None;
+    };
+    let Node::Str(kind) = m.0.get("k")? else {
+        return None;
+    };
+    if m.0.keys().any(|k| &**k != "k" && &**k != "v") {
+        return None;
+    }
+    Some((
+        m.0.get("v").cloned().unwrap_or(Node::Null),
+        kind.to_string(),
+    ))
+}
+
+fn tagged(v: &Node) -> Option<&Node> {
+    let m = v.as_map()?;
+    if m.0.len() != 1 {
+        return None;
+    }
+    m.0.get(JS_TAG)
+}
+
+fn decode_one(v: &Node) -> Option<Node> {
+    match tagged(v)? {
+        Node::Str(t) => Some(match &**t {
+            "NaN" => Node::Js(JsVal::Float(f64::NAN)),
+            "Infinity" => Node::Js(JsVal::Float(f64::INFINITY)),
+            "-Infinity" => Node::Js(JsVal::Float(f64::NEG_INFINITY)),
+            d => {
+                let digits = d.strip_suffix('n')?;
+                let body = digits.strip_prefix('-').unwrap_or(digits);
+                if body.is_empty() || !body.bytes().all(|c| c.is_ascii_digit()) {
+                    return None;
+                }
+                Node::Js(JsVal::BigInt(Arc::from(digits)))
+            }
+        }),
+        // The escape of an app object that carries the reserved key itself.
+        Node::Map(m) if m.0.len() == 1 => m.0.get("o").cloned(),
+        _ => None,
+    }
 }
 
 /// A string-keyed, sorted map: a minijinja `Object` with repr `Map`.
@@ -174,6 +265,10 @@ impl Node {
             Node::Str(s) => Value::from(Arc::clone(s)),
             Node::Arr(a) => Value::from_dyn_object(Arc::clone(a)),
             Node::Map(m) => Value::from_dyn_object(Arc::clone(m)),
+            Node::Js(JsVal::Float(f)) => Value::from(*f),
+            Node::Js(JsVal::BigInt(d)) => {
+                Value::from_object(crate::bigint::JsBigInt(Arc::clone(d)))
+            }
         }
     }
     /// `map` minus its `hidden` top-level keys, as a value (O(1); no copy).
@@ -279,6 +374,10 @@ pub(crate) fn write_node(out: &mut String, n: &Node) {
         Node::Str(s) => crate::write_json_attr_str(out, s),
         Node::Arr(a) => write_arr(out, a),
         Node::Map(m) => write_map(out, m, &[]),
+        // F585: what the client's `JSON.parse` can hold: a non-finite number is `null` (as JS's own JSON writes it), a
+        // bigint its digits as a string (JSON has no bigint; `JSON.stringify` would throw).
+        Node::Js(JsVal::Float(_)) => out.push_str("null"),
+        Node::Js(JsVal::BigInt(d)) => crate::write_json_attr_str(out, d),
     }
 }
 
@@ -322,6 +421,8 @@ impl Serialize for Node {
             Node::Str(x) => s.serialize_str(x),
             Node::Arr(a) => s.collect_seq(a.0.iter()),
             Node::Map(m) => s.collect_map(m.0.iter().map(|(k, v)| (&**k, v))),
+            Node::Js(JsVal::Float(_)) => s.serialize_unit(),
+            Node::Js(JsVal::BigInt(d)) => s.serialize_str(d),
         }
     }
 }
@@ -536,6 +637,8 @@ impl From<&Node> for serde_json::Value {
                     .map(|(k, v)| (k.to_string(), J::from(v)))
                     .collect(),
             ),
+            Node::Js(JsVal::Float(_)) => J::Null,
+            Node::Js(JsVal::BigInt(d)) => J::String(d.to_string()),
         }
     }
 }

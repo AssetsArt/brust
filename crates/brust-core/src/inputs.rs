@@ -164,6 +164,8 @@ fn js_truthy(v: &Node) -> bool {
         Node::Num(n) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
         Node::Str(s) => !s.is_empty(),
         Node::Arr(_) | Node::Map(_) => true,
+        Node::Js(brust_jinja::ctx::JsVal::Float(f)) => !f.is_nan(),
+        Node::Js(brust_jinja::ctx::JsVal::BigInt(d)) => brust_jinja::bigint::truthy(d),
     }
 }
 
