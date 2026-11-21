@@ -25,6 +25,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-60', title: '2.0.0-alpha.60' },
       { id: 'alpha-59', title: '2.0.0-alpha.59' },
       { id: 'alpha-58', title: '2.0.0-alpha.58' },
       { id: 'alpha-57', title: '2.0.0-alpha.57' },
@@ -90,6 +91,34 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-60">2.0.0-alpha.60 · 22 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.59: #534 (ledger F585, the reduced form) and #536 (F602) */}
+      <p>This version stops a <code>bigint</code> in a value the server computes for a component from failing the whole page with a 500, and makes the server spend less CPU turning <code>{'style={{…}}'}</code> objects into CSS text and hashing layouts. The HTML it sends is the same. Nothing in your app has to change.</p>
+
+      <h3>Upgrading: what you must change</h3>
+      <ul>
+        {/* source: PR #534 (F585), PR #536 (F602); packages/brust/test/handlers.test.ts and tests/server/job-bigint.test.ts (a reply without a bigint is exactly JSON.stringify); crates/brust-jinja/src/lib.rs and crates/brust-core/src/render.rs (the tests that compare the new code with the previous one: 25,000 generated style objects, 20,000 generated layout cases, 5,000 generated maps with non-string keys) */}
+        <li>
+          <strong>Nothing to change (#534, #536).</strong> An app that builds and runs on 2.0.0-alpha.59 builds and runs the same on this version. The one thing you may notice is expected: a value the server computes for a component that holds a <code>bigint</code> now prints its digits where it used to answer 500 (see Fixed). The faster rendering changes no output: its tests compare the new code with the previous code on generated inputs.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #534 (F585); packages/brust/src/handlers.ts (toJson: the retry with digits runs only after a plain stringify threw for a bigint, and only for job results), packages/brust/src/worker.ts (jobReply), packages/brust/src/build/cf-entry.ts (the Workers entry passes jobDigits for jobs only); packages/brust/test/handlers.test.ts; tests/server/job-bigint.test.ts (the page equals React renderToString for 10n in text, an attribute, an array item and a nested member; 0n prints 0 and takes the true branch; a loader returning a bigint answers 500); the Rendering tiers page, the paragraph on precomputed values */}
+        <li>
+          <strong>A <code>bigint</code> in a value the server computes for a component no longer makes the page answer 500 (#534).</strong> These are the precomputed values of a component, such as a class built by a helper or a <code>useId</code>. They travel from the worker to the server as JSON, JSON has no <code>bigint</code>, and one in a value made the whole reply fail. Now the <code>bigint</code> is carried as its decimal digits, so text and attributes print the number as React does; the served test compares the page with React&rsquo;s own output for <code>10n</code> in text, in an attribute, as an array item and as a member of an object. One difference stays, and it is documented on the Rendering tiers page: in a test the digits are a non-empty string, so <code>0n</code> counts as true on the server where JavaScript reads it as false. A reply that has no <code>bigint</code> is written as before. Three things are unchanged: <code>NaN</code> and <code>Infinity</code> in such a value still arrive as <code>null</code> and print nothing; a <code>bigint</code> in loader data is not converted, so that page still answers 500; and the Cloudflare entry that a build writes applies the same rule to these values only.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #536 (F602); crates/brust-jinja/src/lib.rs (style declarations written into one buffer; the previous versions kept under cfg(test) and compared on 25,000 generated style objects, plus 5,000 generated maps with non-string keys); crates/brust-core/src/render.rs (level_hash finds the child level by a short prefix and verifies each hit; compared on 20,000 generated cases and named shapes); the PR #536 table (paired runs of the previous build and this one: CPU per request, lane over main, median of 12 pairs) */}
+        <li>
+          <strong>Rendering a page on the server takes less CPU, and the HTML is byte for byte the same (#536).</strong> Two things got cheaper: writing a <code>{'style={{…}}'}</code> object as CSS text, and the per-layout hash that client-side navigation uses. Measured once, on our benchmark app (12 paired runs of the previous build and this one, same machine): CPU per request fell by about 17% for a page of 151 rows whose badges each carry a style object, by about 19% for a small page rendered on every request, and by about 5% for a page with a React island. This is one app on one machine, not a promise for yours; a page you serve from the page cache does not render at all, so it gains nothing.
+        </li>
+      </ul>
 
       <h2 id="alpha-59">2.0.0-alpha.59 · 21 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.58: #530 (ledger F596) and #532 (F597); #531 (the benchmark harness) is not user-facing and has no entry */}
