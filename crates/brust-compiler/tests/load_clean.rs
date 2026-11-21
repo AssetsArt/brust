@@ -67,7 +67,9 @@ fn a_call_at_top_level_of_another_module_refuses_that_module_only() {
 #[test]
 fn a_let_is_judged_by_its_initializer() {
     let literal = "export let mode = 'a'\nexport function set(m: string) {\n  mode = m\n}\n";
-    let called = "function make() {\n  return 1\n}\nexport let mode = make()\n";
+    // F597 D4 accepts a call of a clean function of the module; one that writes outside itself stays load-time code.
+    let called =
+        "function make() {\n  (globalThis as any).n = 1\n  return 1\n}\nexport let mode = make()\n";
     assert_eq!(clean_of(&[("lib/l.ts", literal)]), vec!["lib/l.ts"]);
     assert!(clean_of(&[("lib/l.ts", called)]).is_empty());
 }
@@ -76,7 +78,8 @@ fn a_let_is_judged_by_its_initializer() {
 fn a_class_new_an_expression_statement_and_a_global_write_stay_load_time_code() {
     for src in [
         "export class Poller {\n  n = 0\n}\n",
-        "export const seen = new Map<string, number>()\n",
+        // F597 D1 accepts `new Map()` of the global; a constructor of anything else stays load-time code.
+        "export const enc = new TextEncoder()\n",
         "globalThis.addEventListener('keydown', () => {})\n",
         ";(globalThis as any).__x = 1\nexport const k = 1\n",
     ] {
@@ -248,9 +251,23 @@ const REFUSED: &[(&str, &str)] = &[
         "map callback",
         "export const xs = [1, 2].map((x) => {\n  (globalThis as any).hit = x\n  return x\n})\n",
     ),
+    // F597 (challenge aa98bfcc): `[...new Set([1])]` is D1 + D2 and moved to F597_ACCEPTED; the reviewer's concern (a
+    // spread that may run a custom iterator) stays refused for every value the judge cannot prove fresh.
     (
-        "spread of an iterator",
-        "const s = new Set([1])\nexport const xs = [...s]\n",
+        "spread of an iterator brust cannot prove",
+        "import { s } from './other'\nexport const xs = [...s]\n",
+    ),
+    (
+        "spread of a custom iterator",
+        "const it = {\n  *[Symbol.iterator]() {\n    (globalThis as any).hit = 1\n    yield 1\n  },\n}\nexport const xs = [...it]\n",
+    ),
+    (
+        "spread of a Set built from an unproven import",
+        "import { s } from './other'\nconst t = new Set(s as any)\nexport const xs = [...t]\n",
+    ),
+    (
+        "spread of a call result",
+        "import { list } from 'some-pkg'\nexport const xs = [...list()]\n",
     ),
     ("enum", "export enum E {\n  A,\n  B,\n}\n"),
     (
@@ -367,4 +384,324 @@ fn amendment_3_every_accepted_row_of_both_review_probes() {
             "{what}: {src}"
         );
     }
+}
+
+/// F597: per decision, the forms the load-time judge now accepts (each with its refused rows below).
+const F597_ACCEPTED: &[(&str, &str)] = &[
+    // D1
+    (
+        "D1 new Set of an array literal",
+        "export const SKIP = new Set(['.git', 'node_modules'])\n",
+    ),
+    (
+        "D1 empty collections",
+        "export const a = new Map<string, number>()\nexport const b = new WeakMap()\nexport const c = new WeakSet()\nexport const d = new Set()\n",
+    ),
+    (
+        "D1 new Map of pairs",
+        "export const M = new Map([['a', 1], ['b', 2]])\n",
+    ),
+    (
+        "D1 chained add and set",
+        "export const S = new Set<string>().add('a').add('b')\nexport const M = new Map().set('k', 1)\n",
+    ),
+    (
+        "D1 Set of a module array",
+        "const XS = ['a', 'b']\nexport const S = new Set(XS)\n",
+    ),
+    // D2
+    (
+        "D2 spread of a module array",
+        "const A = ['a']\nexport const B = [...A, 'b']\n",
+    ),
+    (
+        "D2 spread of a fresh Set (was the review row)",
+        "const s = new Set([1])\nexport const xs = [...s]\n",
+    ),
+    (
+        "D2 spread of a Map's keys",
+        "const m = new Map([['a', 1]])\nexport const ks = [...m.keys()]\n",
+    ),
+    (
+        "D2 object spread of a module literal",
+        "const BASE = { a: 1, b: 'x' }\nexport const O = { ...BASE, c: true }\n",
+    ),
+    (
+        "D2 spread of an imported literal array",
+        "import { BASE } from './base'\nexport const ALL = [...BASE, 'z']\n",
+    ),
+    // D3
+    (
+        "D3 filter with an arrow",
+        "const XS = [1, 2, 3]\nexport const EVEN = XS.filter((x) => x % 2 === 0)\n",
+    ),
+    (
+        "D3 chained filter / flatMap",
+        "const AREAS = [{ id: 'a', scopes: ['x', 'y'], soon: false }]\nexport const GRANTABLE = AREAS.filter((a) => !a.soon).flatMap((a) => a.scopes)\n",
+    ),
+    (
+        "D3 map with a block body",
+        "const XS = [1, 2]\nexport const YS = XS.map((x) => {\n  const y = x * 2\n  if (y > 2) return y\n  return 0\n})\n",
+    ),
+    (
+        "D3 reduce with a local accumulator",
+        "const XS = [1, 2]\nexport const N = XS.reduce((acc, x) => acc + x, 0)\n",
+    ),
+    (
+        "D3 sort a fresh copy",
+        "const XS = ['b', 'a']\nexport const SORTED = [...XS].sort()\nexport const BY = XS.toSorted((a, b) => (a < b ? -1 : 1))\n",
+    ),
+    (
+        "D3 Set and Map reads",
+        "const S = new Set(['a'])\nconst M = new Map([['a', 1]])\nexport const has = S.has('a')\nexport const v = M.get('a')\n",
+    ),
+    (
+        "D3 callback reading a module Set",
+        "const ALLOWED = new Set(['a'])\nconst XS = ['a', 'b']\nexport const OK = XS.filter((x) => ALLOWED.has(x))\n",
+    ),
+    (
+        "D3 join and includes",
+        "const XS = ['a', 'b']\nexport const J = XS.join(', ')\nexport const I = XS.includes('a')\n",
+    ),
+    // D4
+    (
+        "D4 a pure helper building objects",
+        "const t = (name: string, scope: string | null) => ({ name, scope })\nexport const TOOLS = [t('a', null), t('b', 'x')]\n",
+    ),
+    (
+        "D4 a function declaration with if and template",
+        "function policy(remote: string, img = '') {\n  if (!remote) return ['default-src none']\n  return ['default-src none', `img-src self${img}`, `script-src ${remote}`]\n}\nexport const CSP = policy('x')\n",
+    ),
+    (
+        "D4 for…of over a fresh array and a local let",
+        "function total(xs: number[]) {\n  let n = 0\n  for (const x of [1, 2, 3]) n += x\n  return n\n}\nexport const T = total([])\n",
+    ),
+    (
+        "D4 a helper calling a helper",
+        "const a = (x: number) => x + 1\nconst b = (x: number) => a(x) * 2\nexport const B = b(1)\n",
+    ),
+    (
+        "D4 a helper used inside a callback",
+        "const t = (n: string) => ({ n })\nconst XS = ['a']\nexport const TS = XS.map((x) => t(x))\n",
+    ),
+    (
+        "D3 a method of a member of an element",
+        "const GROUPS = [{ id: 'a', scopes: [{ s: 'x', soon: true }] }]\nexport const SOON = GROUPS.flatMap((g) => g.scopes.filter((x) => x.soon).map((x) => x.s))\n",
+    ),
+    (
+        "D3 a spread of a member of an element",
+        "const AREAS = [{ read: ['a'], write: ['b'] }]\nexport const ALL = AREAS.flatMap((a) => [...a.read, ...a.write])\n",
+    ),
+    (
+        "D3 includes of a member of an element",
+        "const CIDRS = ['10.0.0.0/8']\nconst DENY = [{ cidr: '10.0.0.0/8' }]\nexport const D = DENY.filter((r) => !CIDRS.includes(r.cidr))\n",
+    ),
+    // extra rule 1 (lead ruling): a template of an imported primitive const
+    (
+        "rule 1 imported primitive const in a template",
+        "import { SITE } from './site'\nexport const TERMS = `${SITE}/terms`\n",
+    ),
+];
+
+const F597_REFUSED: &[(&str, &str)] = &[
+    (
+        "D3 a method of a local read from a global",
+        "function f() {\n  const r = (globalThis as any).list\n  return r.map((x: number) => x)\n}\nexport const xs = f()\n",
+    ),
+    (
+        "D3 a method of a local that was given a global",
+        "function f() {\n  let r = ['a']\n  r = (globalThis as any).list\n  return r.map((x: string) => x)\n}\nexport const xs = f()\n",
+    ),
+    (
+        "D3 a member of an imported value",
+        "import { s } from './other'\nexport const xs = (s as any).items.map((x: number) => x)\n",
+    ),
+    // D1
+    (
+        "D1 shadowed Set",
+        "class Set {\n  constructor() {\n    (globalThis as any).hit = 1\n  }\n}\nexport const s = new Set()\n",
+    ),
+    (
+        "D1 shadowed Set by an import",
+        "import { Set } from './other'\nexport const s = new Set()\n",
+    ),
+    (
+        "D1 new Set of an unproven import",
+        "import { k } from './other'\nexport const s = new Set(k as any)\n",
+    ),
+    (
+        "D1 new Set of a call result",
+        "import { list } from 'some-pkg'\nexport const s = new Set(list())\n",
+    ),
+    (
+        "D1 WeakMap with an argument",
+        "const k = {}\nexport const w = new WeakMap([[k, 1]])\n",
+    ),
+    (
+        "D1 add on a module Set at top level",
+        "const S = new Set<string>()\nexport const T = S.add('a')\n",
+    ),
+    (
+        "D1 new of another global",
+        "export const e = new TextEncoder()\n",
+    ),
+    // D2
+    (
+        "D2 spread of a call result",
+        "function list() {\n  return [1]\n}\nconst g = (globalThis as any).list\nexport const xs = [...g()]\n",
+    ),
+    (
+        "D2 spread of an imported value of unknown shape",
+        "import { s } from './other'\nexport const xs = [...s]\n",
+    ),
+    (
+        "D2 spread of an array holding an imported value then joined",
+        "import { k } from './other'\nconst XS = [k]\nexport const J = [...XS]\n",
+    ),
+    (
+        "D2 object spread of an imported object",
+        "import { O } from './obj'\nexport const o = { ...O, a: 1 }\n",
+    ),
+    (
+        "D2 object spread of a call result",
+        "import { make } from 'some-pkg'\nexport const o = { ...make() }\n",
+    ),
+    (
+        "D2 a getter in a spread object",
+        "export const o = { ...{ get a() {\n  (globalThis as any).hit = 1\n  return 1\n} } }\n",
+    ),
+    (
+        "D2 imported array built by code",
+        "import { BUILT } from './built'\nexport const xs = [...BUILT]\n",
+    ),
+    // D3
+    (
+        "D3 callback writing a module let",
+        "let n = 0\nconst XS = [1]\nexport const YS = XS.map((x) => {\n  n = x\n  return x\n})\n",
+    ),
+    (
+        "D3 callback calling a package",
+        "import { track } from 'some-pkg'\nconst XS = [1]\nexport const YS = XS.map((x) => track(x))\n",
+    ),
+    (
+        "D3 callback writing through its element",
+        "const XS = [{ a: 1 }]\nexport const YS = XS.map((x) => {\n  x.a = 2\n  return x\n})\n",
+    ),
+    (
+        "D3 sort on an imported array",
+        "import { s } from './other'\nexport const xs = (s as any).sort()\n",
+    ),
+    (
+        "D3 method with a callback that is not inline",
+        "const f = (x: number) => x\nconst XS = [1]\nexport const YS = XS.map(f)\n",
+    ),
+    (
+        "D3 callback with this",
+        "const XS = [1]\nexport const YS = XS.map(function (this: any, x) {\n  return this.k + x\n})\n",
+    ),
+    (
+        "D3 an imported value inside a joined array",
+        "import { k } from './other'\nconst XS = ['a']\nexport const J = XS.concat(k as any)\n",
+    ),
+    (
+        "D3 a mutating method not in the list",
+        "const XS = [1]\nexport const N = XS.push(2)\n",
+    ),
+    // D4
+    (
+        "D4 a function writing a module binding",
+        "let count = 0\nfunction bump() {\n  count += 1\n  return count\n}\nexport const FIRST = bump()\n",
+    ),
+    (
+        "D4 a recursive function",
+        "function f(n: number): number {\n  if (n > 0) return f(n - 1)\n  return 0\n}\nexport const N = f(2)\n",
+    ),
+    (
+        "D4 a function calling a package with a function",
+        "import { onReady } from 'some-pkg'\nfunction setup() {\n  return onReady(() => {})\n}\nexport const off = setup()\n",
+    ),
+    (
+        "D4 a function calling a package with data",
+        "import { make } from 'some-pkg'\nfunction setup() {\n  return make(1)\n}\nexport const x = setup()\n",
+    ),
+    (
+        "D4 a function handed a function",
+        "const run = (f: () => number) => 1\nexport const x = run(() => 1)\n",
+    ),
+    (
+        "D4 a function handed an imported value",
+        "import { k } from './other'\nconst s = (v: unknown) => `${v}`\nexport const x = s(k)\n",
+    ),
+    (
+        "D4 a function reading arguments",
+        "function f() {\n  return arguments.length\n}\nexport const n = f()\n",
+    ),
+    (
+        "D4 a function with a try",
+        "function f() {\n  try {\n    return 1\n  } catch {\n    return 0\n  }\n}\nexport const n = f()\n",
+    ),
+    (
+        "D4 an async function",
+        "async function f() {\n  return 1\n}\nexport const p = f()\n",
+    ),
+    (
+        "D4 a function with a while loop",
+        "function f() {\n  let n = 0\n  while (n < 2) n++\n  return n\n}\nexport const n = f()\n",
+    ),
+    (
+        "D4 for…of over an unproven value",
+        "import { s } from './other'\nfunction f() {\n  let n = 0\n  for (const x of s as any) n += 1\n  return n\n}\nexport const n = f()\n",
+    ),
+    (
+        "D4 an imported app function",
+        "import { setup } from './setup'\nexport const x = setup()\n",
+    ),
+    // D5 is dropped (plan drop rule): Array.from of an iterable stays refused
+    (
+        "D5 dropped: Array.from of an array",
+        "export const xs = Array.from([1, 2], (x) => x * 2)\n",
+    ),
+    // rule 1 only crosses primitives
+    (
+        "rule 1 imported object in a template",
+        "import { O } from './obj'\nexport const s = `${O}`\n",
+    ),
+];
+
+fn f597_tree(src: &str) -> Vec<String> {
+    clean_of(&[
+        ("lib/m.ts", src),
+        ("lib/setup.ts", "export function setup() {}\n"),
+        (
+            "lib/other.ts",
+            "export const k = 1\nexport const s = new Set([1])\nexport class Set {}\n",
+        ),
+        ("lib/site.ts", "export const SITE = 'https://example.com'\n"),
+        ("lib/base.ts", "export const BASE = ['a', 'b']\n"),
+        ("lib/built.ts", "export const BUILT = ['a'].map((x) => x)\n"),
+        (
+            "lib/obj.ts",
+            "export const O = { toString() {\n  return 'x'\n} }\n",
+        ),
+    ])
+}
+
+#[test]
+fn f597_every_accepted_form() {
+    let bad: Vec<&str> = F597_ACCEPTED
+        .iter()
+        .filter(|(_, src)| !f597_tree(src).contains(&"lib/m.ts".to_string()))
+        .map(|(what, _)| *what)
+        .collect();
+    assert!(bad.is_empty(), "refused but should be accepted: {bad:?}");
+}
+
+#[test]
+fn f597_every_refused_form() {
+    let bad: Vec<&str> = F597_REFUSED
+        .iter()
+        .filter(|(_, src)| f597_tree(src).contains(&"lib/m.ts".to_string()))
+        .map(|(what, _)| *what)
+        .collect();
+    assert!(bad.is_empty(), "accepted but should be refused: {bad:?}");
 }

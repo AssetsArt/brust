@@ -141,6 +141,8 @@ const DRAWN: Record<string, (s: Server) => string[]> = {
   // page printed; tidy bundles only a module that runs nothing at load.
   '/13/none': (s) => names(s, [...CORE, '@busy', '@caller']),
   '/13/tidy': (s) => names(s, [...CORE, '@busy', '@tidy', '@caller']),
+  // F597: forms bundles a module of every accepted load-time form: left out above, carried where it is drawn.
+  '/13/forms': (s) => names(s, [...CORE, '@busy', '@caller', '@forms']),
   '/12': (s) => names(s, CORE),
   '/12?raw=1': (s) => names(s, [...CORE, '@w5']),
 }
@@ -385,7 +387,12 @@ describe('the drawn hosts work (Chromium)', () => {
     await p.waitForFunction(() => (globalThis as { __busy?: number }).__busy === 1)
     // tidy's counter is the module caller's chunk already bumped at load (that chunk is carried on every page): 2, as in
     // React, which loads every module the route imports.
-    for (const [k, text] of [['busy', 'busy 1'], ['tidy', 'tidy 2'], ['caller', 'caller 1']] as const) {
+    for (const [k, text] of [
+      ['busy', 'busy 1'],
+      ['tidy', 'tidy 2'],
+      ['caller', 'caller 1'],
+      ['forms', 'forms x,y 3 true 2 2 https://example.com/terms'],
+    ] as const) {
       await p.goto(`${drawn.base}/13/${k}`)
       await click(p, `#${k}`, text)
     }

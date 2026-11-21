@@ -145,7 +145,6 @@ pub fn module_effect(
             }
         }
     };
-    let _ = accepted;
     // Lead ruling b0dff21e: bindings a `const` takes from package code (`const [createXContext, createXScope] = createContextScope(…)`):
     // calling one runs package code.
     let mut foreign: HashSet<u32> = HashSet::new();
@@ -337,6 +336,67 @@ pub fn module_effect(
         }
     }
     let functions: HashSet<u32> = walks.iter().map(|(k, _)| *k).collect();
+    // F597: module consts by binding, and the functions a load-time call may follow.
+    let mut inits: std::collections::HashMap<u32, js_ast::Expr> = std::collections::HashMap::new();
+    let mut bodies: std::collections::HashMap<u32, FnBody<'_>> = std::collections::HashMap::new();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            match &stmt.data {
+                S::SFunction(f) => {
+                    if let Some(n) = &f.func.name {
+                        let fl = f.func.flags;
+                        bodies.insert(
+                            key(n.ref_),
+                            FnBody {
+                                args: f.func.args.slice(),
+                                stmts: f.func.body.stmts.slice(),
+                                plain: !fl.contains(js_ast::flags::Function::IsAsync)
+                                    && !fl.contains(js_ast::flags::Function::IsGenerator)
+                                    && !fl.contains(js_ast::flags::Function::HasRestArg),
+                            },
+                        );
+                    }
+                }
+                S::SLocal(l) if matches!(l.kind, js_ast::S::Kind::KConst) => {
+                    for d in l.decls.iter() {
+                        let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
+                        else {
+                            continue;
+                        };
+                        match &v.data {
+                            E::EArrow(a) => {
+                                bodies.insert(
+                                    key(id.r#ref),
+                                    FnBody {
+                                        args: a.args.slice(),
+                                        stmts: a.body.stmts.slice(),
+                                        plain: !a.is_async && !a.has_rest_arg,
+                                    },
+                                );
+                            }
+                            E::EFunction(f) => {
+                                let fl = f.func.flags;
+                                bodies.insert(
+                                    key(id.r#ref),
+                                    FnBody {
+                                        args: f.func.args.slice(),
+                                        stmts: f.func.body.stmts.slice(),
+                                        plain: !fl.contains(js_ast::flags::Function::IsAsync)
+                                            && !fl.contains(js_ast::flags::Function::IsGenerator)
+                                            && !fl.contains(js_ast::flags::Function::HasRestArg),
+                                    },
+                                );
+                            }
+                            _ => {
+                                inits.insert(key(id.r#ref), *v);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     let values = Values {
         names,
         import_read,
@@ -349,6 +409,13 @@ pub fn module_effect(
         code_writes: &code_writes,
         functions: &functions,
         load_only,
+        inits: &inits,
+        bodies: &bodies,
+        accepted,
+        locals: std::cell::RefCell::new(HashSet::new()),
+        data_locals: std::cell::RefCell::new(HashSet::new()),
+        visiting: std::cell::RefCell::new(Vec::new()),
+        strict: std::cell::Cell::new(0),
     };
     let display_name = |e: &js_ast::Expr| {
         let E::EBinary(b) = &e.data else { return false };
@@ -680,7 +747,98 @@ struct Values<'a, 'n> {
     /// the load-time one: there a package call handed app code, and a value a conversion runs app code of, are refused.
     functions: &'a HashSet<u32>,
     load_only: bool,
+    /// F597 (load-time judge only): each module `const` bound to a name, by binding, with its initializer.
+    inits: &'a std::collections::HashMap<u32, js_ast::Expr>,
+    /// F597 D4: the module's functions a load-time call may follow: parameters, body, and whether the function is a
+    /// plain one to follow (not async, not a generator, no rest parameter).
+    bodies: &'a std::collections::HashMap<u32, FnBody<'a>>,
+    /// F597: whether the module `const` named so is folded or proven plain (`accepted` of `module_effect`).
+    accepted: &'a dyn Fn(&str) -> bool,
+    /// F597: parameters and locals of the function bodies being judged (symbols are unique, so one set serves all).
+    locals: std::cell::RefCell<HashSet<u32>>,
+    /// F597: the locals that hold plain data: parameters (handed data), loop bindings over fresh values, and locals
+    /// whose every value is data.
+    data_locals: std::cell::RefCell<HashSet<u32>>,
+    /// F597 D4: the module functions being followed (a call back into one is recursion, refused).
+    visiting: std::cell::RefCell<Vec<u32>>,
+    /// F597: inside a followed body or callback: a call is only one of D1-D4 or a read-only global, never package code.
+    strict: std::cell::Cell<u32>,
 }
+
+/// F597 D4: a module function a load-time call may follow.
+#[derive(Clone, Copy)]
+struct FnBody<'a> {
+    args: &'a [js_ast::G::Arg],
+    stmts: &'a [js_ast::Stmt],
+    plain: bool,
+}
+
+/// F597: the shape a load-time value is proven to have (fresh: built by this module at load, holding data only).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kind {
+    Array,
+    Set,
+    Map,
+    /// `new WeakSet()` / `new WeakMap()`: never iterated or spread.
+    Weak,
+    /// `keys()` / `values()` / `entries()` of a fresh Set or Map.
+    Iter,
+}
+
+/// F597 D3: array methods that build a new value or read one (`sort` / `reverse` sort the fresh receiver in place).
+const ARRAY_METHODS: &[&str] = &[
+    "filter",
+    "map",
+    "flatMap",
+    "reduce",
+    "reduceRight",
+    "slice",
+    "concat",
+    "flat",
+    "sort",
+    "toSorted",
+    "reverse",
+    "toReversed",
+    "join",
+    "includes",
+    "indexOf",
+    "find",
+    "findLast",
+    "findIndex",
+    "some",
+    "every",
+    "at",
+];
+/// Those whose result is a fresh array.
+const ARRAY_RETURNING: &[&str] = &[
+    "filter",
+    "map",
+    "flatMap",
+    "slice",
+    "concat",
+    "flat",
+    "sort",
+    "toSorted",
+    "reverse",
+    "toReversed",
+];
+/// Those that take a callback (its first argument).
+const CALLBACK_METHODS: &[&str] = &[
+    "filter",
+    "map",
+    "flatMap",
+    "reduce",
+    "reduceRight",
+    "sort",
+    "toSorted",
+    "find",
+    "findLast",
+    "findIndex",
+    "some",
+    "every",
+];
+/// F597 D3: Set / Map methods that read.
+const COLLECTION_METHODS: &[&str] = &["has", "get", "keys", "values", "entries"];
 
 impl Values<'_, '_> {
     fn ok(&self, e: &js_ast::Expr, depth: u8) -> bool {
@@ -697,9 +855,25 @@ impl Values<'_, '_> {
         }
         let go = |x: &js_ast::Expr| self.why(x, depth + 1);
         let spell = |x: &js_ast::Expr| spell(x, names);
+        // F597 D3 / D4: a method of a proven fresh value, or a call of a function of this module.
+        if self.load_only
+            && let E::ECall(c) = &e.data
+            && let Some(v) = self.load_call(c, depth)
+        {
+            return v;
+        }
         match &e.data {
             E::EString(_) | E::ENumber(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_) => None,
             E::EImportIdentifier(_) => None,
+            // F597: `arguments` of a followed body is not a value of the module.
+            E::EIdentifier(id)
+                if self.strict.get() > 0
+                    && names.name(id.ref_) == "arguments"
+                    && !module.contains(&names.key_of(id.ref_))
+                    && !self.locals.borrow().contains(&names.key_of(id.ref_)) =>
+            {
+                Some("it reads `arguments`".into())
+            }
             E::EIdentifier(id) => {
                 let k = names.key_of(id.ref_);
                 // F564: read at load before (or while) it is declared: a TDZ error (`const A = B + 1; const B = …`).
@@ -754,6 +928,15 @@ impl Values<'_, '_> {
                 }
             }
             E::EArray(a) => a.items.iter().find_map(|x| match &x.data {
+                // F597 D2: a spread of a value proven to be a fresh array, Set or Map runs only the built-in iterator.
+                E::ESpread(sp)
+                    if self.load_only
+                        && self
+                            .kind(&sp.value, depth + 1)
+                            .is_some_and(|k| k != Kind::Weak) =>
+                {
+                    go(&sp.value)
+                }
                 E::ESpread(sp) => Some(format!(
                     "it spreads `...{}` into an array",
                     spell(&sp.value)
@@ -781,6 +964,17 @@ impl Values<'_, '_> {
                         crate::analyze::expr::estring(k)
                     ));
                 }
+                // F597 D2: in the load-time judge an object spread copies only a value proven to be plain data (an
+                // imported object or a call result could run a getter of app code).
+                if self.load_only
+                    && matches!(p.kind, js_ast::G::PropertyKind::Spread)
+                    && p.value.as_ref().is_some_and(|v| !self.data(v, depth + 1))
+                {
+                    return Some(format!(
+                        "it spreads `...{}`, which brust cannot prove is plain data, into an object",
+                        p.value.as_ref().map(&spell).unwrap_or_default()
+                    ));
+                }
                 p.value.as_ref().and_then(&go)
             }),
             // F564 D1: `Array.from({ length: <number> }, (_, i) => <primitive code>)`.
@@ -791,8 +985,9 @@ impl Values<'_, '_> {
                     |_| None,
                 ),
             E::ECall(c) => {
+                // F597: inside a followed body or callback no package code is called.
                 let allowed = c.was_jsx_element
-                    || package_rooted(&c.target)
+                    || (package_rooted(&c.target) && self.strict.get() == 0)
                     || read_only_global(&c.target, names);
                 if !allowed {
                     return Some(format!("it calls `{}(…)`", spell(&c.target)));
@@ -839,6 +1034,7 @@ impl Values<'_, '_> {
                     _ => go(a),
                 })
             }
+            E::ENew(n) if self.load_only => self.new_why(n, depth),
             E::ENew(n) => Some(format!("it constructs `new {}(…)`", spell(&n.target))),
             // F564 D1: a regex literal runs nothing; one with `g` or `y` keeps `lastIndex` between uses.
             E::ERegExp(r) => r
@@ -1003,6 +1199,480 @@ impl Values<'_, '_> {
                     )
                 }),
         }
+    }
+}
+
+/// F597: the load-time judge's own forms (D1-D4). Each proves a value is fresh data or a call runs only code it judged.
+impl Values<'_, '_> {
+    fn global_named(&self, e: &js_ast::Expr, set: &[&str]) -> Option<String> {
+        match &e.data {
+            E::EIdentifier(id)
+                if matches!(self.names.kind_of(id.ref_).1, crate::ir::IdentKind::Global) =>
+            {
+                let n = self.names.name(id.ref_);
+                set.contains(&n.as_str()).then_some(n)
+            }
+            _ => None,
+        }
+    }
+
+    /// The shape `e` is proven to have. Only fresh values qualify: an array literal of data, a D1 collection, a module
+    /// `const` holding one, a D3 method result, an app import of a literal array (F564's literal-export proof).
+    fn kind(&self, e: &js_ast::Expr, depth: u8) -> Option<Kind> {
+        if depth > 16 {
+            return None;
+        }
+        match &e.data {
+            E::EArray(a) => a
+                .items
+                .iter()
+                .all(|x| match &x.data {
+                    E::ESpread(sp) => self
+                        .kind(&sp.value, depth + 1)
+                        .is_some_and(|k| k != Kind::Weak),
+                    _ => self.data(x, depth + 1),
+                })
+                .then_some(Kind::Array),
+            E::ENew(n) => match self
+                .global_named(&n.target, &["Set", "Map", "WeakSet", "WeakMap"])?
+                .as_str()
+            {
+                "Set" => Some(Kind::Set),
+                "Map" => Some(Kind::Map),
+                _ => Some(Kind::Weak),
+            },
+            // A value read from proven data (a data local, a member of one or of a module data const) holds no code: a
+            // method of the list is the built-in one, or the call throws; it never runs app code.
+            E::EDot(_) | E::EIndex(_) => self.data(e, depth + 1).then_some(Kind::Array),
+            E::EIdentifier(id) => {
+                let k = self.names.key_of(id.ref_);
+                if self.locals.borrow().contains(&k) {
+                    return self
+                        .data_locals
+                        .borrow()
+                        .contains(&k)
+                        .then_some(Kind::Array);
+                }
+                if let Some(init) = self.inits.get(&k) {
+                    return self.kind(init, depth + 1);
+                }
+                self.import_kind(id.ref_)
+            }
+            E::EImportIdentifier(id) => self.import_kind(id.ref_),
+            E::ECall(c) => {
+                let E::EDot(d) = &c.target.data else {
+                    return None;
+                };
+                let m = String::from_utf8_lossy(d.name.slice());
+                let m = m.as_ref();
+                match self.kind(&d.target, depth + 1)? {
+                    Kind::Array if ARRAY_RETURNING.contains(&m) => Some(Kind::Array),
+                    Kind::Set | Kind::Map if matches!(m, "keys" | "values" | "entries") => {
+                        Some(Kind::Iter)
+                    }
+                    // `.add(v)` / `.set(k, v)` chained on the `new` itself returns the same fresh collection.
+                    Kind::Set if m == "add" && Self::chained_on_new(&d.target) => Some(Kind::Set),
+                    Kind::Map if m == "set" && Self::chained_on_new(&d.target) => Some(Kind::Map),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn chained_on_new(e: &js_ast::Expr) -> bool {
+        match &e.data {
+            E::ENew(_) => true,
+            E::ECall(c) => matches!(&c.target.data, E::EDot(d) if Self::chained_on_new(&d.target)),
+            _ => false,
+        }
+    }
+
+    fn import_kind(&self, r: js_ast::Ref) -> Option<Kind> {
+        let (src, imp) = self.names.import_of(r)?;
+        (app_specifier(src) && (self.import_read)(src, imp, &[])).then_some(Kind::Array)
+    }
+
+    /// Data that holds no code and no app-imported value, so a callback, a conversion or a copy of it runs only built-in
+    /// code: literals, untagged templates and operators over data, array / object literals of data (plain properties,
+    /// no conversion hook), a local of a judged body, a module `const` holding data or folded, and fresh values.
+    fn data(&self, e: &js_ast::Expr, depth: u8) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        let go = |x: &js_ast::Expr| self.data(x, depth + 1);
+        match &e.data {
+            E::EString(_)
+            | E::ENumber(_)
+            | E::EBoolean(_)
+            | E::ENull(_)
+            | E::EUndefined(_)
+            | E::EBigInt(_) => true,
+            E::ETemplate(t) => t.tag.is_none() && t.parts().iter().all(|p| go(&p.value)),
+            E::EArray(_) | E::ENew(_) | E::ECall(_) => self.kind(e, depth + 1).is_some(),
+            E::EObject(o) => o.properties.iter().all(|p| {
+                matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                    && !p.flags.contains(js_ast::flags::Property::IsComputed)
+                    && !matches!(p.key.as_ref().map(|k| &k.data),
+                        Some(E::EString(k)) if CONVERSION_HOOKS.contains(&crate::analyze::expr::estring(k).as_str()))
+                    && p.value.as_ref().is_some_and(&go)
+            }),
+            E::EIdentifier(id) => {
+                let k = self.names.key_of(id.ref_);
+                let n = self.names.name(id.ref_);
+                self.data_locals.borrow().contains(&k)
+                    || (!self.locals.borrow().contains(&k) && self.inits.get(&k).is_some_and(&go))
+                    || (self.module.contains(&k) && (self.accepted)(&n) && !self.functions.contains(&k))
+                    || (matches!(n.as_str(), "undefined" | "NaN" | "Infinity")
+                        && matches!(self.names.kind_of(id.ref_).1, crate::ir::IdentKind::Global))
+            }
+            E::EUnary(u) => {
+                !matches!(
+                    u.op,
+                    js_ast::OpCode::UnPreInc
+                        | js_ast::OpCode::UnPreDec
+                        | js_ast::OpCode::UnPostInc
+                        | js_ast::OpCode::UnPostDec
+                        | js_ast::OpCode::UnDelete
+                ) && go(&u.value)
+            }
+            E::EBinary(b) => {
+                matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None)
+                    && !matches!(b.op, js_ast::OpCode::BinIn | js_ast::OpCode::BinInstanceof)
+                    && go(&b.left)
+                    && go(&b.right)
+            }
+            E::EIf(i) => go(&i.test) && go(&i.yes) && go(&i.no),
+            // A member of data is data (`row.scopes`, `pairs[0]`); an optional step or a key that is not data is not.
+            E::EDot(d) => d.optional_chain.is_none() && go(&d.target),
+            E::EIndex(i) => i.optional_chain.is_none() && go(&i.target) && go(&i.index),
+            _ => false,
+        }
+    }
+
+    /// F597 D1: `new Set(x?)` / `new Map(x?)` of the GLOBAL with `x` absent or a fresh iterable; `new WeakSet()` /
+    /// `new WeakMap()` empty.
+    fn new_why(&self, n: &js_ast::E::New, depth: u8) -> Option<String> {
+        let refused = || {
+            Some(format!(
+                "it constructs `new {}(…)`",
+                spell(&n.target, self.names)
+            ))
+        };
+        let Some(name) = self.global_named(&n.target, &["Set", "Map", "WeakSet", "WeakMap"]) else {
+            return refused();
+        };
+        match n.args.as_slice() {
+            [] => None,
+            [x] if matches!(name.as_str(), "Set" | "Map") => {
+                if self.kind(x, depth + 1).is_some_and(|k| k != Kind::Weak) {
+                    self.why(x, depth + 1)
+                } else {
+                    Some(format!(
+                        "it constructs `new {name}(…)` of a value brust cannot prove is a fresh array, Set or Map"
+                    ))
+                }
+            }
+            _ => refused(),
+        }
+    }
+
+    /// F597 D3 / D4: `Some(verdict)` for a call this judge's forms cover, `None` to leave it to the general rules.
+    fn load_call(&self, c: &js_ast::E::Call, depth: u8) -> Option<Option<String>> {
+        if c.optional_chain.is_some() || c.was_jsx_element {
+            return None;
+        }
+        match &c.target.data {
+            E::EDot(d) => {
+                let m = String::from_utf8_lossy(d.name.slice()).into_owned();
+                let k = self.kind(&d.target, depth + 1)?;
+                let ok = match k {
+                    Kind::Array => ARRAY_METHODS.contains(&m.as_str()),
+                    Kind::Set => {
+                        COLLECTION_METHODS.contains(&m.as_str())
+                            || (m == "add" && Self::chained_on_new(&d.target))
+                    }
+                    Kind::Map => {
+                        COLLECTION_METHODS.contains(&m.as_str())
+                            || (m == "set" && Self::chained_on_new(&d.target))
+                    }
+                    Kind::Weak | Kind::Iter => false,
+                };
+                if !ok {
+                    return None;
+                }
+                Some(self.method_why(c, &d.target, &m, depth))
+            }
+            E::EIdentifier(id) => {
+                let k = self.names.key_of(id.ref_);
+                let body = *self.bodies.get(&k)?;
+                Some(self.follow_why(c, k, &self.names.name(id.ref_), body, depth))
+            }
+            _ => None,
+        }
+    }
+
+    fn method_why(
+        &self,
+        c: &js_ast::E::Call,
+        recv: &js_ast::Expr,
+        m: &str,
+        depth: u8,
+    ) -> Option<String> {
+        let spelled = || spell(&c.target, self.names);
+        if let Some(w) = self.why(recv, depth + 1) {
+            return Some(w);
+        }
+        // In a followed body, sorting in place may only change what the body built.
+        if self.strict.get() > 0
+            && matches!(m, "sort" | "reverse")
+            && root_through_calls(recv)
+                .is_some_and(|r| !self.locals.borrow().contains(&self.names.key_of(r)))
+        {
+            return Some(format!(
+                "it sorts `{}` in place, a value its function does not own",
+                spell(recv, self.names)
+            ));
+        }
+        for (i, a) in c.args.iter().enumerate() {
+            match &a.data {
+                E::ESpread(_) => {
+                    return Some(format!("it spreads arguments into `{}(…)`", spelled()));
+                }
+                E::EArrow(_) | E::EFunction(_) => {
+                    if i != 0 || !CALLBACK_METHODS.contains(&m) {
+                        return Some(format!("it hands a function to `{}(…)`", spelled()));
+                    }
+                    if let Some(w) = self.callback_why(a, depth) {
+                        return Some(w);
+                    }
+                }
+                _ => {
+                    if let Some(w) = self.why(a, depth + 1) {
+                        return Some(w);
+                    }
+                    if !self.data(a, depth + 1) {
+                        return Some(format!(
+                            "it hands `{}(…)` a value brust cannot prove is plain data",
+                            spelled()
+                        ));
+                    }
+                }
+            }
+        }
+        if CALLBACK_METHODS.contains(&m) && !matches!(m, "sort" | "toSorted") && c.args.is_empty() {
+            return Some(format!("it calls `{}(…)` without a callback", spelled()));
+        }
+        None
+    }
+
+    /// F597 D3: an inline callback, judged with its parameters as locals.
+    fn callback_why(&self, f: &js_ast::Expr, depth: u8) -> Option<String> {
+        let (args, stmts, plain) = match &f.data {
+            E::EArrow(a) => (
+                a.args.slice(),
+                a.body.stmts.slice(),
+                !a.is_async && !a.has_rest_arg,
+            ),
+            E::EFunction(f) => {
+                let fl = f.func.flags;
+                (
+                    f.func.args.slice(),
+                    f.func.body.stmts.slice(),
+                    !fl.contains(js_ast::flags::Function::IsAsync)
+                        && !fl.contains(js_ast::flags::Function::IsGenerator)
+                        && !fl.contains(js_ast::flags::Function::HasRestArg),
+                )
+            }
+            _ => return Some("it hands a value that is not an inline function".into()),
+        };
+        if !plain {
+            return Some("its callback is async, a generator or takes a rest parameter".into());
+        }
+        self.params_and_body(args, stmts, depth)
+    }
+
+    /// F597 D4: a call at load of a function of this module, with data arguments and a body this judge follows.
+    fn follow_why(
+        &self,
+        c: &js_ast::E::Call,
+        k: u32,
+        name: &str,
+        body: FnBody<'_>,
+        depth: u8,
+    ) -> Option<String> {
+        if self.visiting.borrow().contains(&k) {
+            return Some(format!("it calls `{name}` from itself"));
+        }
+        if !body.plain {
+            return Some(format!(
+                "it calls `{name}`, an async or generator function or one with a rest parameter"
+            ));
+        }
+        for a in c.args.iter() {
+            if matches!(a.data, E::ESpread(_) | E::EArrow(_) | E::EFunction(_))
+                || matches!(&a.data, E::EIdentifier(id) if self.functions.contains(&self.names.key_of(id.ref_)))
+            {
+                return Some(format!("it hands `{name}(…)` a function or a spread"));
+            }
+            if let Some(w) = self.why(a, depth + 1) {
+                return Some(w);
+            }
+            if !self.data(a, depth + 1) {
+                return Some(format!(
+                    "it hands `{name}(…)` a value brust cannot prove is plain data"
+                ));
+            }
+        }
+        self.visiting.borrow_mut().push(k);
+        let r = self.params_and_body(body.args, body.stmts, depth);
+        self.visiting.borrow_mut().pop();
+        r.map(|w| format!("it calls `{name}`, whose body {w}"))
+    }
+
+    fn params_and_body(
+        &self,
+        args: &[js_ast::G::Arg],
+        stmts: &[js_ast::Stmt],
+        depth: u8,
+    ) -> Option<String> {
+        for a in args {
+            if !plain_pattern(&a.binding) {
+                return Some("a parameter pattern has a default value or a computed key".into());
+            }
+            if let Some(d) = &a.default {
+                if let Some(w) = self.why(d, depth + 1) {
+                    return Some(w);
+                }
+                if !self.data(d, depth + 1) {
+                    return Some("a parameter default is not plain data".into());
+                }
+            }
+            // A parameter holds what the call site handed: data (D4 arguments, D3 elements of proven data).
+            self.declare(&a.binding, true);
+        }
+        self.strict.set(self.strict.get() + 1);
+        let r = self.body_why(stmts, depth + 1);
+        self.strict.set(self.strict.get() - 1);
+        r
+    }
+
+    fn declare(&self, b: &js_ast::Binding, data: bool) {
+        let mut w = Walk::default();
+        w.declare_binding(b);
+        let keys: Vec<u32> = w.declared.iter().map(|r| self.names.key_of(*r)).collect();
+        self.locals.borrow_mut().extend(keys.iter().copied());
+        if data {
+            self.data_locals.borrow_mut().extend(keys);
+        }
+    }
+
+    /// F597 D3 / D4: a body of `const` / `let` of judged values, `if`, `return`, blocks, `for…of` over a fresh iterable,
+    /// and assignments to its own locals; nothing else.
+    fn body_why(&self, stmts: &[js_ast::Stmt], depth: u8) -> Option<String> {
+        if depth > 16 {
+            return Some("it nests deeper than the compiler follows".into());
+        }
+        let local = |e: &js_ast::Expr| matches!(&e.data, E::EIdentifier(id) if self.locals.borrow().contains(&self.names.key_of(id.ref_)));
+        for st in stmts {
+            let why = match &st.data {
+                S::SEmpty(_) | S::SComment(_) | S::SDirective(_) | S::STypeScript(_) => None,
+                S::SReturn(r) => r.value.as_ref().and_then(|v| self.why(v, depth + 1)),
+                S::SBlock(b) => self.body_why(b.stmts.slice(), depth + 1),
+                S::SIf(i) => self
+                    .why(&i.test, depth + 1)
+                    .or_else(|| self.body_why(std::slice::from_ref(&i.yes), depth + 1))
+                    .or_else(|| {
+                        i.no.as_ref()
+                            .and_then(|n| self.body_why(std::slice::from_ref(n), depth + 1))
+                    }),
+                S::SLocal(l) => l.decls.iter().find_map(|d| {
+                    if !plain_pattern(&d.binding) {
+                        return Some(
+                            "a local pattern has a default value or a computed key".into(),
+                        );
+                    }
+                    let w = d.value.as_ref().and_then(|v| self.why(v, depth + 1));
+                    let data = d.value.as_ref().is_none_or(|v| self.data(v, depth + 1));
+                    self.declare(&d.binding, data);
+                    w
+                }),
+                S::SForOf(f) => {
+                    if f.is_await {
+                        Some("it awaits".into())
+                    } else if !self
+                        .kind(&f.value, depth + 1)
+                        .is_some_and(|k| k != Kind::Weak)
+                    {
+                        Some(format!(
+                            "it loops over `{}`, which brust cannot prove is a fresh array, Set or Map",
+                            spell(&f.value, self.names)
+                        ))
+                    } else if let Some(w) = self.why(&f.value, depth + 1) {
+                        Some(w)
+                    } else {
+                        match &f.init.data {
+                            S::SLocal(l)
+                                if l.decls
+                                    .iter()
+                                    .all(|d| d.value.is_none() && plain_pattern(&d.binding)) =>
+                            {
+                                for d in l.decls.iter() {
+                                    self.declare(&d.binding, true);
+                                }
+                                self.body_why(std::slice::from_ref(&f.body), depth + 1)
+                            }
+                            _ => Some("its loop does not declare its own binding".into()),
+                        }
+                    }
+                }
+                S::SExpr(x) => match &x.value.data {
+                    E::EBinary(b)
+                        if !matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None) =>
+                    {
+                        if local(&b.left) {
+                            // A local stays data only while every value it is given is data.
+                            if !self.data(&b.right, depth + 1)
+                                && let E::EIdentifier(id) = &b.left.data
+                            {
+                                self.data_locals
+                                    .borrow_mut()
+                                    .remove(&self.names.key_of(id.ref_));
+                            }
+                            self.why(&b.right, depth + 1)
+                                .or_else(|| self.coerced(&b.right))
+                        } else {
+                            Some(format!(
+                                "it assigns `{}`, which its function does not declare",
+                                spell(&b.left, self.names)
+                            ))
+                        }
+                    }
+                    E::EUnary(u)
+                        if matches!(
+                            u.op,
+                            js_ast::OpCode::UnPreInc
+                                | js_ast::OpCode::UnPreDec
+                                | js_ast::OpCode::UnPostInc
+                                | js_ast::OpCode::UnPostDec
+                        ) =>
+                    {
+                        (!local(&u.value)).then(|| {
+                            format!(
+                                "it changes `{}`, which its function does not declare",
+                                spell(&u.value, self.names)
+                            )
+                        })
+                    }
+                    _ => self.why(&x.value, depth + 1),
+                },
+                _ => Some("its function body has a statement brust does not follow".into()),
+            };
+            if why.is_some() {
+                return why;
+            }
+        }
+        None
     }
 }
 
@@ -1227,6 +1897,75 @@ pub fn plain_import_read(
         }
         plain_path(value, path)
     })
+}
+
+/// F597 D2: the app import `imported` of `source` is an array literal of literal data (no identifier, no code) that
+/// its module exports as a `const` and nothing writes: F564's literal-export proof (`plain_import_read`) for the whole
+/// value, so a spread, a copy or a callback over it runs only built-in code.
+pub fn literal_array_import(
+    from: &str,
+    source: &str,
+    imported: &str,
+    opts: &crate::analyze::component::AnalyzeOptions,
+) -> bool {
+    if imported == "*" || !app_specifier(source) {
+        return false;
+    }
+    let Some(start) = crate::analyze::modules::resolve_module(from, source, opts) else {
+        return false;
+    };
+    let declared = |ast: &js_ast::Ast<'_>, n: &str| export_literal(ast, n).is_some();
+    let Some((module, export)) =
+        crate::analyze::hooks::follow_export(opts, start, imported.to_string(), &declared)
+    else {
+        return false;
+    };
+    if opts
+        .load_writes
+        .as_deref()
+        .is_some_and(|lw| lw.why(&module, &export).is_some())
+    {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(opts.root.join(&module)) else {
+        return false;
+    };
+    let Ok(parsed) = crate::parse::parse_cached(&module, bytes) else {
+        return false;
+    };
+    parsed.with_ast(|ast| {
+        let Some((value, Some(r))) = export_literal(ast, &export) else {
+            return false;
+        };
+        let dummy = js_ast::G::Fn::default();
+        let names = NameTable::new(ast, &dummy);
+        if crate::analyze::use_scan::unsafe_to_fold(ast, &names).contains(&r.inner_index()) {
+            return false;
+        }
+        matches!(value.data, E::EArray(_)) && literal_data(value, 0)
+    })
+}
+
+/// Literal data only: primitives, templates without parts, arrays and objects of those (plain non-computed properties,
+/// no conversion hook, no `__proto__`).
+fn literal_data(e: &js_ast::Expr, depth: u8) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    match &e.data {
+        E::EString(_) | E::ENumber(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_) | E::EBigInt(_) => true,
+        E::ETemplate(t) => t.tag.is_none() && t.parts().is_empty(),
+        E::EUnary(u) if matches!(u.op, js_ast::OpCode::UnNeg) => matches!(u.value.data, E::ENumber(_)),
+        E::EArray(a) => a.items.iter().all(|x| literal_data(x, depth + 1)),
+        E::EObject(o) => o.properties.iter().all(|p| {
+            matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                && !p.flags.contains(js_ast::flags::Property::IsComputed)
+                && matches!(p.key.as_ref().map(|k| &k.data), Some(E::EString(k))
+                    if { let k = crate::analyze::expr::estring(k); !CONVERSION_HOOKS.contains(&k.as_str()) && k != "__proto__" })
+                && p.value.as_ref().is_some_and(|v| literal_data(v, depth + 1))
+        }),
+        _ => false,
+    }
 }
 
 /// The object or array literal the export `export` of `ast` declares, and its binding (`None` for `export default {…}`,

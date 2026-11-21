@@ -308,16 +308,25 @@ pub fn load_clean(path: &str, opts: &AnalyzeOptions) -> bool {
         let mut reader = Reader::new(&mut names, &print);
         let (_, decls) = reader.module_scope(ast);
         let none = |_: &str| false;
-        let no_imports = |_: &str, _: &str| None;
-        let folded = Folder::new(&decls, &none, &no_imports).all();
+        // F597 (lead ruling, extra rule 1): a const folded from an imported PRIMITIVE const (`${SITE}/terms`) through
+        // the folder's own proof (`imported_const`, R1.1b: primitives only).
+        let imports = |src: &str, imp: &str| imported_const(path, src, imp, opts, 0);
+        let folded = Folder::new(&decls, &none, &imports).all();
         let evaluated = crate::analyze::module_effects::fold_env_accepts(&decls);
         let plain = crate::analyze::plain_fn::plain_fns(ast, &names);
+        // F597 D2: an app import is a fresh array only through the literal-export proof (an empty read path); member
+        // reads of an import are not followed here.
+        let import_read =
+            |src: &str, imp: &str, read: &[crate::analyze::module_effects::ReadSeg]| {
+                read.is_empty()
+                    && crate::analyze::module_effects::literal_array_import(path, src, imp, opts)
+            };
         crate::analyze::module_effects::module_effect(
             ast,
             &names,
             parsed.text(),
             &|n| folded.contains_key(n) || evaluated.contains(n) || plain.iter().any(|p| p == n),
-            &|_, _, _| false,
+            &import_read,
             true,
         )
         .is_none()
