@@ -1,0 +1,370 @@
+//! F591 rule (e): which app modules run nothing at load that a page would miss when the native chunk bundling them is
+//! left out (`load_writes::scan` → `load_clean`, judged by `module_effects::module_effect` in its load-time mode). The
+//! mode decides only the manifest's `hosts`; the component analysis keeps the F215 rule (last test).
+use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
+use brust_compiler::analyze::load_writes::scan;
+use brust_compiler::ir::{DiagClass, Tier};
+use brust_compiler::parse::run_on_compiler_thread;
+use std::path::PathBuf;
+
+fn write_tree(files: &[(&str, &str)]) -> PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::SeqCst);
+    let root = std::env::temp_dir().join(format!("brustc-f591-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (path, text) in files {
+        let p = root.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    root
+}
+
+/// The modules of `files` the scan judges load-clean, sorted.
+fn clean_of(files: &[(&str, &str)]) -> Vec<String> {
+    let root = write_tree(files);
+    let paths: Vec<String> = files.iter().map(|(p, _)| p.to_string()).collect();
+    run_on_compiler_thread(move || {
+        let opts = AnalyzeOptions {
+            root,
+            ..Default::default()
+        };
+        scan(&paths, &opts).load_clean
+    })
+}
+
+const WRITER: &str = "let count = 0\nexport const items: string[] = []\nexport function bump() {\n  count += 1\n  items.push('x')\n  return count\n}\n";
+
+#[test]
+fn a_function_that_writes_a_module_let_runs_nothing_at_load() {
+    assert_eq!(clean_of(&[("lib/tidy.ts", WRITER)]), vec!["lib/tidy.ts"]);
+}
+
+#[test]
+fn the_same_function_called_at_top_level_is_load_time_code() {
+    let called = format!("{WRITER}bump()\n");
+    let as_value = format!("{WRITER}export const first = bump()\n");
+    assert!(clean_of(&[("lib/tidy.ts", &called)]).is_empty());
+    assert!(clean_of(&[("lib/tidy.ts", &as_value)]).is_empty());
+}
+
+#[test]
+fn a_call_at_top_level_of_another_module_refuses_that_module_only() {
+    let other = "import { bump } from './tidy'\nbump()\nexport const N = 1\n";
+    let value = "import { bump } from './tidy'\nexport const N = bump()\n";
+    // The build refuses `hosts` for any chunk whose graph holds a module not listed: `other` / `value` here.
+    assert_eq!(
+        clean_of(&[
+            ("lib/tidy.ts", WRITER),
+            ("lib/other.ts", other),
+            ("lib/value.ts", value)
+        ]),
+        vec!["lib/tidy.ts"]
+    );
+}
+
+#[test]
+fn a_let_is_judged_by_its_initializer() {
+    let literal = "export let mode = 'a'\nexport function set(m: string) {\n  mode = m\n}\n";
+    let called = "function make() {\n  return 1\n}\nexport let mode = make()\n";
+    assert_eq!(clean_of(&[("lib/l.ts", literal)]), vec!["lib/l.ts"]);
+    assert!(clean_of(&[("lib/l.ts", called)]).is_empty());
+}
+
+#[test]
+fn a_class_new_an_expression_statement_and_a_global_write_stay_load_time_code() {
+    for src in [
+        "export class Poller {\n  n = 0\n}\n",
+        "export const seen = new Map<string, number>()\n",
+        "globalThis.addEventListener('keydown', () => {})\n",
+        ";(globalThis as any).__x = 1\nexport const k = 1\n",
+    ] {
+        assert!(clean_of(&[("lib/m.ts", src)]).is_empty(), "{src}");
+    }
+}
+
+#[test]
+fn package_calls_and_plain_tables_run_nothing_the_page_would_miss() {
+    let store = "import { defineStore, signal } from '@brust/core/store'\nconst KEY = 'k'\nexport const prefs = defineStore('prefs', () => ({ lang: signal('th') }))\nexport function setLang(l: string) {\n  prefs.lang.set(l)\n  localStorage.setItem(KEY, l)\n}\n";
+    let table = "export const LABELS = { a: 'A', b: 'B' }\nexport const NAMES = ['x', 'y']\n";
+    assert_eq!(
+        clean_of(&[("lib/store.ts", store), ("lib/table.ts", table)]),
+        vec!["lib/store.ts", "lib/table.ts"]
+    );
+}
+
+#[test]
+fn the_load_time_mode_changes_no_component_analysis() {
+    // The same shape in the component's own module (a table a declared function writes, read by the page) keeps today's
+    // F215 refusal: the load-time mode is used only for the manifest's `hosts`.
+    let src = "import { useState } from 'react'\nconst items: string[] = ['a']\nexport function add() {\n  items.push('x')\n}\nexport default function C() {\n  const [n, setN] = useState(0)\n  return <button onClick={() => setN(n + 1)}>{items.length} {n}</button>\n}\n";
+    let root = write_tree(&[("C.tsx", src)]);
+    let ir = run_on_compiler_thread(move || {
+        analyze_source(
+            "C.tsx",
+            src.as_bytes().to_vec(),
+            &AnalyzeOptions {
+                root,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    });
+    let fallbacks: Vec<&str> = ir
+        .diagnostics
+        .iter()
+        .filter(|d| d.class == DiagClass::Fallback)
+        .map(|d| d.rule.as_str())
+        .collect();
+    assert!(fallbacks.contains(&"module-side-effect"), "{fallbacks:?}");
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert_eq!(clean_of(&[("C.tsx", src)]), vec!["C.tsx"]);
+}
+
+#[test]
+fn review_f1_a_package_call_handed_app_code_at_load_is_load_time_code() {
+    for src in [
+        "import { onReady } from 'some-pkg'\nexport const off = onReady(() => {\n  document.body.dataset.x = '1'\n})\n",
+        "import { onReady } from 'some-pkg'\nfunction setup() {\n  document.body.dataset.x = '1'\n}\nexport const off = onReady(setup)\n",
+        "import { make } from 'some-pkg'\nexport const x = make({ onLoad: () => {} })\n",
+        "import { make } from 'some-pkg'\nexport const x = make([() => 1])\n",
+        "import { onReady } from 'some-pkg'\nimport { setup } from './setup'\nexport const off = onReady(setup)\n",
+        "import { defineStore } from '@brust/core/store'\nexport const s = defineStore('s', () => {\n  document.title = 'x'\n  return {}\n})\n",
+    ] {
+        let clean = clean_of(&[
+            ("lib/m.ts", src),
+            ("lib/setup.ts", "export function setup() {}\n"),
+        ]);
+        assert_eq!(clean, vec!["lib/setup.ts"], "{src}");
+    }
+}
+
+#[test]
+fn review_f1_data_only_package_calls_store_setups_and_react_wrappers_stay_accepted() {
+    for (file, src) in [
+        (
+            "lib/m.ts",
+            "import i18next from 'i18next'\nexport const i18n = i18next.init({ lng: 'th' })\n",
+        ),
+        (
+            "lib/m.ts",
+            "import { defineStore, signal } from '@brust/core/store'\nexport const s = defineStore('s', () => ({ a: signal(1) }))\n",
+        ),
+        (
+            "lib/m.tsx",
+            "import { forwardRef, memo } from 'react'\nexport const B = forwardRef<HTMLButtonElement>((p, ref) => <button ref={ref} />)\nexport const M = memo(() => <i />)\n",
+        ),
+        (
+            "lib/m.tsx",
+            "function Icon() {\n  return <svg />\n}\nexport const ICONS = { home: <Icon /> }\n",
+        ),
+    ] {
+        assert_eq!(clean_of(&[(file, src)]), vec![file], "{src}");
+    }
+}
+
+#[test]
+fn review_f2_an_object_a_conversion_runs_app_code_of_is_load_time_code() {
+    for src in [
+        "const o = { toString() {\n  (globalThis as any).hit = 1\n  return 'a'\n} }\nexport const s = `${o}`\n",
+        "const o = { toString: () => 'a' }\nexport const s = 'a' + o\n",
+        "const o = { toString: () => 'a' }\nexport const s = String(o)\n",
+        "const o = { valueOf: () => 1 }\nexport const s = o > 0\n",
+        "const o = { toJSON: () => 1 }\nexport const s = JSON.stringify(o)\n",
+    ] {
+        assert!(clean_of(&[("lib/m.ts", src)]).is_empty(), "{src}");
+    }
+}
+
+/// AMENDMENT 3: every row of both review probes (notes 30f3dfb6 and 85e3e8e0), the two F4 rows first.
+const REFUSED: &[(&str, &str)] = &[
+    (
+        "F4 handler || null",
+        "import { onReady } from 'some-pkg'\nconst f = () => {\n  document.body.dataset.x = '1'\n}\nexport const x = onReady(f || null)\n",
+    ),
+    (
+        "F4 comma",
+        "import { onReady } from 'some-pkg'\nexport const x = onReady((0, () => {\n  document.body.dataset.x = '1'\n}))\n",
+    ),
+    (
+        "getter",
+        "const o = {\n  get v() {\n    (globalThis as any).hit = 1\n    return 1\n  },\n}\nexport const v = o.v\n",
+    ),
+    (
+        "tagged template",
+        "import { css } from 'some-pkg'\nexport const c = css`a`\n",
+    ),
+    ("dynamic import", "export const m = import('./other')\n"),
+    (
+        "top-level await",
+        "export const v = await Promise.resolve(1)\n",
+    ),
+    (
+        "assignment initializer",
+        "let a = 0\nexport const b = (a = 1)\n",
+    ),
+    (
+        "delete initializer",
+        "const o: any = { a: 1 }\nexport const b = delete o.a\n",
+    ),
+    (
+        "comma initializer",
+        "function f() {\n  (globalThis as any).hit = 1\n}\nexport const b = (f(), 1)\n",
+    ),
+    (
+        "??= initializer",
+        "let a: number | undefined\nexport const b = (a ??= 1)\n",
+    ),
+    (
+        "IIFE",
+        "export const b = (() => {\n  (globalThis as any).hit = 1\n  return 1\n})()\n",
+    ),
+    (
+        "setTimeout",
+        "setTimeout(() => {}, 0)\nexport const k = 1\n",
+    ),
+    (
+        "addEventListener",
+        "addEventListener('load', () => {})\nexport const k = 1\n",
+    ),
+    (
+        "defineProperty",
+        "export const o = Object.defineProperty({}, 'a', { get: () => 1 })\n",
+    ),
+    (
+        "Reflect",
+        "export const o = Reflect.set(globalThis, 'a', 1)\n",
+    ),
+    (
+        "Promise.then",
+        "export const p = Promise.resolve(1).then(() => {\n  (globalThis as any).hit = 1\n})\n",
+    ),
+    (
+        "Array.from with a writing callback",
+        "export const xs = Array.from({ length: 2 }, () => {\n  (globalThis as any).hit = 1\n  return 1\n})\n",
+    ),
+    (
+        "map callback",
+        "export const xs = [1, 2].map((x) => {\n  (globalThis as any).hit = x\n  return x\n})\n",
+    ),
+    (
+        "spread of an iterator",
+        "const s = new Set([1])\nexport const xs = [...s]\n",
+    ),
+    ("enum", "export enum E {\n  A,\n  B,\n}\n"),
+    (
+        "customElements",
+        "customElements.define('x-a', class extends HTMLElement {})\nexport const k = 1\n",
+    ),
+    (
+        "object const holding a function handed",
+        "import { onReady } from 'some-pkg'\nconst h = { run: () => {} }\nexport const x = onReady(h)\n",
+    ),
+    (
+        "array const holding a function handed",
+        "import { onReady } from 'some-pkg'\nconst hs = [() => {}]\nexport const x = onReady(hs)\n",
+    ),
+    (
+        "ternary",
+        "import { onReady } from 'some-pkg'\nconst f = () => {}\nexport const x = onReady(Math.random() > 1 ? f : null)\n",
+    ),
+    (
+        "?? arrow",
+        "import { onReady } from 'some-pkg'\nconst g: any = null\nexport const x = onReady(g ?? (() => {}))\n",
+    ),
+    (
+        "member of a local object",
+        "import { onReady } from 'some-pkg'\nconst h = { run() {} }\nexport const x = onReady(h.run)\n",
+    ),
+    (
+        "namespace-import member",
+        "import { onReady } from 'some-pkg'\nimport * as app from './setup'\nexport const x = onReady(app.setup)\n",
+    ),
+    (
+        "named app import",
+        "import { onReady } from 'some-pkg'\nimport { setup } from './setup'\nexport const x = onReady(setup)\n",
+    ),
+    (
+        "chained call with a callback",
+        "import { api } from 'some-pkg'\nexport const x = api().on(() => {})\n",
+    ),
+    (
+        "chained call with data",
+        "import { api } from 'some-pkg'\nexport const x = api().get('a')\n",
+    ),
+    (
+        "method shorthand argument",
+        "import { make } from 'some-pkg'\nexport const x = make({ run() {} })\n",
+    ),
+    (
+        "getter argument",
+        "import { make } from 'some-pkg'\nexport const x = make({\n  get v() {\n    return 1\n  },\n})\n",
+    ),
+    (
+        "let holding a function",
+        "import { onReady } from 'some-pkg'\nlet f = () => {}\nexport const x = onReady(f)\n",
+    ),
+    (
+        "var holding a function",
+        "import { onReady } from 'some-pkg'\nvar f = () => {}\nexport const x = onReady(f)\n",
+    ),
+    (
+        "new with a callback",
+        "import { Pkg } from 'some-pkg'\nexport const x = new Pkg(() => {})\n",
+    ),
+    (
+        "tagged package template",
+        "import { gql } from 'some-pkg'\nexport const q = gql`{ a }`\n",
+    ),
+    (
+        "computed setup calling app code",
+        "import { computed } from '@brust/core/store'\nimport { setup } from './setup'\nexport const c = computed(() => setup())\n",
+    ),
+    (
+        "signal handed an arrow",
+        "import { signal } from '@brust/core/store'\nexport const s = signal(() => {\n  (globalThis as any).hit = 1\n})\n",
+    ),
+];
+
+const ACCEPTED: &[(&str, &str)] = &[
+    (
+        "a function value only exported",
+        "export const f = () => {\n  (globalThis as any).hit = 1\n}\n",
+    ),
+    (
+        "defineStore setup returning an object that holds a function",
+        "import { defineStore, signal } from '@brust/core/store'\nexport const s = defineStore('s', () => ({ n: signal(0), run: () => {} }))\n",
+    ),
+    (
+        "a plain table",
+        "export const T = { a: [1, 2], b: 'x', c: -1, d: `t` }\n",
+    ),
+    (
+        "a package call with data only",
+        "import { make } from 'some-pkg'\nconst K = 'k'\nexport const x = make(K, { a: [1, -2], b: `x` }, null)\n",
+    ),
+];
+
+#[test]
+fn amendment_3_every_refused_row_of_both_review_probes() {
+    for (what, src) in REFUSED {
+        let clean = clean_of(&[
+            ("lib/m.ts", src),
+            ("lib/setup.ts", "export function setup() {}\n"),
+            ("lib/other.ts", "export const k = 1\n"),
+        ]);
+        assert!(!clean.contains(&"lib/m.ts".to_string()), "{what}: {src}");
+    }
+}
+
+#[test]
+fn amendment_3_every_accepted_row_of_both_review_probes() {
+    for (what, src) in ACCEPTED {
+        assert_eq!(
+            clean_of(&[("lib/m.ts", src)]),
+            vec!["lib/m.ts"],
+            "{what}: {src}"
+        );
+    }
+}

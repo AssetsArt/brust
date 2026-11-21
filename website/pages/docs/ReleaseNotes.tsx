@@ -25,6 +25,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-58', title: '2.0.0-alpha.58' },
       { id: 'alpha-57', title: '2.0.0-alpha.57' },
       { id: 'alpha-56', title: '2.0.0-alpha.56' },
       { id: 'alpha-55', title: '2.0.0-alpha.55' },
@@ -88,6 +89,42 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-58">2.0.0-alpha.58 · 21 November 2026</h2>
+      {/* source: the pull request merged after v2.0.0-alpha.57: #528 (ledger F591) */}
+      <p>This version sends a page the scripts of the native components it contains, not those of every native component its route could draw. A page that draws one widget out of six loads one widget&rsquo;s script. If your own code inserts the markup of a native component the server did not render, or a package you import only from components a page does not draw does work when it loads, read the first two items below.</p>
+
+      <h3>Upgrading: what you must change</h3>
+      <ul>
+        {/* source: PR #528 (F591); crates/brust-core/src/render.rs (inject_document_assets_full_into, printed_hosts: the scan reads the finished document before the tags are written); packages/brust/src/build/config.ts (parseComponentScripts); tests/server/drawn-scripts.chromium.test.ts (case 10: route mode is the previous list; case 12: raw HTML that spells a host keeps the chunk); the Rendering tiers page, section Only the components the page drew, and the Configuration page */}
+        <li>
+          <strong>Code of your own that inserts the markup of a native component the server did not render finds no script for it, and the component stays inert with no error (#528).</strong> That is an HTML string you build and put in the page, or a fragment you fetch from another URL and insert, when the markup holds the element of a native component that the page you are on did not contain. Set <code>{'component_scripts = "route"'}</code> under <code>[build]</code> in <code>brust.toml</code> and rebuild: every page then carries the scripts of every native component its route can draw, as in the previous versions. To find these places, search your client code for <code>innerHTML</code>, <code>insertAdjacentHTML</code>, <code>importNode</code> and for code that appends fetched markup, and check whether what they insert can hold a native component the current page did not draw. Cloning a node that is already in the page is not affected, and neither is the markup of a component that the page sent hidden, such as the other branch of a condition on state or the row of a list that was empty on the server: the page contains those, so their scripts stay.
+        </li>
+        {/* source: PR #528 (F591); crates/brust-compiler/src/analyze/module_effects.rs (the load-time mode: hands_code); crates/brust-compiler/tests/load_clean.rs (accepted and refused rows); packages/brust/src/build/manifest.ts (chunkHosts); tests/server/drawn-scripts.chromium.test.ts (case 13: chunks that bundle load-time code are sent on every page and their code runs); the Rendering tiers page, section Only the components the page drew */}
+        <li>
+          <strong>Code a package runs when it is imported no longer runs on a page that does not draw the components that import it (#528).</strong> brust does not check code outside the app root and its <code>[build] source_roots</code>. A package that registers something global as soon as it loads, imported only by components a page does not draw, is not loaded on that page, and a package call that your own module makes when it loads, with data only, runs only on the pages that carry that component&rsquo;s script. If a page needs that code on every page of a route, set <code>{'component_scripts = "route"'}</code>. Code of your own is judged: a script is always sent, on every page of its route, when the component bundles an app module that runs code when it loads (a statement at the top level, a call of your own code, a class, <code>new</code>), so that code runs on every page of the route as before. A function the module declares runs nothing until it is called and does not count, but passing one to a package call at load does.
+        </li>
+        {/* source: PR #528 (F591); crates/brust-core/src/manifest.rs (hosts, component_scripts); packages/brust/src/build/manifest.ts (ComponentRecord.hosts); packages/brust/test/fixtures/app.expected-manifest.json (the pinned manifest gains hosts) */}
+        <li>
+          <strong>Rebuild to get the smaller lists; <code>manifest.json</code> gains two fields (#528).</strong> A component record can carry <code>hosts</code>, and the manifest has <code>component_scripts</code> when you set it to <code>{'"route"'}</code>. A build from an earlier version has no <code>hosts</code>, and a server of this version sends the previous list for it. This only matters to a tool that checks <code>manifest.json</code> strictly. React islands, the runtime and its feature modules, stores, runtime components and client navigation are sent as before.
+        </li>
+      </ul>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #528 (F591); crates/brust-core/src/render.rs (inject_document_assets_full_into, printed_hosts); packages/brust/src/build/manifest.ts (chunkHosts); tests/server/drawn-scripts.chromium.test.ts (cases 1-12: tag lists asserted exactly, then clicks; case 8 page cache MISS == HIT; case 7 client navigation); the task notes of drawn-scripts (the measurement of the test app and of one larger app); the Rendering tiers page, section Only the components the page drew */}
+        <li>
+          <strong>A response carries the script of a native component only when the page contains that component (#528).</strong> The server looks for the component&rsquo;s element in the finished HTML before it writes the script tags, and leaves out the script of a component with no element in it. Before, the list depended on the route only: every native script the route could print, on every response. Markup the browser may still show later is part of the HTML, so its scripts stay: the other branch of a condition over state or over a prop that can change, and the row of a list that is empty on the server, which is sent as a hidden template that includes the components inside a row, nested ones too. The served tests click through each case: a server switch, a state branch, a prop branch, a list filled from an action with a child and a grandchild component, a component inside a hidden copy, a native component inside a React island, host-specialised copies and a layout that draws a host. A page that the cache stores holds the list as filtered, so the first response and the cached one are the same bytes. A client navigation loads the scripts that the next page lists before it swaps the page in, and going back works the same. <code>brust build --target static</code> pages carry the same lists. The Cloudflare target calls the same server function, but the served tests do not run on it. See <a href="/docs/rendering-tiers#drawn">Only the components the page drew</a>.
+        </li>
+        {/* source: PR #528 (F591); packages/brust/src/build/config.ts (parseComponentScripts: "drawn" or "route", otherwise a config error); packages/brust/test/build-component-scripts.test.ts; the Configuration page */}
+        <li>
+          <strong><code>[build] component_scripts</code> chooses between the two lists (#528).</strong> <code>{'"drawn"'}</code> is the default; <code>{'"route"'}</code> sends every script a route can draw, whatever the page contains. Any other value is a <code>config</code> error. See <a href="/docs/configuration#other">Configuration</a>.
+        </li>
+        {/* source: the task notes of drawn-scripts (the measured numbers: the fixture app of six components behind a server switch, 9 runs, median; one larger app, 105 native chunks); packages/brust/src/build/manifest.ts (chunkHosts: the rules that keep a chunk); packages/brust/src/build/bundle.ts */}
+        <li>
+          <strong>What it saves, measured.</strong> On a small test app with a page that draws none of six native components behind a server switch, the page&rsquo;s script tags went from 10 to 4 and the JavaScript it loads from 126,854 to 11,661 bytes; <code>load</code> on a throttled network profile went from about 182 ms to about 66 ms. A page that draws one of the six loads 5 tags and 12,270 bytes. On one larger app with 105 native components, 93 have a script that a page can now leave out; the other 12 are always sent, because their script bundles a module of the app that runs code when it loads: 10 build a table by calling your own code at load, and the rest convert an imported value to a string or build a <code>new Set</code> at load. The numbers are one small app and one larger one, not a promise for yours.
+        </li>
+      </ul>
 
       <h2 id="alpha-57">2.0.0-alpha.57 · 21 November 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.56: #522 (ledger F564), #524 (F588), #525 (F580, the rest) and #526 (F589) */}

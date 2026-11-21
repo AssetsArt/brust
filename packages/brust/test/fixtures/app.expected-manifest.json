@@ -45,6 +45,9 @@
       "stores": [],
       "features": [
         "basics"
+      ],
+      "hosts": [
+        "appLayout_d491b982"
       ]
     },
     "homePage_010405bc": {

@@ -64,7 +64,8 @@ max_age_seconds = 600`
 
 const BUILD = `[build]
 server_only = ["lib/db", "bun:sqlite"]   # import prefixes or app-relative paths kept out of the browser
-source_roots = ["../shared"]             # monorepo: directories beside the app that relative imports may reach`
+source_roots = ["../shared"]             # monorepo: directories beside the app that relative imports may reach
+component_scripts = "drawn"              # "route": every native chunk a route can draw, whatever the page drew`
 
 // source: packages/brust/src/build/tiers.ts parseTiers (the keys, the three tier names, the pattern rules) and ruleFor (#Export first, then the
 // longer pattern; a tie between different tiers is a config error), packages/brust/test/tiers.test.ts
@@ -360,6 +361,12 @@ export default function Configuration({ blocks }: ConfigurationData) {
       <p>
         <code>[build] template_max_bytes</code> is a budget, in bytes, for one template the build writes. The default, <code>0</code>, is no budget, and the build only warns about a template over 1 MB. With a budget, a template over it fails the build
         with one <code>template-size</code> error that lists every such template, largest first. The value must be a non-negative integer. In <code>brust dev</code> the error is a warning. See <a href="/docs/cli#large-templates">Large templates</a>.
+      </p>
+      {/* source: packages/brust/src/build/config.ts (parseComponentScripts), packages/brust/src/build/index.ts (manifest.component_scripts), crates/brust-core/src/manifest.rs (ComponentScripts), tests/server/drawn-scripts.chromium.test.ts case 10 */}
+      <p>
+        <code>[build] component_scripts</code> decides which native component chunks a page carries. The default, <code>&quot;drawn&quot;</code>, sends the chunk of a component only when the page contains it (see{' '}
+        <a href="/docs/rendering-tiers#drawn">Only the components the page drew</a>). <code>&quot;route&quot;</code> sends every chunk the route can draw, whatever the page contains, as earlier versions did: use it if your own code
+        inserts the markup of a native component the server did not render. Any other value is a <code>config</code> error.
       </p>
       {/* source: packages/brust/src/build/config.ts:554 parseDevWatch (one key, `watch`; unknown keys and non-string entries are a config error at build too) and packages/brust/src/dev/watch.ts:51 devExtraRoots */}
       <p>

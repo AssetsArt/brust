@@ -28,6 +28,29 @@ use js_ast::expr::Data as E;
 use js_ast::stmt::Data as S;
 use std::collections::HashSet;
 
+/// F591: the members a conversion of an object calls.
+const CONVERSION_HOOKS: &[&str] = &["toString", "valueOf", "toJSON"];
+
+/// F591: brust's store primitives (`@brust/core/store`, `@brust/runtime-dom` and their `/store` entries).
+fn store_primitive(target: &js_ast::Expr, names: &NameTable<'_>) -> bool {
+    const SOURCES: &[&str] = &[
+        "@brust/core/store",
+        "@brust/runtime-dom",
+        "@brust/runtime-dom/store",
+        "@brust/core",
+    ];
+    const FNS: &[&str] = &["defineStore", "signal", "computed"];
+    match &target.data {
+        E::EImportIdentifier(id) => names
+            .import_of(id.ref_)
+            .is_some_and(|(src, imp)| SOURCES.contains(&src) && FNS.contains(&imp)),
+        E::EIdentifier(id) => names
+            .import_of(id.ref_)
+            .is_some_and(|(src, imp)| SOURCES.contains(&src) && FNS.contains(&imp)),
+        _ => false,
+    }
+}
+
 /// Methods that change their receiver.
 const MUTATING: &[&str] = &[
     "push",
@@ -46,6 +69,11 @@ const MUTATING: &[&str] = &[
 ];
 
 /// The first top-level statement of `ast` the allowlist does not accept: its start and a short description.
+/// `load_only` (F591 rule e): judge only what runs WHEN THE MODULE LOADS, not what a copy of its declarations would
+/// miss later: a function the module declares (a declaration, or a `const` / `let` / `var` holding a function value)
+/// runs nothing at load whatever it writes, and a `let` / `var` is judged by its initializer as a `const` is. Every
+/// value computed at load is judged exactly as without it (a load-time call of this module's own code, a function
+/// handed to a call that writes a module binding, a class, an expression statement stay refused).
 /// `accepted(name)`: the module `const` named `name` is folded by the folder or proven plain by `plain_fn`.
 /// `import_read(source, imported, path)`: reading `path` from the app import `imported` of `source` reads only data
 /// properties of a literal (F564 D1, `plain_import_read`).
@@ -55,6 +83,7 @@ pub fn module_effect(
     text: &[u8],
     accepted: &dyn Fn(&str) -> bool,
     import_read: &dyn Fn(&str, &str, &[ReadSeg]) -> bool,
+    load_only: bool,
 ) -> Option<(u32, String)> {
     let key = |r: js_ast::Ref| names.key_of(r);
     // Every module binding, and the code of each function the module declares (a declaration or a function value).
@@ -278,7 +307,7 @@ pub fn module_effect(
             break;
         }
     }
-    let function_ok = |k: u32| !writers.contains(&k);
+    let function_ok = |k: u32| load_only || !writers.contains(&k);
     let package_rooted = |e: &js_ast::Expr| {
         package_rooted(e)
             || matches!(&e.data, E::EIdentifier(id) if foreign.contains(&key(id.ref_)))
@@ -307,6 +336,7 @@ pub fn module_effect(
             }
         }
     }
+    let functions: HashSet<u32> = walks.iter().map(|(k, _)| *k).collect();
     let values = Values {
         names,
         import_read,
@@ -317,6 +347,8 @@ pub fn module_effect(
         package_rooted: &package_rooted,
         hands: &hands,
         code_writes: &code_writes,
+        functions: &functions,
+        load_only,
     };
     let display_name = |e: &js_ast::Expr| {
         let E::EBinary(b) = &e.data else { return false };
@@ -395,7 +427,7 @@ pub fn module_effect(
                     None => continue,
                 },
                 S::SLocal(l) => {
-                    if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                    if !load_only && !matches!(l.kind, js_ast::S::Kind::KConst) {
                         let first = l.decls.first().map(|d| {
                             let mut w = Walk::default();
                             w.declare_binding(&d.binding);
@@ -470,7 +502,7 @@ pub fn module_effect(
                             let name = f.func.name.as_ref().map(|n| names.name(n.ref_));
                             let bad = match &f.func.name {
                                 Some(n) => !function_ok(key(n.ref_)),
-                                None => writes(&w, &writers),
+                                None => !load_only && writes(&w, &writers),
                             };
                             if !bad {
                                 continue;
@@ -489,7 +521,7 @@ pub fn module_effect(
                         E::EArrow(_) | E::EFunction(_) => {
                             let mut w = Walk::default();
                             w.expr(e);
-                            if !writes(&w, &writers) {
+                            if load_only || !writes(&w, &writers) {
                                 continue;
                             }
                             fn_writes("default".into(), stmt, &w)
@@ -644,6 +676,10 @@ struct Values<'a, 'n> {
     package_rooted: &'a dyn Fn(&js_ast::Expr) -> bool,
     hands: &'a dyn Fn(&js_ast::Expr) -> bool,
     code_writes: &'a dyn Fn(&Walk) -> bool,
+    /// F591 (`load_only`): this module's functions (declarations and function-valued consts), and whether the judge is
+    /// the load-time one: there a package call handed app code, and a value a conversion runs app code of, are refused.
+    functions: &'a HashSet<u32>,
+    load_only: bool,
 }
 
 impl Values<'_, '_> {
@@ -734,6 +770,17 @@ impl Values<'_, '_> {
                 if p.flags.contains(js_ast::flags::Property::IsComputed) {
                     return Some("it has a computed key".into());
                 }
+                // F591 (Mellow F2): a conversion of this object at load (a template, `+`, `String(o)`, `JSON.stringify`)
+                // runs these as app code.
+                if self.load_only
+                    && let Some(E::EString(k)) = p.key.as_ref().map(|k| &k.data)
+                    && CONVERSION_HOOKS.contains(&crate::analyze::expr::estring(k).as_str())
+                {
+                    return Some(format!(
+                        "it declares `{}`, which a conversion may run",
+                        crate::analyze::expr::estring(k)
+                    ));
+                }
                 p.value.as_ref().and_then(&go)
             }),
             // F564 D1: `Array.from({ length: <number> }, (_, i) => <primitive code>)`.
@@ -754,6 +801,18 @@ impl Values<'_, '_> {
                     && let Some(w) = go(&c.target)
                 {
                     return Some(w);
+                }
+                // F591 (Mellow F1): in the load-time judge, package code handed app code may run it at load (`onReady(() =>
+                // …)`); brust's own store primitives run their setup only as the allowlist judges it (the function's
+                // returned value), and React's `forwardRef` / `memo` / `cache` keep the function without calling it.
+                if self.load_only && !c.was_jsx_element && package_rooted(&c.target) {
+                    if store_primitive(&c.target, names) {
+                        if let Some(w) = c.args.iter().find_map(|a| self.setup_why(a, depth)) {
+                            return Some(w);
+                        }
+                    } else if !react_stores_fn(&c.target, names) && c.args.iter().any(|a| self.hands_code(a, 0)) {
+                        return Some(format!("it hands app code to `{}(…)`", spell(&c.target)));
+                    }
                 }
                 // Package code handed a module array or object could change it.
                 if package_rooted(&c.target)
@@ -849,6 +908,74 @@ impl Values<'_, '_> {
 }
 
 impl Values<'_, '_> {
+    /// F591 (AMENDMENT 3, fail-closed): whether `a` may hand app code to the package call it is an argument of. "No code"
+    /// only for shapes known to be data: a literal, an untagged template of data, an identifier that is neither a
+    /// function of this module nor an app import, and arrays / objects / spreads of those (plain properties, no
+    /// computed key). Everything else (a function, a logical / comma / conditional expression, a call, a member, …)
+    /// hands code.
+    fn hands_code(&self, a: &js_ast::Expr, depth: u8) -> bool {
+        if depth > 16 {
+            return true;
+        }
+        let app_import = |r: js_ast::Ref| {
+            self.names
+                .import_of(r)
+                .is_some_and(|(src, _)| app_specifier(src))
+        };
+        match &a.data {
+            E::EString(_)
+            | E::ENumber(_)
+            | E::EBoolean(_)
+            | E::ENull(_)
+            | E::EUndefined(_)
+            | E::EBigInt(_) => false,
+            E::EUnary(u) if matches!(u.op, js_ast::OpCode::UnNeg | js_ast::OpCode::UnPos) => {
+                !matches!(u.value.data, E::ENumber(_) | E::EBigInt(_))
+            }
+            E::ETemplate(t) => {
+                t.tag.is_some()
+                    || t.parts()
+                        .iter()
+                        .any(|p| self.hands_code(&p.value, depth + 1))
+            }
+            E::EIdentifier(id) => {
+                self.functions.contains(&self.names.key_of(id.ref_)) || app_import(id.ref_)
+            }
+            E::EImportIdentifier(id) => app_import(id.ref_),
+            E::EArray(arr) => arr.items.iter().any(|x| self.hands_code(x, depth + 1)),
+            E::EObject(o) => o.properties.iter().any(|p| {
+                !matches!(
+                    p.kind,
+                    js_ast::G::PropertyKind::Normal | js_ast::G::PropertyKind::Spread
+                ) || p.flags.contains(js_ast::flags::Property::IsComputed)
+                    || p.value
+                        .as_ref()
+                        .is_some_and(|v| self.hands_code(v, depth + 1))
+            }),
+            E::ESpread(sp) => self.hands_code(&sp.value, depth + 1),
+            _ => true,
+        }
+    }
+
+    /// F591: an argument of a brust store primitive: data is judged as any value; a setup function only as the value it
+    /// returns (a single returned expression), which the same judge must accept.
+    fn setup_why(&self, a: &js_ast::Expr, depth: u8) -> Option<String> {
+        let E::EArrow(f) = &a.data else {
+            return if self.hands_code(a, 0) {
+                Some("it hands a store primitive code that is not one returned value".into())
+            } else {
+                self.why(a, depth + 1)
+            };
+        };
+        let [body] = f.body.stmts.slice() else {
+            return Some("it hands a store primitive a setup function with statements".into());
+        };
+        match &body.data {
+            S::SReturn(r) => r.value.as_ref().and_then(|v| self.why(v, depth + 1)),
+            _ => Some("it hands a store primitive a setup function with statements".into()),
+        }
+    }
+
     /// F564 D1: a value that a coercion would run code of an app import for (`${ICON.overview}`, `ICON + 1`).
     fn coerced(&self, e: &js_ast::Expr) -> Option<String> {
         match &e.data {

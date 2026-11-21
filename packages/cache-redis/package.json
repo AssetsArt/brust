@@ -1,6 +1,6 @@
 {
   "name": "@brust/cache-redis",
-  "version": "2.0.0-alpha.57",
+  "version": "2.0.0-alpha.58",
   "description": "brust cache adapter for Redis and Dragonfly (Bun RedisClient, no npm dependency)",
   "license": "MIT",
   "homepage": "https://brust.dev",
@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@brust/core": "workspace:*",
-    "@types/bun": "^1.4.4",
+    "@types/bun": "^1.4.5",
     "typescript": "^7.0.2"
   },
   "engines": {
