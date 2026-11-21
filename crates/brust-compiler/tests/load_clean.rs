@@ -811,3 +811,145 @@ fn f597_every_refused_form() {
         .collect();
     assert!(bad.is_empty(), "accepted but should be refused: {bad:?}");
 }
+
+// ---- F599: the six shapes an app report found after alpha.59. One-file modules; each row is a pure module that runs
+// nothing at load beyond building its own values. ----
+
+const T_OBJ: &str = "export const T = { a: 4, side: { x: 1, y: 2 }, s: 'x', list: [1, 2, 3] }\n";
+const ARR_LIT: &str =
+    "export const ARR = [{ path: 'a/b', k: 'a' }, { path: 'c/d', k: 'b', named: true }]\n";
+
+type Case = Vec<(String, String)>;
+
+fn case(files: &[(&str, &str)]) -> Case {
+    files
+        .iter()
+        .map(|(p, t)| (p.to_string(), t.to_string()))
+        .collect()
+}
+
+/// Every case must come out with all its modules clean; the failures are listed together, each by its own last
+/// module's source, so a failing shape is named, not just counted.
+fn assert_cases_clean(cases: Vec<Case>) {
+    let mut bad = Vec::new();
+    for files in &cases {
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let mut want: Vec<String> = files.iter().map(|(p, _)| p.clone()).collect();
+        want.sort();
+        let got = clean_of(&refs);
+        if got != want {
+            let unclean: Vec<&String> = want.iter().filter(|w| !got.contains(w)).collect();
+            let src = files
+                .last()
+                .map_or("", |f| f.1.as_str())
+                .replace('\n', " ; ");
+            bad.push(format!("{unclean:?} unclean: {src}"));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of {} cases unclean:\n{}",
+        bad.len(),
+        cases.len(),
+        bad.join("\n")
+    );
+}
+
+#[test]
+fn o1_a_member_read_of_an_imported_object_const_is_data_read() {
+    let cases = [
+        "import { T } from './t'\nexport const X = T.a\n",
+        "import { T } from './t'\nexport const X = { ...T.side }\n",
+        "import { T } from './t'\nexport const X = Math.round(T.a / 3)\n",
+        "import { T } from './t'\nexport const X = { y: T.side.y, soft: T.a }\n",
+        "import { T } from './t'\nexport const X = T.list[1]\n",
+        "import { T } from './t'\nexport const X = [...T.list]\n",
+    ];
+    assert_cases_clean(
+        cases
+            .iter()
+            .map(|c| case(&[("lib/t.ts", T_OBJ), ("lib/x.ts", c)]))
+            .collect(),
+    );
+}
+
+#[test]
+fn o2_a_computed_read_of_data_with_a_primitive_index_is_clean() {
+    let cases = [
+        "const R = { gap: [1, 2], pad: [3, 4] }\nconst text = (k: string) => `${R[k as 'gap'][0]}-${R[k as 'gap'][1]}`\nexport const H = { gap: text('gap') }\n",
+        "const R: Record<string, number[]> = { gap: [1, 2] }\nfunction text(k: string) {\n  return `${R[k][0]}`\n}\nexport const H = { gap: text('gap') }\n",
+        "const key = (k: string) => ({ [k]: 1 })\nexport const H = key('a')\n",
+        "export const H = { ['a' + 'b']: 1 }\n",
+    ];
+    assert_cases_clean(cases.iter().map(|c| case(&[("lib/r.ts", c)])).collect());
+}
+
+#[test]
+fn o3_a_generic_arrow_parses_with_or_without_the_trailing_comma() {
+    let cases = [
+        "export const id = <T>(l: T): T => l\n",
+        "export const id = <T,>(l: T): T => l\n",
+        "export const id = <T extends object>(l: T): T => l\n",
+        "export function id<T>(l: T): T {\n  return l\n}\n",
+        "const toggle = <T>(l: readonly T[], v: T): T[] => (l.includes(v) ? l.filter((x) => x !== v) : [...l, v])\nexport const n = 1\n",
+    ];
+    assert_cases_clean(cases.iter().map(|c| case(&[("lib/g.ts", c)])).collect());
+}
+
+#[test]
+fn o4_string_methods_in_an_inline_callback_over_data_are_clean() {
+    let cases = [
+        "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.path.split('/')[1])\n",
+        "import { ARR } from './arr'\nexport const K = new Set(ARR.map((p) => `/${p.path.split('/')[1]}`))\n",
+        "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.k.toLowerCase())\n",
+        "import { ARR } from './arr'\nexport const K = ARR.filter((p) => p.path.startsWith('a'))\n",
+        "export const K = ['A/b', 'C/d'].map((p) => p.toUpperCase().padStart(5, '-'))\n",
+    ];
+    assert_cases_clean(
+        cases
+            .iter()
+            .map(|c| case(&[("lib/arr.ts", ARR_LIT), ("lib/k.ts", c)]))
+            .collect(),
+    );
+}
+
+#[test]
+fn o5_the_in_operator_on_data_is_clean() {
+    let cases = [
+        "import { ARR } from './arr'\nexport const K = ARR.filter((p) => 'named' in p).map((p) => p.k)\n",
+        "export const K = 'a' in { a: 1 }\n",
+    ];
+    assert_cases_clean(
+        cases
+            .iter()
+            .map(|c| case(&[("lib/arr.ts", ARR_LIT), ("lib/k.ts", c)]))
+            .collect(),
+    );
+}
+
+#[test]
+fn o6_an_imported_array_is_not_poisoned_by_its_exporter_reading_it() {
+    let readers = [
+        "export const find = (k: string) => ARR.find((x) => x.k === k)\n",
+        "export const first = () => ARR[0]\n",
+        "export const all = () => ARR.map((x) => x.k)\n",
+        "export function each() {\n  for (const x of ARR) void x\n}\n",
+        "export const same = () => ARR\n",
+    ];
+    let consumers = [
+        "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.k)\n",
+        "import { ARR } from './arr'\nexport const K = [...ARR]\n",
+        "import { ARR } from './arr'\nexport const K = ARR.length\n",
+    ];
+    let mut cases = Vec::new();
+    for r in readers {
+        let exporter = format!("{ARR_LIT}{r}");
+        for c in consumers {
+            cases.push(case(&[("lib/arr.ts", &exporter), ("lib/k.ts", c)]));
+        }
+    }
+    assert_cases_clean(cases);
+}
