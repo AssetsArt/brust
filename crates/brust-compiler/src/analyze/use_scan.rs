@@ -30,29 +30,20 @@ const PRIMITIVE_RESULT: &[&str] = &["some", "every", "includes", "indexOf", "joi
 
 /// Inner indexes of the bindings with a use that is not proven read-only.
 pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
-    scan(ast, names, false, false, false)
-}
-
-/// F599 (D7): the bindings this module WRITES: an assignment, update or `delete` rooted at one, a mutating method or any
-/// other call that is handed one, a declaration or assignment that aliases one. A use that only reads (a member or
-/// index read, `.find` / `.map` / `.filter` / `.slice` / `.at`, a `for…of`, a returned or bare reference) is not listed:
-/// [`unsafe_to_fold`] lists those too, because folding a value into code needs it unchanged for the whole run, where the
-/// load-time judge needs only that nothing changes it while the module loads (which the load-time scan decides).
-pub fn written_in_module(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
-    scan(ast, names, false, false, true)
+    scan(ast, names, false, false)
 }
 
 /// F266: the bindings with a use that is not a spread, a member read or an argument of a function the component was
 /// given (a prop): a `const` object literal outside this set is never written, handed on or aliased, so its literal
 /// stands for it wherever it is read.
 pub fn unsafe_objects(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
-    scan(ast, names, true, false, false)
+    scan(ast, names, true, false)
 }
 
 /// [`unsafe_objects`] where a member read of a primitive literal out of a module-level object literal (`Direction.LTR`)
 /// is not an escape of the object (R34.142, for the constants an inlined hook of another module reads).
 pub fn unsafe_objects_literal_reads(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
-    scan(ast, names, true, true, false)
+    scan(ast, names, true, true)
 }
 
 fn scan(
@@ -60,13 +51,10 @@ fn scan(
     names: &NameTable<'_>,
     objects: bool,
     literal_reads: bool,
-    writes_only: bool,
 ) -> HashSet<u32> {
     let mut s = Scan {
         objects,
         literal_reads,
-        writes_only,
-        force: false,
         top: HashSet::new(),
         names,
         bad: HashSet::new(),
@@ -150,11 +138,6 @@ struct Scan<'x, 'a> {
     objects: bool,
     /// A member read of a primitive literal of a module-level object literal does not make the object escape.
     literal_reads: bool,
-    /// [`written_in_module`]: a value that flows into a return, a `for…of` or a read method's result is not an escape.
-    writes_only: bool,
-    /// In `writes_only` mode: the expression being visited lands somewhere that may write it (a write target, a call's
-    /// callee or argument, a declaration or assignment), so a use of a binding there is listed.
-    force: bool,
     /// Bindings declared at module level (functions, consts).
     top: HashSet<u32>,
     bad: HashSet<u32>,
@@ -263,18 +246,6 @@ impl Scan<'_, '_> {
             .all(|p| p.value.as_ref().is_some_and(is_primitive))
     }
 
-    /// Whether an escaping use is listed: always, except in `writes_only` mode where only a forced one is.
-    fn listed(&self) -> bool {
-        !self.writes_only || self.force
-    }
-
-    /// Visits `e` as something that may be written (see `force`).
-    fn forced(&mut self, e: &js_ast::Expr, esc: bool) {
-        let saved = std::mem::replace(&mut self.force, true);
-        self.expr(e, esc);
-        self.force = saved;
-    }
-
     fn mark(&mut self, r: js_ast::Ref) {
         self.bad.insert(r.inner_index());
     }
@@ -343,19 +314,19 @@ impl Scan<'_, '_> {
     /// `e` is assigned to, incremented or deleted: its root is mutated, `.length` included.
     fn write(&mut self, e: &js_ast::Expr) {
         let saved = std::mem::replace(&mut self.writing, true);
-        self.forced(e, true);
+        self.expr(e, true);
         self.writing = saved;
     }
 
     fn expr(&mut self, e: &js_ast::Expr, esc: bool) {
         match &e.data {
             E::EIdentifier(id) => {
-                if esc && self.listed() && !self.lit_prims.contains(&id.ref_.inner_index()) {
+                if esc && !self.lit_prims.contains(&id.ref_.inner_index()) {
                     self.mark(id.ref_)
                 }
             }
             E::EImportIdentifier(id) => {
-                if esc && self.listed() {
+                if esc {
                     self.mark(id.ref_)
                 }
             }
@@ -376,7 +347,7 @@ impl Scan<'_, '_> {
             E::EBinary(b) => match b.op {
                 op if !matches!(op.binary_assign_target(), js_ast::AssignTarget::None) => {
                     self.write(&b.left);
-                    self.forced(&b.right, true);
+                    self.expr(&b.right, true);
                 }
                 OpCode::BinLogicalAnd | OpCode::BinLogicalOr | OpCode::BinNullishCoalescing => {
                     self.expr(&b.left, esc);
@@ -441,23 +412,17 @@ impl Scan<'_, '_> {
                     self.expr(&p.value, false);
                 }
             }
-            // A function written here runs later and judges its own statements: what the enclosing declaration forces
-            // does not reach into its body.
             E::EArrow(a) => {
-                let saved = std::mem::replace(&mut self.force, false);
                 self.params(a.args.slice(), &[]);
                 self.body(a.body.stmts.slice(), true);
-                self.force = saved;
             }
             E::EFunction(f) => {
-                let saved = std::mem::replace(&mut self.force, false);
                 self.params(f.func.args.slice(), &[]);
                 self.body(f.func.body.stmts.slice(), true);
-                self.force = saved;
             }
             E::ENew(n) => {
-                self.forced(&n.target, true);
-                n.args.iter().for_each(|x| self.forced(x, true));
+                self.expr(&n.target, true);
+                n.args.iter().for_each(|x| self.expr(x, true));
             }
             E::EAwait(a) => self.expr(&a.value, true),
             E::EYield(y) => {
@@ -580,8 +545,8 @@ impl Scan<'_, '_> {
             c.args.iter().for_each(|a| self.expr(a, false));
             return;
         }
-        self.forced(&c.target, true);
-        c.args.iter().for_each(|a| self.forced(a, true));
+        self.expr(&c.target, true);
+        c.args.iter().for_each(|a| self.expr(a, true));
     }
 
     fn stmt(&mut self, s: &js_ast::Stmt) {
@@ -593,7 +558,7 @@ impl Scan<'_, '_> {
                     if let Some(v) = &d.value {
                         let primitive = matches!(l.kind, js_ast::S::Kind::KConst)
                             && (self.reads_literal(v) || self.reads_literal_entries(v));
-                        self.forced(v, !primitive);
+                        self.expr(v, !primitive);
                     }
                 }
             }

@@ -12,6 +12,7 @@ pub mod hooks;
 pub mod inline_fn;
 pub mod jsx;
 pub mod load_writes;
+pub mod mentions;
 pub mod module_effects;
 pub mod modules;
 pub mod names;

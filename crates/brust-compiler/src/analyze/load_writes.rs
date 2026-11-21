@@ -13,6 +13,7 @@
 //! code is not scanned (trusted, ledger N1); a write by a package is not seen.
 use crate::analyze::component::AnalyzeOptions;
 use crate::analyze::expr::{Walk, chain_root};
+use crate::analyze::mentions::{Pos, Seg};
 use crate::analyze::module_effects::app_specifier;
 use crate::analyze::modules::resolve;
 use crate::analyze::names::NameTable;
@@ -66,11 +67,13 @@ pub struct LoadWrites {
     /// (`const_fold::load_clean`), sorted. A module not listed (unclean, or not scanned) keeps the native chunk that
     /// bundles it on every page its route can print it.
     pub load_clean: Vec<String>,
-    /// F599 (D1, review F1): the modules whose exports the load-time judge may NOT read as plain data, because the module
-    /// or one that imports it (through a re-export too) is itself not load-clean: its load-time code can write into what
-    /// the exporter hands out (a returned reference, a `for…of` alias, a member path) where this scan cannot see it. Only
-    /// the scan's own passes fill it (it is not part of the JSON the build hands to a compile).
-    pub untrusted: HashSet<String>,
+    /// F599 (D1'): the exports of app modules that have a mention outside the closed list of safe reads somewhere in the
+    /// build (`analyze::mentions`): the load-time judge never reads such an export as plain data. `(module, "*")` stands
+    /// for every export of the module (a namespace object handed on, a dynamic `import()` of it). Only the scan fills it:
+    /// it is not part of the JSON the build hands to a compile.
+    pub escaped: HashSet<ExportKey>,
+    /// A module of the build could not be read or parsed, or a dynamic `import()` names no literal: nothing is data.
+    pub escaped_all: bool,
 }
 
 impl LoadWrites {
@@ -109,7 +112,8 @@ impl LoadWrites {
             written: j.written.into_iter().map(|(m, e, w)| ((m, e), w)).collect(),
             writers: j.writers,
             load_clean: j.load_clean,
-            untrusted: HashSet::new(),
+            escaped: HashSet::new(),
+            escaped_all: false,
         })
     }
 }
@@ -140,6 +144,12 @@ struct Scanned {
     /// `export { x } from './m'` (alias, module, name) and `export * from './m'`.
     follows: Vec<(String, String, String)>,
     stars: Vec<String>,
+    /// F599 (D1'): the mentions of exports by this module (own exported literals and imports), by export key.
+    mentions: Vec<(ExportKey, Vec<Seg>, Pos)>,
+    /// Modules whose every export escapes here: a namespace object used other than as `ns.name`.
+    ns_escapes: Vec<String>,
+    /// Modules named by a dynamic `import()` (`None`: a specifier that is not a string literal).
+    dynamic: Vec<Option<String>>,
 }
 
 /// Scans `paths` (app modules, relative to `opts.root`). Runs on the compiler thread. A module that does not read or
@@ -148,108 +158,176 @@ pub fn scan(paths: &[String], opts: &AnalyzeOptions) -> LoadWrites {
     let _aliases = crate::analyze::aliases::Scope::enter(&opts.root, &opts.path_aliases);
     let mut scanned = Vec::new();
     let mut readable = Vec::new();
+    let mut unreadable = false;
     for path in paths {
         let Ok(source) = std::fs::read(opts.root.join(path)) else {
+            unreadable = true;
             continue;
         };
         let Ok(parsed) = crate::parse::parse_tsx(path, source) else {
+            unreadable = true;
             continue;
         };
         scanned.push(parsed.with_ast(|ast| scan_module(path, ast, opts)));
         readable.push(path.clone());
     }
     let mut out = propagate(&scanned);
-    // F599 (review F1): the load-time judge reads an imported value as plain data only when no module writes it as it
-    // loads (the table just built) and no module that can reach what its exporter hands out is itself running arbitrary
-    // code at load. So the judge runs AFTER the writes are known, and again while the set of modules whose exports it may
-    // not trust grows (a module becoming unclean can only make others untrusted, never the reverse): the passes stop at a
-    // fixed point, or after a few with every module untrusted.
-    let importers = importers_of(&scanned);
-    let mut clean: Vec<String> = Vec::new();
-    for pass in 0.. {
-        let mut with = opts.clone();
-        with.load_writes = Some(std::sync::Arc::new(out.clone()));
-        clean = readable
-            .iter()
-            .filter(|p| crate::analyze::const_fold::load_clean(p, &with))
-            .cloned()
-            .collect();
-        let clean_set: HashSet<&String> = clean.iter().collect();
-        let untrusted: HashSet<String> = readable
-            .iter()
-            .filter(|m| {
-                !clean_set.contains(m)
-                    || importers
-                        .get(m.as_str())
-                        .is_some_and(|xs| xs.iter().any(|x| !clean_set.contains(x)))
-            })
-            .cloned()
-            .collect();
-        if untrusted == out.untrusted {
-            break;
-        }
-        if pass >= 8 {
-            out.untrusted = readable.iter().cloned().collect();
-            let mut with = opts.clone();
-            with.load_writes = Some(std::sync::Arc::new(out.clone()));
-            clean = readable
-                .iter()
-                .filter(|p| crate::analyze::const_fold::load_clean(p, &with))
-                .cloned()
-                .collect();
-            break;
-        }
-        out.untrusted = untrusted;
-    }
+    // F599 (D1'): the mentions of every export in every module of the build, before any module is judged.
+    out.escaped_all = unreadable;
+    escaped_exports(&scanned, opts, &mut out);
+    let mut with = opts.clone();
+    with.load_writes = Some(std::sync::Arc::new(out.clone()));
+    let mut clean: Vec<String> = readable
+        .iter()
+        .filter(|p| crate::analyze::const_fold::load_clean(p, &with))
+        .cloned()
+        .collect();
     clean.sort();
     clean.dedup();
     out.load_clean = clean;
     out
 }
 
-/// For each scanned module, the scanned modules that can obtain what it exports: those that import it, and, through a
-/// module that only re-exports from it (`export { x } from`, `export *`), those that import that module.
-fn importers_of(scanned: &[Scanned]) -> HashMap<&str, HashSet<String>> {
-    let mut direct: HashMap<&str, HashSet<&str>> = HashMap::new();
-    let mut reexporters: HashMap<&str, HashSet<&str>> = HashMap::new();
-    for m in scanned {
-        for (target, _) in m.imports.values() {
-            direct.entry(target.as_str()).or_default().insert(&m.path);
+/// Fills `out.escaped` from the mentions every scanned module made (see `analyze::mentions`): an escape of an export, or
+/// a use of it where it stands (an operand, an argument, a returned or stored value) when what the read path reaches in
+/// its literal is a container. A mention through a re-export counts for the export it names at its declaration.
+fn escaped_exports(mods: &[Scanned], opts: &AnalyzeOptions, out: &mut LoadWrites) {
+    let mut by_decl: HashMap<ExportKey, Vec<(Vec<Seg>, Pos)>> = HashMap::new();
+    for m in mods {
+        for (k, path, pos) in &m.mentions {
+            for d in declaring(mods, k, &mut HashSet::new()) {
+                by_decl.entry(d).or_default().push((path.clone(), *pos));
+            }
         }
-        for (_, target, _) in &m.follows {
-            direct.entry(target.as_str()).or_default().insert(&m.path);
-            reexporters
-                .entry(target.as_str())
-                .or_default()
-                .insert(&m.path);
+        for k in &m.ns_escapes {
+            out.escaped.insert((k.clone(), "*".to_string()));
         }
-        for target in &m.stars {
-            direct.entry(target.as_str()).or_default().insert(&m.path);
-            reexporters
-                .entry(target.as_str())
-                .or_default()
-                .insert(&m.path);
+        for spec in &m.dynamic {
+            match spec {
+                Some(t) => {
+                    out.escaped.insert((t.clone(), "*".to_string()));
+                }
+                None => out.escaped_all = true,
+            }
         }
     }
-    let mut out: HashMap<&str, HashSet<String>> = HashMap::new();
-    for m in scanned {
-        let mut seen: HashSet<&str> = HashSet::new();
-        let mut stack = vec![m.path.as_str()];
-        let mut found: HashSet<String> = HashSet::new();
-        // a module's own load code counts too
-        found.insert(m.path.clone());
-        while let Some(x) = stack.pop() {
-            if !seen.insert(x) {
-                continue;
+    for ((module, export), uses) in by_decl {
+        let key = (module.clone(), export.clone());
+        if uses.iter().any(|(_, pos)| *pos == Pos::Escape) {
+            out.escaped.insert(key);
+            continue;
+        }
+        let free: Vec<&Vec<Seg>> = uses.iter().map(|(p, _)| p).collect();
+        let Ok(bytes) = std::fs::read(opts.root.join(&module)) else {
+            out.escaped.insert(key);
+            continue;
+        };
+        let Ok(parsed) = crate::parse::parse_cached(&module, bytes) else {
+            out.escaped.insert(key);
+            continue;
+        };
+        let container = parsed.with_ast(|ast| {
+            let Some((value, _)) = crate::analyze::module_effects::export_value(ast, &export)
+            else {
+                // not a literal `export const`: it is never data, whatever its mentions
+                return false;
+            };
+            free.iter().any(|p| container_at(value, p))
+        });
+        if container {
+            out.escaped.insert(key);
+        }
+    }
+}
+
+/// Whether reading `path` from the literal `e` may give a container (an object or an array), or something the scan cannot
+/// follow. A path that leaves the literal (a missing member, a step into a primitive) gives a primitive: `undefined`
+/// or a character, which cannot be written into.
+fn container_at(e: &js_ast::Expr, path: &[Seg]) -> bool {
+    let Some((first, rest)) = path.split_first() else {
+        return !matches!(
+            e.data,
+            E::EString(_)
+                | E::ENumber(_)
+                | E::EBoolean(_)
+                | E::ENull(_)
+                | E::EUndefined(_)
+                | E::EBigInt(_)
+        );
+    };
+    match &e.data {
+        E::EObject(o) => {
+            let mut hit = false;
+            for p in o.properties.iter() {
+                let (Some(E::EString(key)), Some(v)) =
+                    (p.key.as_ref().map(|k| &k.data), p.value.as_ref())
+                else {
+                    // a computed key, a spread, an accessor: not a literal the scan can follow
+                    return true;
+                };
+                let key = crate::analyze::expr::estring(key);
+                let named = match first {
+                    Seg::Key(k) => *k == key,
+                    Seg::Index(i) => i.to_string() == key,
+                    Seg::Any => true,
+                };
+                if named && container_at(v, rest) {
+                    hit = true;
+                }
             }
-            if let Some(ds) = direct.get(x) {
-                found.extend(ds.iter().map(|d| d.to_string()));
+            hit
+        }
+        E::EArray(a) => {
+            if a.items
+                .iter()
+                .any(|x| matches!(x.data, E::ESpread(_) | E::EMissing(_)))
+            {
+                return true;
             }
-            if let Some(rs) = reexporters.get(x) {
-                stack.extend(rs.iter().copied());
+            match first {
+                Seg::Index(i) => a.items.get(*i).is_some_and(|v| container_at(v, rest)),
+                Seg::Any => a.items.iter().any(|v| container_at(v, rest)),
+                // `length` and anything else read from a list value
+                Seg::Key(k) => match k.parse::<usize>() {
+                    Ok(i) => a.items.get(i).is_some_and(|v| container_at(v, rest)),
+                    Err(_) => k != "length",
+                },
             }
         }
-        out.insert(m.path.as_str(), found);
+        E::EString(_)
+        | E::ENumber(_)
+        | E::EBoolean(_)
+        | E::ENull(_)
+        | E::EUndefined(_)
+        | E::EBigInt(_) => false,
+        _ => true,
+    }
+}
+
+/// The exports a read of `k` reaches at their declaration, followed through re-exports (`export { x } from`,
+/// `import { x }; export { x }`, `export *`). A key nothing declares stays as it is (fails closed in the caller).
+fn declaring(mods: &[Scanned], k: &ExportKey, seen: &mut HashSet<ExportKey>) -> Vec<ExportKey> {
+    if k.1 == "*" || !seen.insert(k.clone()) {
+        return vec![k.clone()];
+    }
+    let Some(m) = mods.iter().find(|m| m.path == k.0) else {
+        return vec![k.clone()];
+    };
+    if let Some((_, t, name)) = m.follows.iter().find(|(alias, _, _)| *alias == k.1) {
+        return declaring(mods, &(t.clone(), name.clone()), seen);
+    }
+    if let Some((_, local)) = m.exports.iter().find(|(name, _)| *name == k.1) {
+        if let Some(i) = local.and_then(|l| m.imports.get(&l)) {
+            return declaring(mods, i, seen);
+        }
+        return vec![k.clone()];
+    }
+    let mut out = Vec::new();
+    for t in &m.stars {
+        out.extend(declaring(mods, &(t.clone(), k.1.clone()), seen));
+    }
+    if out.is_empty() {
+        out.push(k.clone());
     }
     out
 }
@@ -559,6 +637,49 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
     if default_function {
         function.insert("default".into());
     }
+    // F599 (D1'): every mention of an import, and of this module's own exported bindings, in the closed list's terms.
+    let mut tracked: HashSet<u32> = imports.keys().copied().collect();
+    tracked.extend(exports.iter().filter_map(|(_, k)| *k));
+    let namespaces: HashSet<u32> = imports
+        .iter()
+        .filter(|(_, (_, n))| n == "*")
+        .map(|(k, _)| *k)
+        .collect();
+    let found = crate::analyze::mentions::mentions(ast, &names, &tracked, &namespaces);
+    let keys_of = |root: &crate::analyze::mentions::Root| -> Vec<ExportKey> {
+        match root {
+            crate::analyze::mentions::Root::Binding(k) => match imports.get(k) {
+                Some(i) => vec![i.clone()],
+                None => exports
+                    .iter()
+                    .filter(|(_, l)| *l == Some(*k))
+                    .map(|(n, _)| (path.to_string(), n.clone()))
+                    .collect(),
+            },
+            crate::analyze::mentions::Root::Member(ns, member) => imports
+                .get(ns)
+                .map(|(module, _)| vec![(module.clone(), member.clone())])
+                .unwrap_or_default(),
+        }
+    };
+    let mut mention_rows = Vec::new();
+    for f in &found.facts {
+        for k in keys_of(&f.root) {
+            mention_rows.push((k, f.path.clone(), f.pos));
+        }
+    }
+    let ns_escapes: Vec<String> = found
+        .namespace_escapes
+        .iter()
+        .filter_map(|k| imports.get(k).map(|(m, _)| m.clone()))
+        .collect();
+    // a package specifier names no app module; an app specifier that does not resolve, or no literal, may be any
+    let dynamic: Vec<Option<String>> = found
+        .dynamic
+        .iter()
+        .filter(|spec| spec.as_deref().is_none_or(app_specifier))
+        .map(|spec| spec.as_deref().and_then(&target))
+        .collect();
     Scanned {
         path: path.to_string(),
         writes,
@@ -572,6 +693,9 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
         exports,
         follows,
         stars,
+        mentions: mention_rows,
+        ns_escapes,
+        dynamic,
     }
 }
 

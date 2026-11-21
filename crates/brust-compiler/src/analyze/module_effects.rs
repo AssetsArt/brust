@@ -2141,13 +2141,13 @@ pub fn literal_array_import(
     })
 }
 
-/// F599 (D1): the app import `imported` of `source`, read along `path` (empty: the whole value), is DATA: an `export const`
-/// whose literal holds, at that path, a value with no function anywhere inside it (`literal_data`), every step on the way
-/// a plain data property (no accessor, computed key, spread, hole or `__proto__`, as `plain_path`), and which nothing
-/// writes. Reading a data property of a literal runs no code, and a copy, a spread or a built-in method of such a value
-/// runs only built-in code. "Nothing writes": the build-wide scan shows no module writing it as it loads (F230), and its
-/// own module has no write of it ([`crate::analyze::use_scan::written_in_module`]); reads of it there (`.find`, `.map`,
-/// `[0]`, `for…of`, a returned reference) are not writes. `.length` of an array literal is a number.
+/// F599 (D1'): the app import `imported` of `source`, read along `path` (empty: the whole value), is DATA: an
+/// `export const` whose initialiser is a literal built only of primitives, arrays and objects with plain keys (no
+/// function anywhere, `literal_data`), every step on the way a plain data property (no accessor, computed key, spread,
+/// hole or `__proto__`), and every mention of the binding in every module of the build is on the closed list of safe
+/// reads (`analyze::mentions`; the result is `LoadWrites::escaped`). Reading a data property of such a literal runs no
+/// code, and a copy, a spread or a built-in method of it runs only built-in code, because nothing can put code into
+/// it. Built-in prototypes are assumed unpatched. `.length` of an array literal is a number.
 pub fn import_data(
     from: &str,
     source: &str,
@@ -2164,23 +2164,22 @@ pub fn import_data(
         crate::analyze::hooks::follow_export(opts, start, imported.to_string(), &declared)?;
     // Written as a module loads (F230), or the exporter (or a module that can reach what it hands out) runs code the judge
     // cannot follow at load, which can change the value where no scan sees it (review F1).
-    if opts
-        .load_writes
-        .as_deref()
-        .is_some_and(|lw| lw.why(&module, &export).is_some() || lw.untrusted.contains(&module))
+    // D1' (i)+(ii): a literal built only of data, and every mention of it in every module of the build is a safe read
+    // (`analyze::mentions`; a build without that table, a single-file compile, trusts nothing).
+    let lw = opts.load_writes.as_deref()?;
+    if lw.escaped_all
+        || lw.escaped.contains(&(module.clone(), export.clone()))
+        || lw.escaped.contains(&(module.clone(), "*".to_string()))
+        || lw.why(&module, &export).is_some()
     {
         return None;
     }
     let bytes = std::fs::read(opts.root.join(&module)).ok()?;
     let parsed = crate::parse::parse_cached(&module, bytes).ok()?;
     parsed.with_ast(|ast| {
-        let (value, binding) = export_value(ast, &export)?;
-        if let Some(r) = binding {
-            let dummy = js_ast::G::Fn::default();
-            let names = NameTable::new(ast, &dummy);
-            if crate::analyze::use_scan::written_in_module(ast, &names).contains(&r.inner_index()) {
-                return None;
-            }
+        let (value, _) = export_value(ast, &export)?;
+        if !literal_data(value, 0) {
+            return None;
         }
         let at = value_at(value, path)?;
         match at {
@@ -2251,7 +2250,7 @@ fn value_at<'x>(e: &'x js_ast::Expr, path: &[ReadSeg]) -> Option<Found<'x>> {
 }
 
 /// [`export_literal`] for any value: the initializer of the `export const` `export` (or of what `export default` names).
-fn export_value<'x>(
+pub(crate) fn export_value<'x>(
     ast: &'x js_ast::Ast<'_>,
     export: &str,
 ) -> Option<(&'x js_ast::Expr, Option<js_ast::Ref>)> {

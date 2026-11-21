@@ -906,7 +906,7 @@ fn o4_string_methods_in_an_inline_callback_over_data_are_clean() {
         "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.path.split('/')[1])\n",
         "import { ARR } from './arr'\nexport const K = new Set(ARR.map((p) => `/${p.path.split('/')[1]}`))\n",
         "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.k.toLowerCase())\n",
-        "import { ARR } from './arr'\nexport const K = ARR.filter((p) => p.path.startsWith('a'))\n",
+        "import { ARR } from './arr'\nexport const K = ARR.filter((p) => p.path.startsWith('a')).map((p) => p.k)\n",
         "export const K = ['A/b', 'C/d'].map((p) => p.toUpperCase().padStart(5, '-'))\n",
     ];
     assert_cases_clean(
@@ -933,17 +933,21 @@ fn o5_the_in_operator_on_data_is_clean() {
 
 #[test]
 fn o6_an_imported_array_is_not_poisoned_by_its_exporter_reading_it() {
+    // D7': the exporter READS its own table in safe positions (a member of what `find` returns, an index then a member,
+    // `map` / `for…of` with the item read as a member, `length`, `some`); that does not make it escape
     let readers = [
-        "export const find = (k: string) => ARR.find((x) => x.k === k)\n",
-        "export const first = () => ARR[0]\n",
+        "export const label = (k: string) => ARR.find((x) => x.k === k)?.k\n",
+        "export const first = () => ARR[0].k\n",
         "export const all = () => ARR.map((x) => x.k)\n",
-        "export function each() {\n  for (const x of ARR) void x\n}\n",
-        "export const same = () => ARR\n",
+        "export function each() {\n  for (const x of ARR) void x.k\n}\n",
+        "export const has = (k: string) => ARR.some((x) => x.k === k)\n",
+        "export const n = ARR.length\n",
     ];
     let consumers = [
         "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.k)\n",
-        "import { ARR } from './arr'\nexport const K = [...ARR]\n",
+        "import { ARR } from './arr'\nexport const K = [...ARR.map((p) => p.k), 'z']\n",
         "import { ARR } from './arr'\nexport const K = ARR.length\n",
+        "import { ARR } from './arr'\nexport const K = ARR.filter((p) => p.k !== 'a').map((p) => p.path)\n",
     ];
     let mut cases = Vec::new();
     for r in readers {
@@ -954,8 +958,6 @@ fn o6_an_imported_array_is_not_poisoned_by_its_exporter_reading_it() {
     }
     assert_cases_clean(cases);
 }
-
-// ---- F599 REFUSED rows: the same shapes with the one thing that makes them unsafe. Each module must stay unclean. ----
 
 /// Every case's LAST module must be refused (`lib/k.ts` or the only one); the accepted ones are listed together.
 fn assert_cases_refused(cases: Vec<(&'static str, Case)>) {
@@ -1258,9 +1260,10 @@ fn f599_o4_o5_refused_a_method_or_in_that_could_run_code() {
 }
 
 #[test]
-fn f599_o6_refused_an_exporter_that_writes_the_array() {
+fn f599_o6_refused_an_exporter_that_writes_or_hands_out_the_array() {
     let consumer = "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.k)\n";
-    let writers = [
+    let escapes = [
+        // writes
         "export function add() {\n  ARR.push({ k: 'z' })\n}\n",
         "export function clear() {\n  ARR.length = 0\n}\n",
         "export function set() {\n  ARR[0] = { k: 'z' }\n}\n",
@@ -1268,23 +1271,40 @@ fn f599_o6_refused_an_exporter_that_writes_the_array() {
         "export function rev() {\n  ARR.reverse()\n}\n",
         "export function first() {\n  ARR[0].k = 'z'\n}\n",
         "export function drop() {\n  delete (ARR[0] as any).k\n}\n",
-        "export function alias() {\n  const a = ARR\n  a.push({ k: 'z' })\n}\n",
         "export function assign() {\n  Object.assign(ARR[0], { k: 'z' })\n}\n",
-        "export function pass() {\n  mutate(ARR)\n}\nfunction mutate(a: unknown[]) {\n  a.length = 0\n}\n",
         "export function splice() {\n  ARR.splice(0, 1)\n}\n",
         "export function fill() {\n  ARR.fill(0 as any)\n}\n",
+        // a bare reference, a returned item, an alias, an argument, a stored handle: the report's own rows move here
+        "export const same = () => ARR\n",
+        "export const find = (k: string) => ARR.find((x) => x.k === k)\n",
+        "export const first = () => ARR[0]\n",
+        "export function alias() {\n  const a = ARR\n  return a.length\n}\n",
+        "export function pass() {\n  mutate(ARR)\n}\nfunction mutate(a: unknown[]) {\n  a.length = 0\n}\n",
+        "export const U = ARR\n",
+        "export const box = { list: ARR }\n",
+        "export const wrapped = [ARR]\n",
+        "export function each() {\n  for (const x of ARR) keep(x)\n}\nfunction keep(x: unknown) {\n  void x\n}\n",
+        "export function cb() {\n  let kept: unknown\n  ARR.forEach((x) => {\n    kept = x\n  })\n  return kept\n}\n",
+        "export const items = ARR.map((x) => x)\n",
+        "export const copy = [...ARR]\n",
+        "export const json = () => JSON.stringify(ARR)\n",
+        "export const type = typeof ARR\n",
+        "export const same2 = (o: unknown) => o === ARR\n",
+        "export async function late() {\n  return await ARR\n}\n",
+        "export function thrower() {\n  throw ARR\n}\n",
+        "export default ARR\n",
     ];
     let mut cases = Vec::new();
-    for w in writers {
+    for w in escapes {
         cases.push((
-            "an exporter write",
+            "an exporter escape",
             case(&[
                 ("lib/arr.ts", &format!("{ARR_LIT}{w}")),
                 ("lib/k.ts", consumer),
             ]),
         ));
     }
-    // an imported array that is not data in the first place, and one the exporter spreads into
+    // an imported array that is not data in the first place
     cases.push((
         "an array holding a call",
         case(&[
@@ -1299,13 +1319,20 @@ fn f599_o6_refused_an_exporter_that_writes_the_array() {
         "an array holding a function",
         case(&[
             ("lib/arr.ts", "export const ARR = [{ k: () => 1 }]\n"),
-            (
-                "lib/k.ts",
-                "import { ARR } from './arr'\nexport const K = [...ARR]\n",
-            ),
+            ("lib/k.ts", consumer),
         ]),
     ));
-    // a consumer that mutates the imported array in place at load
+    cases.push((
+        "an array with a spread",
+        case(&[
+            (
+                "lib/arr.ts",
+                "const A = [{ k: 1 }]\nexport const ARR = [...A]\n",
+            ),
+            ("lib/k.ts", consumer),
+        ]),
+    ));
+    // a consumer that mutates or keeps the imported array
     cases.push((
         "a consumer sort of the import",
         case(&[
@@ -1328,22 +1355,51 @@ fn f599_o6_refused_an_exporter_that_writes_the_array() {
     ));
     cases.push(("a consumer sort through a body local", case(&[("lib/arr.ts", ARR_LIT), ("lib/k.ts", "import { ARR } from './arr'\nfunction f() {\n  const l = ARR\n  return l.sort()\n}\nexport const K = f()\n")])));
     cases.push(("a consumer push at load", case(&[("lib/arr.ts", ARR_LIT), ("lib/k.ts", "import { ARR } from './arr'\nARR.push({ path: 'x', k: 'x' })\nexport const K = 1\n")])));
+    // the consumer keeps the items (they are the exporter's objects)
+    cases.push((
+        "a consumer filter stored",
+        case(&[
+            ("lib/arr.ts", ARR_LIT),
+            (
+                "lib/k.ts",
+                "import { ARR } from './arr'\nexport const K = ARR.filter((p) => p.k === 'a')\n",
+            ),
+        ]),
+    ));
+    cases.push((
+        "a consumer spread stored",
+        case(&[
+            ("lib/arr.ts", ARR_LIT),
+            (
+                "lib/k.ts",
+                "import { ARR } from './arr'\nexport const K = [...ARR]\n",
+            ),
+        ]),
+    ));
+    cases.push((
+        "a consumer map returning the item",
+        case(&[
+            ("lib/arr.ts", ARR_LIT),
+            (
+                "lib/k.ts",
+                "import { ARR } from './arr'\nexport const K = ARR.map((x) => x)\n",
+            ),
+        ]),
+    ));
+    cases.push((
+        "a consumer find stored",
+        case(&[
+            ("lib/arr.ts", ARR_LIT),
+            (
+                "lib/k.ts",
+                "import { ARR } from './arr'\nexport const K = ARR.find((x) => x.k === 'a')\n",
+            ),
+        ]),
+    ));
+    // (the module that keeps the item runs nothing at load itself; the consumer c.ts must be the one refused)
+    cases.push(("a for-of keeping the item", case(&[("lib/arr.ts", ARR_LIT), ("lib/m.ts", "import { ARR } from './arr'\nexport function keep() {\n  const out: unknown[] = []\n  for (const x of ARR) out.push(x)\n  return out\n}\n"), ("lib/k.ts", consumer)])));
+    cases.push(("a consumer callback keeping the item", case(&[("lib/arr.ts", ARR_LIT), ("lib/k.ts", "import { ARR } from './arr'\nlet keep: unknown\nARR.forEach((x) => {\n  keep = x\n})\nexport const K = 1\n")])));
     assert_cases_refused(cases);
-}
-
-#[test]
-fn f599_o6_the_length_of_an_imported_array_literal_is_a_number_whatever_it_holds() {
-    // reading `.length` runs nothing and depends on no element (the exporter's own load code is judged on its own)
-    assert_cases_clean(vec![case(&[
-        (
-            "lib/arr.ts",
-            "const mk = () => 1\nexport const ARR = [{ k: mk() }]\n",
-        ),
-        (
-            "lib/k.ts",
-            "import { ARR } from './arr'\nexport const K = ARR.length\n",
-        ),
-    ])]);
 }
 
 #[test]
@@ -1365,7 +1421,7 @@ fn f599_a_tsx_module_is_still_tsx() {
 fn f599_the_reported_module_shapes_are_clean() {
     let theme = "export const SHOP_THEME = {\n  shadow: { soft: 9, hard: 12 },\n  radius: { sm: 4, md: 8 },\n  page: { maxW: 1200, side: { l: 16, r: 16 } },\n} as const\n";
     let pages = "export const SYSTEM_PAGES = [\n  { key: 'a', path: '/x/a', named: true },\n  { key: 'b', path: '/x/b' },\n] as const\n";
-    let unrouted = "export const UNROUTED_PAGES = [{ key: 'u', path: '/u/1' }, { key: 'v', path: '/v/2' }] as const\nexport const pageDefOf = (k: string) => UNROUTED_PAGES.find((p) => p.key === k)\n";
+    let unrouted = "export const UNROUTED_PAGES = [{ key: 'u', path: '/u/1' }, { key: 'v', path: '/v/2' }] as const\nexport const pageKeyOf = (k: string) => UNROUTED_PAGES.find((p) => p.key === k)?.key\n";
     assert_cases_clean(vec![
         // box-css: a member read of an imported object, in arithmetic and in a literal
         case(&[
@@ -1402,14 +1458,14 @@ fn f599_the_reported_module_shapes_are_clean() {
             ("lib/pages.ts", pages),
             (
                 "lib/reserved.ts",
-                "import { UNROUTED_PAGES } from './unrouted'\nimport { SYSTEM_PAGES } from './pages'\nconst UNROUTED_PATHS = UNROUTED_PAGES.map((p) => p.path)\nconst SYSTEM_PREFIXES = [...new Set(SYSTEM_PAGES.map((p) => `/${p.path.split('/')[1]}`))]\nconst NAMED_PAGES = SYSTEM_PAGES.filter((p) => 'named' in p)\nexport const RESERVED = [...SYSTEM_PREFIXES, ...UNROUTED_PATHS, NAMED_PAGES.length]\n",
+                "import { UNROUTED_PAGES } from './unrouted'\nimport { SYSTEM_PAGES } from './pages'\nconst UNROUTED_PATHS = UNROUTED_PAGES.map((p) => p.path)\nconst SYSTEM_PREFIXES = [...new Set(SYSTEM_PAGES.map((p) => `/${p.path.split('/')[1]}`))]\nconst NAMED_PAGES = SYSTEM_PAGES.filter((p) => 'named' in p).map((p) => p.key)\nexport const RESERVED = [...SYSTEM_PREFIXES, ...UNROUTED_PATHS, ...NAMED_PAGES]\n",
             ),
         ]),
         // style: an imported array whose exporter reads it with .find, mapped into a Set, then spread
         case(&[
             (
                 "lib/tokens.ts",
-                "export const SHOP_TOKENS = [{ id: 't1', k: 1 }, { id: 't2', k: 2 }] as const\nexport const shopToken = (k: string) => SHOP_TOKENS.find((t) => t.id === k)\n",
+                "export const SHOP_TOKENS = [{ id: 't1', k: 1 }, { id: 't2', k: 2 }] as const\nexport const shopTokenId = (k: string) => SHOP_TOKENS.find((t) => t.id === k)?.id\n",
             ),
             (
                 "lib/style.ts",
@@ -1435,41 +1491,39 @@ fn f599_the_reported_module_shapes_are_clean() {
     ]);
 }
 
-/// F599 review F1: an imported value is DATA only when nothing can put app code into it as the app loads. Another module
-/// writes it (`T.a.toString = hit`, `Object.defineProperty`, a `for…of` alias), or hands out through a function of the
-/// exporter, from a module that is itself not load-clean: the consumer must stay unclean (its chunk would be left out
-/// and the write it would have triggered lost). Each case is `base.ts` (the export), `c.ts` (the consumer), `w.ts` (the
-/// writer, always unclean) and sometimes a re-export.
+/// F599 D1' (review F1, F1'): an imported literal is DATA only when every mention of it in every module of the build is a
+/// safe read. A write by another module (`T.a.toString = hit`, `Object.defineProperty`, a `for…of` alias), the value
+/// handed on by a clean middle module (a stored alias, an exported function, a literal that holds it), a namespace
+/// object passed on, a dynamic `import()`: each is an escape somewhere in the build, and the consumer stays unclean.
+/// Each case is `base.ts` (the export), a middle and a writer module where it takes them, and `c.ts` (the consumer, last).
 #[test]
-fn f599_f1_a_value_another_module_changes_at_load_is_not_data() {
+fn f599_d1_a_value_with_a_mention_outside_the_list_is_not_data() {
     const HIT: &str = "() => {\n  (globalThis as any).hit = 1\n  return 'x'\n}";
     let t = "export const T = { a: { k: 1 } }\n";
     let arr = "export const ARR = [{ k: 'a' }]\n";
-    let c_t = "import { T } from './base'\nexport const s = `${T.a}`\n";
+    let c_t = "import { T } from './base'\nexport const s = `${T.a.k}`\n";
     let c_k = "import { T } from './base'\nexport const v = T.a.k\n";
-    let c_arr = "import { ARR } from './base'\nexport const m = ARR.map((x) => `${x}`)\n";
-    let c_join = "import { ARR } from './base'\nexport const j = [...ARR].join()\n";
+    let c_arr = "import { ARR } from './base'\nexport const m = ARR.map((x) => `${x.k}`)\n";
+    let c_join = "import { ARR } from './base'\nexport const j = ARR.map((x) => x.k).join()\n";
     let base_poison = format!(
         "{arr}export function poison() {{\n  for (const x of ARR) (x as any).toString = {HIT}\n}}\n"
     );
     let base_get = format!("{arr}export function get() {{\n  return ARR\n}}\n");
-    let w = |s: &str| {
-        format!("import {{ T, ARR, poison, get }} from './base'\nvoid [T, ARR, poison, get]\n{s}\n")
-    };
     let w_t = |s: &str| format!("import {{ T }} from './base'\n{s}\n");
     let w_arr = |s: &str| format!("import {{ ARR }} from './base'\n{s}\n");
-    let _ = w;
+    let m = |s: &str| format!("import {{ ARR }} from './base'\n{s}\n");
+    let hit_write = |expr: &str| format!("({expr} as any).toString = {HIT}");
     assert_cases_refused(vec![
         (
-            "W7 a member write at load, consumer prints it",
+            "W7 a member write at load",
             case(&[
                 ("lib/base.ts", t),
-                ("lib/w.ts", &w_t(&format!("(T.a as any).toString = {HIT}"))),
+                ("lib/w.ts", &w_t(&hit_write("T.a"))),
                 ("lib/c.ts", c_t),
             ]),
         ),
         (
-            "W5 defineProperty at load, consumer reads it",
+            "W5 defineProperty at load",
             case(&[
                 ("lib/base.ts", t),
                 (
@@ -1490,31 +1544,29 @@ fn f599_f1_a_value_another_module_changes_at_load_is_not_data() {
             ]),
         ),
         (
-            "A2 an exported function returning the array, written at load",
+            "A2 an exported function returning the array",
             case(&[
                 ("lib/base.ts", &base_get),
                 (
                     "lib/w.ts",
                     &format!(
-                        "import {{ get }} from './base'\n(get()[0] as any).toString = {HIT}\n"
+                        "import {{ get }} from './base'\n{}\n",
+                        hit_write("get()[0]")
                     ),
                 ),
                 ("lib/c.ts", c_arr),
             ]),
         ),
         (
-            "F597 an element written at load, consumer maps a template",
+            "F597 an element written at load",
             case(&[
                 ("lib/base.ts", arr),
-                (
-                    "lib/w.ts",
-                    &w_arr(&format!("(ARR[0] as any).toString = {HIT}")),
-                ),
+                ("lib/w.ts", &w_arr(&hit_write("ARR[0]"))),
                 ("lib/c.ts", c_arr),
             ]),
         ),
         (
-            "F597 a for-of alias written at load, consumer joins",
+            "F597 a for-of alias written at load",
             case(&[
                 ("lib/base.ts", arr),
                 (
@@ -1531,27 +1583,220 @@ fn f599_f1_a_value_another_module_changes_at_load_is_not_data() {
                 ("lib/r.ts", "export { ARR } from './base'\n"),
                 (
                     "lib/w.ts",
-                    &format!("import {{ ARR }} from './r'\n(ARR[0] as any).toString = {HIT}\n"),
+                    &format!("import {{ ARR }} from './r'\n{}\n", hit_write("ARR[0]")),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        // C1-C4: a clean middle module hands the value on, an unclean one two steps away writes
+        (
+            "C1 a middle module stores it",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", &m("export const U = ARR")),
+                (
+                    "lib/w.ts",
+                    &format!("import {{ U }} from './m'\n{}\n", hit_write("U[0]")),
                 ),
                 ("lib/c.ts", c_arr),
             ]),
         ),
         (
-            "an importer that runs code at load for another reason",
+            "C2 a middle module's function writes a for-of alias",
             case(&[
                 ("lib/base.ts", arr),
                 (
+                    "lib/m.ts",
+                    &m(&format!(
+                        "export function poison() {{\n  for (const x of ARR) (x as any).toString = {HIT}\n}}"
+                    )),
+                ),
+                ("lib/w.ts", "import { poison } from './m'\npoison()\n"),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "C3 a middle module returns it",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", &m("export function get() {\n  return ARR\n}")),
+                (
                     "lib/w.ts",
-                    "import { ARR } from './base'\nconsole.log(ARR.length)\n",
+                    &format!("import {{ get }} from './m'\n{}\n", hit_write("get()[0]")),
                 ),
                 ("lib/c.ts", c_arr),
             ]),
         ),
+        (
+            "C4 a middle module holds it in an object",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", &m("export const box = { list: ARR }")),
+                (
+                    "lib/w.ts",
+                    &format!(
+                        "import {{ box }} from './m'\n{}\n",
+                        hit_write("box.list[0]")
+                    ),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        // the escapes the amendment names, in a third module that is itself load-clean
+        (
+            "an alias stored in a clean module",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", &m("const a = ARR\nexport const n = a.length")),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "handed to a function in a clean module",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/m.ts",
+                    &m("const count = (l: unknown[]) => l.length\nexport const n = count(ARR)"),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "compared by identity",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/m.ts",
+                    &m("export const same = (o: unknown) => o === ARR"),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "JSON.stringify of it",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", &m("export const j = JSON.stringify(ARR)")),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "a namespace object handed on",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/m.ts",
+                    "import * as ns from './base'\nexport const all = ns\n",
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "a namespace object read by a computed key",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/m.ts",
+                    "import * as ns from './base'\nexport const get = (k: string) => (ns as any)[k]\n",
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "a dynamic import of the exporter",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", "export const load = () => import('./base')\n"),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "a dynamic import with a computed specifier",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", "export const load = (n: string) => import(n)\n"),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "a handle stored by a callback",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/m.ts",
+                    &m(
+                        "let keep: unknown\nARR.forEach((x) => {\n  keep = x\n})\nexport const n = 1",
+                    ),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "an item returned from an inline callback and stored",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", &m("export const items = ARR.map((x) => x)")),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "an item destructured",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", &m("export const [first] = ARR")),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
     ]);
-    // the same trees without the unclean writer stay clean (the writer is what changes the verdict)
+    // controls: the same trees with only safe mentions stay clean
     assert_cases_clean(vec![
         case(&[("lib/base.ts", t), ("lib/c.ts", c_t)]),
-        case(&[("lib/base.ts", &base_get), ("lib/c.ts", c_arr)]),
-        case(&[("lib/base.ts", &base_poison), ("lib/c.ts", c_arr)]),
+        case(&[
+            ("lib/base.ts", arr),
+            (
+                "lib/m.ts",
+                &m("export const n = ARR.length\nexport const keys = ARR.map((x) => x.k)"),
+            ),
+            ("lib/c.ts", c_arr),
+        ]),
+        case(&[
+            ("lib/base.ts", arr),
+            (
+                "lib/m.ts",
+                &m("export const lens = ARR.map((x) => x).length"),
+            ),
+            ("lib/c.ts", c_arr),
+        ]),
+        case(&[
+            (
+                "lib/base.ts",
+                &format!("{arr}export const has = (k: string) => ARR.some((x) => x.k === k)\n"),
+            ),
+            ("lib/c.ts", c_arr),
+        ]),
     ]);
+    // a module that runs code at load does not distrust a value it only reads safely: the list is about mentions, not
+    // about who can reach what
+    let noisy_files = case(&[
+        ("lib/base.ts", arr),
+        (
+            "lib/w.ts",
+            "import { ARR } from './base'\nconsole.log(ARR.length, ARR[0].k)\n",
+        ),
+        ("lib/c.ts", c_arr),
+    ]);
+    let refs: Vec<(&str, &str)> = noisy_files
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect();
+    let clean = clean_of(&refs);
+    assert!(
+        clean.contains(&"lib/c.ts".to_string()),
+        "a reader of safe positions must not distrust the value: {clean:?}"
+    );
+    assert!(
+        !clean.contains(&"lib/w.ts".to_string()),
+        "the module that logs at load is itself unclean: {clean:?}"
+    );
 }
