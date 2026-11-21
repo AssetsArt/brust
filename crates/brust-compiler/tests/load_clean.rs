@@ -780,7 +780,8 @@ fn f597_tree(src: &str) -> Vec<String> {
         ("lib/setup.ts", "export function setup() {}\n"),
         (
             "lib/other.ts",
-            "export const k = 1\nexport const s = new Set([1])\nexport class Set {}\n",
+            // `k` is `let`: an imported value brust cannot prove is data (an `export const k = 1` is DATA since F599 D1).
+            "export let k = 1\nexport const s = new Set([1])\nexport class Set {}\n",
         ),
         ("lib/site.ts", "export const SITE = 'https://example.com'\n"),
         ("lib/base.ts", "export const BASE = ['a', 'b']\n"),
@@ -952,4 +953,410 @@ fn o6_an_imported_array_is_not_poisoned_by_its_exporter_reading_it() {
         }
     }
     assert_cases_clean(cases);
+}
+
+// ---- F599 REFUSED rows: the same shapes with the one thing that makes them unsafe. Each module must stay unclean. ----
+
+/// Every case's LAST module must be refused (`lib/k.ts` or the only one); the accepted ones are listed together.
+fn assert_cases_refused(cases: Vec<(&'static str, Case)>) {
+    let mut bad = Vec::new();
+    for (what, files) in &cases {
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let last = files.last().map(|f| f.0.clone()).unwrap_or_default();
+        if clean_of(&refs).contains(&last) {
+            bad.push(*what);
+        }
+    }
+    assert!(bad.is_empty(), "accepted but should be refused: {bad:?}");
+}
+
+#[test]
+fn f599_o1_o2_refused_a_read_of_an_import_that_is_not_proven_data() {
+    let obj_getter = "export const T = { get a() { (globalThis as any).n = 1; return 1 }, b: 2 }\n";
+    let obj_fn = "export const T = { a: 1, f: () => 1 }\n";
+    let obj_let = "export let T = { a: 1 }\n";
+    let obj_call = "const mk = () => ({ a: 1 })\nexport const T = mk()\n";
+    let obj_nested_fn = "export const T = { side: { x: 1, run: () => 1 } }\n";
+    let obj_spread = "const O = { a: 1 }\nexport const T = { ...O }\n";
+    let obj_computed = "const K = 'a'\nexport const T = { [K]: 1 }\n";
+    let read = "import { T } from './t'\nexport const X = T.a\n";
+    assert_cases_refused(vec![
+        (
+            "a getter on the way",
+            case(&[("lib/t.ts", obj_getter), ("lib/k.ts", read)]),
+        ),
+        (
+            "a function member read",
+            case(&[
+                ("lib/t.ts", obj_fn),
+                (
+                    "lib/k.ts",
+                    "import { T } from './t'\nexport const X = T.f\n",
+                ),
+            ]),
+        ),
+        (
+            "a member that holds code, copied",
+            case(&[
+                ("lib/t.ts", obj_nested_fn),
+                (
+                    "lib/k.ts",
+                    "import { T } from './t'\nexport const X = { ...T.side }\n",
+                ),
+            ]),
+        ),
+        (
+            "a let export",
+            case(&[("lib/t.ts", obj_let), ("lib/k.ts", read)]),
+        ),
+        (
+            "a call result export",
+            case(&[("lib/t.ts", obj_call), ("lib/k.ts", read)]),
+        ),
+        (
+            "a spread inside the exported literal",
+            case(&[("lib/t.ts", obj_spread), ("lib/k.ts", read)]),
+        ),
+        (
+            "a computed key inside the exported literal",
+            case(&[("lib/t.ts", obj_computed), ("lib/k.ts", read)]),
+        ),
+        (
+            "a __proto__ read",
+            case(&[
+                ("lib/t.ts", T_OBJ),
+                (
+                    "lib/k.ts",
+                    "import { T } from './t'\nexport const X = (T as any).__proto__\n",
+                ),
+            ]),
+        ),
+        (
+            "an optional chain read",
+            case(&[
+                ("lib/t.ts", T_OBJ),
+                (
+                    "lib/k.ts",
+                    "import { T } from './t'\nexport const X = (T as any)?.a\n",
+                ),
+            ]),
+        ),
+        (
+            "a call of a read member",
+            case(&[
+                ("lib/t.ts", T_OBJ),
+                (
+                    "lib/k.ts",
+                    "import { T } from './t'\nexport const X = (T as any).a()\n",
+                ),
+            ]),
+        ),
+        // D3: a computed read is never a call target or a callback, and its object must be data
+        (
+            "a computed read in call position",
+            case(&[(
+                "lib/k.ts",
+                "const R: Record<string, any> = { f: 1 }\nconst call = (k: string) => R[k]()\nexport const X = call('f')\n",
+            )]),
+        ),
+        (
+            "a computed read of a non-data object",
+            case(&[(
+                "lib/k.ts",
+                "const R: Record<string, any> = { f: () => 1 }\nconst get = (k: string) => R[k]\nexport const X = get('f')\n",
+            )]),
+        ),
+        (
+            "a computed read with a call as the key",
+            case(&[(
+                "lib/k.ts",
+                "const R: Record<string, any> = { f: 1 }\nconst key = () => 'f'\nexport const X = R[key()]\n",
+            )]),
+        ),
+        (
+            "a computed key holding a function",
+            case(&[(
+                "lib/k.ts",
+                "const mk = (k: string) => ({ [k]: () => 1 })\nexport const X = mk('toString')\n",
+            )]),
+        ),
+        (
+            "a computed key from a non-data value",
+            case(&[(
+                "lib/k.ts",
+                "const k = () => 'a'\nexport const X = { [k()]: 1 }\n",
+            )]),
+        ),
+        (
+            "a computed read as a callback",
+            case(&[(
+                "lib/k.ts",
+                "const R: Record<string, any> = { f: 1 }\nconst use = (k: string) => [1].map(R[k])\nexport const X = use('f')\n",
+            )]),
+        ),
+    ]);
+}
+
+#[test]
+fn f599_o4_o5_refused_a_method_or_in_that_could_run_code() {
+    let arr_fn = "export const ARR = [{ path: 'a/b', run: () => 1 }]\n";
+    let arr_let = "export let ARR = [{ path: 'a/b', k: 'a', named: true }]\n";
+    let ok_arr = ARR_LIT;
+    let imp = |t: &str| format!("import {{ ARR }} from './arr'\n{t}\n");
+    assert_cases_refused(vec![
+        (
+            "split of an element that holds code beside it",
+            case(&[
+                ("lib/arr.ts", arr_fn),
+                (
+                    "lib/k.ts",
+                    &imp("export const K = ARR.map((p) => p.path.split('/')[0])"),
+                ),
+            ]),
+        ),
+        (
+            "a method on a let export",
+            case(&[
+                ("lib/arr.ts", arr_let),
+                (
+                    "lib/k.ts",
+                    &imp("export const K = ARR.map((p) => p.k.toLowerCase())"),
+                ),
+            ]),
+        ),
+        (
+            "split with a regex",
+            case(&[
+                ("lib/arr.ts", ok_arr),
+                (
+                    "lib/k.ts",
+                    &imp("export const K = ARR.map((p) => p.path.split(/\\//))"),
+                ),
+            ]),
+        ),
+        (
+            "replace with a function",
+            case(&[
+                ("lib/arr.ts", ok_arr),
+                (
+                    "lib/k.ts",
+                    &imp("export const K = ARR.map((p) => p.path.replace('a', () => 'b'))"),
+                ),
+            ]),
+        ),
+        (
+            "replace with a regex",
+            case(&[
+                ("lib/arr.ts", ok_arr),
+                (
+                    "lib/k.ts",
+                    &imp("export const K = ARR.map((p) => p.path.replace(/a/g, 'b'))"),
+                ),
+            ]),
+        ),
+        (
+            "replaceAll with a string and a function",
+            case(&[
+                ("lib/arr.ts", ok_arr),
+                (
+                    "lib/k.ts",
+                    &imp(
+                        "export const K = ARR.map((p) => p.path.replaceAll('a', (m: string) => m))",
+                    ),
+                ),
+            ]),
+        ),
+        (
+            "localeCompare",
+            case(&[
+                ("lib/arr.ts", ok_arr),
+                (
+                    "lib/k.ts",
+                    &imp(
+                        "export const K = ARR.map((p) => p.k.localeCompare('b', undefined, { numeric: true }))",
+                    ),
+                ),
+            ]),
+        ),
+        (
+            "a method not in the list",
+            case(&[
+                ("lib/arr.ts", ok_arr),
+                (
+                    "lib/k.ts",
+                    &imp("export const K = ARR.map((p) => p.k.normalize())"),
+                ),
+            ]),
+        ),
+        (
+            "a method handed a function",
+            case(&[
+                ("lib/arr.ts", ok_arr),
+                (
+                    "lib/k.ts",
+                    &imp("export const K = ARR.map((p) => p.path.split('/').join(String))"),
+                ),
+            ]),
+        ),
+        (
+            "a method handed a non-data argument",
+            case(&[(
+                "lib/k.ts",
+                "const f = () => '/'\nexport const K = ['a/b'].map((p) => p.split(f()))\n",
+            )]),
+        ),
+        (
+            "an object with its own toString, joined",
+            case(&[(
+                "lib/k.ts",
+                "export const K = [{ toString() { return 'x' } }].map((p) => p.toString())\n",
+            )]),
+        ),
+        (
+            "a getter object, sliced",
+            case(&[(
+                "lib/k.ts",
+                "const o = { get k() { (globalThis as any).n = 1; return 'a' } }\nexport const K = [o].map((p) => p.k.slice(0))\n",
+            )]),
+        ),
+        (
+            "in over a call result",
+            case(&[(
+                "lib/k.ts",
+                "const mk = () => ({ a: 1 })\nexport const K = 'a' in mk()\n",
+            )]),
+        ),
+        (
+            "in over an import that is not proven",
+            case(&[
+                ("lib/arr.ts", arr_let),
+                ("lib/k.ts", &imp("export const K = 'k' in (ARR as any)")),
+            ]),
+        ),
+        (
+            "in with a non-data key",
+            case(&[(
+                "lib/k.ts",
+                "const k = () => 'a'\nexport const K = k() in { a: 1 }\n",
+            )]),
+        ),
+        (
+            "instanceof",
+            case(&[("lib/k.ts", "export const K = ({}) instanceof Object\n")]),
+        ),
+        (
+            "in over a Proxy-like value from a package call",
+            case(&[(
+                "lib/k.ts",
+                "import { z } from 'zod'\nexport const K = 'a' in z.object({})\n",
+            )]),
+        ),
+    ]);
+}
+
+#[test]
+fn f599_o6_refused_an_exporter_that_writes_the_array() {
+    let consumer = "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.k)\n";
+    let writers = [
+        "export function add() {\n  ARR.push({ k: 'z' })\n}\n",
+        "export function clear() {\n  ARR.length = 0\n}\n",
+        "export function set() {\n  ARR[0] = { k: 'z' }\n}\n",
+        "export function sort() {\n  ARR.sort()\n}\n",
+        "export function rev() {\n  ARR.reverse()\n}\n",
+        "export function first() {\n  ARR[0].k = 'z'\n}\n",
+        "export function drop() {\n  delete (ARR[0] as any).k\n}\n",
+        "export function alias() {\n  const a = ARR\n  a.push({ k: 'z' })\n}\n",
+        "export function assign() {\n  Object.assign(ARR[0], { k: 'z' })\n}\n",
+        "export function pass() {\n  mutate(ARR)\n}\nfunction mutate(a: unknown[]) {\n  a.length = 0\n}\n",
+        "export function splice() {\n  ARR.splice(0, 1)\n}\n",
+        "export function fill() {\n  ARR.fill(0 as any)\n}\n",
+    ];
+    let mut cases = Vec::new();
+    for w in writers {
+        cases.push((
+            "an exporter write",
+            case(&[
+                ("lib/arr.ts", &format!("{ARR_LIT}{w}")),
+                ("lib/k.ts", consumer),
+            ]),
+        ));
+    }
+    // an imported array that is not data in the first place, and one the exporter spreads into
+    cases.push((
+        "an array holding a call",
+        case(&[
+            (
+                "lib/arr.ts",
+                "const mk = () => 1\nexport const ARR = [{ k: mk() }]\n",
+            ),
+            ("lib/k.ts", consumer),
+        ]),
+    ));
+    cases.push((
+        "an array holding a function",
+        case(&[
+            ("lib/arr.ts", "export const ARR = [{ k: () => 1 }]\n"),
+            (
+                "lib/k.ts",
+                "import { ARR } from './arr'\nexport const K = [...ARR]\n",
+            ),
+        ]),
+    ));
+    // a consumer that mutates the imported array in place at load
+    cases.push((
+        "a consumer sort of the import",
+        case(&[
+            ("lib/arr.ts", ARR_LIT),
+            (
+                "lib/k.ts",
+                "import { ARR } from './arr'\nexport const K = ARR.sort()\n",
+            ),
+        ]),
+    ));
+    cases.push((
+        "a consumer reverse of an array holding the import",
+        case(&[
+            ("lib/arr.ts", ARR_LIT),
+            (
+                "lib/k.ts",
+                "import { ARR } from './arr'\nconst A = [ARR]\nexport const K = A[0].reverse()\n",
+            ),
+        ]),
+    ));
+    cases.push(("a consumer sort through a body local", case(&[("lib/arr.ts", ARR_LIT), ("lib/k.ts", "import { ARR } from './arr'\nfunction f() {\n  const l = ARR\n  return l.sort()\n}\nexport const K = f()\n")])));
+    cases.push(("a consumer push at load", case(&[("lib/arr.ts", ARR_LIT), ("lib/k.ts", "import { ARR } from './arr'\nARR.push({ path: 'x', k: 'x' })\nexport const K = 1\n")])));
+    assert_cases_refused(cases);
+}
+
+#[test]
+fn f599_o6_the_length_of_an_imported_array_literal_is_a_number_whatever_it_holds() {
+    // reading `.length` runs nothing and depends on no element (the exporter's own load code is judged on its own)
+    assert_cases_clean(vec![
+        case(&[
+            (
+                "lib/arr.ts",
+                "const mk = () => 1\nexport const ARR = [{ k: mk() }]\n",
+            ),
+            (
+                "lib/k.ts",
+                "import { ARR } from './arr'\nexport const K = ARR.length\n",
+            ),
+        ]),
+    ]);
+}
+
+#[test]
+fn f599_a_tsx_module_is_still_tsx() {
+    // the loader follows the extension: `<T>(…) =>` without a comma is JSX in a `.tsx` module, `<T,>` is a generic arrow
+    assert_cases_clean(vec![case(&[(
+        "lib/g.tsx",
+        "export const id = <T,>(l: T): T => l\n",
+    )])]);
+    assert_cases_refused(vec![(
+        "a generic arrow without a comma in a tsx module",
+        case(&[("lib/g.tsx", "export const id = <T>(l: T): T => l\n")]),
+    )]);
 }

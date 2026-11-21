@@ -556,6 +556,7 @@ fn read_function_as(
         opts.is_some_and(|o| {
             crate::analyze::module_effects::plain_import_read(&me_from, src, imp, path, o)
         })
+        .then_some(crate::analyze::module_effects::DataShape::Plain)
     };
     ir.module_effect = crate::analyze::module_effects::module_effect(
         ast,

@@ -82,7 +82,7 @@ pub fn module_effect(
     names: &NameTable<'_>,
     text: &[u8],
     accepted: &dyn Fn(&str) -> bool,
-    import_read: &dyn Fn(&str, &str, &[ReadSeg]) -> bool,
+    import_read: &dyn Fn(&str, &str, &[ReadSeg]) -> Option<DataShape>,
     load_only: bool,
 ) -> Option<(u32, String)> {
     let key = |r: js_ast::Ref| names.key_of(r);
@@ -417,6 +417,7 @@ pub fn module_effect(
         local_inits: std::cell::RefCell::new(std::collections::HashMap::new()),
         visiting: std::cell::RefCell::new(Vec::new()),
         strict: std::cell::Cell::new(0),
+        own_only: std::cell::Cell::new(false),
     };
     let display_name = |e: &js_ast::Expr| {
         let E::EBinary(b) = &e.data else { return false };
@@ -738,7 +739,7 @@ struct Values<'a, 'n> {
     /// F564: where each lexical module binding is declared, and the binding being judged (`i32::MAX`: none).
     declared_at: &'a std::collections::HashMap<u32, i32>,
     current: std::cell::Cell<i32>,
-    import_read: &'a dyn Fn(&str, &str, &[ReadSeg]) -> bool,
+    import_read: &'a dyn Fn(&str, &str, &[ReadSeg]) -> Option<DataShape>,
     module: &'a HashSet<u32>,
     writers: &'a HashSet<u32>,
     package_rooted: &'a dyn Fn(&js_ast::Expr) -> bool,
@@ -766,6 +767,9 @@ struct Values<'a, 'n> {
     visiting: std::cell::RefCell<Vec<u32>>,
     /// F597: inside a followed body or callback: a call is only one of D1-D4 or a read-only global, never package code.
     strict: std::cell::Cell<u32>,
+    /// F599: `data` is being asked for a value the module BUILT: an imported value (data, but shared with its module) does
+    /// not count, because changing it in place (`sort`, `reverse`) would write another module's value.
+    own_only: std::cell::Cell<bool>,
 }
 
 /// F597 D4: a module function a load-time call may follow.
@@ -840,6 +844,33 @@ const CALLBACK_METHODS: &[&str] = &[
     "some",
     "every",
 ];
+/// F599 (D4): built-in String / Number / Array methods that take no callback. Called on a value proven DATA they run only
+/// the built-in (or throw): `replace` / `replaceAll` only with a string pattern and a string replacement
+/// (`data_method_why`); `localeCompare` and anything that takes a function or an options object stay refused.
+const DATA_METHODS: &[&str] = &[
+    "split",
+    "toLowerCase",
+    "toUpperCase",
+    "startsWith",
+    "endsWith",
+    "includes",
+    "indexOf",
+    "trim",
+    "trimStart",
+    "trimEnd",
+    "padStart",
+    "padEnd",
+    "slice",
+    "substring",
+    "at",
+    "charAt",
+    "replace",
+    "replaceAll",
+    "toFixed",
+    "toString",
+    "join",
+    "concat",
+];
 /// F597 D3: Set / Map methods that read.
 const COLLECTION_METHODS: &[&str] = &["has", "get", "keys", "values", "entries"];
 
@@ -913,8 +944,10 @@ impl Values<'_, '_> {
                         .map(|(src, imp)| (src.to_string(), imp.to_string()))
                 });
                 if let Some((src, imp)) = app_root {
-                    let proven =
-                        read_path(e).is_some_and(|path| (self.import_read)(&src, &imp, &path));
+                    // F599 (D3): a computed read of imported data with a data key (`R[k]`) runs no code either.
+                    let proven = read_path(e)
+                        .is_some_and(|path| (self.import_read)(&src, &imp, &path).is_some())
+                        || (self.load_only && self.data(e, depth + 1));
                     return (!proven).then(|| {
                         format!(
                             "it reads `{}`, an imported value brust cannot prove is a plain object",
@@ -926,6 +959,16 @@ impl Values<'_, '_> {
                     E::EDot(d) => go(&d.target),
                     E::EIndex(i) if matches!(i.index.data, E::EString(_) | E::ENumber(_)) => {
                         go(&i.target)
+                    }
+                    // F599 (D3): a computed read of data with a data key. Never a call target or a callback (those
+                    // positions accept nothing but what they list), and its result is data only if every member is.
+                    E::EIndex(i)
+                        if self.load_only
+                            && i.optional_chain.is_none()
+                            && self.data(&i.target, depth + 1)
+                            && self.data(&i.index, depth + 1) =>
+                    {
+                        go(&i.target).or_else(|| go(&i.index))
                     }
                     _ => Some(format!("it reads `{}` with a computed key", spell(e))),
                 }
@@ -953,8 +996,15 @@ impl Values<'_, '_> {
                 ) {
                     return Some("it has a getter, a setter or a method".into());
                 }
+                // F599 (D3): in the load-time judge a computed key that is a data primitive is fine when the value is
+                // data (so a key that turns out to be `toString` holds no function).
                 if p.flags.contains(js_ast::flags::Property::IsComputed) {
-                    return Some("it has a computed key".into());
+                    let data_key = self.load_only
+                        && p.key.as_ref().is_some_and(|k| self.data(k, depth + 1))
+                        && p.value.as_ref().is_some_and(|v| self.data(v, depth + 1));
+                    if !data_key {
+                        return Some("it has a computed key".into());
+                    }
                 }
                 // F591 (Mellow F2): a conversion of this object at load (a template, `+`, `String(o)`, `JSON.stringify`)
                 // runs these as app code.
@@ -1072,6 +1122,14 @@ impl Values<'_, '_> {
                     | O::BinStrictEq
                     | O::BinStrictNe
                     | O::BinComma => go(&b.left).or_else(|| go(&b.right)),
+                    // F599 (D5): `key in value` of data (a primitive key, a value holding no code) runs no trap.
+                    O::BinIn
+                        if self.load_only
+                            && self.data(&b.left, depth + 1)
+                            && self.data(&b.right, depth + 1) =>
+                    {
+                        go(&b.left).or_else(|| go(&b.right))
+                    }
                     O::BinIn | O::BinInstanceof => {
                         Some("it uses `in` or `instanceof`, which may run a trap".into())
                     }
@@ -1189,6 +1247,8 @@ impl Values<'_, '_> {
             {
                 self.coerced(&b.left).or_else(|| self.coerced(&b.right))
             }
+            // F599 (D1): an imported value proven DATA holds no conversion code.
+            _ if self.load_only && self.data(e, 0) => None,
             _ => chain_root(e)
                 .filter(|r| {
                     self.names
@@ -1279,9 +1339,23 @@ impl Values<'_, '_> {
         }
     }
 
+    /// F599: for a read `e` rooted at an app import along a literal path (`T.side.x`, `T.list[1]`, `ARR.length`):
+    /// whether the part it reaches is DATA; `None` when `e` is not such a read (the caller reads it as any member).
+    fn import_path_data(&self, e: &js_ast::Expr) -> Option<bool> {
+        if self.own_only.get() {
+            return None;
+        }
+        let (src, imp) = chain_root(e)
+            .and_then(|r| self.names.import_of(r))
+            .filter(|(src, _)| app_specifier(src))?;
+        let path = read_path(e)?;
+        Some((self.import_read)(src, imp, &path).is_some())
+    }
+
     fn import_kind(&self, r: js_ast::Ref) -> Option<Kind> {
         let (src, imp) = self.names.import_of(r)?;
-        (app_specifier(src) && (self.import_read)(src, imp, &[])).then_some(Kind::Array)
+        (app_specifier(src) && (self.import_read)(src, imp, &[]) == Some(DataShape::Array))
+            .then_some(Kind::Array)
     }
 
     /// Data that holds no code and no app-imported value, so a callback, a conversion or a copy of it runs only built-in
@@ -1307,13 +1381,24 @@ impl Values<'_, '_> {
                 None => false,
             },
             E::ECall(c) => self.data_call(c, depth + 1),
+            // F599 (D3): a computed key that is itself data (a primitive) names a property of data; the value is data too,
+            // so a conversion hook written that way holds no function.
             E::EObject(o) => o.properties.iter().all(|p| {
                 matches!(p.kind, js_ast::G::PropertyKind::Normal)
-                    && !p.flags.contains(js_ast::flags::Property::IsComputed)
+                    && (!p.flags.contains(js_ast::flags::Property::IsComputed)
+                        || p.key.as_ref().is_some_and(&go))
                     && !matches!(p.key.as_ref().map(|k| &k.data),
-                        Some(E::EString(k)) if CONVERSION_HOOKS.contains(&crate::analyze::expr::estring(k).as_str()))
+                        Some(E::EString(k)) if !p.flags.contains(js_ast::flags::Property::IsComputed)
+                            && CONVERSION_HOOKS.contains(&crate::analyze::expr::estring(k).as_str()))
                     && p.value.as_ref().is_some_and(&go)
             }),
+            // F599 (D1): an imported value proven DATA (`import_data`): the whole export, or the part a read reaches.
+            E::EImportIdentifier(id) => {
+                !self.own_only.get()
+                    && self.names.import_of(id.ref_).is_some_and(|(src, imp)| {
+                        app_specifier(src) && (self.import_read)(src, imp, &[]).is_some()
+                    })
+            }
             E::EIdentifier(id) => {
                 let k = self.names.key_of(id.ref_);
                 let n = self.names.name(id.ref_);
@@ -1337,12 +1422,16 @@ impl Values<'_, '_> {
             }
             E::EBinary(b) => {
                 matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None)
-                    && !matches!(b.op, js_ast::OpCode::BinIn | js_ast::OpCode::BinInstanceof)
+                    && !matches!(b.op, js_ast::OpCode::BinInstanceof)
                     && go(&b.left)
                     && go(&b.right)
             }
             E::EIf(i) => go(&i.test) && go(&i.yes) && go(&i.no),
-            // A member of data is data (`row.scopes`, `pairs[0]`); an optional step or a key that is not data is not.
+            // A member of data is data (`row.scopes`, `pairs[0]`); an optional step or a key that is not data is not. A
+            // read rooted at an app import is data when the part it reaches is (`import_data` along the path).
+            E::EDot(_) | E::EIndex(_) if self.import_path_data(e).is_some() => {
+                self.import_path_data(e).unwrap_or(false)
+            }
             E::EDot(d) => d.optional_chain.is_none() && go(&d.target),
             E::EIndex(i) => i.optional_chain.is_none() && go(&i.target) && go(&i.index),
             _ => false,
@@ -1352,7 +1441,26 @@ impl Values<'_, '_> {
     /// Review F1: a D3 call whose result holds data only: a method that keeps the receiver's elements on a data receiver
     /// (with data arguments), `add` / `set` chained on a data collection with data arguments.
     fn data_call(&self, c: &js_ast::E::Call, depth: u8) -> bool {
-        if depth > 16 || c.optional_chain.is_some() || self.kind_call(c, depth).is_none() {
+        if depth > 16 || c.optional_chain.is_some() {
+            return false;
+        }
+        // F599 (D4): the result of a built-in method of DATA that takes no callback (`p.path.split('/')`) is data: a string,
+        // a number or an array of strings holds no function.
+        if let E::EDot(d) = &c.target.data
+            && DATA_METHODS.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+            && self.data(&d.target, depth + 1)
+            && self
+                .data_method_why(
+                    c,
+                    &d.target,
+                    &String::from_utf8_lossy(d.name.slice()),
+                    depth,
+                )
+                .is_none()
+        {
+            return true;
+        }
+        if self.kind_call(c, depth).is_none() {
             return false;
         }
         let E::EDot(d) = &c.target.data else {
@@ -1389,6 +1497,15 @@ impl Values<'_, '_> {
         }
     }
 
+    /// [`Self::data`] for a value the module built: nothing imported inside it (F599: an imported value is data too, but not
+    /// the module's to change).
+    fn data_own(&self, e: &js_ast::Expr, depth: u8) -> bool {
+        let saved = self.own_only.replace(true);
+        let r = self.data(e, depth);
+        self.own_only.set(saved);
+        r
+    }
+
     /// Review F2: `e` is a value this module or the judged body built, so sorting it in place changes nothing another
     /// module can see: a fresh expression, an own local, a module `const` whose initializer is fresh, or a member of one.
     fn own_value(&self, e: &js_ast::Expr, depth: u8) -> bool {
@@ -1416,8 +1533,12 @@ impl Values<'_, '_> {
                     .is_some_and(|v| self.own_value(v, depth + 1))
             }
             // A member is the module's own only inside data it built (data holds no imported reference).
-            E::EDot(d) => self.own_value(&d.target, depth + 1) && self.data(&d.target, depth + 1),
-            E::EIndex(i) => self.own_value(&i.target, depth + 1) && self.data(&i.target, depth + 1),
+            E::EDot(d) => {
+                self.own_value(&d.target, depth + 1) && self.data_own(&d.target, depth + 1)
+            }
+            E::EIndex(i) => {
+                self.own_value(&i.target, depth + 1) && self.data_own(&i.target, depth + 1)
+            }
             _ => false,
         }
     }
@@ -1457,20 +1578,23 @@ impl Values<'_, '_> {
         match &c.target.data {
             E::EDot(d) => {
                 let m = String::from_utf8_lossy(d.name.slice()).into_owned();
-                let k = self.kind(&d.target, depth + 1)?;
-                let ok = match k {
-                    Kind::Array => ARRAY_METHODS.contains(&m.as_str()),
-                    Kind::Set => {
+                let ok = match self.kind(&d.target, depth + 1) {
+                    Some(Kind::Array) => ARRAY_METHODS.contains(&m.as_str()),
+                    Some(Kind::Set) => {
                         COLLECTION_METHODS.contains(&m.as_str())
                             || (m == "add" && Self::chained_on_new(&d.target))
                     }
-                    Kind::Map => {
+                    Some(Kind::Map) => {
                         COLLECTION_METHODS.contains(&m.as_str())
                             || (m == "set" && Self::chained_on_new(&d.target))
                     }
-                    Kind::Weak | Kind::Iter => false,
+                    Some(Kind::Weak | Kind::Iter) | None => false,
                 };
                 if !ok {
+                    // F599 (D4): a built-in method that takes no callback, on a value proven DATA.
+                    if DATA_METHODS.contains(&m.as_str()) && self.data(&d.target, depth + 1) {
+                        return Some(self.data_method_why(c, &d.target, &m, depth));
+                    }
                     return None;
                 }
                 Some(self.method_why(c, &d.target, &m, depth))
@@ -1482,6 +1606,48 @@ impl Values<'_, '_> {
             }
             _ => None,
         }
+    }
+
+    /// F599 (D4): `recv.m(args)` where `recv` is DATA and `m` a built-in String / Number / Array method that takes no
+    /// callback: it can only run the built-in or throw, because data holds no function. Every argument is data and not a
+    /// function; `replace` / `replaceAll` only with two string literals (a function or a regex replacement runs code).
+    fn data_method_why(
+        &self,
+        c: &js_ast::E::Call,
+        recv: &js_ast::Expr,
+        m: &str,
+        depth: u8,
+    ) -> Option<String> {
+        let spelled = || spell(&c.target, self.names);
+        if let Some(w) = self.why(recv, depth + 1) {
+            return Some(w);
+        }
+        if matches!(m, "replace" | "replaceAll")
+            && !(c.args.len() == 2 && c.args.iter().all(|a| matches!(a.data, E::EString(_))))
+        {
+            return Some(format!(
+                "it calls `{}(…)` with something other than a string and a string",
+                spelled()
+            ));
+        }
+        for a in c.args.iter() {
+            if matches!(a.data, E::ESpread(_) | E::EArrow(_) | E::EFunction(_)) {
+                return Some(format!(
+                    "it hands `{}(…)` a function or a spread",
+                    spelled()
+                ));
+            }
+            if let Some(w) = self.why(a, depth + 1) {
+                return Some(w);
+            }
+            if !self.data(a, depth + 1) {
+                return Some(format!(
+                    "it hands `{}(…)` a value brust cannot prove is plain data",
+                    spelled()
+                ));
+            }
+        }
+        None
     }
 
     fn method_why(
@@ -1824,6 +1990,13 @@ fn array_from_table(c: &js_ast::E::Call, names: &NameTable<'_>) -> bool {
     ok(v, &params, names, 0)
 }
 
+/// F599 (D1): what an imported value proven DATA is: an array literal, or anything else plain (an object, a primitive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataShape {
+    Array,
+    Plain,
+}
+
 /// F564 D1: one step of a read rooted at an import: a property name or an array index.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReadSeg {
@@ -1963,6 +2136,172 @@ pub fn literal_array_import(
         }
         matches!(value.data, E::EArray(_)) && literal_data(value, 0)
     })
+}
+
+/// F599 (D1): the app import `imported` of `source`, read along `path` (empty: the whole value), is DATA: an `export const`
+/// whose literal holds, at that path, a value with no function anywhere inside it (`literal_data`), every step on the way
+/// a plain data property (no accessor, computed key, spread, hole or `__proto__`, as `plain_path`), and which nothing
+/// writes. Reading a data property of a literal runs no code, and a copy, a spread or a built-in method of such a value
+/// runs only built-in code. "Nothing writes": the build-wide scan shows no module writing it as it loads (F230), and its
+/// own module has no write of it ([`crate::analyze::use_scan::written_in_module`]); reads of it there (`.find`, `.map`,
+/// `[0]`, `for…of`, a returned reference) are not writes. `.length` of an array literal is a number.
+pub fn import_data(
+    from: &str,
+    source: &str,
+    imported: &str,
+    path: &[ReadSeg],
+    opts: &crate::analyze::component::AnalyzeOptions,
+) -> Option<DataShape> {
+    if imported == "*" || !app_specifier(source) {
+        return None;
+    }
+    let start = crate::analyze::modules::resolve_module(from, source, opts)?;
+    let declared = |ast: &js_ast::Ast<'_>, n: &str| export_value(ast, n).is_some();
+    let (module, export) =
+        crate::analyze::hooks::follow_export(opts, start, imported.to_string(), &declared)?;
+    if opts
+        .load_writes
+        .as_deref()
+        .is_some_and(|lw| lw.why(&module, &export).is_some())
+    {
+        return None;
+    }
+    let bytes = std::fs::read(opts.root.join(&module)).ok()?;
+    let parsed = crate::parse::parse_cached(&module, bytes).ok()?;
+    parsed.with_ast(|ast| {
+        let (value, binding) = export_value(ast, &export)?;
+        if let Some(r) = binding {
+            let dummy = js_ast::G::Fn::default();
+            let names = NameTable::new(ast, &dummy);
+            if crate::analyze::use_scan::written_in_module(ast, &names).contains(&r.inner_index()) {
+                return None;
+            }
+        }
+        let at = value_at(value, path)?;
+        match at {
+            Found::Length => Some(DataShape::Plain),
+            Found::Expr(x) if literal_data(x, 0) => Some(if matches!(x.data, E::EArray(_)) {
+                DataShape::Array
+            } else {
+                DataShape::Plain
+            }),
+            Found::Expr(_) => None,
+        }
+    })
+}
+
+/// What a read path reaches in a literal: a sub-expression, or the `length` of an array literal.
+enum Found<'x> {
+    Expr(&'x js_ast::Expr),
+    Length,
+}
+
+/// The part of the literal `e` that `path` reads, when every step is a plain data property (`plain_path`'s rules) or an
+/// array literal's `length`.
+fn value_at<'x>(e: &'x js_ast::Expr, path: &[ReadSeg]) -> Option<Found<'x>> {
+    let Some((first, rest)) = path.split_first() else {
+        return Some(Found::Expr(e));
+    };
+    match (&e.data, first) {
+        (E::EObject(o), ReadSeg::Key(k)) => {
+            if k == "__proto__" {
+                return None;
+            }
+            let mut found = None;
+            for p in o.properties.iter() {
+                if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                    || p.flags.contains(js_ast::flags::Property::IsComputed)
+                {
+                    return None;
+                }
+                let Some(E::EString(key)) = p.key.as_ref().map(|k| &k.data) else {
+                    return None;
+                };
+                let key = crate::analyze::expr::estring(key);
+                if key == "__proto__" {
+                    return None;
+                }
+                if key == *k {
+                    found = p.value.as_ref();
+                }
+            }
+            value_at(found?, rest)
+        }
+        (E::EArray(a), ReadSeg::Index(i)) => {
+            if a.items
+                .iter()
+                .any(|x| matches!(x.data, E::ESpread(_) | E::EMissing(_)))
+            {
+                return None;
+            }
+            value_at(a.items.get(*i)?, rest)
+        }
+        (E::EArray(a), ReadSeg::Key(k)) if k == "length" && rest.is_empty() => (!a
+            .items
+            .iter()
+            .any(|x| matches!(x.data, E::ESpread(_) | E::EMissing(_))))
+        .then_some(Found::Length),
+        _ => None,
+    }
+}
+
+/// [`export_literal`] for any value: the initializer of the `export const` `export` (or of what `export default` names).
+fn export_value<'x>(
+    ast: &'x js_ast::Ast<'_>,
+    export: &str,
+) -> Option<(&'x js_ast::Expr, Option<js_ast::Ref>)> {
+    let sym = |r: js_ast::Ref| {
+        ast.symbols
+            .as_slice()
+            .get(r.inner_index() as usize)
+            .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
+    };
+    let local = if export == "default" {
+        // `export default <literal>` has no binding; a named one is read like any export
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                if let S::SExportDefault(ed) = &stmt.data
+                    && let js_ast::StmtOrExpr::Expr(v) = &ed.value
+                {
+                    match &v.data {
+                        E::EObject(_) | E::EArray(_) => return Some((v, None)),
+                        E::EIdentifier(id) => return export_const_named(ast, &sym(id.ref_)?),
+                        _ => return None,
+                    }
+                }
+            }
+        }
+        crate::analyze::const_fold::exported_const_name(ast, export)?
+    } else {
+        crate::analyze::const_fold::exported_const_name(ast, export)?
+    };
+    export_const_named(ast, &local)
+}
+
+fn export_const_named<'x>(
+    ast: &'x js_ast::Ast<'_>,
+    local: &str,
+) -> Option<(&'x js_ast::Expr, Option<js_ast::Ref>)> {
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            if let S::SLocal(l) = &stmt.data
+                && matches!(l.kind, js_ast::S::Kind::KConst)
+            {
+                for d in l.decls.iter() {
+                    if let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
+                        && ast
+                            .symbols
+                            .as_slice()
+                            .get(id.r#ref.inner_index() as usize)
+                            .is_some_and(|s| s.original_name.slice() == local.as_bytes())
+                    {
+                        return Some((v, Some(id.r#ref)));
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Literal data only: primitives, templates without parts, arrays and objects of those (plain non-computed properties,
