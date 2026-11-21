@@ -88,7 +88,7 @@ export function cfEntrySource(i: CfEntryInput): string {
         ]
       : []),
     'export const loader = jsonCall(h.loader)',
-    'export const jobs = jsonCall(h.jobs)',
+    'export const jobs = jsonCall(h.jobs, { jobDigits: true })',
     actions ? 'export const action = (req) => fetchInScope(app, req)' : 'export const action = noActions',
     'export const MANIFEST = JSON.stringify(M)',
     'export const TEMPLATES = T',

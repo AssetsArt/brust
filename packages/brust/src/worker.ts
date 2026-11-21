@@ -88,6 +88,7 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan:
     if (kind === 'fetch') return runFetch(requestJson, view, slot, slots)
     if (kind === 'cache') return runCache(requestJson, view, slot, slots, cacheHeapIo(), cacheDeps)
     let out: unknown
+    let jobReply = false // F585: only a reply of job results writes a bigint as its digits (see toJson)
     try {
       const req = JSON.parse(requestJson)
       if (kind === 'loader') {
@@ -110,16 +111,20 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan:
             misses = heap.planBuf(slot, bytes)
             if (misses === PLAN_DECLINED) return writeSlot(view, slot, slots, json, heap.io, cap())
           }
+          jobReply = misses !== ''
           out = misses === '' ? PLANNED : { planned: true, results: (await h.jobs(JSON.parse(misses))).results }
         }
-      } else if (kind === 'jobs') out = await h.jobs(req)
+      } else if (kind === 'jobs') {
+        jobReply = true
+        out = await h.jobs(req)
+      }
       // F519 (R5.2): the reply may hold artifacts of 2 × 256 KiB each: it crosses by heap like a loader reply (L10).
       else if (kind === 'component') out = h.component ? await h.component(req) : { results: (req.refs ?? []).map((ref: string) => ({ ref, missing: true })) }
       else out = { error: `unknown call kind ${kind}` }
     } catch (e) {
       out = { error: String(e) }
     }
-    return writeSlot(view, slot, slots, toJson(out), heap.io, cap())
+    return writeSlot(view, slot, slots, toJson(out, jobReply), heap.io, cap())
   }
 }
 

@@ -12,7 +12,7 @@ const app = mountActions(A, "/_brust/action")
 if (app["~hasWS"]) throw new Error("WebSocket (.ws()) is not supported on --target cloudflare: a Worker has no sockets; use --target bun")
 app.compile() // startup-phase compile (R9)
 export const loader = jsonCall(h.loader)
-export const jobs = jsonCall(h.jobs)
+export const jobs = jsonCall(h.jobs, { jobDigits: true })
 export const action = (req) => fetchInScope(app, req)
 export const MANIFEST = JSON.stringify(M)
 export const TEMPLATES = T
