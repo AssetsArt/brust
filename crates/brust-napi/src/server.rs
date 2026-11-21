@@ -543,11 +543,15 @@ const CALL_WRAPPER: &str = r#"(function (fn, done, buf, slots, ids) {
   return function (kind, json, slot, gen) {
     var p;
     try { p = fn(KINDS[kind], json, slot); } catch (e) { fail(slot, gen, e); return; }
-    if (p !== null && (typeof p === 'object' || typeof p === 'function') && typeof p.then === 'function') {
-      p.then(function (n) { ok(slot, gen, n); }, function (e) { fail(slot, gen, e); });
-    } else {
-      ok(slot, gen, p);
-    }
+    var then;
+    try {
+      then = p !== null && (typeof p === 'object' || typeof p === 'function') ? p.then : undefined;
+      if (typeof then === 'function') {
+        then.call(p, function (n) { ok(slot, gen, n); }, function (e) { fail(slot, gen, e); });
+        return;
+      }
+    } catch (e) { fail(slot, gen, e); return; }
+    ok(slot, gen, p);
   };
 })"#;
 
