@@ -82,7 +82,7 @@ pub fn module_effect(
     names: &NameTable<'_>,
     text: &[u8],
     accepted: &dyn Fn(&str) -> bool,
-    import_read: &dyn Fn(&str, &str, &[ReadSeg]) -> Option<DataShape>,
+    import_read: ImportRead<'_>,
     load_only: bool,
 ) -> Option<(u32, String)> {
     let key = |r: js_ast::Ref| names.key_of(r);
@@ -739,7 +739,7 @@ struct Values<'a, 'n> {
     /// F564: where each lexical module binding is declared, and the binding being judged (`i32::MAX`: none).
     declared_at: &'a std::collections::HashMap<u32, i32>,
     current: std::cell::Cell<i32>,
-    import_read: &'a dyn Fn(&str, &str, &[ReadSeg]) -> Option<DataShape>,
+    import_read: ImportRead<'a>,
     module: &'a HashSet<u32>,
     writers: &'a HashSet<u32>,
     package_rooted: &'a dyn Fn(&js_ast::Expr) -> bool,
@@ -1989,6 +1989,9 @@ fn array_from_table(c: &js_ast::E::Call, names: &NameTable<'_>) -> bool {
     }
     ok(v, &params, names, 0)
 }
+
+/// What the judge asks about an app import: whether the value its read path reaches is proven DATA, and what shape it has.
+pub type ImportRead<'a> = &'a dyn Fn(&str, &str, &[ReadSeg]) -> Option<DataShape>;
 
 /// F599 (D1): what an imported value proven DATA is: an array literal, or anything else plain (an object, a primitive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

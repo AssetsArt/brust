@@ -1334,18 +1334,16 @@ fn f599_o6_refused_an_exporter_that_writes_the_array() {
 #[test]
 fn f599_o6_the_length_of_an_imported_array_literal_is_a_number_whatever_it_holds() {
     // reading `.length` runs nothing and depends on no element (the exporter's own load code is judged on its own)
-    assert_cases_clean(vec![
-        case(&[
-            (
-                "lib/arr.ts",
-                "const mk = () => 1\nexport const ARR = [{ k: mk() }]\n",
-            ),
-            (
-                "lib/k.ts",
-                "import { ARR } from './arr'\nexport const K = ARR.length\n",
-            ),
-        ]),
-    ]);
+    assert_cases_clean(vec![case(&[
+        (
+            "lib/arr.ts",
+            "const mk = () => 1\nexport const ARR = [{ k: mk() }]\n",
+        ),
+        (
+            "lib/k.ts",
+            "import { ARR } from './arr'\nexport const K = ARR.length\n",
+        ),
+    ])]);
 }
 
 #[test]
