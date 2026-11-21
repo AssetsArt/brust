@@ -163,11 +163,12 @@ fn js_truthy(v: &Node) -> bool {
         Node::Bool(b) => *b,
         Node::Num(n) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
         Node::Str(s) => !s.is_empty(),
-        Node::Arr(_) | Node::Map(_) => true,
-        Node::Js(j) => match &**j {
+        Node::Arr(_) => true,
+        // F585: a decoded job-value tag is its number / bigint.
+        Node::Map(m) => brust_jinja::ctx::js_scalar(m).is_none_or(|j| match j {
             brust_jinja::ctx::JsVal::Float(f) => !f.is_nan(),
-            brust_jinja::ctx::JsVal::BigInt(d) => brust_jinja::bigint::truthy(d),
-        },
+            brust_jinja::ctx::JsVal::BigInt(d) => brust_jinja::bigint::truthy(&d),
+        }),
     }
 }
 

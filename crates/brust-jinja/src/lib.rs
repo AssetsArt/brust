@@ -83,23 +83,29 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("json_attr", json_attr);
     // F585: a bigint operand follows JS (`bigint::arith`): a bigint result, or the TypeError / RangeError JS throws.
     env.add_filter("js_mod", |a: Value, b: Value| {
-        js_arith_big(&a, &b, '%', |x, y| x % y)
+        js_arith_big(&lift(a), &lift(b), '%', |x, y| x % y)
     });
     env.add_filter("js_div", |a: Value, b: Value| {
-        js_arith_big(&a, &b, '/', |x, y| x / y)
+        js_arith_big(&lift(a), &lift(b), '/', |x, y| x / y)
     });
-    env.add_filter("js_add", |a: Value, b: Value| js_add_checked(&a, &b));
+    env.add_filter("js_add", |a: Value, b: Value| {
+        js_add_checked(&lift(a), &lift(b))
+    });
     env.add_filter("js_sub", |a: Value, b: Value| {
-        js_arith_big(&a, &b, '-', |x, y| x - y)
+        js_arith_big(&lift(a), &lift(b), '-', |x, y| x - y)
     });
     env.add_filter("js_mul", |a: Value, b: Value| {
-        js_arith_big(&a, &b, '*', |x, y| x * y)
+        js_arith_big(&lift(a), &lift(b), '*', |x, y| x * y)
     });
-    env.add_filter("js_neg", |a: Value| match bigint::digits(&a) {
-        Some(d) => bigint::neg(&d),
-        None => Ok(js_arith(&a, &Value::from(0), |x, _| -x)),
+    env.add_filter("js_neg", |a: Value| {
+        let a = lift(a);
+        match bigint::digits(&a) {
+            Some(d) => bigint::neg(&d),
+            None => Ok(js_arith(&a, &Value::from(0), |x, _| -x)),
+        }
     });
     env.add_filter("js_num", |a: Value| {
+        let a = lift(a);
         if bigint::is_bigint(&a) {
             Err(minijinja::Error::new(
                 minijinja::ErrorKind::InvalidOperation,
@@ -110,10 +116,14 @@ pub fn register(env: &mut Environment<'_>) {
         }
     });
     env.add_filter("js_cmp", |a: Value, b: Value, op: String| {
-        js_cmp(&a, &b, &op)
+        js_cmp(&lift(a), &lift(b), &op)
     });
-    env.add_filter("js_eq", |a: Value, b: Value| js_loose_eq(&a, &b));
-    env.add_filter("js_seq", |a: Value, b: Value| js_strict_eq(&a, &b));
+    env.add_filter("js_eq", |a: Value, b: Value| {
+        js_loose_eq(&lift(a), &lift(b))
+    });
+    env.add_filter("js_seq", |a: Value, b: Value| {
+        js_strict_eq(&lift(a), &lift(b))
+    });
     env.add_filter("str_slice", str_slice);
     env.add_filter("includes", includes);
     env.add_filter("starts_with", |s: Value, x: Value| {
@@ -266,6 +276,23 @@ pub fn js_add(a: &Value, b: &Value) -> Value {
     js_arith(a, b, |x, y| x + y)
 }
 
+/// F585: the number or bigint a decoded job-value tag stands for ([`ctx::js_scalar`]); only a map can be one.
+fn js_tag(v: &Value) -> Option<Value> {
+    v.downcast_object_ref::<ctx::CtxMap>()
+        .and_then(ctx::js_scalar)
+        .map(|j| j.to_value())
+}
+
+/// An operand as the operators see it: a decoded tag is its number / bigint; anything else is itself (one kind check).
+fn lift(v: Value) -> Value {
+    if v.kind() == ValueKind::Map
+        && let Some(x) = js_tag(&v)
+    {
+        return x;
+    }
+    v
+}
+
 /// F585: [`js_add`] with a bigint operand as JS adds it: a string (or an object / array, its string) on the other side
 /// concatenates; another bigint sums; anything else is JS's TypeError.
 pub fn js_add_checked(a: &Value, b: &Value) -> Result<Value, minijinja::Error> {
@@ -399,6 +426,7 @@ pub fn paint(v: &Value) -> String {
             .try_iter()
             .map(|it| it.map(|x| paint(&x)).collect::<String>())
             .unwrap_or_default(),
+        ValueKind::Map => js_tag(v).map_or_else(|| v.to_string(), |x| paint(&x)),
         _ => v.to_string(),
     }
 }
@@ -421,7 +449,7 @@ pub fn js_string(v: &Value) -> String {
                 .join(",")
             })
             .unwrap_or_default(),
-        ValueKind::Map => "[object Object]".into(),
+        ValueKind::Map => js_tag(v).map_or_else(|| "[object Object]".into(), |x| js_string(&x)),
         _ => v.to_string(),
     }
 }
@@ -432,6 +460,7 @@ pub fn attr_string(v: &Value) -> String {
         ValueKind::Bool => v.is_true().to_string(),
         ValueKind::Number => number_of(v).map(js_number).unwrap_or_default(),
         ValueKind::Undefined | ValueKind::None => String::new(),
+        ValueKind::Map => js_tag(v).map_or_else(|| v.to_string(), |x| attr_string(&x)),
         _ => v.to_string(),
     }
 }
@@ -472,8 +501,10 @@ pub fn truthy(v: &Value) -> bool {
         ValueKind::Bool => v.is_true(),
         ValueKind::Number => number_of(v).is_some_and(|n| n != 0.0 && !n.is_nan()),
         ValueKind::String => v.as_str().is_some_and(|s| !s.is_empty()),
-        // F585: `0n` is the one falsy bigint.
-        _ => bigint::digits(v).is_none_or(|d| bigint::truthy(&d)),
+        // F585: a decoded NaN and `0n` are falsy.
+        ValueKind::Map => js_tag(v).is_none_or(|x| truthy(&x)),
+        ValueKind::Plain => bigint::digits(v).is_none_or(|d| bigint::truthy(&d)),
+        _ => true,
     }
 }
 
