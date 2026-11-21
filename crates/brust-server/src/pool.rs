@@ -82,6 +82,10 @@ pub struct Slot {
     /// while the cell waits leaves it `ABANDONED` and the slot claimed; the late `callDone` or the
     /// worker's exit releases it ([`WorkerPool::call_done`], [`WorkerPool::close_calls`]).
     pub(crate) call: CallCell,
+    /// F606: when this slot's call was last abandoned (ms since [`EPOCH`]); written once on the
+    /// abandon arm of `RenderClaim::drop` (cold), read by the sweeper's stale check. Meaningful
+    /// only while the cell is ABANDONED.
+    abandoned_at_ms: AtomicU64,
 }
 
 /// The origin of [`Slot`] deadlines (process-wide, so a slot needs no pool back-reference).
@@ -92,6 +96,14 @@ fn epoch_ms_ceil(at: Instant) -> u64 {
     let d = at.saturating_duration_since(*EPOCH);
     (d.as_micros().div_ceil(1000) as u64).max(1)
 }
+
+/// F606: a call still ABANDONED this long after its caller gave up is worth a warning (a burst of
+/// disconnects leaves cells abandoned for well under a millisecond: measured max 803 us at c=120).
+pub const STALE_ABANDONED: Duration = Duration::from_secs(10);
+/// F606: at most one stale-abandoned warning per worker this often.
+pub const STALE_WARN_EVERY: Duration = Duration::from_secs(60);
+/// F606: how often the sweeper looks for stale abandoned calls.
+const STALE_CHECK_EVERY: Duration = Duration::from_secs(1);
 
 /// How often the pool's sweeper looks for expired call deadlines (R3: a deadline fires within
 /// one tick after it passed).
@@ -126,6 +138,9 @@ pub struct WorkerEntry {
     pub(crate) slots: Vec<Slot>,
     /// F604: slots held by abandoned calls (raised by `RenderClaim::drop`, lowered by their release).
     pub(crate) abandoned: AtomicU32,
+    /// F606: when the stale-abandoned warning last fired for this worker (ms since [`EPOCH`]; 0 =
+    /// never): at most one per [`STALE_WARN_EVERY`].
+    stale_warned_ms: AtomicU64,
 }
 
 impl WorkerEntry {
@@ -307,7 +322,9 @@ impl Drop for RenderClaim {
             abandoned_sub(&self.entry);
             release_slot(&self.entry, slot, &self.idle_notify);
         } else {
-            warn_if_many_abandoned(&self.entry);
+            // F606: the cold arm: one relaxed store, read only by the sweeper's stale check.
+            slot.abandoned_at_ms
+                .store(epoch_ms_ceil(Instant::now()), Ordering::Relaxed);
         }
     }
 }
@@ -336,21 +353,6 @@ fn abandoned_sub(entry: &WorkerEntry) {
     let _ = entry
         .abandoned
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
-}
-
-/// F604 (D5'): warn once each time a worker's abandoned slots go past half of its slots (a
-/// handler that never finishes eats slots silently otherwise).
-fn warn_if_many_abandoned(entry: &WorkerEntry) {
-    let n = entry.abandoned.load(Ordering::Relaxed);
-    let k = entry.slots.len() as u32;
-    if n * 2 > k && (n - 1) * 2 <= k {
-        tracing::warn!(
-            worker_id = entry.id,
-            abandoned = n,
-            slots = k,
-            "more than half of a worker's slots hold calls their callers gave up on (the worker never finished them)"
-        );
-    }
 }
 
 /// Hand a slot back to the pool: `in_flight` first, then the `idle` gate (Release), then one
@@ -412,6 +414,7 @@ impl WorkerPool {
                 deadline_waker: parking_lot::Mutex::new(None),
                 heap_reply: parking_lot::Mutex::new(None),
                 call: CallCell::new(),
+                abandoned_at_ms: AtomicU64::new(0),
             })
             .collect();
         let entry = Arc::new(WorkerEntry {
@@ -420,6 +423,7 @@ impl WorkerPool {
             in_flight: AtomicU32::new(0),
             slots,
             abandoned: AtomicU32::new(0),
+            stale_warned_ms: AtomicU64::new(0),
         });
         self.swept.lock().push(Arc::downgrade(&entry));
         self.entries.write().push(entry);
@@ -462,10 +466,17 @@ impl WorkerPool {
             let mut iv = tokio::time::interval(SWEEP_TICK);
             iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             let mut due: Vec<Waker> = Vec::new();
+            let mut stale_check = Instant::now();
             loop {
                 iv.tick().await;
                 let Some(pool) = pool.upgrade() else { return };
-                pool.collect_expired(Instant::now(), &mut due);
+                let now = Instant::now();
+                pool.collect_expired(now, &mut due);
+                // F606: abandoned calls that STAY abandoned, looked at once a second.
+                if now.duration_since(stale_check) >= STALE_CHECK_EVERY {
+                    stale_check = now;
+                    pool.warn_stale_abandoned(now);
+                }
                 drop(pool);
                 for w in due.drain(..) {
                     w.wake();
@@ -507,6 +518,53 @@ impl WorkerPool {
                 }
             }
         }
+    }
+
+    /// F606: warn about slots whose call has stayed ABANDONED (its caller gave up, the worker has
+    /// not answered) for [`STALE_ABANDONED`] or more: at most once per worker per
+    /// [`STALE_WARN_EVERY`], with how many and the oldest age. A burst of disconnects whose calls
+    /// the worker finishes at once never reaches it. Returns what it logged, per worker
+    /// `(worker id, stale slots, slots, oldest age)`.
+    pub(crate) fn warn_stale_abandoned(&self, now: Instant) -> Vec<(u32, usize, usize, Duration)> {
+        let now_ms = now.saturating_duration_since(*EPOCH).as_millis() as u64;
+        let stale_ms = STALE_ABANDONED.as_millis() as u64;
+        let mut logged = Vec::new();
+        let live: Vec<Arc<WorkerEntry>> =
+            self.swept.lock().iter().filter_map(Weak::upgrade).collect();
+        for e in &live {
+            if e.abandoned.load(Ordering::Relaxed) == 0 {
+                continue;
+            }
+            let mut n = 0;
+            let mut oldest = 0;
+            for s in &e.slots {
+                let at = s.abandoned_at_ms.load(Ordering::Relaxed);
+                if s.call.is_abandoned() && at != 0 && now_ms.saturating_sub(at) >= stale_ms {
+                    n += 1;
+                    oldest = oldest.max(now_ms - at);
+                }
+            }
+            if n == 0 {
+                continue;
+            }
+            let last = e.stale_warned_ms.load(Ordering::Relaxed);
+            if last != 0 && now_ms.saturating_sub(last) < STALE_WARN_EVERY.as_millis() as u64 {
+                continue;
+            }
+            e.stale_warned_ms.store(now_ms.max(1), Ordering::Relaxed);
+            let oldest = Duration::from_millis(oldest);
+            tracing::warn!(
+                worker_id = e.id,
+                stale = n,
+                slots = e.slots.len(),
+                oldest_s = oldest.as_secs(),
+                "{n} of {k} slots have held a call for more than {t} s after its caller gave up; the worker has not finished them",
+                k = e.slots.len(),
+                t = STALE_ABANDONED.as_secs(),
+            );
+            logged.push((e.id, n, e.slots.len(), oldest));
+        }
+        logged
     }
 
     pub fn registered_count(&self) -> usize {
@@ -868,6 +926,64 @@ mod tests {
         drop(next);
         assert!(entry.slot(0).is_idle());
         assert_eq!(entry.in_flight.load(Ordering::Relaxed), 0);
+    }
+
+    /// F606 (a): a burst of 100 dropped calls whose `callDone` arrives at once: the count returns
+    /// to 0 and the stale check logs nothing, even long after.
+    #[test]
+    fn a_burst_of_promptly_answered_abandoned_calls_warns_nothing() {
+        let pool = Arc::new(WorkerPool::new());
+        let id = register_k_for_test(&pool, 100);
+        let entry = pool.entry(id).unwrap();
+        let calls: Vec<(RenderClaim, u64)> = (0..100)
+            .map(|_| {
+                let c = claim_on(&pool);
+                let g = entry.slots[c.slot() as usize].call.arm().unwrap();
+                (c, g)
+            })
+            .collect();
+        let ids: Vec<(u32, u64)> = calls.iter().map(|(c, g)| (c.slot(), *g)).collect();
+        drop(calls); // every caller gives up at once
+        assert_eq!(entry.abandoned.load(Ordering::Relaxed), 100);
+        for (slot, g) in ids {
+            assert!(pool.call_done(id, slot, g, 1));
+        }
+        assert_eq!(entry.abandoned.load(Ordering::Relaxed), 0);
+        let later = Instant::now() + STALE_ABANDONED * 3;
+        assert!(pool.warn_stale_abandoned(later).is_empty());
+        assert!(entry.slots.iter().all(|s| s.is_idle()));
+    }
+
+    /// F606 (b): a call the worker never finishes: nothing before the threshold, ONE warning after
+    /// it, none again within the rate limit, one more after it.
+    #[test]
+    fn a_call_that_stays_abandoned_warns_once_per_rate_limit() {
+        let pool = Arc::new(WorkerPool::new());
+        let id = register_k_for_test(&pool, 4);
+        let entry = pool.entry(id).unwrap();
+        let c = claim_on(&pool);
+        entry.slots[c.slot() as usize].call.arm().unwrap();
+        let t0 = Instant::now();
+        drop(c); // the handler never completes
+        assert_eq!(entry.abandoned.load(Ordering::Relaxed), 1);
+        assert!(
+            pool.warn_stale_abandoned(t0 + STALE_ABANDONED / 2)
+                .is_empty(),
+            "too young"
+        );
+        let first = pool.warn_stale_abandoned(t0 + STALE_ABANDONED + Duration::from_secs(1));
+        assert_eq!(first.len(), 1);
+        let (w, n, k, oldest) = first[0];
+        assert_eq!((w, n, k), (id, 1, 4));
+        assert!(oldest >= STALE_ABANDONED, "{oldest:?}");
+        let soon = t0 + STALE_ABANDONED + STALE_WARN_EVERY / 2;
+        assert!(pool.warn_stale_abandoned(soon).is_empty(), "rate limited");
+        let after = t0 + STALE_ABANDONED + STALE_WARN_EVERY + Duration::from_secs(2);
+        assert_eq!(
+            pool.warn_stale_abandoned(after).len(),
+            1,
+            "warns again after the limit"
+        );
     }
 
     #[test]

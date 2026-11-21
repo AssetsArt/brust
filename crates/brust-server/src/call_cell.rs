@@ -285,6 +285,12 @@ impl CallCell {
         }
     }
 
+    /// F606: the call is ABANDONED (its caller gave up, the worker has not answered). A hint for
+    /// the sweeper's stale check, not a transition.
+    pub fn is_abandoned(&self) -> bool {
+        split(self.word.load(Ordering::Relaxed)).1 == ABANDONED
+    }
+
     #[cfg(test)]
     fn state(&self) -> (u64, u64) {
         split(self.word.load(Ordering::Acquire))
