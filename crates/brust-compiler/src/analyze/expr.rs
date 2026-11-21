@@ -901,6 +901,36 @@ impl<'r, 'a> Reader<'r, 'a> {
                 }
                 continue;
             }
+            // F589: a hook object read as `t.key` is that member of the hook's returned literal (as `expr` prints it), so the
+            // code captures what the member reads, as a destructured name captures what it stands for: `() => t.run()`
+            // reaches the hook's `run` like `() => run()` does. An index read (`t[0]`, its key not named here) takes every
+            // member. A hook object read only as a whole is refused by name (`hook_object_escape`) and captured as before.
+            if let Some(members) = self.names.hook_object(r) {
+                let keys: Vec<&str> = w
+                    .member_reads
+                    .iter()
+                    .filter(|(x, _, _)| self.names.same(*x, r))
+                    .map(|(_, k, _)| k.as_str())
+                    .collect();
+                if !keys.is_empty() {
+                    let every = keys.contains(&"");
+                    for (k, v) in members {
+                        if every || keys.contains(&k.as_str()) {
+                            crate::lower::common::visit_idents(
+                                v,
+                                &mut |n: &str, kind: &IdentKind| {
+                                    let c = (n.to_string(), kind.clone());
+                                    if !out.contains(&c) {
+                                        out.push(c.clone());
+                                        from_bound.push(c);
+                                    }
+                                },
+                            );
+                        }
+                    }
+                    continue;
+                }
+            }
             let c = self.names.kind_of(r);
             if !from_bound.contains(&c) {
                 out.push(c);

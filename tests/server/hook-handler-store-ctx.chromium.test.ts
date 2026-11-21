@@ -61,6 +61,8 @@ const props = (path: Path, who = 'ann') => (path.startsWith('/8c') ? { who } : {
 const PATHS = [
   '/7a-m', '/7a-d', '/7b-m', '/7b-d', '/7c-m', '/7c-d', '/7d-m', '/7d-d', '/7e-m', '/7e-d',
   '/8a-m', '/8a-d', '/8b-m', '/8b-d', '/8c-m', '/8c-d', '/8d-m', '/8d-d', '/8e-m', '/8e-d', '/8f-m', '/8f-d',
+  // F589: called from an inline handler, through the hook object (im) and destructured (id)
+  '/7a-im', '/7a-id', '/7d-im', '/7d-id', '/8a-im', '/8a-id', '/8d-im', '/8d-id',
 ] as const satisfies readonly Path[]
 
 /** Markup with brust's own wrappers, directives and hidden placeholders removed (the content React renders). */
@@ -96,7 +98,7 @@ test('8c: a second request with another loader value paints that value', async (
 test("the hook's components are native (the proof is of the native path, not of React serving itself)", () => {
   const manifest = JSON.parse(readFileSync(join(app, 'dist/manifest.json'), 'utf8')) as { components: Record<string, { tier: string }> }
   const tier = (name: string) => Object.entries(manifest.components).find(([k]) => k.startsWith(`${name}_`))?.[1].tier
-  for (const name of ['s7aM', 's7aD', 's7bM', 's7bD', 's7cM', 's7cD', 's7dM', 's7dD', 'inst7eM', 'inst7eD', 'rM', 'rD', 'dM', 'dD']) {
+  for (const name of ['s7aM', 's7aD', 's7bM', 's7bD', 's7cM', 's7cD', 's7dM', 's7dD', 'inst7eM', 'inst7eD', 'rM', 'rD', 'dM', 'dD', 's7aIM', 's7aID', 's7dIM', 's7dID', 'rIM', 'rID']) {
     expect([name, tier(name)]).toEqual([name, 'native'])
   }
 })
@@ -151,7 +153,7 @@ for (const path of PATHS) {
     expect(served.log).toEqual(expected(steps))
     if (path.startsWith('/8')) {
       // React hydrating the same page gives the same log
-      const name = `C${path.slice(1, 3)}${path.endsWith('-m') ? 'M' : 'D'}`
+      const name = `C${path.slice(1, 3)}${path.slice(4).toUpperCase()}`
       const react = await play(async (page) => {
         await page.route('http://react.test/**', (route) =>
           route.request().url().endsWith('/app.js')
