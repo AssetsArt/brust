@@ -80,9 +80,10 @@ test('the dev wrapper also tags a top-level object-like output with its kind; pr
   expect(SLOTS_HELPER).not.toContain('__dev')
 })
 
-test('a bigint JSON cannot hold elsewhere in a reply is its digits, not a failed reply', async () => {
+test('a bigint the wrapper does not tag, in a JOB reply, is its digits, not a failed reply; any other reply keeps the failure', async () => {
   const { toJson } = await import('../src/handlers')
-  expect(toJson({ a: { b: 10n }, c: [1n] })).toBe('{"a":{"b":"10"},"c":["1"]}')
+  expect(toJson({ a: { b: 10n }, c: [1n] }, true)).toBe('{"a":{"b":"10"},"c":["1"]}')
+  expect(toJson({ a: { b: 10n } })).toContain('response not serialisable')
   expect(toJson({ a: 1 })).toBe('{"a":1}')
   const loop: Record<string, unknown> = {}
   loop.self = loop
