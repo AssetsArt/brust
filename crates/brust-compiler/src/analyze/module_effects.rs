@@ -414,6 +414,8 @@ pub fn module_effect(
         accepted,
         locals: std::cell::RefCell::new(HashSet::new()),
         data_locals: std::cell::RefCell::new(HashSet::new()),
+        frames: std::cell::RefCell::new(Vec::new()),
+        own_locals: std::cell::RefCell::new(HashSet::new()),
         visiting: std::cell::RefCell::new(Vec::new()),
         strict: std::cell::Cell::new(0),
     };
@@ -759,6 +761,11 @@ struct Values<'a, 'n> {
     /// F597: the locals that hold plain data: parameters (handed data), loop bindings over fresh values, and locals
     /// whose every value is data.
     data_locals: std::cell::RefCell<HashSet<u32>>,
+    /// F597 (review F3): the locals each body being judged declares, innermost last: a body assigns only its own.
+    frames: std::cell::RefCell<Vec<HashSet<u32>>>,
+    /// F597 (review F2): the locals holding a value their body built (a fresh array or collection): only those, and a
+    /// module `const` built the same way, may be sorted or reversed in place.
+    own_locals: std::cell::RefCell<HashSet<u32>>,
     /// F597 D4: the module functions being followed (a call back into one is recursion, refused).
     visiting: std::cell::RefCell<Vec<u32>>,
     /// F597: inside a followed body or callback: a call is only one of D1-D4 or a read-only global, never package code.
@@ -1259,23 +1266,8 @@ impl Values<'_, '_> {
                 self.import_kind(id.ref_)
             }
             E::EImportIdentifier(id) => self.import_kind(id.ref_),
-            E::ECall(c) => {
-                let E::EDot(d) = &c.target.data else {
-                    return None;
-                };
-                let m = String::from_utf8_lossy(d.name.slice());
-                let m = m.as_ref();
-                match self.kind(&d.target, depth + 1)? {
-                    Kind::Array if ARRAY_RETURNING.contains(&m) => Some(Kind::Array),
-                    Kind::Set | Kind::Map if matches!(m, "keys" | "values" | "entries") => {
-                        Some(Kind::Iter)
-                    }
-                    // `.add(v)` / `.set(k, v)` chained on the `new` itself returns the same fresh collection.
-                    Kind::Set if m == "add" && Self::chained_on_new(&d.target) => Some(Kind::Set),
-                    Kind::Map if m == "set" && Self::chained_on_new(&d.target) => Some(Kind::Map),
-                    _ => None,
-                }
-            }
+            // `.add(v)` / `.set(k, v)` chained on the `new` itself returns the same fresh collection.
+            E::ECall(c) => self.kind_call(c, depth),
             _ => None,
         }
     }
@@ -1309,7 +1301,13 @@ impl Values<'_, '_> {
             | E::EUndefined(_)
             | E::EBigInt(_) => true,
             E::ETemplate(t) => t.tag.is_none() && t.parts().iter().all(|p| go(&p.value)),
-            E::EArray(_) | E::ENew(_) | E::ECall(_) => self.kind(e, depth + 1).is_some(),
+            E::EArray(_) => self.kind(e, depth + 1).is_some(),
+            // Review F1: a collection or a method result is data only when its elements are.
+            E::ENew(n) => match self.global_named(&n.target, &["Set", "Map", "WeakSet", "WeakMap"]) {
+                Some(_) => n.args.iter().all(&go),
+                None => false,
+            },
+            E::ECall(c) => self.data_call(c, depth + 1),
             E::EObject(o) => o.properties.iter().all(|p| {
                 matches!(p.kind, js_ast::G::PropertyKind::Normal)
                     && !p.flags.contains(js_ast::flags::Property::IsComputed)
@@ -1346,6 +1344,118 @@ impl Values<'_, '_> {
             // A member of data is data (`row.scopes`, `pairs[0]`); an optional step or a key that is not data is not.
             E::EDot(d) => d.optional_chain.is_none() && go(&d.target),
             E::EIndex(i) => i.optional_chain.is_none() && go(&i.target) && go(&i.index),
+            _ => false,
+        }
+    }
+
+    /// Review F1: a D3 call whose result holds data only: a method that keeps the receiver's elements on a data receiver
+    /// (with data arguments), `map` / `flatMap` whose inline callback returns only data, `add` / `set` chained on a
+    /// data collection with data arguments.
+    fn data_call(&self, c: &js_ast::E::Call, depth: u8) -> bool {
+        if depth > 16 || c.optional_chain.is_some() || self.kind_call(c, depth).is_none() {
+            return false;
+        }
+        let E::EDot(d) = &c.target.data else {
+            return false;
+        };
+        let m = String::from_utf8_lossy(d.name.slice());
+        let args_data = || {
+            c.args.iter().all(|a| {
+                matches!(a.data, E::EArrow(_) | E::EFunction(_)) || self.data(a, depth + 1)
+            })
+        };
+        match m.as_ref() {
+            "filter" | "slice" | "sort" | "toSorted" | "reverse" | "toReversed" | "flat"
+            | "concat" | "add" | "set" | "keys" | "values" | "entries" => {
+                self.data(&d.target, depth + 1) && args_data()
+            }
+            "map" | "flatMap" => {
+                self.data(&d.target, depth + 1)
+                    && c.args
+                        .first()
+                        .is_some_and(|f| self.returns_data(f, depth + 1))
+            }
+            _ => false,
+        }
+    }
+
+    fn kind_call(&self, c: &js_ast::E::Call, depth: u8) -> Option<Kind> {
+        let E::EDot(d) = &c.target.data else {
+            return None;
+        };
+        let m = String::from_utf8_lossy(d.name.slice());
+        let m = m.as_ref();
+        match self.kind(&d.target, depth + 1)? {
+            Kind::Array if ARRAY_RETURNING.contains(&m) => Some(Kind::Array),
+            Kind::Set | Kind::Map if matches!(m, "keys" | "values" | "entries") => Some(Kind::Iter),
+            Kind::Set if m == "add" && Self::chained_on_new(&d.target) => Some(Kind::Set),
+            Kind::Map if m == "set" && Self::chained_on_new(&d.target) => Some(Kind::Map),
+            _ => None,
+        }
+    }
+
+    /// Review F1: every value the inline callback `f` returns (each `return`, or the arrow's expression) is data, with
+    /// its parameters as data (elements of a data receiver) and its locals data only when their values are.
+    fn returns_data(&self, f: &js_ast::Expr, depth: u8) -> bool {
+        let (args, stmts) = match &f.data {
+            E::EArrow(a) => (a.args.slice(), a.body.stmts.slice()),
+            E::EFunction(f) => (f.func.args.slice(), f.func.body.stmts.slice()),
+            _ => return false,
+        };
+        for a in args {
+            self.declare_quiet(&a.binding, true);
+        }
+        self.returns_in(stmts, depth)
+    }
+
+    fn returns_in(&self, stmts: &[js_ast::Stmt], depth: u8) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        stmts.iter().all(|st| match &st.data {
+            S::SReturn(r) => r.value.as_ref().is_none_or(|v| self.data(v, depth + 1)),
+            S::SBlock(b) => self.returns_in(b.stmts.slice(), depth + 1),
+            S::SIf(i) => {
+                self.returns_in(std::slice::from_ref(&i.yes), depth + 1)
+                    && i.no
+                        .as_ref()
+                        .is_none_or(|n| self.returns_in(std::slice::from_ref(n), depth + 1))
+            }
+            S::SForOf(f) => self.returns_in(std::slice::from_ref(&f.body), depth + 1),
+            S::SLocal(l) => {
+                for d in l.decls.iter() {
+                    let data = d.value.as_ref().is_none_or(|v| self.data(v, depth + 1));
+                    self.declare_quiet(&d.binding, data);
+                }
+                true
+            }
+            _ => true,
+        })
+    }
+
+    /// Review F2: `e` is a value this module or the judged body built, so sorting it in place changes nothing another
+    /// module can see: a fresh expression, an own local, a module `const` whose initializer is fresh, or a member of one.
+    fn own_value(&self, e: &js_ast::Expr, depth: u8) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        match &e.data {
+            E::EArray(_) | E::ENew(_) => true,
+            E::ECall(c) => matches!(&c.target.data, E::EDot(d)
+                if matches!(String::from_utf8_lossy(d.name.slice()).as_ref(),
+                    "filter" | "map" | "flatMap" | "slice" | "concat" | "flat" | "toSorted" | "toReversed")),
+            E::EIdentifier(id) => {
+                let k = self.names.key_of(id.ref_);
+                if self.locals.borrow().contains(&k) {
+                    return self.own_locals.borrow().contains(&k);
+                }
+                self.inits
+                    .get(&k)
+                    .is_some_and(|v| self.own_value(v, depth + 1))
+            }
+            // A member is the module's own only inside data it built (data holds no imported reference).
+            E::EDot(d) => self.own_value(&d.target, depth + 1) && self.data(&d.target, depth + 1),
+            E::EIndex(i) => self.own_value(&i.target, depth + 1) && self.data(&i.target, depth + 1),
             _ => false,
         }
     }
@@ -1423,17 +1533,18 @@ impl Values<'_, '_> {
         if let Some(w) = self.why(recv, depth + 1) {
             return Some(w);
         }
-        // In a followed body, sorting in place may only change what the body built.
-        if self.strict.get() > 0
-            && matches!(m, "sort" | "reverse")
-            && root_through_calls(recv)
-                .is_some_and(|r| !self.locals.borrow().contains(&self.names.key_of(r)))
-        {
+        // Review F2: sorting in place may only change a value this module or the judged body built, at every level.
+        if matches!(m, "sort" | "reverse") && !self.own_value(recv, depth + 1) {
             return Some(format!(
-                "it sorts `{}` in place, a value its function does not own",
+                "it sorts `{}` in place, a value this module did not build",
                 spell(recv, self.names)
             ));
         }
+        // Review F1: a callback's parameters are data only when the receiver (and every other argument) is data.
+        let elems_data = self.data(recv, depth + 1)
+            && c.args.iter().all(|a| {
+                matches!(a.data, E::EArrow(_) | E::EFunction(_)) || self.data(a, depth + 1)
+            });
         for (i, a) in c.args.iter().enumerate() {
             match &a.data {
                 E::ESpread(_) => {
@@ -1443,7 +1554,7 @@ impl Values<'_, '_> {
                     if i != 0 || !CALLBACK_METHODS.contains(&m) {
                         return Some(format!("it hands a function to `{}(…)`", spelled()));
                     }
-                    if let Some(w) = self.callback_why(a, depth) {
+                    if let Some(w) = self.callback_why(a, elems_data, depth) {
                         return Some(w);
                     }
                 }
@@ -1467,7 +1578,7 @@ impl Values<'_, '_> {
     }
 
     /// F597 D3: an inline callback, judged with its parameters as locals.
-    fn callback_why(&self, f: &js_ast::Expr, depth: u8) -> Option<String> {
+    fn callback_why(&self, f: &js_ast::Expr, params_data: bool, depth: u8) -> Option<String> {
         let (args, stmts, plain) = match &f.data {
             E::EArrow(a) => (
                 a.args.slice(),
@@ -1489,7 +1600,7 @@ impl Values<'_, '_> {
         if !plain {
             return Some("its callback is async, a generator or takes a rest parameter".into());
         }
-        self.params_and_body(args, stmts, depth)
+        self.params_and_body(args, stmts, params_data, depth)
     }
 
     /// F597 D4: a call at load of a function of this module, with data arguments and a body this judge follows.
@@ -1525,7 +1636,7 @@ impl Values<'_, '_> {
             }
         }
         self.visiting.borrow_mut().push(k);
-        let r = self.params_and_body(body.args, body.stmts, depth);
+        let r = self.params_and_body(body.args, body.stmts, true, depth);
         self.visiting.borrow_mut().pop();
         r.map(|w| format!("it calls `{name}`, whose body {w}"))
     }
@@ -1534,6 +1645,20 @@ impl Values<'_, '_> {
         &self,
         args: &[js_ast::G::Arg],
         stmts: &[js_ast::Stmt],
+        params_data: bool,
+        depth: u8,
+    ) -> Option<String> {
+        self.frames.borrow_mut().push(HashSet::new());
+        let r = self.params_and_body_in(args, stmts, params_data, depth);
+        self.frames.borrow_mut().pop();
+        r
+    }
+
+    fn params_and_body_in(
+        &self,
+        args: &[js_ast::G::Arg],
+        stmts: &[js_ast::Stmt],
+        params_data: bool,
         depth: u8,
     ) -> Option<String> {
         for a in args {
@@ -1548,8 +1673,8 @@ impl Values<'_, '_> {
                     return Some("a parameter default is not plain data".into());
                 }
             }
-            // A parameter holds what the call site handed: data (D4 arguments, D3 elements of proven data).
-            self.declare(&a.binding, true);
+            // A parameter holds what the call site handed: data for D4 arguments and for D3 elements of a data receiver.
+            self.declare(&a.binding, params_data);
         }
         self.strict.set(self.strict.get() + 1);
         let r = self.body_why(stmts, depth + 1);
@@ -1558,13 +1683,27 @@ impl Values<'_, '_> {
     }
 
     fn declare(&self, b: &js_ast::Binding, data: bool) {
+        let keys = self.declare_quiet(b, data);
+        if let Some(f) = self.frames.borrow_mut().last_mut() {
+            f.extend(keys);
+        }
+    }
+
+    /// Declares the binding's names as locals (data or not) without adding them to the current frame.
+    fn declare_quiet(&self, b: &js_ast::Binding, data: bool) -> Vec<u32> {
         let mut w = Walk::default();
         w.declare_binding(b);
         let keys: Vec<u32> = w.declared.iter().map(|r| self.names.key_of(*r)).collect();
         self.locals.borrow_mut().extend(keys.iter().copied());
-        if data {
-            self.data_locals.borrow_mut().extend(keys);
+        let mut dl = self.data_locals.borrow_mut();
+        for k in &keys {
+            if data {
+                dl.insert(*k);
+            } else {
+                dl.remove(k);
+            }
         }
+        keys
     }
 
     /// F597 D3 / D4: a body of `const` / `let` of judged values, `if`, `return`, blocks, `for…of` over a fresh iterable,
@@ -1573,7 +1712,14 @@ impl Values<'_, '_> {
         if depth > 16 {
             return Some("it nests deeper than the compiler follows".into());
         }
-        let local = |e: &js_ast::Expr| matches!(&e.data, E::EIdentifier(id) if self.locals.borrow().contains(&self.names.key_of(id.ref_)));
+        // Review F3: a body assigns only a local it declares itself (not one of an enclosing body).
+        let local = |e: &js_ast::Expr| {
+            matches!(&e.data, E::EIdentifier(id) if self
+                .frames
+                .borrow()
+                .last()
+                .is_some_and(|f| f.contains(&self.names.key_of(id.ref_))))
+        };
         for st in stmts {
             let why = match &st.data {
                 S::SEmpty(_) | S::SComment(_) | S::SDirective(_) | S::STypeScript(_) => None,
@@ -1595,6 +1741,18 @@ impl Values<'_, '_> {
                     let w = d.value.as_ref().and_then(|v| self.why(v, depth + 1));
                     let data = d.value.as_ref().is_none_or(|v| self.data(v, depth + 1));
                     self.declare(&d.binding, data);
+                    // Review F2: a local is its body's own value only when it holds what the body built.
+                    if let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
+                        && !matches!(
+                            v.data,
+                            E::EIdentifier(_) | E::EImportIdentifier(_) | E::EDot(_) | E::EIndex(_)
+                        )
+                        && self.own_value(v, depth + 1)
+                    {
+                        self.own_locals
+                            .borrow_mut()
+                            .insert(self.names.key_of(id.r#ref));
+                    }
                     w
                 }),
                 S::SForOf(f) => {
@@ -1617,10 +1775,22 @@ impl Values<'_, '_> {
                                     .iter()
                                     .all(|d| d.value.is_none() && plain_pattern(&d.binding)) =>
                             {
+                                // Elements of a data iterable are data; of another fresh one (functions inside) they are not.
+                                let elems = self.data(&f.value, depth + 1);
                                 for d in l.decls.iter() {
-                                    self.declare(&d.binding, true);
+                                    self.declare(&d.binding, elems);
                                 }
-                                self.body_why(std::slice::from_ref(&f.body), depth + 1)
+                                // Review F3: the body runs again with what its previous run left: judge it until the data
+                                // locals stop shrinking.
+                                let mut r = None;
+                                for _ in 0..16 {
+                                    let before = self.data_locals.borrow().len();
+                                    r = self.body_why(std::slice::from_ref(&f.body), depth + 1);
+                                    if r.is_some() || self.data_locals.borrow().len() == before {
+                                        break;
+                                    }
+                                }
+                                r
                             }
                             _ => Some("its loop does not declare its own binding".into()),
                         }
@@ -1631,13 +1801,14 @@ impl Values<'_, '_> {
                         if !matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None) =>
                     {
                         if local(&b.left) {
-                            // A local stays data only while every value it is given is data.
-                            if !self.data(&b.right, depth + 1)
-                                && let E::EIdentifier(id) = &b.left.data
-                            {
-                                self.data_locals
-                                    .borrow_mut()
-                                    .remove(&self.names.key_of(id.ref_));
+                            // A local stays data only while every value it is given is data, and its body's own only while
+                            // nothing else is assigned to it.
+                            if let E::EIdentifier(id) = &b.left.data {
+                                let k = self.names.key_of(id.ref_);
+                                if !self.data(&b.right, depth + 1) {
+                                    self.data_locals.borrow_mut().remove(&k);
+                                }
+                                self.own_locals.borrow_mut().remove(&k);
                             }
                             self.why(&b.right, depth + 1)
                                 .or_else(|| self.coerced(&b.right))

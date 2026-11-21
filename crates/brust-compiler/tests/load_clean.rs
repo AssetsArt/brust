@@ -388,6 +388,19 @@ fn amendment_3_every_accepted_row_of_both_review_probes() {
 
 /// F597: per decision, the forms the load-time judge now accepts (each with its refused rows below).
 const F597_ACCEPTED: &[(&str, &str)] = &[
+    // Review F1/F2: what stays accepted after the tightening.
+    (
+        "map returning data is data",
+        "const XS = [1, 2]\nconst YS = XS.map((x) => ({ x }))\nexport const Z = YS.filter((y) => y.x > 1).map((y) => y.x)\n",
+    ),
+    (
+        "sort of a module copy of an imported array",
+        "import { BASE } from './base'\nexport const S = BASE.slice().sort()\nexport const T = [...BASE].reverse()\n",
+    ),
+    (
+        "sort of a body local copy",
+        "function f() {\n  const l = [3, 1, 2]\n  l.sort()\n  return l\n}\nexport const S = f()\n",
+    ),
     // D1
     (
         "D1 new Set of an array literal",
@@ -504,6 +517,65 @@ const F597_ACCEPTED: &[(&str, &str)] = &[
 ];
 
 const F597_REFUSED: &[(&str, &str)] = &[
+    // Review f9df7a4e F1: a map / flatMap result holds what the callback returned, functions included.
+    (
+        "review F1a map result handed as a callback",
+        "const fs = [0].map(() => () => {\n  (globalThis as any).hit = 1\n})\nexport const r = [1].map(fs[0])\n",
+    ),
+    (
+        "review F1b map result handed as a comparator",
+        "function g() {\n  (globalThis as any).hit = 1\n  return 0\n}\nconst fs = [0].map(() => g)\nexport const r = [2, 1].sort(fs[0])\n",
+    ),
+    (
+        "review F1c the same through a callback parameter",
+        "function g() {\n  (globalThis as any).hit = 1\n  return 0\n}\nconst fs = [0].map(() => g)\nexport const r = fs.map((f) => [1].map(f))\n",
+    ),
+    (
+        "review F1d a fake receiver from map",
+        "const os = [0].map(() => ({\n  map: () => {\n    (globalThis as any).hit = 1\n  },\n}))\nexport const r = os[0].map((x: number) => x)\n",
+    ),
+    (
+        "review F1e a fake receiver from flatMap",
+        "const os = [0].flatMap(() => [{\n  filter: () => {\n    (globalThis as any).hit = 1\n  },\n}])\nexport const r = os[0].filter((x: number) => x)\n",
+    ),
+    (
+        "review F1f the comparator shape inside a D4 function",
+        "function g() {\n  (globalThis as any).hit = 1\n  return 0\n}\nfunction f() {\n  const fs = [0].map(() => g)\n  return [2, 1].sort(fs[0])\n}\nexport const r = f()\n",
+    ),
+    // Review F2: an imported array sorted in place at module level changes what every other module sees.
+    (
+        "review F2 sort of an imported literal array",
+        "import { BASE } from './base'\nexport const s = BASE.sort()\n",
+    ),
+    (
+        "review F2 reverse of an imported literal array",
+        "import { BASE } from './base'\nexport const s = BASE.reverse()\n",
+    ),
+    (
+        "review F2 sort through a module alias",
+        "import { BASE } from './base'\nconst B = BASE\nexport const s = B.sort()\n",
+    ),
+    (
+        "review F2 sort of an imported array held in a module array",
+        "import { BASE } from './base'\nconst A = [BASE]\nexport const s = A[0].sort()\n",
+    ),
+    (
+        "review F2 sort through a body local alias",
+        "import { BASE } from './base'\nfunction f() {\n  const l = BASE\n  return l.sort()\n}\nexport const s = f()\n",
+    ),
+    // Review F3: a local judged data before a later assignment in the same loop or from a callback.
+    (
+        "review F3 loop-carried local",
+        "function f() {\n  let g = undefined\n  for (const i of [1, 2]) {\n    [2, 1].sort(g)\n    g = () => {\n      (globalThis as any).hit = 1\n      return 0\n    }\n  }\n  return 1\n}\nexport const r = f()\n",
+    ),
+    (
+        "review F3 a callback assigning its function's local",
+        "function f() {\n  let g = undefined\n  const xs = [1, 2].map((i) => {\n    [2, 1].sort(g)\n    g = () => {\n      (globalThis as any).hit = 1\n      return 0\n    }\n    return i\n  })\n  return xs\n}\nexport const r = f()\n",
+    ),
+    (
+        "review F3 a two-step loop chain",
+        "function f() {\n  let a = undefined\n  let b = undefined\n  for (const i of [1, 2, 3]) {\n    [2, 1].sort(a)\n    a = b\n    b = () => {\n      (globalThis as any).hit = 1\n      return 0\n    }\n  }\n  return 1\n}\nexport const r = f()\n",
+    ),
     (
         "D3 a method of a local read from a global",
         "function f() {\n  const r = (globalThis as any).list\n  return r.map((x: number) => x)\n}\nexport const xs = f()\n",
