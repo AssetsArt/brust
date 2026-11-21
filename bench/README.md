@@ -11,6 +11,7 @@ cd packages/brust && bun run build                 # RELEASE addon (not build:de
 bun install                                        # once: pulls next@16.4.0 into the workspace
 BRUST_RELEASE_ADDON=1 bun run bench                # one full run: brust · bun-serve · next · elysia-bun, 5 rounds
 BRUST_RELEASE_ADDON=1 bun run bench --sweep default    # the worker sweep (brust · bun-serve · elysia-bun), 3 rounds
+BRUST_RELEASE_ADDON=1 bun run bench --sweep default --quick   # the short preset: D, S-render, I, A1; identity; 3 × 6 s
 BRUST_RELEASE_ADDON=1 bun run bench --publish      # also rewrite bench/RESULTS.{md,json} (the website reads them)
 bun bench/run.ts --apps brust,next --probes D --rounds 3 --dur 5s --enc identity --seed 7   # a quick partial run
 ```
@@ -62,6 +63,9 @@ data is `apps/_shared/data.json` (regenerate with `bun bench/apps/_shared/gen-da
   wrappers unwrapped, attributes ignored, whitespace collapsed) and compared by tag sequence + text; a mismatch aborts.
 
 ### The sweep (`--sweep default` or `--sweep 1,2,4,8`)
+
+`--quick` (run or sweep) is the short preset: probes D, S-render, I and A1, identity only, 3 rounds of 6 s; any flag
+given explicitly still wins. The header prints the minutes planned and taken.
 
 The same cells at c=120, identity, for each N (default: 1, 2, 3, then up to the server set's CPUs, at most 8 points).
 Per (app, probe) the table names the best N: the highest median rps whose p99 is within 20% of the best p99 of the

@@ -123,7 +123,7 @@ export function renderRun(r: FairResults): string {
     `server CPUs ${cpus(h.serverCpus)} · generator CPUs ${cpus(h.genCpus)}${h.serverCpus === null ? ' · unpinned: ratios only' : ''}`,
     `brust ${h.sha} · ${Object.entries(h.versions).map(([k, v]) => `${k} ${v}`).join(' · ')}`,
     `budgets ${Object.entries(h.budgets).map(([k, v]) => `${k} ${v}`).join(', ')} · in the server set brust would default to ${h.defaults.brustWorkers ?? '?'} workers and ${h.defaults.tokioThreads ?? '?'} tokio threads (left at their default)`,
-    `${h.rounds} rounds, interleaved, seed ${h.seed} · \`oha -z ${h.dur}\` at c=${h.conns.join(' and c=')} · warm-up ${h.warmup} discarded per cell · estimate ${h.estimateMin} min${h.tookMin !== null ? `, took ${h.tookMin} min` : ''}`,
+    `${h.rounds} rounds, interleaved, seed ${h.seed} · \`oha -z ${h.dur}\` at c=${h.conns.join(' and c=')} · warm-up ${h.warmup} discarded per cell · load minutes planned ${h.estimateMin}, taken ${h.tookMin ?? '—'}`,
   ]
   if (h.skipped.length) L.push(`skipped: ${h.skipped.map((s) => `${s.app} (${s.reason})`).join(', ')}`)
   L.push('', 'Cells show the median of the rounds and [min-max]. Marks: noisy = (max-min)/median > 5%; generator-limited = oha used >= 90% of its CPUs (the number is the generator\'s ceiling); unbalanced = busiest / idlest process > 2:1 (only at 4+ connections per process); not compressed = the gzip request got an identity body.')

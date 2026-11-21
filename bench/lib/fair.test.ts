@@ -154,6 +154,7 @@ test('the markdown names the pinning, the work and the marks; the sweep names th
   expect(md).toContain('server CPUs 0,1,2,3 · generator CPUs 4,5')
   expect(md).toContain('work: brust renders per request, hydration scripts')
   expect(md).toContain('not compressed')
+  expect(md).toContain('load minutes planned 1, taken 1')
   expect(md).toContain('## Marked cells')
   expect(md).not.toMatch(/macOS/)
   const unpinned = renderRun({ ...fixture('run'), header: { ...fixture('run').header, serverCpus: null, genCpus: null } })

@@ -1,6 +1,7 @@
 // bench/run.ts — the bench suite (spec §1; F595: fair to every side and repeatable). Manual, load-guarded, never in CI.
 //   BRUST_RELEASE_ADDON=1 bun run bench                         # one full run: brust, bun-serve, next, elysia-bun
 //   BRUST_RELEASE_ADDON=1 bun run bench --sweep default         # the worker sweep (brust, bun-serve, elysia-bun)
+//   BRUST_RELEASE_ADDON=1 bun run bench --sweep default --quick # the same in about 30 min on 8 server CPUs
 //   bun bench/run.ts --apps brust,next --probes D --rounds 3 --dur 5s --seed 7
 // Flow: topology (server CPUs S / generator CPUs L, never shared) → guards → build → parity + the work each app does →
 // every app started once inside S with the same process count N → cells (app, probe, encoding, connections) measured
@@ -27,7 +28,7 @@ import { cpuList, readTopology, splitCores } from './lib/topology'
 const { values: f } = parseArgs({
   args: process.argv.slice(2),
   options: {
-    apps: { type: 'string' }, probes: { type: 'string', default: 'S,S-render,D,I,A1,A2' },
+    apps: { type: 'string' }, probes: { type: 'string' }, quick: { type: 'boolean', default: false },
     conn: { type: 'string', default: '120,auto' }, dur: { type: 'string' }, warmup: { type: 'string', default: '2s' },
     rounds: { type: 'string' }, enc: { type: 'string' }, seed: { type: 'string' }, workers: { type: 'string' },
     'gen-cores': { type: 'string', default: '2' }, sweep: { type: 'string' }, publish: { type: 'boolean', default: false },
@@ -47,15 +48,17 @@ const int = (s: string | undefined, name: string, min = 0): number => {
 }
 
 const sweeping = f.sweep !== undefined
+// --quick: the short preset (D, S-render, I, A1; identity; 3 rounds of 6 s); explicit flags still win.
+const quick = f.quick === true
 const SWEEP_APPS: AppId[] = ['brust', 'bun-serve', 'elysia-bun']
 const appIds = (f.apps ?? (sweeping ? SWEEP_APPS : APP_ORDER.filter((a) => a !== 'brust-01x')).join(',')).split(',').map((s) => s.trim()).filter(Boolean) as AppId[]
 for (const a of appIds) if (!(a in APPS)) die(1, `unknown app ${a} (choose from ${APP_ORDER.join(', ')})`)
-const probeIds = f.probes!.split(',').map((s) => s.trim()).filter(Boolean) as ProbeId[]
+const probeIds = (f.probes ?? (quick ? 'D,S-render,I,A1' : 'S,S-render,D,I,A1,A2')).split(',').map((s) => s.trim()).filter(Boolean) as ProbeId[]
 for (const p of probeIds) probeOf(p)
-const encArg = f.enc ?? (sweeping ? 'identity' : 'both')
+const encArg = f.enc ?? (sweeping || quick ? 'identity' : 'both')
 const encs: Encoding[] = encArg === 'both' ? ['identity', 'gzip'] : encArg === 'identity' || encArg === 'gzip' ? [encArg] : die(1, '--enc must be identity|gzip|both')
-const rounds = int(f.rounds ?? (sweeping ? '3' : '5'), 'rounds', 1)
-const dur = f.dur ?? (sweeping ? '6s' : '10s')
+const rounds = int(f.rounds ?? (sweeping || quick ? '3' : '5'), 'rounds', 1)
+const dur = f.dur ?? (sweeping || quick ? '6s' : '10s')
 const seed = f.seed !== undefined ? int(f.seed, 'seed') : Date.now() % 1_000_000_000
 const timeoutMs = int(f.timeout, 'timeout', 1000)
 const idleMax = Number.parseFloat(f['idle-max']!)
