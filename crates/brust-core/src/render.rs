@@ -296,11 +296,14 @@ fn level_hash(html: &str, child: Option<&str>, root: bool) -> String {
 /// and a child level's whole markup can be most of the page.
 const CHILD_PREFIX: usize = 32;
 
-/// Every non-overlapping, left-to-right occurrence of `c` in `html`, pushed as byte ranges: what
+/// Every non-overlapping, left-to-right occurrence of `c` in `html`, pushed as byte ranges (none for an empty `c`): what
 /// `html.match_indices(c)` finds, without building a searcher over the whole of `c`. A short prefix of `c` (at most
 /// [`CHILD_PREFIX`] bytes, cut at a char boundary) is searched for, and each hit is checked against the full `c`; after
 /// a match the search goes on at its end, after a hit that is not one at the next char.
 fn child_ranges(html: &str, c: &str, out: &mut Vec<(usize, usize)>) {
+    if c.is_empty() {
+        return;
+    }
     let mut cut = c.len().min(CHILD_PREFIX);
     while !c.is_char_boundary(cut) {
         cut -= 1;
@@ -1896,6 +1899,20 @@ mod tests {
         for (html, child) in &cases {
             same_hash(html, child.as_deref());
         }
+    }
+
+    /// F602: an empty child has no occurrence (`match_indices("")` would match everywhere, and a prefix search for it
+    /// would never advance): nothing is pushed, and the hash is that of the whole level.
+    #[test]
+    fn child_ranges_of_an_empty_child_is_nothing() {
+        let mut out = Vec::new();
+        child_ranges("<p>a</p>", "", &mut out);
+        child_ranges("", "", &mut out);
+        assert!(out.is_empty());
+        assert_eq!(
+            level_hash("<p>a</p>", Some(""), false),
+            level_hash("<p>a</p>", None, false)
+        );
     }
 
     /// F602: the same, on generated pages: random small alphabets so that repeats, overlaps and near misses are common.

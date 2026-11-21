@@ -126,7 +126,7 @@ pub fn render_attr(react_name: &str, v: &Value) -> String {
         if v.kind() != ValueKind::Map {
             return String::new();
         }
-        return crate::style_attr_of_map(v, true);
+        return crate::style_attr_of_map(v, true, false);
     }
     match attr_kind(&html) {
         AttrKind::Boolean => {

@@ -157,7 +157,7 @@ pub fn register(env: &mut Environment<'_>) {
         if v.kind() != ValueKind::Map {
             return String::new();
         }
-        style_attr_of_map(&v, false)
+        style_attr_of_map(&v, false, true)
     });
     env.add_filter("style_css", |v: Value| {
         // Only a style object has declarations (React throws on a string).
@@ -1254,29 +1254,46 @@ fn arg_pairs(args: &[Value]) -> impl Iterator<Item = (&str, &Value)> {
         .filter_map(|kv| Some((kv[0].as_str().unwrap_or_default(), kv.get(1)?)))
 }
 
-/// The same for an object's entries as [`map_entries`] gives them, with `keep_empty` as in [`push_style_attr`].
-pub(crate) fn style_attr_of_map(v: &Value, keep_empty: bool) -> String {
+/// An object's entries as [`map_entries`] gives them, with the keys as text: with `stringify` a key that is not a string
+/// is printed (`style_pairs` did), without it the entry is left out (`map_pairs` of the spread did).
+fn entry_keys(
+    entries: &[(Value, Value)],
+    stringify: bool,
+) -> Vec<(std::borrow::Cow<'_, str>, &Value)> {
+    entries
+        .iter()
+        .filter_map(|(k, v)| match k.as_str() {
+            Some(s) => Some((std::borrow::Cow::Borrowed(s), v)),
+            None if stringify => Some((std::borrow::Cow::Owned(k.to_string()), v)),
+            None => None,
+        })
+        .collect()
+}
+
+/// The ` style="…"` attribute of an object's entries, with `keep_empty` as in [`push_style_attr`] and `stringify` as in
+/// [`entry_keys`].
+pub(crate) fn style_attr_of_map(v: &Value, keep_empty: bool, stringify: bool) -> String {
     let entries = map_entries(v);
     let mut out = String::new();
     push_style_attr(
         &mut out,
-        entries
+        entry_keys(&entries, stringify)
             .iter()
-            .filter_map(|(k, val)| Some((k.as_str()?, val))),
+            .map(|(k, val)| (&**k, *val)),
         keep_empty,
     );
     out
 }
 
-/// The declarations of an object's entries as [`map_entries`] gives them.
+/// The declarations of an object's entries (keys printed as text, as `style_pairs` did).
 fn style_css_of_map(v: &Value) -> String {
     let entries = map_entries(v);
     let mut out = String::new();
     push_style_decls(
         &mut out,
-        entries
+        entry_keys(&entries, true)
             .iter()
-            .filter_map(|(k, val)| Some((k.as_str()?, val))),
+            .map(|(k, val)| (&**k, *val)),
     );
     out
 }
@@ -1560,6 +1577,85 @@ mod tests {
                 );
                 assert_eq!(css_property(k), old::css_property(k), "case {case}: {k}");
             }
+        }
+    }
+
+    /// F602: an object whose keys are not all strings (a bool, a number, a none key) prints as it did: the `style_attr` and
+    /// `style_css` filters print a key as text (`true` is a key that passes `css_key`), the spread's `render_attr` leaves
+    /// a non-string key out.
+    #[test]
+    fn style_maps_with_non_string_keys_print_as_before() {
+        let mut r = Rng(0x5EED_0F_A11_CAFE);
+        let mut printed_non_string = 0;
+        for case in 0..5_000 {
+            let n = r.below(6) as usize;
+            let mut entries: Vec<(Value, Value)> = Vec::new();
+            for _ in 0..n {
+                let k = match r.below(7) {
+                    0 => Value::from(true),
+                    1 => Value::from(false),
+                    2 => Value::from(r.below(50) as i64),
+                    3 => Value::from(()),
+                    4 => Value::from(if r.below(2) == 0 {
+                        f64::INFINITY
+                    } else {
+                        1.5_f64
+                    }),
+                    5 => Value::from(gen_string(&mut r)),
+                    _ => Value::from(STYLE_KEYS[r.below(STYLE_KEYS.len() as u64) as usize]),
+                };
+                entries.push((k, gen_style_value(&mut r)));
+            }
+            let map = Value::from(
+                entries
+                    .into_iter()
+                    .collect::<std::collections::BTreeMap<Value, Value>>(),
+            );
+            if map.kind() != ValueKind::Map {
+                continue;
+            }
+            // the previous code: `style_pairs` (key printed) and `map_pairs` (non-string key dropped)
+            let printed: Vec<(String, Value)> = map_entries(&map)
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+            let strings: Vec<(String, Value)> = map_entries(&map)
+                .into_iter()
+                .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v)))
+                .collect();
+            let css = old::style_obj_to_css(&printed);
+            assert_eq!(style_css_of_map(&map), css, "case {case}: {printed:?}");
+            if printed.iter().any(|(k, _)| k.starts_with("inf")) && css.contains("inf:") {
+                printed_non_string += 1;
+            }
+            assert_eq!(
+                style_attr_of_map(&map, false, true),
+                old::style_attr_text(&css),
+                "case {case}: {printed:?}"
+            );
+            let css_s = old::style_obj_to_css(&strings);
+            assert_eq!(
+                style_attr_of_map(&map, true, false),
+                format!(" style=\"{}\"", escape_text(&css_s)),
+                "case {case}: {strings:?}"
+            );
+        }
+        // the generator reached a non-string key that printed as a declaration (`inf`), so the comparison is not vacuous
+        assert!(printed_non_string > 0);
+        // a non-string key that prints as a CSS identifier (`true`, `none` is not one): the filters keep it as text
+        for (k, label) in [(Value::from(true), "true"), (Value::from(false), "false")] {
+            let m = Value::from(std::collections::BTreeMap::from([(k, Value::from("red"))]));
+            let printed: Vec<(String, Value)> = map_entries(&m)
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+            let want = old::style_obj_to_css(&printed);
+            assert_eq!(style_css_of_map(&m), want, "{label}: {printed:?}");
+            assert_eq!(
+                style_attr_of_map(&m, false, true),
+                old::style_attr_text(&want),
+                "{label}"
+            );
         }
     }
 
