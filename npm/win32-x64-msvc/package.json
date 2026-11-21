@@ -1,6 +1,6 @@
 {
   "name": "@brust/native-win32-x64-msvc",
-  "version": "2.0.0-alpha.58",
+  "version": "2.0.0-alpha.59",
   "cpu": [
     "x64"
   ],
