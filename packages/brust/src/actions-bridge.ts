@@ -186,6 +186,26 @@ export async function fetchInScope(a: ActionsApp, req: Request): Promise<Respons
 export const noActions = async (_: Request): Promise<Response> =>
   new Response('brust: actions are not configured in this worker', { status: 500, headers: { 'content-type': 'text/plain; charset=utf-8' } })
 
+/** The reply stage of `runFetch`: the meta JSON is built and encoded ONCE (the fit test and the frame use the same
+ * bytes; a heap reply builds the one other meta, with `heap`, once). Frame bytes, return values and the 500 branches
+ * are those of `writeFramed` + a separate length probe (the equality suite pins that against the old path). */
+export function writeReply(view: Uint8Array, slot: number, slots: number, out: { status: number; pairs: [string, string][]; body: Uint8Array; ws?: WsMeta }, io: HeapIo): number {
+  if (out.ws) return writeFramed(view, slot, slots, 101, out.pairs, out.body, undefined, out.ws)
+  const sub = Math.floor(view.byteLength / Math.max(1, slots))
+  const dst = view.subarray(slot * sub, slot * sub + sub)
+  const meta = enc.encode(JSON.stringify({ status: out.status, headers: out.pairs } satisfies FetchMeta))
+  if (4 + meta.length + out.body.length <= sub) return put(dst, meta, out.body)
+  if (out.body.length > maxResponseBytes) {
+    console.error(`[brust] action response body ${out.body.length} bytes exceeds max_response_bytes ${maxResponseBytes} — answered 500`)
+    return writeFramed(view, slot, slots, 500, TEXT_PLAIN, enc.encode(`brust: action response exceeds ${maxResponseBytes} bytes`))
+  }
+  // The meta alone must fit; otherwise writeFramed's own 500 (R10) answers.
+  const heapMeta = enc.encode(JSON.stringify({ status: out.status, headers: out.pairs, heap: out.body.length } satisfies FetchMeta))
+  if (4 + heapMeta.length > sub) return writeFramed(view, slot, slots, out.status, out.pairs, out.body)
+  if (!io.putReply(slot, out.body)) throw new Error('heap reply declined by the server (F82)')
+  return put(dst, heapMeta, new Uint8Array(0))
+}
+
 /** The `fetch` call (makeDispatch). Never rejects, never writes JSON: every outcome is a frame. A body of
  * more than 262144 bytes (`ACTION_INLINE_BODY_BYTES`, not the slot size) arrives by `io.takeBody` (A1 `{heap}`); a response that does not fit the slot leaves
  * by `io.putReply` with only status/headers/`heap` in the slot (F82), unless it exceeds `max_response_bytes`. */
@@ -208,18 +228,7 @@ export async function runFetch(requestJson: string, view: Uint8Array, slot: numb
     const req = toRequest(fr, heapBody)
     // R1/E5: one store scope around the handler AND the body read (a lazy body may still touch stores).
     const out = await fetchParts(a, req)
-    if (out.ws) return writeFramed(view, slot, slots, 101, out.pairs, out.body, undefined, out.ws)
-    const sub = Math.floor(view.byteLength / Math.max(1, slots))
-    const metaLen = (m: FetchMeta) => enc.encode(JSON.stringify(m)).length
-    if (4 + metaLen({ status: out.status, headers: out.pairs }) + out.body.length <= sub) return writeFramed(view, slot, slots, out.status, out.pairs, out.body)
-    if (out.body.length > maxResponseBytes) {
-      console.error(`[brust] action response body ${out.body.length} bytes exceeds max_response_bytes ${maxResponseBytes} — answered 500`)
-      return writeFramed(view, slot, slots, 500, TEXT_PLAIN, enc.encode(`brust: action response exceeds ${maxResponseBytes} bytes`))
-    }
-    // The meta alone must fit; otherwise writeFramed's own 500 (R10) answers.
-    if (4 + metaLen({ status: out.status, headers: out.pairs, heap: out.body.length }) > sub) return writeFramed(view, slot, slots, out.status, out.pairs, out.body)
-    if (!io.putReply(slot, out.body)) throw new Error('heap reply declined by the server (F82)')
-    return writeFramed(view, slot, slots, out.status, out.pairs, new Uint8Array(0), out.body.length)
+    return writeReply(view, slot, slots, out, io)
   } catch (e) {
     console.error(`[brust] action failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`)
     return fail(view, slot, slots, 'brust: action failed')
