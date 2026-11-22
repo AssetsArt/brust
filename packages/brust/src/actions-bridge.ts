@@ -3,7 +3,6 @@
 // with a web Response, framed into this worker's SAB slot. No Elysia import: the app is anything with `fetch`.
 import { pullFetchBody, putFetchReply, takeFetchBody } from './native'
 import { dropAccept, dropSocket, takeAccept, type WsMeta } from './actions/ws'
-import type { LoaderReq } from './routes'
 import { runInStoreContext } from './store/server-context'
 
 /** A3: the manifest block `brust build` writes (the elysia lane's writer). `entry` is relative to dist. */
@@ -30,7 +29,6 @@ export interface FetchRequest {
    * `{stream}` (F475): a `[actions] stream` route's body, pulled chunk by chunk with `pullFetchBody(slot, token)`; `length` is the
    * declared Content-Length, if any. */
   body: { text: string } | { b64: string } | { heap: number } | { stream: { length: number | null; token: number } } | null
-  req: LoaderReq
 }
 /** A2 meta: `status`, `headers`, and (F82) `heap` — the byte length of a response body that crossed by
  * `putFetchReply` instead of the slot (the slot body is then empty). Never a store. */

@@ -411,16 +411,15 @@ impl ComponentResult {
     }
 }
 
-/// A1 `fetch` request: `{ method, url, headers: [[k,v]…], body: {text}|{b64}|{heap}|{stream}|null, req }`. `headers`
-/// are PAIRS (repeated names survive; `req.headers` is an object and collapses them — F5). `url` =
-/// path + query as received.
+/// A1 `fetch` request: `{ method, url, headers: [[k,v]…], body: {text}|{b64}|{heap}|{stream}|null }`. `headers`
+/// are PAIRS (repeated names survive). `url` = path + query as received. F608: no request envelope (`req`): the
+/// worker builds its `Request` from these four fields and nothing read the envelope.
 #[derive(Serialize)]
 pub struct FetchRequest<'a> {
     pub method: &'a str,
     pub url: &'a str,
     pub headers: Vec<(Cow<'a, str>, Cow<'a, str>)>,
     pub body: Option<FetchBody>,
-    pub req: RequestEnvelope<'a>,
 }
 
 /// A1 body (R2), externally tagged: `{"text": …}` / `{"b64": …}`.
@@ -993,13 +992,6 @@ mod tests {
                 ("set-cookie".into(), "b=2".into()),
             ],
             body,
-            req: RequestEnvelope {
-                method: "POST",
-                url: "/_brust/action/team?x=1",
-                headers: vec![("content-type".into(), "application/json".into())],
-                cookies: vec![],
-                search: vec![("x".into(), "1".into())],
-            },
         }
     }
 
@@ -1008,7 +1000,7 @@ mod tests {
         // A1, verbatim: headers are PAIRS (both set-cookie survive), body externally tagged.
         assert_eq!(
             serde_json::to_string(&fetch_req(Some(FetchBody::Text(r#"{"id":1}"#.into())))).unwrap(),
-            r#"{"method":"POST","url":"/_brust/action/team?x=1","headers":[["content-type","application/json"],["set-cookie","a=1"],["set-cookie","b=2"]],"body":{"text":"{\"id\":1}"},"req":{"method":"POST","url":"/_brust/action/team?x=1","headers":{"content-type":"application/json"},"cookies":{},"search":{"x":"1"}}}"#
+            r#"{"method":"POST","url":"/_brust/action/team?x=1","headers":[["content-type","application/json"],["set-cookie","a=1"],["set-cookie","b=2"]],"body":{"text":"{\"id\":1}"}}"#
         );
         let b64 = serde_json::to_string(&fetch_req(Some(FetchBody::B64("AAE=".into())))).unwrap();
         assert!(b64.contains(r#""body":{"b64":"AAE="}"#), "{b64}");

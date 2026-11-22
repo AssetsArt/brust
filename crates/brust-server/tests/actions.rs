@@ -353,6 +353,31 @@ fn get_and_head_bodies_are_not_read() {
     assert_eq!(last(&fake)["body"], Value::Null);
 }
 
+/// F608: the fetch call carries exactly `method`, `url`, `headers`, `body`: no request envelope (`req`), even for a GET
+/// with two cookies and a query (what the envelope used to parse into `cookies` / `search`).
+#[test]
+fn the_fetch_call_carries_exactly_four_keys() {
+    let (fake, s) = server(echo);
+    let (status, _, _) = request_open_body(
+        &s,
+        "GET",
+        "/_brust/action/types?a=1&b=2",
+        &[("cookie", "c1=x; c2=y")],
+    );
+    assert_eq!(status, 200);
+    let r = last(&fake);
+    let mut keys: Vec<&str> = r.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["body", "headers", "method", "url"], "{r}");
+    assert_eq!(r["method"], "GET");
+    assert_eq!(r["url"], "/_brust/action/types?a=1&b=2");
+    let pairs: Vec<(String, String)> = serde_json::from_value(r["headers"].clone()).unwrap();
+    assert!(
+        pairs.contains(&("cookie".into(), "c1=x; c2=y".into())),
+        "{pairs:?}"
+    );
+}
+
 #[test]
 fn page_route_never_reads_the_body() {
     let (fake, s) = server(echo);
@@ -391,7 +416,8 @@ fn headers_cross_as_pairs_minus_hop_by_hop() {
         "{pairs:?}"
     );
     assert!(pairs.contains(&("host".into(), "fx".into())), "{pairs:?}");
-    assert!(!r["req"]["headers"]["x-dup"].is_null(), "{}", r["req"]);
+    // F608: the fetch call carries no request envelope.
+    assert!(r.get("req").is_none(), "{r}");
 
     let (status, _, _) = request_chunked(&s, "POST", URL, &[], vec![b"{}".to_vec()]);
     assert_eq!(status, 200);
