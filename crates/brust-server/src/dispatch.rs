@@ -1093,13 +1093,6 @@ mod tests {
             url: "/_brust/action/x",
             headers: vec![],
             body: None,
-            req: crate::routing::routes::RequestEnvelope {
-                method: "POST",
-                url: "/_brust/action/x",
-                headers: vec![],
-                cookies: vec![],
-                search: vec![],
-            },
         }
     }
 

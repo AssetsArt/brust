@@ -17,13 +17,11 @@ import { type Handlers, makeDispatch, SLOT_BYTES } from '../src/worker'
 
 const twoSlots = () => new Uint8Array(new SharedArrayBuffer(SLOT_BYTES * 2))
 const dec = new TextDecoder()
-const REQ = { method: 'POST', url: '/_brust/action/t?x=1', headers: {}, cookies: {}, search: {} }
 const fr = (over: Partial<FetchRequest> = {}): FetchRequest => ({
   method: 'POST',
   url: '/_brust/action/t?x=1',
   headers: [['host', 'ex.com:8080']],
   body: null,
-  req: REQ,
   ...over,
 })
 const mk = (): StoreRecord => ({ instance: {} })

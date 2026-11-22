@@ -184,21 +184,12 @@ impl Host for NativeHost {
                 None,
             ),
         };
-        let full = call.full;
-        let query = full.split_once('?').map_or("", |(_, q)| q);
-        let pairs = worker_request_headers(call.headers, call.authority);
+        // F608: no request envelope: the worker's `Request` is built from these four fields only.
         let req = FetchRequest {
             method: call.method,
-            url: full,
-            headers: pairs,
+            url: call.full,
+            headers: worker_request_headers(call.headers, call.authority),
             body: fb,
-            req: brust_core::routing::routes::build_request_envelope(
-                call.method,
-                full,
-                query,
-                call.headers,
-                None,
-            ),
         };
         let r = call_worker_fetch(
             &self.pool,
