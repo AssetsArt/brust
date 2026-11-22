@@ -10,7 +10,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import { BrustRouteError, checkBasePath, type FlatRoute, validateRoutes } from '../routes'
 import { assertRoutesInstallable, type CheckPatterns, nativeCheckPatterns } from './route-conflicts'
-import { type BrowserCtx, brustRoot, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, nestedOf, storeModules } from './bundle'
+import { type BrowserCtx, browserModules, brustRoot, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, nestedOf, storeModules } from './bundle'
 import { runActionsOnly } from './actions-only'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import { renderIcons } from './build-icons'
@@ -289,7 +289,7 @@ async function buildInto(
   const css = await buildCss(out, [...new Set([...[...routeCss.values()].flat(), ...serverCss])], process.env.BRUST_BUILD_MODE !== 'development', { appRoot, log: o.log, basePath: o.basePath, ownOutput: [o.dist, join(appRoot, 'dist'), join(appRoot, '.brust')] })
   for (const c of directCss(entry))
     o.log(`[brust] warning css ${relative(appRoot, entry)} imports ${c}: the route entry belongs to no route, so it is linked nowhere; import it from a layout, or list it in [css] global`)
-  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps, clientDir: join(out, 'client'), basePath: o.basePath }
+  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps, clientDir: join(out, 'client'), basePath: o.basePath, browserInputs: new Set() }
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
   const runtimeUrls = { core: `${brustRoot(ctx)}/${runtime.core}`, store: `${brustRoot(ctx)}/${runtime.store}` }
@@ -400,8 +400,12 @@ async function buildInto(
   const exposedMods = exposedModules(appRoot, o.expose)
   const client = await buildClientChunks(out, compiled, ctx, runtimeUrls, exposedMods, o.exposeIsolated, o.log)
   const chunks = new Map([...client.chunks, ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writersFor))])
-  // F591: the native chunks a response may leave out when it printed none of their hosts (D1 a, rule e).
-  const loadClean = new Set((scanned.load_clean ?? []).map((f) => real(resolve(appRoot, f))))
+  // F591: the native chunks a response may leave out when it printed none of their hosts (D1 a, rule e). F610 D1: judged
+  // by a second scan in which only the modules some browser bundle holds can spoil a table (a module the browser never
+  // loads cannot change what a load-time read does there); the first scan's writers still keep a chunk.
+  const browserSet = client.chunks.size === 0 ? undefined : browserModules(ctx.browserInputs ?? [], ctx.sourceOf, appGraph)
+  const forBrowser = browserSet === undefined ? scanned : (JSON.parse(scanAppWrites(appRoot, o.appModules, o.log, o.sourceRoots, browserSet)) as typeof scanned)
+  const loadClean = new Set((forBrowser.load_clean ?? []).map((f) => real(resolve(appRoot, f))))
   const writerFiles = new Set(writers)
   const roots = [appRoot, ...o.sourceRoots.map((r) => resolve(appRoot, r))].map(real)
   const own = real(out)

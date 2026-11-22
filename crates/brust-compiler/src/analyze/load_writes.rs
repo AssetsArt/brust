@@ -150,31 +150,78 @@ struct Scanned {
     ns_escapes: Vec<String>,
     /// Modules named by a dynamic `import()` (`None`: a specifier that is not a string literal).
     dynamic: Vec<Option<String>>,
+    /// F610 D4: the top-level functions a call can be followed into (`function f`, `const f = function / arrow`), never
+    /// reassigned: their binding keys.
+    fns: HashSet<u32>,
 }
 
 /// Scans `paths` (app modules, relative to `opts.root`). Runs on the compiler thread. A module that does not read or
 /// parse is skipped.
 pub fn scan(paths: &[String], opts: &AnalyzeOptions) -> LoadWrites {
+    scan_for(paths, opts, None)
+}
+
+/// F610 D1: `scan`, where only the modules of `browser` (paths as in `paths`: every app module some bundle the build
+/// writes for the browser contains) can spoil a table: mentions, namespace escapes, dynamic imports and unreadable modules
+/// are taken from those only. A module no browser bundle contains never runs there, so nothing it does can change what a
+/// load-time read does in the browser. The F230 writes (`written`, `writers`) still come from every module. `None`: every
+/// module (the first scan of a build, and a build whose browser modules are not known).
+pub fn scan_for(
+    paths: &[String],
+    opts: &AnalyzeOptions,
+    browser: Option<&HashSet<String>>,
+) -> LoadWrites {
     let _aliases = crate::analyze::aliases::Scope::enter(&opts.root, &opts.path_aliases);
     let mut scanned = Vec::new();
+    let mut parsed_all: HashMap<String, std::rc::Rc<crate::parse::Parsed>> = HashMap::new();
     let mut readable = Vec::new();
-    let mut unreadable = false;
+    let mut unreadable: Vec<String> = Vec::new();
     for path in paths {
         let Ok(source) = std::fs::read(opts.root.join(path)) else {
-            unreadable = true;
+            unreadable.push(path.clone());
             continue;
         };
         let Ok(parsed) = crate::parse::parse_tsx(path, source) else {
-            unreadable = true;
+            unreadable.push(path.clone());
             continue;
         };
+        let parsed = std::rc::Rc::new(parsed);
         scanned.push(parsed.with_ast(|ast| scan_module(path, ast, opts)));
+        parsed_all.insert(path.clone(), parsed);
         readable.push(path.clone());
     }
+    // F599 (D1') + F610 D4: the mentions of every export in every module, with calls of top-level app functions followed
+    // through their summaries (which need every module's imports and exports first).
+    let found: Vec<Mentioned> = {
+        let fns = Fns {
+            mods: &scanned,
+            by_path: scanned
+                .iter()
+                .enumerate()
+                .map(|(i, m)| (m.path.clone(), i))
+                .collect(),
+            parsed: &parsed_all,
+            memo: Default::default(),
+            busy: Default::default(),
+        };
+        scanned
+            .iter()
+            .map(|m| {
+                let parsed = &parsed_all[&m.path];
+                parsed.with_ast(|ast| module_mentions(m, ast, &fns, opts))
+            })
+            .collect()
+    };
+    for (m, f) in scanned.iter_mut().zip(found) {
+        m.mentions = f.mentions;
+        m.ns_escapes = f.ns_escapes;
+        m.dynamic = f.dynamic;
+    }
+    let in_browser = |p: &str| browser.is_none_or(|b| b.contains(p));
     let mut out = propagate(&scanned);
     // F599 (D1'): the mentions of every export in every module of the build, before any module is judged.
-    out.escaped_all = unreadable;
-    escaped_exports(&scanned, opts, &mut out);
+    out.escaped_all = unreadable.iter().any(|p| in_browser(p));
+    escaped_exports(&scanned, opts, &mut out, &in_browser);
     let mut with = opts.clone();
     with.load_writes = Some(std::sync::Arc::new(out.clone()));
     let mut clean: Vec<String> = readable
@@ -191,9 +238,14 @@ pub fn scan(paths: &[String], opts: &AnalyzeOptions) -> LoadWrites {
 /// Fills `out.escaped` from the mentions every scanned module made (see `analyze::mentions`): an escape of an export, or
 /// a use of it where it stands (an operand, an argument, a returned or stored value) when what the read path reaches in
 /// its literal is a container. A mention through a re-export counts for the export it names at its declaration.
-fn escaped_exports(mods: &[Scanned], opts: &AnalyzeOptions, out: &mut LoadWrites) {
+fn escaped_exports(
+    mods: &[Scanned],
+    opts: &AnalyzeOptions,
+    out: &mut LoadWrites,
+    in_browser: &dyn Fn(&str) -> bool,
+) {
     let mut by_decl: HashMap<ExportKey, Vec<(Vec<Seg>, Pos)>> = HashMap::new();
-    for m in mods {
+    for m in mods.iter().filter(|m| in_browser(&m.path)) {
         for (k, path, pos) in &m.mentions {
             for d in declaring(mods, k, &mut HashSet::new()) {
                 by_decl.entry(d).or_default().push((path.clone(), *pos));
@@ -637,48 +689,10 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
     if default_function {
         function.insert("default".into());
     }
-    // F599 (D1'): every mention of an import, and of this module's own exported bindings, in the closed list's terms.
-    let mut tracked: HashSet<u32> = imports.keys().copied().collect();
-    tracked.extend(exports.iter().filter_map(|(_, k)| *k));
-    let namespaces: HashSet<u32> = imports
+    let fns: HashSet<u32> = function_keys
         .iter()
-        .filter(|(_, (_, n))| n == "*")
-        .map(|(k, _)| *k)
-        .collect();
-    let found = crate::analyze::mentions::mentions(ast, &names, &tracked, &namespaces);
-    let keys_of = |root: &crate::analyze::mentions::Root| -> Vec<ExportKey> {
-        match root {
-            crate::analyze::mentions::Root::Binding(k) => match imports.get(k) {
-                Some(i) => vec![i.clone()],
-                None => exports
-                    .iter()
-                    .filter(|(_, l)| *l == Some(*k))
-                    .map(|(n, _)| (path.to_string(), n.clone()))
-                    .collect(),
-            },
-            crate::analyze::mentions::Root::Member(ns, member) => imports
-                .get(ns)
-                .map(|(module, _)| vec![(module.clone(), member.clone())])
-                .unwrap_or_default(),
-        }
-    };
-    let mut mention_rows = Vec::new();
-    for f in &found.facts {
-        for k in keys_of(&f.root) {
-            mention_rows.push((k, f.path.clone(), f.pos));
-        }
-    }
-    let ns_escapes: Vec<String> = found
-        .namespace_escapes
-        .iter()
-        .filter_map(|k| imports.get(k).map(|(m, _)| m.clone()))
-        .collect();
-    // a package specifier names no app module; an app specifier that does not resolve, or no literal, may be any
-    let dynamic: Vec<Option<String>> = found
-        .dynamic
-        .iter()
-        .filter(|spec| spec.as_deref().is_none_or(app_specifier))
-        .map(|spec| spec.as_deref().and_then(&target))
+        .filter(|k| !reassigned.contains(k))
+        .copied()
         .collect();
     Scanned {
         path: path.to_string(),
@@ -693,9 +707,171 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
         exports,
         follows,
         stars,
-        mentions: mention_rows,
+        mentions: Vec::new(),
+        ns_escapes: Vec::new(),
+        dynamic: Vec::new(),
+        fns,
+    }
+}
+
+/// What `module_mentions` found in one module.
+struct Mentioned {
+    mentions: Vec<(ExportKey, Vec<Seg>, Pos)>,
+    ns_escapes: Vec<String>,
+    dynamic: Vec<Option<String>>,
+}
+
+/// F599 (D1'): every mention of an import, and of this module's own exported bindings, in the closed list's terms (F610
+/// D4: a call of a top-level app function followed through its summary).
+fn module_mentions(
+    m: &Scanned,
+    ast: &js_ast::Ast<'_>,
+    fns: &Fns<'_>,
+    opts: &AnalyzeOptions,
+) -> Mentioned {
+    use crate::analyze::mentions::Root;
+    let names = NameTable::for_hook(ast);
+    let mut tracked: HashSet<u32> = m.imports.keys().copied().collect();
+    tracked.extend(m.exports.iter().filter_map(|(_, k)| *k));
+    let namespaces: HashSet<u32> = m
+        .imports
+        .iter()
+        .filter(|(_, (_, n))| n == "*")
+        .map(|(k, _)| *k)
+        .collect();
+    let callees = ModCallees {
+        fns,
+        module: &m.path,
+    };
+    let found = crate::analyze::mentions::mentions(ast, &names, &tracked, &namespaces, &callees);
+    let keys_of = |root: &Root| -> Vec<ExportKey> {
+        match root {
+            Root::Binding(k) => match m.imports.get(k) {
+                Some(i) => vec![i.clone()],
+                None => m
+                    .exports
+                    .iter()
+                    .filter(|(_, l)| *l == Some(*k))
+                    .map(|(n, _)| (m.path.clone(), n.clone()))
+                    .collect(),
+            },
+            Root::Member(ns, member) => m
+                .imports
+                .get(ns)
+                .map(|(module, _)| vec![(module.clone(), member.clone())])
+                .unwrap_or_default(),
+            Root::Param(_) => Vec::new(),
+        }
+    };
+    let mut mentions = Vec::new();
+    for f in &found.facts {
+        for k in keys_of(&f.root) {
+            mentions.push((k, f.path.clone(), f.pos));
+        }
+    }
+    let ns_escapes: Vec<String> = found
+        .namespace_escapes
+        .iter()
+        .filter_map(|k| m.imports.get(k).map(|(p, _)| p.clone()))
+        .collect();
+    // a package specifier names no app module; an app specifier that does not resolve, or no literal, may be any
+    let target = |spec: &str| {
+        if app_specifier(spec) {
+            resolve(&m.path, spec, opts)
+        } else {
+            None
+        }
+    };
+    let dynamic: Vec<Option<String>> = found
+        .dynamic
+        .iter()
+        .filter(|spec| spec.as_deref().is_none_or(app_specifier))
+        .map(|spec| spec.as_deref().and_then(target))
+        .collect();
+    Mentioned {
+        mentions,
         ns_escapes,
         dynamic,
+    }
+}
+
+type SummaryRc = std::rc::Rc<crate::analyze::mentions::Summary>;
+
+/// F610 D4: the top-level functions of the build's modules and their summaries (memoised; a function whose summary is
+/// being made is not followed again: a recursive call ends the track).
+struct Fns<'m> {
+    mods: &'m [Scanned],
+    by_path: HashMap<String, usize>,
+    parsed: &'m HashMap<String, std::rc::Rc<crate::parse::Parsed>>,
+    memo: std::cell::RefCell<HashMap<(String, u32), Option<SummaryRc>>>,
+    busy: std::cell::RefCell<HashSet<(String, u32)>>,
+}
+
+impl Fns<'_> {
+    /// The top-level function the binding `k` of `module` is: one of its own, or one imported by name from an app module
+    /// (re-exports followed); `None` for anything else.
+    fn resolve(&self, module: &str, k: u32) -> Option<(String, u32)> {
+        let m = &self.mods[*self.by_path.get(module)?];
+        if m.fns.contains(&k) {
+            return Some((module.to_string(), k));
+        }
+        let imported = m.imports.get(&k)?;
+        if imported.1 == "*" {
+            return None;
+        }
+        let decl = declaring(self.mods, imported, &mut HashSet::new());
+        let [(dm, name)] = decl.as_slice() else {
+            return None;
+        };
+        let d = &self.mods[*self.by_path.get(dm)?];
+        let (_, local) = d.exports.iter().find(|(n, _)| n == name)?;
+        let local = (*local)?;
+        d.fns.contains(&local).then(|| (dm.clone(), local))
+    }
+
+    fn summary(
+        &self,
+        module: &str,
+        k: u32,
+        depth: u32,
+    ) -> Option<std::rc::Rc<crate::analyze::mentions::Summary>> {
+        let key = (module.to_string(), k);
+        if let Some(s) = self.memo.borrow().get(&key) {
+            return s.clone();
+        }
+        if !self.busy.borrow_mut().insert(key.clone()) {
+            // recursive (directly or through other summarised functions)
+            return None;
+        }
+        let parsed = self.parsed.get(module)?;
+        let callees = ModCallees { fns: self, module };
+        let s = parsed.with_ast(|ast| {
+            let names = NameTable::for_hook(ast);
+            crate::analyze::mentions::summarize(ast, &names, k, &callees, depth)
+        });
+        let s = s.map(std::rc::Rc::new);
+        self.busy.borrow_mut().remove(&key);
+        self.memo.borrow_mut().insert(key, s.clone());
+        s
+    }
+}
+
+struct ModCallees<'f, 'm> {
+    fns: &'f Fns<'m>,
+    module: &'f str,
+}
+
+impl crate::analyze::mentions::Callees for ModCallees<'_, '_> {
+    fn summary(
+        &self,
+        callee: u32,
+        depth: u32,
+    ) -> Option<std::rc::Rc<crate::analyze::mentions::Summary>> {
+        if depth > crate::analyze::mentions::MAX_SUMMARY_DEPTH {
+            return None;
+        }
+        let (module, k) = self.fns.resolve(self.module, callee)?;
+        self.fns.summary(&module, k, depth)
     }
 }
 

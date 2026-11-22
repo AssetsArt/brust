@@ -58,6 +58,33 @@ export interface BrowserCtx {
   loadWriters?: Map<string, LoadWriter>
   /** F495 `[server] base_path`: every `/_brust/…` URL a bundle names carries it (`/portal/_brust/…`); absent or `''` = the root. */
   basePath?: string
+  /** F610 D1: given, every browser bundle (`browserBuild`) adds the real path of each module it bundled (the metafile's
+   * inputs); a staged file stands for its source (`sourceOf`), which `browserModules` widens to what that source imports. */
+  browserInputs?: Set<string>
+}
+
+/** F610 D1: the app modules the browser can run, from what the browser bundles took in (`ctx.browserInputs`). A staged
+ * file (a compiled component chunk, an island shim) holds code the compiler made from its source and from what the
+ * source imports (an inlined child or hook), so it stands for its source and every app module that source reaches
+ * through imports (`appGraph`, real paths); any other input stands for itself. */
+export function browserModules(inputs: Iterable<string>, sourceOf: SourceOf, appGraph: Map<string, string[]>): Set<string> {
+  const out = new Set<string>()
+  const stack: string[] = []
+  for (const f of inputs) {
+    const src = sourceOf.get(f)
+    if (src === undefined) {
+      out.add(f)
+      continue
+    }
+    stack.push(realPath(src))
+  }
+  while (stack.length > 0) {
+    const f = stack.pop()!
+    if (out.has(f)) continue
+    out.add(f)
+    stack.push(...(appGraph.get(f) ?? []))
+  }
+  return out
 }
 
 /** F480/F481: a load writer shipped into island chunks (F230): its path, every island whose chunk carries it, and the modules it is judged to write. */
@@ -298,7 +325,7 @@ async function browserBuild(
   try {
     res = await Bun.build({
       ...config,
-      ...(inputs || graph ? { metafile: true } : {}),
+      ...(inputs || graph || ctx.browserInputs ? { metafile: true } : {}),
       plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir, ctx.basePath), ...(config.plugins ?? [])],
       target: 'browser',
       format: 'esm',
@@ -314,6 +341,7 @@ async function browserBuild(
   if (violations.length > 0) throw fail()
   if (!res.success) throw new BuildError('bundle', `${what}: ${res.logs.map(String).join('\n')}`)
   if (inputs && res.metafile) for (const k of Object.keys(res.metafile.inputs)) inputs.add(realPath(k))
+  if (ctx.browserInputs && res.metafile) for (const k of Object.keys(res.metafile.inputs)) ctx.browserInputs.add(realPath(k))
   if (graph && res.metafile) entryGraph(res.metafile, graph)
   const outs = await Promise.all(res.outputs.map(async (o) => ({ o, name: basename(o.path), text: await o.text() })))
   const rename = new Map<string, string>()

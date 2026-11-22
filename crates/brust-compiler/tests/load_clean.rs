@@ -1278,18 +1278,14 @@ fn f599_o6_refused_an_exporter_that_writes_or_hands_out_the_array() {
         "export const same = () => ARR\n",
         "export const find = (k: string) => ARR.find((x) => x.k === k)\n",
         "export const first = () => ARR[0]\n",
-        "export function alias() {\n  const a = ARR\n  return a.length\n}\n",
         "export function pass() {\n  mutate(ARR)\n}\nfunction mutate(a: unknown[]) {\n  a.length = 0\n}\n",
         "export const U = ARR\n",
         "export const box = { list: ARR }\n",
         "export const wrapped = [ARR]\n",
-        "export function each() {\n  for (const x of ARR) keep(x)\n}\nfunction keep(x: unknown) {\n  void x\n}\n",
         "export function cb() {\n  let kept: unknown\n  ARR.forEach((x) => {\n    kept = x\n  })\n  return kept\n}\n",
         "export const items = ARR.map((x) => x)\n",
         "export const copy = [...ARR]\n",
         "export const json = () => JSON.stringify(ARR)\n",
-        "export const type = typeof ARR\n",
-        "export const same2 = (o: unknown) => o === ARR\n",
         "export async function late() {\n  return await ARR\n}\n",
         "export function thrower() {\n  throw ARR\n}\n",
         "export default ARR\n",
@@ -1297,7 +1293,7 @@ fn f599_o6_refused_an_exporter_that_writes_or_hands_out_the_array() {
     let mut cases = Vec::new();
     for w in escapes {
         cases.push((
-            "an exporter escape",
+            w,
             case(&[
                 ("lib/arr.ts", &format!("{ARR_LIT}{w}")),
                 ("lib/k.ts", consumer),
@@ -1644,31 +1640,12 @@ fn f599_d1_a_value_with_a_mention_outside_the_list_is_not_data() {
         ),
         // the escapes the amendment names, in a third module that is itself load-clean
         (
-            "an alias stored in a clean module",
-            case(&[
-                ("lib/base.ts", arr),
-                ("lib/m.ts", &m("const a = ARR\nexport const n = a.length")),
-                ("lib/c.ts", c_arr),
-            ]),
-        ),
-        (
             "handed to a function in a clean module",
             case(&[
                 ("lib/base.ts", arr),
                 (
                     "lib/m.ts",
                     &m("const count = (l: unknown[]) => l.length\nexport const n = count(ARR)"),
-                ),
-                ("lib/c.ts", c_arr),
-            ]),
-        ),
-        (
-            "compared by identity",
-            case(&[
-                ("lib/base.ts", arr),
-                (
-                    "lib/m.ts",
-                    &m("export const same = (o: unknown) => o === ARR"),
                 ),
                 ("lib/c.ts", c_arr),
             ]),
@@ -1799,4 +1776,391 @@ fn f599_d1_a_value_with_a_mention_outside_the_list_is_not_data() {
         !clean.contains(&"lib/w.ts".to_string()),
         "the module that logs at load is itself unclean: {clean:?}"
     );
+}
+
+/// Every case's LAST module must be clean (the other modules may run code at load of their own).
+fn assert_last_clean(cases: Vec<(&'static str, Case)>) {
+    let mut bad = Vec::new();
+    for (what, files) in &cases {
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let last = files.last().map(|f| f.0.clone()).unwrap_or_default();
+        if !clean_of(&refs).contains(&last) {
+            bad.push(*what);
+        }
+    }
+    assert!(bad.is_empty(), "refused but should be accepted: {bad:?}");
+}
+
+/// F610: the table, a module of functions around it (`lib/m.ts`), and the consumer that reads the table at load.
+const PAGES: &str = "export const PAGES = [\n  { key: 'a', path: '/a', lock: false, alt: ['/x'] },\n  { key: 'b', path: '/b', lock: true, alt: [] },\n]\nexport function pathsOf(p: { path: string; alt: string[] }) {\n  return [p.path, ...p.alt]\n}\n";
+const READER: &str =
+    "import { PAGES } from './pages'\nexport const NAMES = PAGES.map((p) => p.key)\n";
+
+fn with_m(m: &str) -> Case {
+    case(&[
+        ("lib/pages.ts", PAGES),
+        (
+            "lib/m.ts",
+            &format!("import {{ PAGES, pathsOf }} from './pages'\n{m}\n"),
+        ),
+        ("lib/r.ts", READER),
+    ])
+}
+
+/// F610 (D2, D3, D4): read-only code the scan now FOLLOWS to where the value is used. The report's three browser shapes
+/// first (one module: the reader's own), then one row per operator and per kind of call.
+#[test]
+fn f610_read_only_flows_are_followed() {
+    let report = "import { PAGES, pathsOf } from './pages'\nexport const NAMES = PAGES.map((p) => p.key)\nconst label = (p: { key: string; path: string }) => `${p.key}:${p.path}`\nexport function pathOf(key: string) {\n  const own = PAGES.find((p) => p.key === key)\n  if (!own) return null\n  return label(own)\n}\nexport function lockOf(key: string) {\n  const own = PAGES.find((p) => p.key === key)\n  return own ? own.lock : false\n}\nexport const anyPath = (k: string) => PAGES.some((p) => pathsOf(p).some((x) => x === k))\n";
+    assert_last_clean(vec![
+        (
+            "the report: two local consts, an imported helper in an inline callback",
+            case(&[("lib/pages.ts", PAGES), ("lib/r.ts", report)]),
+        ),
+        // D2
+        (
+            "D2 a const alias of the table",
+            with_m(
+                "export function n() {\n  const all = PAGES\n  return all.length + all[0].key.length\n}",
+            ),
+        ),
+        (
+            "D2 a const of a fresh list of items, sorted in place",
+            with_m(
+                "export function first() {\n  const open = PAGES.filter((p) => !p.lock)\n  return open.sort((a, b) => (a.key < b.key ? -1 : 1))[0]?.path\n}",
+            ),
+        ),
+        (
+            "D2 a top-level const alias",
+            with_m("const FIRST = PAGES[0]\nexport const path = () => FIRST.path"),
+        ),
+        // D3
+        (
+            "D3 ??",
+            with_m(
+                "export const f = (k: string) => (PAGES.find((p) => p.key === k) ?? PAGES[0]).path",
+            ),
+        ),
+        (
+            "D3 ||",
+            with_m(
+                "export function f(k: string) {\n  const x = PAGES.find((p) => p.key === k) || PAGES[0]\n  return x.path\n}",
+            ),
+        ),
+        (
+            "D3 &&",
+            with_m(
+                "export function f(k: string) {\n  const x = k && PAGES[0]\n  return x ? x.path : ''\n}",
+            ),
+        ),
+        (
+            "D3 ?:",
+            with_m(
+                "export function f(k: string) {\n  const x = k ? PAGES[0] : PAGES[1]\n  return x.path\n}",
+            ),
+        ),
+        (
+            "D3 the test of if and while",
+            with_m(
+                "export function f() {\n  if (PAGES[0]) return 1\n  while (!PAGES[1]) return 2\n  return 0\n}",
+            ),
+        ),
+        (
+            "D3 ! and typeof",
+            with_m("export const f = () => !PAGES[0] || typeof PAGES[1] === 'object'"),
+        ),
+        (
+            "D3 === and !==",
+            with_m("export const f = (o: unknown) => o === PAGES[0] || o !== PAGES"),
+        ),
+        (
+            "D3 == null and != null",
+            with_m(
+                "export const f = (k: string) => {\n  const x = PAGES.find((p) => p.key === k)\n  return x == null ? null : x != null ? x.path : ''\n}",
+            ),
+        ),
+        // D4
+        (
+            "D4 a same-module helper",
+            with_m(
+                "function key(p: { key: string }) {\n  return p.key\n}\nexport const keys = () => PAGES.map((p) => key(p))",
+            ),
+        ),
+        (
+            "D4 an imported helper",
+            case(&[
+                ("lib/pages.ts", PAGES),
+                (
+                    "lib/h.ts",
+                    "export function key(p: { key: string }) {\n  return p.key.toUpperCase()\n}\n",
+                ),
+                (
+                    "lib/m.ts",
+                    "import { PAGES } from './pages'\nimport { key } from './h'\nexport const keys = () => PAGES.map((p) => key(p))\n",
+                ),
+                ("lib/r.ts", READER),
+            ]),
+        ),
+        (
+            "D4 a helper through a re-export",
+            case(&[
+                ("lib/pages.ts", PAGES),
+                (
+                    "lib/h.ts",
+                    "export const key = (p: { key: string }) => p.key\n",
+                ),
+                ("lib/hx.ts", "export { key } from './h'\n"),
+                (
+                    "lib/m.ts",
+                    "import { PAGES } from './pages'\nimport { key } from './hx'\nexport const keys = () => PAGES.map((p) => key(p))\n",
+                ),
+                ("lib/r.ts", READER),
+            ]),
+        ),
+        (
+            "D4 a helper returning a fresh array of the item's members, read on",
+            with_m(
+                "export const all = () => PAGES.flatMap((p) => pathsOf(p).map((x) => x.length))",
+            ),
+        ),
+        (
+            "D4 a helper that returns its parameter, read on",
+            with_m(
+                "function pick(p: { path: string }) {\n  return p\n}\nexport const f = () => pick(PAGES[0]).path",
+            ),
+        ),
+        (
+            "D4 a summary inside a summary",
+            with_m(
+                "function a(p: { key: string }) {\n  return p.key\n}\nfunction b(p: { key: string }) {\n  return a(p)\n}\nexport const f = () => PAGES.map((p) => b(p))",
+            ),
+        ),
+    ]);
+}
+
+/// F610: every attack the rule protects against, as a module tree where the write really happens: each stays refused.
+#[test]
+fn f610_every_write_through_a_followed_value_is_refused() {
+    let rows: Vec<(&'static str, &str)> = vec![
+        (
+            "a write through a local const",
+            "export function f() {\n  const own = PAGES[0]\n  own.path = '/z'\n}",
+        ),
+        (
+            "a push through a local const",
+            "export function f() {\n  const own = PAGES[0]\n  own.alt.push('/z')\n}",
+        ),
+        (
+            "Object.assign of a local const",
+            "export function f() {\n  const own = PAGES[0]\n  Object.assign(own, { path: '/z' })\n}",
+        ),
+        (
+            "delete through a local const",
+            "export function f() {\n  const own = PAGES[0]\n  delete (own as any).lock\n}",
+        ),
+        (
+            "a helper that writes its parameter",
+            "function w(p: { path: string }) {\n  p.path = '/z'\n}\nexport const f = () => w(PAGES[0])",
+        ),
+        (
+            "a helper that stores it in a module variable",
+            "let kept: unknown\nfunction keep(p: unknown) {\n  kept = p\n}\nexport const f = () => keep(PAGES[0])\nexport const g = () => kept",
+        ),
+        (
+            "a helper that pushes it into a module list",
+            "const kept: unknown[] = []\nfunction keep(p: unknown) {\n  kept.push(p)\n}\nexport const f = () => keep(PAGES[0])",
+        ),
+        (
+            "a helper that hands it to a package function",
+            "import { use } from 'some-package'\nfunction h(p: unknown) {\n  use(p)\n}\nexport const f = () => h(PAGES[0])",
+        ),
+        (
+            "a helper that returns it, the caller writes through the result",
+            "function id(p: { path: string }) {\n  return p\n}\nexport function f() {\n  id(PAGES[0]).path = '/z'\n}",
+        ),
+        (
+            "a helper's result kept in a const, written",
+            "function id(p: { path: string }) {\n  return p\n}\nexport function f() {\n  const r = id(PAGES[0])\n  r.path = '/z'\n}",
+        ),
+        (
+            "a helper called with a spread",
+            "function h(p: { path: string }) {\n  return p.path\n}\nexport const f = () => h(...(PAGES as [{ path: string }]))",
+        ),
+        (
+            "a recursive helper",
+            "function r(p: { path: string }, n: number): string {\n  return n > 0 ? r(p, n - 1) : p.path\n}\nexport const f = () => r(PAGES[0], 2)",
+        ),
+        (
+            "two helpers calling each other",
+            "function a(p: { path: string }, n: number): string {\n  return n > 0 ? b(p, n - 1) : p.path\n}\nfunction b(p: { path: string }, n: number): string {\n  return a(p, n)\n}\nexport const f = () => a(PAGES[0], 2)",
+        ),
+        (
+            "a helper through `arguments`",
+            "function h(p: unknown) {\n  ;(arguments[0] as any).path = '/z'\n  return p\n}\nexport const f = () => h(PAGES[0])",
+        ),
+        (
+            "a helper with a default parameter",
+            "function h(p = PAGES[1]) {\n  return p.path\n}\nexport const f = () => h(PAGES[0])",
+        ),
+        (
+            "a helper with a destructured parameter",
+            "function h({ alt }: { alt: string[] }) {\n  alt.push('/z')\n}\nexport const f = () => h(PAGES[0])",
+        ),
+        (
+            "a helper with a rest parameter",
+            "function h(...ps: { path: string }[]) {\n  ps[0].path = '/z'\n}\nexport const f = () => h(PAGES[0])",
+        ),
+        (
+            "a helper that is reassigned",
+            "let h = (p: { path: string }) => p.path\nexport function set() {\n  h = (p) => {\n    p.path = '/z'\n    return ''\n  }\n}\nexport const f = () => h(PAGES[0])",
+        ),
+        (
+            "a let reassigned",
+            "export function f() {\n  let x = PAGES.find((p) => p.lock)\n  x = PAGES[0]\n  return x\n}",
+        ),
+        (
+            "a let written",
+            "export function f() {\n  let x = PAGES[0]\n  x.path = '/z'\n}",
+        ),
+        (
+            "an alias captured by a nested function that writes",
+            "export function f() {\n  const own = PAGES[0]\n  return () => {\n    own.path = '/z'\n  }\n}",
+        ),
+        (
+            "a function declared above the const it writes through",
+            "export function f() {\n  function w() {\n    own.path = '/z'\n  }\n  const own = PAGES[0]\n  w()\n}",
+        ),
+        (
+            "an item of a const fresh list written",
+            "export function f() {\n  const open = PAGES.filter((p) => !p.lock)\n  open[0].path = '/z'\n}",
+        ),
+        (
+            "?? flows on to a write",
+            "export function f(k: string) {\n  const x = PAGES.find((p) => p.key === k) ?? PAGES[0]\n  x.path = '/z'\n}",
+        ),
+        (
+            "a table-rooted return",
+            "export const defOf = (k: string) => PAGES.find((p) => p.key === k)",
+        ),
+        (
+            "a table-rooted return through a helper",
+            "const defOf = (k: string) => PAGES.find((p) => p.key === k)\nexport const f = (k: string) => defOf(k)",
+        ),
+        ("an exported const alias", "export const FIRST = PAGES[0]"),
+        (
+            "a callback not written inline",
+            "function keep(p: unknown) {\n  return p\n}\nexport const f = () => PAGES.map(keep)",
+        ),
+        (
+            "a template part of an item",
+            "export const f = () => `${PAGES[0]}`",
+        ),
+        (
+            "loose == with a value",
+            "export const f = (o: unknown) => PAGES[0] == o",
+        ),
+    ];
+    let mut cases = Vec::new();
+    for (what, m) in rows {
+        cases.push((what, with_m(m)));
+    }
+    // a helper four summaries deep that writes: past the bound nothing is followed
+    cases.push((
+        "a write four summaries deep",
+        with_m("function d(p: { path: string }) {\n  p.path = '/z'\n}\nfunction c(p: { path: string }) {\n  d(p)\n}\nfunction b(p: { path: string }) {\n  c(p)\n}\nfunction a(p: { path: string }) {\n  b(p)\n}\nexport const f = () => a(PAGES[0])"),
+    ));
+    // the exported const alias written by another module
+    cases.push((
+        "an exported const alias written elsewhere",
+        case(&[
+            ("lib/pages.ts", PAGES),
+            (
+                "lib/m.ts",
+                "import { PAGES } from './pages'\nconst own = PAGES[0]\nexport { own }\n",
+            ),
+            (
+                "lib/w.ts",
+                "import { own } from './m'\nexport function f() {\n  own.path = '/z'\n}\n",
+            ),
+            ("lib/r.ts", READER),
+        ]),
+    ));
+    assert_cases_refused(cases);
+}
+
+/// F610: the F599 rows this round accepts (D2, D3, D4 name each), as they were written there.
+#[test]
+fn f610_f599_rows_now_accepted() {
+    let arr = "export const ARR = [{ k: 'a' }]\n";
+    let c_arr = "import { ARR } from './base'\nexport const m = ARR.map((x) => `${x.k}`)\n";
+    let m = |s: &str| format!("import {{ ARR }} from './base'\n{s}\n");
+    let k = "import { ARR } from './arr'\nexport const K = ARR.map((p) => p.k)\n";
+    assert_last_clean(vec![
+        (
+            "D2 an alias stored in a clean module",
+            case(&[
+                ("lib/base.ts", arr),
+                ("lib/m.ts", &m("const a = ARR\nexport const n = a.length")),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "D3 compared by identity",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/m.ts",
+                    &m("export const same = (o: unknown) => o === ARR"),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "D2 an alias in an exporter's function",
+            case(&[
+                (
+                    "lib/arr.ts",
+                    &format!(
+                        "{ARR_LIT}export function alias() {{\n  const a = ARR\n  return a.length\n}}\n"
+                    ),
+                ),
+                ("lib/k.ts", k),
+            ]),
+        ),
+        (
+            "D4 an item handed to a function that does nothing with it",
+            case(&[
+                (
+                    "lib/arr.ts",
+                    &format!(
+                        "{ARR_LIT}export function each() {{\n  for (const x of ARR) keep(x)\n}}\nfunction keep(x: unknown) {{\n  void x\n}}\n"
+                    ),
+                ),
+                ("lib/k.ts", k),
+            ]),
+        ),
+        (
+            "D3 typeof",
+            case(&[
+                (
+                    "lib/arr.ts",
+                    &format!("{ARR_LIT}export const type = typeof ARR\n"),
+                ),
+                ("lib/k.ts", k),
+            ]),
+        ),
+        (
+            "D3 ===",
+            case(&[
+                (
+                    "lib/arr.ts",
+                    &format!("{ARR_LIT}export const same2 = (o: unknown) => o === ARR\n"),
+                ),
+                ("lib/k.ts", k),
+            ]),
+        ),
+    ]);
 }
