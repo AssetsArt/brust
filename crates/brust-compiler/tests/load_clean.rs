@@ -1640,17 +1640,6 @@ fn f599_d1_a_value_with_a_mention_outside_the_list_is_not_data() {
         ),
         // the escapes the amendment names, in a third module that is itself load-clean
         (
-            "handed to a function in a clean module",
-            case(&[
-                ("lib/base.ts", arr),
-                (
-                    "lib/m.ts",
-                    &m("const count = (l: unknown[]) => l.length\nexport const n = count(ARR)"),
-                ),
-                ("lib/c.ts", c_arr),
-            ]),
-        ),
-        (
             "JSON.stringify of it",
             case(&[
                 ("lib/base.ts", arr),
@@ -2108,6 +2097,17 @@ fn f610_f599_rows_now_accepted() {
             ]),
         ),
         (
+            "F614 D2 handed to a function in a clean module that only reads it",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/m.ts",
+                    &m("const count = (l: unknown[]) => l.length\nexport const n = count(ARR)"),
+                ),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
             "D3 compared by identity",
             case(&[
                 ("lib/base.ts", arr),
@@ -2163,4 +2163,71 @@ fn f610_f599_rows_now_accepted() {
             ]),
         ),
     ]);
+}
+
+/// F614 D1: the five read-only globals read their first argument safely; the writing ones, a shadowed `Object` and
+/// `.call` keep today's refusal.
+#[test]
+fn f614_read_only_globals() {
+    assert_last_clean(vec![
+        (
+            "Object.keys",
+            with_m("export const f = () => Object.keys(PAGES[0]).length"),
+        ),
+        (
+            "Object.values",
+            with_m(
+                "export const f = () => Object.values(PAGES[0]).filter((v) => v === '/a').length",
+            ),
+        ),
+        (
+            "Object.entries",
+            with_m(
+                "export const f = () => Object.entries({ x: 1 }).length + Object.keys(PAGES).length",
+            ),
+        ),
+        (
+            "Object.hasOwn",
+            with_m("export const f = (k: string) => Object.hasOwn(PAGES[0], k)"),
+        ),
+        (
+            "Array.isArray",
+            with_m("export const f = () => Array.isArray(PAGES[0].alt)"),
+        ),
+    ]);
+    let rows: Vec<(&'static str, &str)> = vec![
+        (
+            "Object.assign",
+            "export const f = () => Object.assign(PAGES[0], { path: '/z' })",
+        ),
+        (
+            "Object.defineProperty",
+            "export const f = () => Object.defineProperty(PAGES[0], 'path', { value: '/z' })",
+        ),
+        (
+            "Object.freeze",
+            "export const f = () => Object.freeze(PAGES[0])",
+        ),
+        (
+            "Reflect.set",
+            "export const f = () => Reflect.set(PAGES[0], 'path', '/z')",
+        ),
+        (
+            "a shadowed Object",
+            "const Object = { keys: (o: any) => { o.path = '/z'; return [] } }\nexport const f = () => Object.keys(PAGES[0])",
+        ),
+        (
+            "keys.call",
+            "export const f = () => Object.keys.call(null, PAGES[0])",
+        ),
+        (
+            "entries of containers",
+            "export const f = () => Object.entries(PAGES).map((e) => e[1])",
+        ),
+    ];
+    let mut cases = Vec::new();
+    for (what, m) in rows {
+        cases.push((what, with_m(m)));
+    }
+    assert_cases_refused(cases);
 }
