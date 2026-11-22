@@ -74,6 +74,10 @@ pub struct LoadWrites {
     pub escaped: HashSet<ExportKey>,
     /// A module of the build could not be read or parsed, or a dynamic `import()` names no literal: nothing is data.
     pub escaped_all: bool,
+    /// F615 (AMENDMENT 2): every written key resolved to the export(s) that DECLARE it (`declaring`, through
+    /// `export { x } from`, `import { x }; export { x }` and `export *`; an ambiguous `export *` gives every candidate).
+    /// A written `(m, "*")` also marks `*` of every module `m` re-exports from. A key nothing declares stays as itself.
+    pub declared_written: HashSet<ExportKey>,
 }
 
 impl LoadWrites {
@@ -83,6 +87,18 @@ impl LoadWrites {
             .get(&(module.to_string(), export.to_string()))
             .or_else(|| self.written.get(&(module.to_string(), "*".to_string())))
             .map(String::as_str)
+    }
+
+    /// F615 (AMENDMENT 2): some module writes the export `(module, export)` declares, under any name or through any
+    /// re-export (or every export of the module).
+    pub fn declaration_written(&self, module: &str, export: &str) -> bool {
+        self.why(module, export).is_some()
+            || self
+                .declared_written
+                .contains(&(module.to_string(), export.to_string()))
+            || self
+                .declared_written
+                .contains(&(module.to_string(), "*".to_string()))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -95,7 +111,9 @@ impl LoadWrites {
         let mut rows: Vec<(&String, &String, &String)> =
             self.written.iter().map(|((m, e), w)| (m, e, w)).collect();
         rows.sort();
-        serde_json::json!({ "written": rows, "writers": self.writers, "load_clean": self.load_clean }).to_string()
+        let mut declared: Vec<&ExportKey> = self.declared_written.iter().collect();
+        declared.sort();
+        serde_json::json!({ "written": rows, "writers": self.writers, "load_clean": self.load_clean, "declared_written": declared }).to_string()
     }
 
     pub fn from_json(text: &str) -> serde_json::Result<Self> {
@@ -106,6 +124,8 @@ impl LoadWrites {
             writers: Vec<(String, Vec<String>)>,
             #[serde(default)]
             load_clean: Vec<String>,
+            #[serde(default)]
+            declared_written: Vec<ExportKey>,
         }
         let j: J = serde_json::from_str(text)?;
         Ok(LoadWrites {
@@ -114,6 +134,7 @@ impl LoadWrites {
             load_clean: j.load_clean,
             escaped: HashSet::new(),
             escaped_all: false,
+            declared_written: j.declared_written.into_iter().collect(),
         })
     }
 }
@@ -220,6 +241,7 @@ pub fn scan_for(
     }
     let in_browser = |p: &str| browser.is_none_or(|b| b.contains(p));
     let mut out = propagate(&scanned, &read_only);
+    out.declared_written = declared_written(&scanned, &out.written);
     // F599 (D1'): the mentions of every export in every module of the build, before any module is judged.
     out.escaped_all = unreadable.iter().any(|p| in_browser(p));
     escaped_exports(&scanned, opts, &mut out, &in_browser);
@@ -355,6 +377,41 @@ fn container_at(e: &js_ast::Expr, path: &[Seg]) -> bool {
         | E::EBigInt(_) => false,
         _ => true,
     }
+}
+
+/// F615 (AMENDMENT 2): see `LoadWrites::declared_written`.
+fn declared_written(mods: &[Scanned], written: &HashMap<ExportKey, String>) -> HashSet<ExportKey> {
+    let mut out = HashSet::new();
+    for k in written.keys() {
+        if k.1 == "*" {
+            // every export of a module that re-exports others: every export of those (fail closed)
+            let mut todo = vec![k.0.clone()];
+            let mut seen = HashSet::new();
+            while let Some(p) = todo.pop() {
+                if !seen.insert(p.clone()) {
+                    continue;
+                }
+                out.insert((p.clone(), "*".to_string()));
+                if let Some(m) = mods.iter().find(|m| m.path == p) {
+                    todo.extend(m.follows.iter().map(|(_, t, _)| t.clone()));
+                    todo.extend(m.stars.iter().cloned());
+                    todo.extend(
+                        m.imports
+                            .values()
+                            .filter(|i| {
+                                m.exports
+                                    .iter()
+                                    .any(|(_, l)| l.is_some_and(|l| m.imports.get(&l) == Some(i)))
+                            })
+                            .map(|i| i.0.clone()),
+                    );
+                }
+            }
+            continue;
+        }
+        out.extend(declaring(mods, k, &mut HashSet::new()));
+    }
+    out
 }
 
 /// The exports a read of `k` reaches at their declaration, followed through re-exports (`export { x } from`,

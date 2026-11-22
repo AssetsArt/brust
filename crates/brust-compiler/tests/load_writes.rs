@@ -174,6 +174,9 @@ fn the_json_the_build_hands_every_compile_round_trips() {
     assert_eq!(written(&back), written(&lw));
     assert_eq!(back.writers, lw.writers);
     assert!(!back.writers.is_empty());
+    // F615: the declaring exports of the written keys reach every compile too
+    assert_eq!(back.declared_written, lw.declared_written);
+    assert!(!back.declared_written.is_empty());
 }
 
 fn diags(root: &std::path::Path, file: &str, lw: Option<LoadWrites>) -> Vec<String> {

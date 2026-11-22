@@ -829,6 +829,48 @@ impl<'a> NameTable<'a> {
         }
     }
 
+    /// F615: drops the module constants another module of the app writes at load (F230): the prop-default folder
+    /// (F153b) must not print a value the app changes. F230 keys a write by EXPORT name, so a constant is dropped when
+    /// its own name or any name it is exported under (`export { NS as NO_SIDE }`, `export default NS`) is `written`.
+    pub fn forget_written_inits(&mut self, ast: &js_ast::Ast<'_>, written: &dyn Fn(&str) -> bool) {
+        use js_ast::stmt::Data as S;
+        if self.module_inits.is_empty() {
+            return;
+        }
+        let mut exported: HashMap<String, Vec<String>> = HashMap::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    S::SExportClause(c) => {
+                        for item in c.items.slice() {
+                            exported
+                                .entry(self.name(item.name.ref_))
+                                .or_default()
+                                .push(String::from_utf8_lossy(item.alias.slice()).into_owned());
+                        }
+                    }
+                    S::SExportDefault(d) => {
+                        if let js_ast::StmtOrExpr::Expr(e) = &d.value
+                            && let E::EIdentifier(id) = &e.data
+                        {
+                            exported
+                                .entry(self.name(id.ref_))
+                                .or_default()
+                                .push("default".into());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.module_inits.retain(|n, _| {
+            !written(n)
+                && !exported
+                    .get(n)
+                    .is_some_and(|es| es.iter().any(|e| written(e)))
+        });
+    }
+
     /// See `module_inits`.
     pub fn module_inits(&self) -> &HashMap<String, js_ast::Expr> {
         &self.module_inits

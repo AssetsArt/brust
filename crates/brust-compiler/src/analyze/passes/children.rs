@@ -1128,6 +1128,145 @@ struct Inner {
     /// F494: the component is static (no host of its own): only then are its records fed per row of a fixed list it sits
     /// in (a native wrapper in a list keeps F328c's fallback).
     is_static: bool,
+    /// F615 D1: each declared prop's value when a call site omits it: its default as the lowering prints it (the
+    /// component's own `PropDecl::default`, already folded by F153b), `undefined` without one, unknown otherwise.
+    omitted: HashMap<String, Omitted>,
+}
+
+/// F615 D1: what an omitted prop is.
+#[derive(Clone, Debug)]
+enum Omitted {
+    Value(serde_json::Value),
+    Undefined,
+    Unknown,
+}
+
+/// F615 D2/D3: a guard simplified over known values.
+#[derive(Debug, PartialEq)]
+enum Tri {
+    True,
+    False,
+    Guard(RowGuard),
+}
+
+/// F615 D2: the value at `path` (`root.a[0].b`; `[idx]` = a row) when `root` is known, `None` when it cannot be told: a
+/// member of `undefined` / `null` (React would throw there), a member of a primitive, a row index.
+fn read_known(root: &Option<serde_json::Value>, rest: &str) -> Option<Option<serde_json::Value>> {
+    let mut cur = root.clone();
+    let mut segs: Vec<String> = Vec::new();
+    for part in rest.split('.').filter(|p| !p.is_empty()) {
+        let mut it = part.split('[');
+        if let Some(head) = it.next()
+            && !head.is_empty()
+        {
+            segs.push(head.to_string());
+        }
+        for b in it {
+            segs.push(format!("[{}", b.trim_end_matches(']')));
+        }
+    }
+    for seg in segs {
+        let v = cur?;
+        cur = match (&v, seg.strip_prefix('[')) {
+            (_, Some(i)) => {
+                let i: usize = i.parse().ok()?;
+                match &v {
+                    serde_json::Value::Array(xs) => xs.get(i).cloned(),
+                    _ => return None,
+                }
+            }
+            (serde_json::Value::Object(o), None) => o.get(&seg).cloned(),
+            _ => return None,
+        };
+    }
+    Some(cur)
+}
+
+fn js_truthy(v: &Option<serde_json::Value>) -> bool {
+    use serde_json::Value as J;
+    match v {
+        None | Some(J::Null) => false,
+        Some(J::Bool(b)) => *b,
+        Some(J::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
+        Some(J::String(s)) => !s.is_empty(),
+        Some(J::Array(_) | J::Object(_)) => true,
+    }
+}
+
+/// F615 D2/D3: `g` with every atom over an omitted prop of known value evaluated (JS semantics, as the server evaluates
+/// the guard), then simplified three-valued. `known(path)` is `Some(value at path)` for such a path, `None` otherwise.
+fn simplify_guard(g: &RowGuard, known: &dyn Fn(&str) -> Option<Option<serde_json::Value>>) -> Tri {
+    match g {
+        RowGuard::Truthy(p) => match known(p) {
+            Some(v) => {
+                if js_truthy(&v) {
+                    Tri::True
+                } else {
+                    Tri::False
+                }
+            }
+            None => Tri::Guard(g.clone()),
+        },
+        RowGuard::Eq(p, lit) => match known(p) {
+            Some(None) => Tri::False,
+            Some(Some(v)) => match (&v, lit) {
+                (serde_json::Value::Array(_) | serde_json::Value::Object(_), _)
+                | (_, serde_json::Value::Array(_) | serde_json::Value::Object(_)) => {
+                    Tri::Guard(g.clone())
+                }
+                (serde_json::Value::Number(a), serde_json::Value::Number(b)) => {
+                    if a.as_f64() == b.as_f64() {
+                        Tri::True
+                    } else {
+                        Tri::False
+                    }
+                }
+                _ => {
+                    if v == *lit {
+                        Tri::True
+                    } else {
+                        Tri::False
+                    }
+                }
+            },
+            None => Tri::Guard(g.clone()),
+        },
+        RowGuard::Not(x) => match simplify_guard(x, known) {
+            Tri::True => Tri::False,
+            Tri::False => Tri::True,
+            Tri::Guard(x) => Tri::Guard(RowGuard::Not(Box::new(x))),
+        },
+        RowGuard::All(xs) => {
+            let mut left = Vec::new();
+            for x in xs {
+                match simplify_guard(x, known) {
+                    Tri::False => return Tri::False,
+                    Tri::True => {}
+                    Tri::Guard(x) => left.push(x),
+                }
+            }
+            match left.len() {
+                0 => Tri::True,
+                1 => Tri::Guard(left.pop().unwrap()),
+                _ => Tri::Guard(RowGuard::All(left)),
+            }
+        }
+        RowGuard::Any(xs) => {
+            let mut left = Vec::new();
+            for x in xs {
+                match simplify_guard(x, known) {
+                    Tri::True => return Tri::True,
+                    Tri::False => {}
+                    Tri::Guard(x) => left.push(x),
+                }
+            }
+            match left.len() {
+                0 => Tri::False,
+                1 => Tri::Guard(left.pop().unwrap()),
+                _ => Tri::Guard(RowGuard::Any(left)),
+            }
+        }
+    }
 }
 
 impl Inner {
@@ -1146,6 +1285,20 @@ impl Inner {
                 _ => false,
             },
             is_static: matches!(ir.tier, Tier::Static),
+            omitted: ir
+                .props
+                .iter()
+                .map(|p| {
+                    let o = match &p.default {
+                        None => Omitted::Undefined,
+                        Some(d) => match d.json_literal_ordered() {
+                            Some(j) => Omitted::Value(j.to_value()),
+                            None => Omitted::Unknown,
+                        },
+                    };
+                    (p.name.clone(), o)
+                })
+                .collect(),
             fixed: ir.specialised
                 && matches!(ir.tier, Tier::Static)
                 && ir.props.iter().all(|p| {
@@ -6076,7 +6229,59 @@ impl Walker<'_, '_> {
         // A spread may carry any key: it matters only for a root a record binds from this wrapper's props (below).
         let spread = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
         let mut out = Vec::new();
+        // F615 D1: the value of a prop this call site omits (none is known when a spread may carry any key).
+        let known = |path: &str| -> Option<Option<serde_json::Value>> {
+            if spread {
+                return None;
+            }
+            let end = path.find(['.', '[']).unwrap_or(path.len());
+            let (root, rest) = path.split_at(end);
+            if props.iter().any(|(k, _)| k == root) {
+                return None;
+            }
+            match inner.omitted.get(root)? {
+                Omitted::Value(v) => read_known(&Some(v.clone()), rest),
+                // D2: `x` itself is `undefined`; a member of it is not evaluated (React would throw there)
+                Omitted::Undefined if rest.is_empty() => Some(None),
+                _ => None,
+            }
+        };
         for r in &inner.records {
+            // F615 D3: the record's condition over omitted props, evaluated. FALSE = the instance is never rendered at
+            // this call site; the template still prints the branch (guarded at request time by the same default) and
+            // reads its slot there, so a PLACEHOLDER keeps the record's number: no loops, every prop `undefined`, a
+            // condition that is always false (`any: []`), so the server never runs its job. It is decided before the list and
+            // computed-value checks: nothing is refused on its behalf. TRUE = no condition from the inner component.
+            let r_when = match &r.when {
+                Some(g) if !r.when_opaque => match simplify_guard(g, &known) {
+                    Tri::False => {
+                        // every child prop the record binds stays bound (the server checks a job's input roots
+                        // against them at boot), to `undefined`: read only after the guard, which never holds
+                        let exprs = r
+                            .props
+                            .keys()
+                            .chain(r.literals.keys())
+                            .chain(r.exprs.keys())
+                            .map(|k| (k.clone(), crate::lower::server_expr::UNDEFINED.to_string()))
+                            .collect();
+                        out.push(InstanceRecord {
+                            child_id: r.child_id.clone(),
+                            k: 0,
+                            loops: Vec::new(),
+                            props: Default::default(),
+                            literals: Default::default(),
+                            exprs,
+                            rows_literal: None,
+                            when: Some(RowGuard::Any(Vec::new())),
+                            when_opaque: false,
+                        });
+                        continue;
+                    }
+                    Tri::True => None,
+                    Tri::Guard(g) => Some(g),
+                },
+                other => other.clone(),
+            };
             // F494: a fixed-props clone's own list (one, over a props path) rebases like its props do; anything deeper,
             // a constant list, or a list inside a list here, stays refused.
             if r.rows_literal.is_some()
@@ -6117,7 +6322,7 @@ impl Walker<'_, '_> {
             // F502: the record's condition, over this call site's props, under this call site's own branches. A linked
             // call site may change what the condition reads on the client: its job keeps running everywhere (as before).
             let fixed_ctx = in_list || inner.fixed;
-            let mut when = r.when.clone();
+            let mut when = r_when;
             let mut when_opaque = r.when_opaque;
             if let Some(g) = &mut when {
                 let mut ok = true;
