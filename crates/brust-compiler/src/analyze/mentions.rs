@@ -54,6 +54,10 @@ pub enum Pos {
     Free,
     /// Always an escape.
     Escape,
+    /// F614 ruling (F610 D5 amended): the receiver of a method not on the list. Judged like `Free`: an escape only when
+    /// the path reaches a container (a method there may change it in place); on a primitive it is a method of the
+    /// built-in prototype (the trust base), and a primitive cannot be written into.
+    Method,
 }
 
 /// A tracked binding a mention is rooted at: a local binding by key, or a member of a namespace import.
@@ -169,7 +173,8 @@ impl Callees for NoCallees {
     }
 }
 
-/// D4: at most this many summaries nested in one another.
+/// D4: at most this many summaries nested in one another WHILE a summary is made; a memoised summary is reused at any
+/// depth (lead AMENDMENT 2: no depth limit on what a reader reaches; recursion is the condition).
 pub const MAX_SUMMARY_DEPTH: u32 = 3;
 /// D2: passes over a module (or a summarised body) before the bindings settle; past it, nothing is followed.
 const MAX_PASSES: usize = 4;
@@ -998,7 +1003,11 @@ impl<'x, 'a> Scan<'x, 'a> {
             Val::none()
         };
         if !READ_METHODS.contains(&m) {
-            return escape(self, &rv);
+            self.consume(&rv, Pos::Method);
+            for a in c.args.iter() {
+                self.arg(a);
+            }
+            return Val::none();
         }
         // sorting or reversing a handle changes it in place; on a fresh container made here it changes nothing shared
         if matches!(m, "sort" | "reverse") && !rv.hs.is_empty() {
