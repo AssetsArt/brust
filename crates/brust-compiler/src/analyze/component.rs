@@ -438,6 +438,13 @@ fn read_function_as(
 ) {
     crate::analyze::expr::take_printer_panic(); // a flag left by an earlier component is not ours
     let mut names = NameTable::new(ast, func);
+    // F615: a module constant another module writes at load (F230) is not a literal a prop default folds to.
+    if let Some(lw) = opts.and_then(|o| o.load_writes.as_deref())
+        && !lw.is_empty()
+    {
+        let module = ir.source.clone();
+        names.forget_written_inits(ast, &|n| lw.declaration_written(&module, n));
+    }
     names.tag_contexts(&ir.source);
     names.set_collections_recognised(opts.is_some_and(|o| {
         o.packages
