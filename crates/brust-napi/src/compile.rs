@@ -336,12 +336,15 @@ pub fn compile_source(opts: CompileSourceOptions) -> CompiledTree {
 /// exports; the JSON result goes to every `compile_tree` of the build as `loadWrites`. `path_aliases` as for
 /// `compile_tree`; a bad one is ignored (the compile reports it). `source_roots` (F256, F276): the directories besides
 /// the app that a relative import may reach, so a module there can be scanned and an import into it resolves.
+/// `browser` (F610 D1): the modules (as in `modules`) some bundle the build writes for the browser contains; given, only
+/// those can spoil a table for the load-time judge (`load_writes::scan_for`).
 #[napi]
 pub fn scan_load_writes(
     root: String,
     modules: Vec<String>,
     path_aliases: Option<String>,
     source_roots: Option<Vec<String>>,
+    browser: Option<Vec<String>>,
 ) -> String {
     crate::init_tracing();
     let opts = AnalyzeOptions {
@@ -353,7 +356,9 @@ pub fn scan_load_writes(
         ..Default::default()
     };
     brust_compiler::parse::run_on_compiler_thread(|| {
-        brust_compiler::analyze::load_writes::scan(&modules, &opts).to_json()
+        let browser: Option<std::collections::HashSet<String>> =
+            browser.map(|b| b.into_iter().collect());
+        brust_compiler::analyze::load_writes::scan_for(&modules, &opts, browser.as_ref()).to_json()
     })
 }
 

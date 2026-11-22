@@ -128,19 +128,28 @@ export function replaces(kept: Seen, next: Seen): boolean {
  * `list.push(…)` through an import) and returns the JSON every `compileTree` of the build reads: a component whose
  * compiled code reads such an export falls back to React (`module-written`). `modules` are absolute paths.
  */
-export function scanAppWrites(appRoot: string, modules: string[], log: (s: string) => void, sourceRoots: string[] = []): string {
+export function scanAppWrites(appRoot: string, modules: string[], log: (s: string) => void, sourceRoots: string[] = [], browser?: Iterable<string>): string {
   // Keyed as `compileApp` names a file to the compiler (relative to `appRoot`), plus the real-path spelling (as
   // `routeRoots`), so an import resolves to the same key either way.
   const real = realpathSync(appRoot)
   const toKey = (base: string, f: string) => relative(base, f).split(sep).join('/')
   // F276: a module under a `[build] source_roots` directory (`../shared/x.ts`) is scanned too; any other `..` key is not.
   const inSourceRoot = (k: string) => sourceRoots.some((r) => k.startsWith(`${r}/`))
-  const rel = [...new Set(modules.flatMap((f) => [toKey(appRoot, f), toKey(real, realpathSync(f))]))].filter((k) => !k.startsWith('..') || inSourceRoot(k)).sort()
+  const keys = (f: string) => {
+    let r = f
+    try {
+      r = realpathSync(f)
+    } catch {}
+    return [toKey(appRoot, f), toKey(real, r)]
+  }
+  const rel = [...new Set(modules.flatMap(keys))].filter((k) => !k.startsWith('..') || inSourceRoot(k)).sort()
+  // F610 D1: the browser modules, spelled as the modules are.
+  const inBrowser = browser === undefined ? undefined : [...new Set([...browser].flatMap(keys))].sort()
   const { aliases } = readPathAliases(appRoot)
   const t0 = performance.now()
-  const json = scanLoadWrites(appRoot, rel, aliases.length > 0 ? JSON.stringify(aliases) : undefined, sourceRoots.length > 0 ? sourceRoots : undefined)
+  const json = scanLoadWrites(appRoot, rel, aliases.length > 0 ? JSON.stringify(aliases) : undefined, sourceRoots.length > 0 ? sourceRoots : undefined, inBrowser)
   const ms = performance.now() - t0
-  if (process.env.BRUST_BUILD_TIMINGS) log(`[brust] scan load-time writes: ${rel.length} modules in ${ms.toFixed(1)} ms`)
+  if (process.env.BRUST_BUILD_TIMINGS) log(`[brust] scan load-time writes${inBrowser ? ' (browser modules)' : ''}: ${rel.length} modules in ${ms.toFixed(1)} ms`)
   return json
 }
 
