@@ -192,7 +192,7 @@ pub fn scan_for(
     }
     // F599 (D1') + F610 D4: the mentions of every export in every module, with calls of top-level app functions followed
     // through their summaries (which need every module's imports and exports first).
-    let found: Vec<Mentioned> = {
+    let (found, read_only): (Vec<Mentioned>, HashSet<(String, Hand)>) = {
         let fns = Fns {
             mods: &scanned,
             by_path: scanned
@@ -204,13 +204,14 @@ pub fn scan_for(
             memo: Default::default(),
             busy: Default::default(),
         };
-        scanned
+        let found = scanned
             .iter()
             .map(|m| {
                 let parsed = &parsed_all[&m.path];
                 parsed.with_ast(|ast| module_mentions(m, ast, &fns, opts))
             })
-            .collect()
+            .collect();
+        (found, read_only_hands(&scanned, &fns, opts))
     };
     for (m, f) in scanned.iter_mut().zip(found) {
         m.mentions = f.mentions;
@@ -218,7 +219,7 @@ pub fn scan_for(
         m.dynamic = f.dynamic;
     }
     let in_browser = |p: &str| browser.is_none_or(|b| b.contains(p));
-    let mut out = propagate(&scanned);
+    let mut out = propagate(&scanned, &read_only);
     // F599 (D1'): the mentions of every export in every module of the build, before any module is judged.
     out.escaped_all = unreadable.iter().any(|p| in_browser(p));
     escaped_exports(&scanned, opts, &mut out, &in_browser);
@@ -714,6 +715,78 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
     }
 }
 
+/// F614 D2: the hand-offs (by the module that makes them) that are not writes: the callee is a top-level app function
+/// called by name, without a spread, and its summary for that parameter has no `Escape` and no `Free` mention whose path
+/// reaches a container of the handed export's literal (no `Free` mention at all when that literal cannot be read). The
+/// summary follows the parameter into further app calls (F610 D4), so a reader that hands it on to a writer is a writer;
+/// what it returns of the parameter counts as a use where it stands (the caller may write it).
+fn read_only_hands(
+    mods: &[Scanned],
+    fns: &Fns<'_>,
+    opts: &AnalyzeOptions,
+) -> HashSet<(String, Hand)> {
+    let mut out = HashSet::new();
+    for m in mods {
+        for h in m.writes.handed.iter().chain(m.load.handed.iter()) {
+            if h.spread {
+                continue;
+            }
+            let Some(callee) = h.named else { continue };
+            let Some((module, k)) = fns.resolve(&m.path, callee) else {
+                continue;
+            };
+            let Some(s) = fns.summary(&module, k, 1) else {
+                continue;
+            };
+            if h.pos as usize >= s.params {
+                continue;
+            }
+            let uses: Vec<&(u32, Vec<Seg>, Pos)> =
+                s.uses.iter().filter(|(i, _, _)| *i == h.pos).collect();
+            if uses.iter().any(|(_, _, pos)| *pos == Pos::Escape) {
+                continue;
+            }
+            // what it returns of the parameter reaches the caller, who may write it: a use where it stands
+            let returned = s.returned(h.pos);
+            let free: Vec<&Vec<Seg>> = uses
+                .iter()
+                .map(|(_, p, _)| p)
+                .chain(returned.iter())
+                .collect();
+            if !free.is_empty() && !free_reaches_no_container(mods, &h.arg, &free, opts) {
+                continue;
+            }
+            out.insert((m.path.clone(), h.clone()));
+        }
+    }
+    out
+}
+
+/// F614 D2: every path of `free` read from the literal of `k` (at its declaration) gives a primitive.
+fn free_reaches_no_container(
+    mods: &[Scanned],
+    k: &ExportKey,
+    free: &[&Vec<Seg>],
+    opts: &AnalyzeOptions,
+) -> bool {
+    let decl = declaring(mods, k, &mut HashSet::new());
+    let [(module, export)] = decl.as_slice() else {
+        return false;
+    };
+    let Ok(bytes) = std::fs::read(opts.root.join(module)) else {
+        return false;
+    };
+    let Ok(parsed) = crate::parse::parse_cached(module, bytes) else {
+        return false;
+    };
+    parsed.with_ast(|ast| {
+        let Some((value, _)) = crate::analyze::module_effects::export_value(ast, export) else {
+            return false;
+        };
+        free.iter().all(|p| !container_at(value, p))
+    })
+}
+
 /// What `module_mentions` found in one module.
 struct Mentioned {
     mentions: Vec<(ExportKey, Vec<Seg>, Pos)>,
@@ -891,7 +964,8 @@ fn writes_of(
     let mut method_refs: Vec<js_ast::Ref> = Vec::new();
     // Handed on as is (an alias is not followed: `apply(r)` after `const r = await api.post()` hands a call's result),
     // with the callee's import when it is one (a method of a package-made value is package code).
-    let mut handed_refs: Vec<(js_ast::Ref, Option<js_ast::Ref>)> = Vec::new();
+    // F614: with the callee's own binding key when it is called by name, the argument's position and whether it is spread.
+    let mut handed_refs: Vec<HandedRef> = Vec::new();
     // Handed to a global that writes its argument: a write whatever the import is (a function too).
     let mut global_refs: Vec<js_ast::Ref> = Vec::new();
     written_refs.extend(w.member_written.iter().copied());
@@ -918,14 +992,24 @@ fn writes_of(
             None => true,
         };
         if app_callee {
-            for a in call.args.iter() {
+            let named = match &call.target.data {
+                E::EIdentifier(id) => Some(key(id.ref_)),
+                E::EImportIdentifier(id) => Some(key(id.ref_)),
+                _ => None,
+            };
+            let spread = call.args.iter().any(|a| matches!(a.data, E::ESpread(_)));
+            for (i, a) in call.args.iter().enumerate() {
                 let a = match &a.data {
                     E::ESpread(sp) => &sp.value,
                     _ => a,
                 };
                 match &a.data {
-                    E::EIdentifier(id) => handed_refs.push((id.ref_, callee)),
-                    E::EImportIdentifier(id) => handed_refs.push((id.ref_, callee)),
+                    E::EIdentifier(id) => {
+                        handed_refs.push((id.ref_, callee, named, i as u32, spread))
+                    }
+                    E::EImportIdentifier(id) => {
+                        handed_refs.push((id.ref_, callee, named, i as u32, spread))
+                    }
                     _ => {}
                 }
             }
@@ -954,9 +1038,15 @@ fn writes_of(
     };
     let handed = handed_refs
         .iter()
-        .filter_map(|(r, callee)| {
+        .filter_map(|(r, callee, named, pos, spread)| {
             let arg = imports.get(&key(*r))?.clone();
-            Some((arg, callee.and_then(|c| imports.get(&key(c)).cloned())))
+            Some(Hand {
+                arg,
+                callee: callee.and_then(|c| imports.get(&key(c)).cloned()),
+                named: *named,
+                pos: *pos,
+                spread: *spread,
+            })
         })
         .collect();
     let global = global_refs
@@ -971,14 +1061,32 @@ fn writes_of(
     }
 }
 
+/// (argument, callee chain root, callee binding key when called by name, position, spread in the call).
+type HandedRef = (js_ast::Ref, Option<js_ast::Ref>, Option<u32>, u32, bool);
+
+/// An import handed to app code as a bare argument.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Hand {
+    /// The import handed.
+    arg: ExportKey,
+    /// The callee's import, when the callee chain starts at one (a method of a package-made value is package code).
+    callee: Option<ExportKey>,
+    /// F614: the binding key of the callee when it is called by its name (`f(x)`).
+    named: Option<u32>,
+    /// F614: the argument's position.
+    pos: u32,
+    /// F614: some argument of the call is spread.
+    spread: bool,
+}
+
 /// The exports a piece of code writes: through a mutating method call (`list.push(…)`, `team.members.set(…)`), and
 /// otherwise (an assignment, a hand-off).
 #[derive(Default)]
 struct Writes {
     method: BTreeSet<ExportKey>,
     other: BTreeSet<ExportKey>,
-    /// An import handed to code that may write it: (the import, the callee's import when it is one).
-    handed: BTreeSet<(ExportKey, Option<ExportKey>)>,
+    /// An import handed to code that may write it.
+    handed: BTreeSet<Hand>,
     /// An import (a chain rooted at one) handed to a global that writes its argument (`Object.assign(f, …)`).
     global: BTreeSet<ExportKey>,
 }
@@ -1044,7 +1152,7 @@ fn writing_global(target: &js_ast::Expr, names: &NameTable<'_>) -> bool {
 
 /// The written exports: each module's writes, then every export whose code reads a written export (its own module's
 /// tainted locals included), and re-exports of a written one, to a fixpoint.
-fn propagate(mods: &[Scanned]) -> LoadWrites {
+fn propagate(mods: &[Scanned], read_only: &HashSet<(String, Hand)>) -> LoadWrites {
     let mut out = LoadWrites::default();
     let package_made = |k: &ExportKey| {
         mods.iter()
@@ -1057,13 +1165,18 @@ fn propagate(mods: &[Scanned]) -> LoadWrites {
     let function = |k: &ExportKey| is_function(mods, k, &mut HashSet::new());
     // The writes that count: a method call into a package-made value, or a hand-off to its methods, is its API; a
     // function handed on is code to call (F480); a primitive cannot be written.
-    let counted = |w: &Writes| -> BTreeSet<ExportKey> {
+    // F614 D2: a hand-off the callee's summary proves read-only is not a write.
+    let counted = |path: &str, w: &Writes| -> BTreeSet<ExportKey> {
         let method = w.method.iter().filter(|k| !package_made(k));
         let handed = w
             .handed
             .iter()
-            .filter(|(k, callee)| !callee.as_ref().is_some_and(package_made) && !function(k))
-            .map(|(k, _)| k);
+            .filter(|h| {
+                !h.callee.as_ref().is_some_and(package_made)
+                    && !function(&h.arg)
+                    && !read_only.contains(&(path.to_string(), (*h).clone()))
+            })
+            .map(|h| &h.arg);
         w.other
             .iter()
             .chain(method)
@@ -1074,7 +1187,10 @@ fn propagate(mods: &[Scanned]) -> LoadWrites {
             .collect()
     };
     for m in mods {
-        let modules: BTreeSet<String> = counted(&m.load).into_iter().map(|(p, _)| p).collect();
+        let modules: BTreeSet<String> = counted(&m.path, &m.load)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
         if !modules.is_empty() {
             out.writers
                 .push((m.path.clone(), modules.into_iter().collect()));
@@ -1083,7 +1199,7 @@ fn propagate(mods: &[Scanned]) -> LoadWrites {
     out.writers.sort();
     out.writers.dedup();
     for m in mods {
-        for w in &counted(&m.writes) {
+        for w in &counted(&m.path, &m.writes) {
             out.written
                 .entry(w.clone())
                 .or_insert_with(|| format!("{} writes it", m.path));

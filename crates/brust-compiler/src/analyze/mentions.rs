@@ -54,6 +54,10 @@ pub enum Pos {
     Free,
     /// Always an escape.
     Escape,
+    /// F614 ruling (F610 D5 amended): the receiver of a method not on the list. Judged like `Free`: an escape only when
+    /// the path reaches a container (a method there may change it in place); on a primitive it is a method of the
+    /// built-in prototype (the trust base), and a primitive cannot be written into.
+    Method,
 }
 
 /// A tracked binding a mention is rooted at: a local binding by key, or a member of a namespace import.
@@ -144,6 +148,17 @@ pub struct Summary {
     ret: Val,
 }
 
+impl Summary {
+    /// F614: the read paths of parameter `i` that the function returns (itself, or as a member of a fresh container).
+    pub fn returned(&self, i: u32) -> Vec<Vec<Seg>> {
+        self.ret
+            .all()
+            .filter(|h| h.root == Root::Param(i))
+            .map(|h| h.path.clone())
+            .collect()
+    }
+}
+
 /// F610 D4: the summary of the function a call of the binding `callee` (a key of the module being scanned) reaches, made
 /// `depth` summaries deep; `None` ends the track (today's refusal).
 pub trait Callees {
@@ -158,7 +173,8 @@ impl Callees for NoCallees {
     }
 }
 
-/// D4: at most this many summaries nested in one another.
+/// D4: at most this many summaries nested in one another WHILE a summary is made; a memoised summary is reused at any
+/// depth (lead AMENDMENT 2: no depth limit on what a reader reaches; recursion is the condition).
 pub const MAX_SUMMARY_DEPTH: u32 = 3;
 /// D2: passes over a module (or a summarised body) before the bindings settle; past it, nothing is followed.
 const MAX_PASSES: usize = 4;
@@ -854,7 +870,53 @@ impl<'x, 'a> Scan<'x, 'a> {
         }
     }
 
+    /// F614 D1: `Object.keys` / `values` / `entries` / `hasOwn` and `Array.isArray`, called on the global itself.
+    fn read_only_global(&self, d: &js_ast::E::Dot) -> Option<&'static str> {
+        let E::EIdentifier(id) = &d.target.data else {
+            return None;
+        };
+        if !self.names.is_unbound(id.ref_) {
+            return None;
+        }
+        let m = String::from_utf8_lossy(d.name.slice());
+        match (self.names.name(id.ref_).as_str(), m.as_ref()) {
+            ("Object", "keys") => Some("keys"),
+            ("Object", "values") => Some("values"),
+            ("Object", "entries") => Some("entries"),
+            ("Object", "hasOwn") => Some("hasOwn"),
+            ("Array", "isArray") => Some("isArray"),
+            _ => None,
+        }
+    }
+
     fn call(&mut self, c: &js_ast::E::Call) -> Val {
+        // F614 D1: a read-only global reads its first argument (a safe read); nothing of it is kept
+        if let E::EDot(d) = &c.target.data
+            && let Some(g) = self.read_only_global(d)
+            && !c.args.iter().any(|a| matches!(a.data, E::ESpread(_)))
+        {
+            let mut first = Val::none();
+            for (i, a) in c.args.iter().enumerate() {
+                if i == 0 {
+                    first = self.value(a);
+                } else {
+                    self.arg(a);
+                }
+            }
+            return match g {
+                // a fresh list of the handle's members
+                "values" => Val::fresh(Self::items_of(&first).hs),
+                // a fresh list of fresh [key, member] pairs: the pair level is not followed, so the members are used
+                // where they stand
+                "entries" => {
+                    let items = Self::items_of(&first);
+                    self.consume(&items, Pos::Free);
+                    Val::none()
+                }
+                // keys (a list of strings), hasOwn and isArray (booleans): primitives
+                _ => Val::none(),
+            };
+        }
         if let E::EDot(d) = &c.target.data {
             let m = String::from_utf8_lossy(d.name.slice()).into_owned();
             if self.ns_member(&d.target, &m).is_none() {
@@ -941,7 +1003,11 @@ impl<'x, 'a> Scan<'x, 'a> {
             Val::none()
         };
         if !READ_METHODS.contains(&m) {
-            return escape(self, &rv);
+            self.consume(&rv, Pos::Method);
+            for a in c.args.iter() {
+                self.arg(a);
+            }
+            return Val::none();
         }
         // sorting or reversing a handle changes it in place; on a fresh container made here it changes nothing shared
         if matches!(m, "sort" | "reverse") && !rv.hs.is_empty() {

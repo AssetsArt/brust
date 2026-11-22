@@ -1640,17 +1640,6 @@ fn f599_d1_a_value_with_a_mention_outside_the_list_is_not_data() {
         ),
         // the escapes the amendment names, in a third module that is itself load-clean
         (
-            "handed to a function in a clean module",
-            case(&[
-                ("lib/base.ts", arr),
-                (
-                    "lib/m.ts",
-                    &m("const count = (l: unknown[]) => l.length\nexport const n = count(ARR)"),
-                ),
-                ("lib/c.ts", c_arr),
-            ]),
-        ),
-        (
             "JSON.stringify of it",
             case(&[
                 ("lib/base.ts", arr),
@@ -2067,7 +2056,8 @@ fn f610_every_write_through_a_followed_value_is_refused() {
     for (what, m) in rows {
         cases.push((what, with_m(m)));
     }
-    // a helper four summaries deep that writes: past the bound nothing is followed
+    // a helper four summaries deep that writes: the write is followed (summaries are memoised and reused at any depth,
+    // AMENDMENT 2) and refused
     cases.push((
         "a write four summaries deep",
         with_m("function d(p: { path: string }) {\n  p.path = '/z'\n}\nfunction c(p: { path: string }) {\n  d(p)\n}\nfunction b(p: { path: string }) {\n  c(p)\n}\nfunction a(p: { path: string }) {\n  b(p)\n}\nexport const f = () => a(PAGES[0])"),
@@ -2104,6 +2094,17 @@ fn f610_f599_rows_now_accepted() {
             case(&[
                 ("lib/base.ts", arr),
                 ("lib/m.ts", &m("const a = ARR\nexport const n = a.length")),
+                ("lib/c.ts", c_arr),
+            ]),
+        ),
+        (
+            "F614 D2 handed to a function in a clean module that only reads it",
+            case(&[
+                ("lib/base.ts", arr),
+                (
+                    "lib/m.ts",
+                    &m("const count = (l: unknown[]) => l.length\nexport const n = count(ARR)"),
+                ),
                 ("lib/c.ts", c_arr),
             ]),
         ),
@@ -2163,4 +2164,145 @@ fn f610_f599_rows_now_accepted() {
             ]),
         ),
     ]);
+}
+
+/// F614 D1: the five read-only globals read their first argument safely; the writing ones, a shadowed `Object` and
+/// `.call` keep today's refusal.
+#[test]
+fn f614_read_only_globals() {
+    assert_last_clean(vec![
+        (
+            "Object.keys",
+            with_m("export const f = () => Object.keys(PAGES[0]).length"),
+        ),
+        (
+            "Object.values",
+            with_m(
+                "export const f = () => Object.values(PAGES[0]).filter((v) => v === '/a').length",
+            ),
+        ),
+        (
+            "Object.entries",
+            with_m(
+                "export const f = () => Object.entries({ x: 1 }).length + Object.keys(PAGES).length",
+            ),
+        ),
+        (
+            "Object.hasOwn",
+            with_m("export const f = (k: string) => Object.hasOwn(PAGES[0], k)"),
+        ),
+        (
+            "Array.isArray",
+            with_m("export const f = () => Array.isArray(PAGES[0].alt)"),
+        ),
+    ]);
+    let rows: Vec<(&'static str, &str)> = vec![
+        (
+            "Object.assign",
+            "export const f = () => Object.assign(PAGES[0], { path: '/z' })",
+        ),
+        (
+            "Object.defineProperty",
+            "export const f = () => Object.defineProperty(PAGES[0], 'path', { value: '/z' })",
+        ),
+        (
+            "Object.freeze",
+            "export const f = () => Object.freeze(PAGES[0])",
+        ),
+        (
+            "Reflect.set",
+            "export const f = () => Reflect.set(PAGES[0], 'path', '/z')",
+        ),
+        (
+            "a shadowed Object",
+            "const Object = { keys: (o: any) => { o.path = '/z'; return [] } }\nexport const f = () => Object.keys(PAGES[0])",
+        ),
+        (
+            "keys.call",
+            "export const f = () => Object.keys.call(null, PAGES[0])",
+        ),
+        (
+            "entries of containers",
+            "export const f = () => Object.entries(PAGES).map((e) => e[1])",
+        ),
+    ];
+    let mut cases = Vec::new();
+    for (what, m) in rows {
+        cases.push((what, with_m(m)));
+    }
+    assert_cases_refused(cases);
+}
+
+/// F614 ruling (F610 D5 amended): a method not on the list spoils only when its receiver's path reaches a container;
+/// on a string or number member it is the built-in prototype's (the trust base).
+#[test]
+fn f614_an_unknown_method_on_a_primitive_member_is_a_read() {
+    let nums = "export const NUMS = [{ n: 1.5, o: { k: 1 } }]\n";
+    let with_nums = |m: &str| {
+        case(&[
+            ("lib/pages.ts", PAGES),
+            ("lib/nums.ts", nums),
+            (
+                "lib/m.ts",
+                &format!(
+                    "import {{ PAGES }} from './pages'\nimport {{ NUMS }} from './nums'\n{m}\n"
+                ),
+            ),
+            (
+                "lib/r.ts",
+                "import { PAGES } from './pages'\nimport { NUMS } from './nums'\nexport const NAMES = PAGES.map((p) => p.key)\nexport const N = NUMS.map((x) => x.n)\n",
+            ),
+        ])
+    };
+    assert_last_clean(vec![
+        (
+            "normalize on a string member",
+            with_nums("export const f = () => PAGES[0].path.normalize('NFC')"),
+        ),
+        (
+            "localeCompare on a string member",
+            with_nums("export const f = (t: string) => PAGES[0].key.localeCompare(t)"),
+        ),
+        (
+            "toFixed on a number member",
+            with_nums("export const f = () => NUMS[0].n.toFixed(2)"),
+        ),
+        (
+            "the fold/nfc shape, two helpers deep, inside callbacks",
+            with_nums(
+                "const nfc = (s: string) => s.normalize('NFC')\nconst fold = (s: string) => nfc(s).toLowerCase()\nexport const f = (n: string) => PAGES.some((p) => [p.path, ...p.alt].some((x) => fold(x) === n))",
+            ),
+        ),
+    ]);
+    let rows: Vec<(&'static str, &str)> = vec![
+        (
+            "fill on a list",
+            "export const f = () => PAGES[0].alt.fill('')",
+        ),
+        (
+            "push on a list",
+            "export const f = () => PAGES[0].alt.push('/z')",
+        ),
+        (
+            "an unknown method on a list",
+            "export const f = () => (PAGES as any).unknownMethod()",
+        ),
+        (
+            "an unknown method on an object member",
+            "export const f = () => (PAGES[0] as any).unknownMethod()",
+        ),
+        (
+            "an unknown method on a member whose value is an object",
+            "export const f = () => (NUMS[0].o as any).unknownMethod()",
+        ),
+        (
+            "an unknown method through a helper on an object",
+            "const m = (o: any) => o.unknownMethod()\nexport const f = () => m(NUMS[0].o)",
+        ),
+    ];
+    let mut cases = Vec::new();
+    for (what, m) in rows {
+        cases.push((what, with_nums(m)));
+    }
+    assert_cases_refused(cases);
 }

@@ -587,3 +587,131 @@ fn an_anonymous_default_function_handed_on_is_not_written() {
     );
     assert_eq!(written(&lw), ["lib/d.ts#default"]);
 }
+
+/// F614: `t.ts` declares the table, `c.ts` hands it to a function; `T` is written exactly when the function may write it.
+fn handed_written(name: &str, files: &[(&str, &str)]) -> bool {
+    let mut all = vec![(
+        "t.ts",
+        "export const T = { a: { k: 1 }, b: 2 }\nexport const L = [{ k: 'a' }]\n",
+    )];
+    all.extend_from_slice(files);
+    let (_, lw) = app(name, &all);
+    let w = written(&lw);
+    w.contains(&"t.ts#T".to_string()) || w.contains(&"t.ts#L".to_string())
+}
+
+/// F614 D2: an import handed to a top-level app function whose summary only reads that parameter is not a write.
+#[test]
+fn f614_an_import_handed_to_a_reader_is_not_written() {
+    let report = "import { T } from './t'\nfunction checkKeys(set: unknown, table: Readonly<Record<string, unknown>>, at: string): string | null {\n  const bad = Object.keys(set as object).find((k) => !Object.hasOwn(table, k))\n  return bad ? `${at}: ${bad}` : null\n}\nexport const check = (s: unknown) => checkKeys(s, T, 'x')\n";
+    let imported_reader = "export function keysOf(t: object): string[] {\n  return Object.keys(t).filter((k) => Object.hasOwn(t, k))\n}\n";
+    let second = "import { T } from './t'\nfunction inner(t: { b: number }) {\n  return t.b\n}\nfunction outer(t: { b: number }) {\n  return inner(t) + 1\n}\nexport const n = () => outer(T)\n";
+    let rows: Vec<(&str, Vec<(&str, &str)>)> = vec![
+        ("report", vec![("c.ts", report)]),
+        (
+            "imported",
+            vec![
+                ("r.ts", imported_reader),
+                (
+                    "c.ts",
+                    "import { T } from './t'\nimport { keysOf } from './r'\nexport const ks = () => keysOf(T)\n",
+                ),
+            ],
+        ),
+        ("second", vec![("c.ts", second)]),
+        (
+            "primitive-free",
+            vec![(
+                "c.ts",
+                "import { T } from './t'\nfunction b(t: { b: number }) {\n  return `${t.b}`\n}\nexport const s = () => b(T)\n",
+            )],
+        ),
+    ];
+    let bad: Vec<&str> = rows
+        .iter()
+        .filter(|(n, f)| handed_written(&format!("f614-ok-{n}"), f))
+        .map(|(n, _)| *n)
+        .collect();
+    assert!(bad.is_empty(), "written but only read: {bad:?}");
+}
+
+/// F614 D2: every hand-off that can write or keep the import stays a write. (A callee that is a parameter or a package
+/// function, and an import spread inside an array literal, were never hand-offs F230 counts: unchanged, not rows here.)
+#[test]
+fn f614_an_import_handed_to_a_writer_or_keeper_is_written() {
+    let one = |body: &str, call: &str| {
+        format!("import {{ T, L }} from './t'\n{body}\nexport const go = () => {call}\n")
+    };
+    let rows: Vec<(&str, String)> = vec![
+        (
+            "assigns a member",
+            one("function w(t: any) {\n  t.b = 3\n}", "w(T)"),
+        ),
+        (
+            "mutating method",
+            one("function w(l: any[]) {\n  l.push(1)\n}", "w(L)"),
+        ),
+        (
+            "Object.assign",
+            one(
+                "function w(t: any) {\n  Object.assign(t, { b: 3 })\n}",
+                "w(T)",
+            ),
+        ),
+        (
+            "stores it",
+            one(
+                "let kept: unknown\nfunction w(t: unknown) {\n  kept = t\n}\nexport const k = () => kept",
+                "w(T)",
+            ),
+        ),
+        (
+            "returns it",
+            one("function w(t: unknown) {\n  return t\n}", "w(T)"),
+        ),
+        (
+            "hands it to a writer",
+            one(
+                "function x(t: any) {\n  t.b = 3\n}\nfunction w(t: unknown) {\n  x(t)\n}",
+                "w(T)",
+            ),
+        ),
+        (
+            "recursive",
+            one(
+                "function w(t: any, n: number): number {\n  return n > 0 ? w(t, n - 1) : t.b\n}",
+                "w(T, 2)",
+            ),
+        ),
+        (
+            "callee given by a conditional",
+            one(
+                "function a(t: any) {\n  return t.b\n}\nfunction b(t: any) {\n  return t.b\n}",
+                "(Math.random() > 0.5 ? a : b)(T)",
+            ),
+        ),
+        (
+            "spread argument",
+            one("function w(t: any) {\n  return t.k\n}", "w(...L)"),
+        ),
+        (
+            "destructured parameter",
+            one("function w({ a }: any) {\n  a.k = 2\n}", "w(T)"),
+        ),
+        (
+            "a member reaching a container used where it stands",
+            one(
+                "let kept: unknown\nfunction w(t: any) {\n  kept = t.a\n}",
+                "w(T)",
+            ),
+        ),
+    ];
+    let mut missed = Vec::new();
+    for (i, (n, src)) in rows.iter().enumerate() {
+        let files = [("c.ts", src.as_str())];
+        if !handed_written(&format!("f614-w-{i}"), &files) {
+            missed.push(*n);
+        }
+    }
+    assert!(missed.is_empty(), "not written but may be: {missed:?}");
+}

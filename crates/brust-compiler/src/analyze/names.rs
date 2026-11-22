@@ -1348,6 +1348,13 @@ impl<'a> NameTable<'a> {
     }
 
     /// Import binding of `r`, if any: (module path, imported name).
+    /// F614: `r` names a global (no declaration or import in the module binds it).
+    pub fn is_unbound(&self, r: js_ast::Ref) -> bool {
+        self.symbols
+            .get(self.key(r) as usize)
+            .is_some_and(|s| s.kind == js_ast::symbol::Kind::Unbound)
+    }
+
     pub fn import_of(&self, r: js_ast::Ref) -> Option<(&str, &str)> {
         self.imports
             .get(&self.key(r))
