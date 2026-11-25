@@ -2073,10 +2073,7 @@ pub fn plain_import_read(
     {
         return false;
     }
-    let Ok(bytes) = std::fs::read(opts.root.join(&module)) else {
-        return false;
-    };
-    let Ok(parsed) = crate::parse::parse_cached(&module, bytes) else {
+    let Ok(parsed) = crate::parse::parse_file(&opts.root, &module) else {
         return false;
     };
     parsed.with_ast(|ast| {
@@ -2122,10 +2119,7 @@ pub fn literal_array_import(
     {
         return false;
     }
-    let Ok(bytes) = std::fs::read(opts.root.join(&module)) else {
-        return false;
-    };
-    let Ok(parsed) = crate::parse::parse_cached(&module, bytes) else {
+    let Ok(parsed) = crate::parse::parse_file(&opts.root, &module) else {
         return false;
     };
     parsed.with_ast(|ast| {
@@ -2174,8 +2168,7 @@ pub fn import_data(
     {
         return None;
     }
-    let bytes = std::fs::read(opts.root.join(&module)).ok()?;
-    let parsed = crate::parse::parse_cached(&module, bytes).ok()?;
+    let parsed = crate::parse::parse_file(&opts.root, &module).ok()?;
     parsed.with_ast(|ast| {
         let (value, _) = export_value(ast, &export)?;
         if !literal_data(value, 0) {

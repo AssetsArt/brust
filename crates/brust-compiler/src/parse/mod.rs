@@ -249,6 +249,140 @@ struct Cache {
     parses: std::collections::HashMap<(u64, String), Vec<std::rc::Rc<Parsed>>>,
     /// `plain_fn::module_may_hold_element`, by (alias scope, resolved module path, depth).
     may_hold: std::collections::HashMap<(u64, String, u8), bool>,
+    /// F620 D1: what this run read of each file (`root.join(path)`): its bytes, or why it cannot be read. A run is one
+    /// native call and nothing writes app files during one, so a file is read once per run.
+    sources: std::collections::HashMap<std::path::PathBuf, Result<std::rc::Rc<[u8]>, ReadError>>,
+    /// F620 D1: the parse of each file [`parse_file`] read, by (alias scope, root, path): a hit needs no text compare
+    /// (the bytes are `sources`'s).
+    files: std::collections::HashMap<(u64, std::path::PathBuf, String), std::rc::Rc<Parsed>>,
+    /// F620 D2: what is derived from one module alone ([`memo`]), by (kind, alias scope, root, path, question).
+    memos: std::collections::HashMap<MemoKey, Box<dyn std::any::Any>>,
+}
+
+type MemoKey = (&'static str, u64, std::path::PathBuf, String, String);
+
+/// F620 D1: why a file could not be read (the error of the read itself, shared by every reader of the run).
+#[derive(Clone, Debug)]
+pub struct ReadError(std::rc::Rc<std::io::Error>);
+
+impl ReadError {
+    pub fn kind(&self) -> std::io::ErrorKind {
+        self.0.kind()
+    }
+}
+
+impl core::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// F620 D1: why [`parse_file`] has no module: the file cannot be read, or it does not parse.
+#[derive(Debug)]
+pub enum FileError {
+    Read(ReadError),
+    Parse(ParseError),
+}
+
+fn cache_open() -> bool {
+    CACHE.with(|c| c.borrow().is_some())
+}
+
+/// F620 D1: the bytes of the file `root / path`, read once per run while a [`ParseCache`] is open (a file that cannot
+/// be read stays so for the run); without an open cache it reads every time.
+pub fn read_source(root: &std::path::Path, path: &str) -> Result<std::rc::Rc<[u8]>, ReadError> {
+    let full = root.join(path);
+    if !cache_open() {
+        return std::fs::read(&full)
+            .map(std::rc::Rc::from)
+            .map_err(|e| ReadError(std::rc::Rc::new(e)));
+    }
+    if let Some(r) = CACHE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .and_then(|m| m.sources.get(&full).cloned())
+    }) {
+        return r;
+    }
+    let r = std::fs::read(&full)
+        .map(std::rc::Rc::from)
+        .map_err(|e| ReadError(std::rc::Rc::new(e)));
+    CACHE.with(|c| {
+        if let Some(m) = c.borrow_mut().as_mut() {
+            m.sources.insert(full, r.clone());
+        }
+    });
+    r
+}
+
+/// F620 D1: the module at `root / path`, read through [`read_source`] and parsed through the run's cache: one read and
+/// one parse per file and alias scope per run. Without an open cache it reads and parses every time (as
+/// `std::fs::read` + [`parse_cached`] did). A parse error is not kept.
+pub fn parse_file(root: &std::path::Path, path: &str) -> Result<std::rc::Rc<Parsed>, FileError> {
+    if !cache_open() {
+        let bytes = std::fs::read(root.join(path))
+            .map_err(|e| FileError::Read(ReadError(std::rc::Rc::new(e))))?;
+        return parse_tsx(path, bytes)
+            .map(std::rc::Rc::new)
+            .map_err(FileError::Parse);
+    }
+    let key = (
+        crate::analyze::aliases::scope_id(),
+        root.to_path_buf(),
+        path.to_string(),
+    );
+    if let Some(p) = CACHE.with(|c| c.borrow().as_ref().and_then(|m| m.files.get(&key).cloned())) {
+        return Ok(p);
+    }
+    let bytes = read_source(root, path).map_err(FileError::Read)?;
+    // Through `parse_cached`: a module the run was GIVEN with the same text (the entry of `compile_source`) is shared.
+    let p = parse_cached(path, bytes.to_vec()).map_err(FileError::Parse)?;
+    CACHE.with(|c| {
+        if let Some(m) = c.borrow_mut().as_mut() {
+            m.files.insert(key, p.clone());
+        }
+    });
+    Ok(p)
+}
+
+/// F620 D2: `f()`, memoised for the run by (`kind`, alias scope, `root`, `path`, `question`) while a [`ParseCache`] is
+/// open; without one it runs every time. RULE: the value must be a pure function of the text of the module `path`
+/// (read through [`parse_file`]), the alias scope and `question`, nothing else of the run's options.
+pub(crate) fn memo<T: Clone + 'static>(
+    kind: &'static str,
+    root: &std::path::Path,
+    path: &str,
+    question: &str,
+    f: impl FnOnce() -> T,
+) -> T {
+    if !cache_open() {
+        return f();
+    }
+    let key: MemoKey = (
+        kind,
+        crate::analyze::aliases::scope_id(),
+        root.to_path_buf(),
+        path.to_string(),
+        question.to_string(),
+    );
+    let hit = CACHE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .and_then(|m| m.memos.get(&key))
+            .and_then(|v| v.downcast_ref::<T>())
+            .cloned()
+    });
+    if let Some(v) = hit {
+        return v;
+    }
+    // Computed with the cache NOT borrowed: `f` reads and parses through it.
+    let v = f();
+    CACHE.with(|c| {
+        if let Some(m) = c.borrow_mut().as_mut() {
+            m.memos.insert(key, Box::new(v.clone()));
+        }
+    });
+    v
 }
 
 /// F535: `module_may_hold_element`'s answer for a resolved module at a depth, memoised for the run (`None` when no run
@@ -426,3 +560,6 @@ impl Parsed {
         &self.arena
     }
 }
+
+#[cfg(test)]
+mod run_cache_tests;

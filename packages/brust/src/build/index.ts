@@ -16,7 +16,7 @@ import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflar
 import { renderIcons } from './build-icons'
 import { evaluateBuildSlots } from './build-eval'
 import { preparePackageSources } from './pkg-src'
-import { type Compiled, compileApp, scanAppWrites } from './compile'
+import { type Compiled, compileApp as compileAppOnce, scanAppWrites } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
@@ -344,6 +344,15 @@ async function buildInto(
     cssMaps: css.maps,
     islands: o.islands,
   }
+  // F619: under `BRUST_BUILD_TIMINGS`, one line per compile and one for the bundling stage (next to the scans' lines).
+  const timings = process.env.BRUST_BUILD_TIMINGS ? o.log : undefined
+  let compiles = 0
+  const compileApp: typeof compileAppOnce = (args) => {
+    const t0 = performance.now()
+    const r = compileAppOnce(args)
+    timings?.(`[brust] compile ${++compiles}: ${(performance.now() - t0).toFixed(1)} ms`)
+    return r
+  }
   const firstLog: string[] = []
   let { compiled, routeComponent } = compileApp({ ...compileOpts, log: (l) => firstLog.push(l) })
   // F153c: the packages the app imports components from are compiled from their source when they publish it (and
@@ -398,8 +407,10 @@ async function buildInto(
 
   // F517: the modules `[build] expose` shares with runtime components are entries of the native-chunk build.
   const exposedMods = exposedModules(appRoot, o.expose)
+  const bundling = performance.now()
   const client = await buildClientChunks(out, compiled, ctx, runtimeUrls, exposedMods, o.exposeIsolated, o.log)
   const chunks = new Map([...client.chunks, ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writersFor))])
+  timings?.(`[brust] bundle client and React chunks: ${(performance.now() - bundling).toFixed(1)} ms`)
   // F591: the native chunks a response may leave out when it printed none of their hosts (D1 a, rule e). F610 D1: judged
   // by a second scan in which only the modules some browser bundle holds can spoil a table (a module the browser never
   // loads cannot change what a load-time read does there); the first scan's writers still keep a chunk.

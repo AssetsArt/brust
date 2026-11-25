@@ -205,13 +205,13 @@ pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions, packages:
         if !seen.insert(path.clone()) {
             return true;
         }
-        let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+        let Ok(bytes) = crate::parse::read_source(&opts.root, &path) else {
             return false;
         };
         if String::from_utf8_lossy(&bytes).contains("Math.random") {
             return false;
         }
-        let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
+        let Ok(parsed) = crate::parse::parse_file(&opts.root, &path) else {
             return false;
         };
         let rels: Option<Vec<String>> = parsed.with_ast(|ast| {

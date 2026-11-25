@@ -273,8 +273,7 @@ pub fn imported_const(
         return None;
     }
     let path = resolve(from, source, opts)?;
-    let bytes = std::fs::read(opts.root.join(&path)).ok()?;
-    let parsed = crate::parse::parse_cached(&path, bytes).ok()?;
+    let parsed = crate::parse::parse_file(&opts.root, &path).ok()?;
     parsed.with_ast(|ast| {
         let dummy = js_ast::G::Fn::default();
         let mut names = NameTable::new(ast, &dummy);
@@ -295,10 +294,7 @@ pub fn imported_const(
 /// plain; an app-import read is not followed). Its imports are not judged here: each imported app module is judged on
 /// its own. A module that does not read or parse is not clean.
 pub fn load_clean(path: &str, opts: &AnalyzeOptions) -> bool {
-    let Ok(bytes) = std::fs::read(opts.root.join(path)) else {
-        return false;
-    };
-    let Ok(parsed) = crate::parse::parse_cached(path, bytes) else {
+    let Ok(parsed) = crate::parse::parse_file(&opts.root, path) else {
         return false;
     };
     parsed.with_ast(|ast| {
@@ -342,8 +338,7 @@ pub fn imported_literal(
     opts: &AnalyzeOptions,
 ) -> Option<(String, RawExpr)> {
     let path = resolve(from, source, opts)?;
-    let bytes = std::fs::read(opts.root.join(&path)).ok()?;
-    let parsed = crate::parse::parse_cached(&path, bytes).ok()?;
+    let parsed = crate::parse::parse_file(&opts.root, &path).ok()?;
     parsed.with_ast(|ast| {
         let dummy = js_ast::G::Fn::default();
         let mut names = NameTable::new(ast, &dummy);
@@ -401,11 +396,10 @@ pub fn imported_call_const(
     let Some(path) = resolve(from, source, opts) else {
         return not("cannot be resolved");
     };
-    let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
-        return not("cannot be read");
-    };
-    let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
-        return not("cannot be parsed");
+    let parsed = match crate::parse::parse_file(&opts.root, &path) {
+        Ok(p) => p,
+        Err(crate::parse::FileError::Read(_)) => return not("cannot be read"),
+        Err(crate::parse::FileError::Parse(_)) => return not("cannot be parsed"),
     };
     parsed.with_ast(|ast| {
         let dummy = js_ast::G::Fn::default();

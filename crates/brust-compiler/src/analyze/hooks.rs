@@ -2961,10 +2961,7 @@ fn adopt_react_alias(names: &mut NameTable<'_>, m: Module<'_, '_>, value: &js_as
         return;
     };
     let (path, imported) = follow_reexports(opts, path, imported);
-    let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
-        return;
-    };
-    let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
+    let Ok(parsed) = crate::parse::parse_file(&opts.root, &path) else {
         return;
     };
     let hook = parsed.with_ast(|ast| NameTable::for_hook(ast).exported_react_hook(ast, &imported));
@@ -3034,9 +3031,9 @@ fn inline_hook(
         }
     });
     let hook = site.hook;
-    let bytes = match std::fs::read(opts.root.join(&path)) {
-        Ok(b) => b,
-        Err(e) => {
+    let parsed = match crate::parse::parse_file(&opts.root, &path) {
+        Ok(p) => p,
+        Err(crate::parse::FileError::Read(e)) => {
             out.fallback(
                 "hook-unsupported",
                 format!("custom hook {hook}: cannot read {path}: {e}"),
@@ -3045,10 +3042,7 @@ fn inline_hook(
             );
             return true;
         }
-    };
-    let parsed = match crate::parse::parse_cached(&path, bytes) {
-        Ok(p) => p,
-        Err(e) => {
+        Err(crate::parse::FileError::Parse(e)) => {
             out.fallback(
                 "hook-unsupported",
                 format!("custom hook {hook}: cannot parse {path}: {}", e.message),
@@ -3164,17 +3158,144 @@ fn find_export(
     }
     seen.push(here.clone());
     *last = here;
-    let bytes = std::fs::read(opts.root.join(&path)).ok()?;
-    let parsed = crate::parse::parse_cached(&path, bytes).ok()?;
+    let parsed = crate::parse::parse_file(&opts.root, &path).ok()?;
     // (declared here, the named re-export step, the `export *` modules)
-    let (declared, step, stars) = parsed.with_ast(|ast| {
-        if declared_here(ast, &imported) {
-            return (true, None, Vec::new());
+    let (declared, step, stars) = if parsed.with_ast(|ast| declared_here(ast, &imported)) {
+        (true, None, Vec::new())
+    } else {
+        let s = export_step(opts, &path, &parsed, &imported);
+        (false, s.step, s.stars)
+    };
+    if declared {
+        return Some((path, imported));
+    }
+    if let Some((spec, original)) = step {
+        if original == "*" {
+            return None;
         }
+        let to = crate::analyze::modules::resolve_module(&path, &spec, opts)?;
+        return find_export(opts, to, original, depth + 1, seen, last, declared_here);
+    }
+    for spec in stars {
+        let Some(to) = crate::analyze::modules::resolve_module(&path, &spec, opts) else {
+            continue;
+        };
+        let mut probe = last.clone();
+        if let Some(found) = find_export(
+            opts,
+            to,
+            imported.clone(),
+            depth + 1,
+            seen,
+            &mut probe,
+            declared_here,
+        ) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// F620 D2: what a module says about the export `imported` when it does not declare it itself (`declared_here` is the
+/// caller's question): nothing when it exports the name locally, else the named re-export step and the `export *`
+/// modules. A pure function of the module and the name, so memoised for the run.
+#[derive(Clone, Default)]
+struct ExportStep {
+    step: Option<(String, String)>,
+    stars: Vec<String>,
+}
+
+/// F620 D2: the export names a module could answer for (a superset: every name an export statement of it spells) and its
+/// `export *` modules, built once per module. A name outside the set takes no step and exports nothing locally.
+struct ExportIndex {
+    named: std::collections::HashSet<String>,
+    stars: Vec<String>,
+}
+
+fn export_index(ast: &js_ast::Ast<'_>) -> ExportIndex {
+    let names = NameTable::for_hook(ast);
+    let records = ast.import_records.as_slice();
+    let mut named = std::collections::HashSet::new();
+    let mut stars = Vec::new();
+    let mut w = crate::analyze::expr::Walk::default();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            match &stmt.data {
+                S::SLocal(l) if l.is_export => {
+                    for d in l.decls.iter() {
+                        w.declared.clear();
+                        w.declare_binding(&d.binding);
+                        named.extend(w.declared.iter().map(|r| names.name(*r)));
+                    }
+                }
+                S::SFunction(f) => named.extend(f.func.name.as_ref().map(|n| names.name(n.ref_))),
+                S::SClass(c) => {
+                    named.extend(c.class.class_name.as_ref().map(|n| names.name(n.ref_)))
+                }
+                S::SEnum(e) => {
+                    named.insert(names.name(e.name.ref_));
+                }
+                S::SNamespace(n) => {
+                    named.insert(names.name(n.name.ref_));
+                }
+                S::SExportDefault(_) => {
+                    named.insert("default".to_string());
+                }
+                S::SExportClause(c) => named.extend(
+                    c.items
+                        .slice()
+                        .iter()
+                        .map(|i| String::from_utf8_lossy(i.alias.slice()).into_owned()),
+                ),
+                S::SExportFrom(f) => named.extend(
+                    f.items
+                        .slice()
+                        .iter()
+                        .map(|i| String::from_utf8_lossy(i.alias.slice()).into_owned()),
+                ),
+                S::SExportStar(st) if st.alias.is_none() => stars.extend(
+                    records
+                        .get(st.import_record_index as usize)
+                        .map(|r| String::from_utf8_lossy(r.path.text).into_owned()),
+                ),
+                _ => {}
+            }
+        }
+    }
+    ExportIndex { named, stars }
+}
+
+fn export_step(
+    opts: &AnalyzeOptions,
+    path: &str,
+    parsed: &crate::parse::Parsed,
+    imported: &str,
+) -> ExportStep {
+    let index = crate::parse::memo("hooks-export-index", &opts.root, path, "", || {
+        std::rc::Rc::new(parsed.with_ast(export_index))
+    });
+    if !index.named.contains(imported) {
+        return ExportStep {
+            step: None,
+            stars: if imported != "default" {
+                index.stars.clone()
+            } else {
+                Vec::new()
+            },
+        };
+    }
+    crate::parse::memo("hooks-export-step", &opts.root, path, imported, || {
+        export_step_of(parsed, imported)
+    })
+}
+
+fn export_step_of(parsed: &crate::parse::Parsed, imported: &str) -> ExportStep {
+    let imported = imported.to_string();
+    parsed.with_ast(|ast| {
         // F564 (Mellow F2): a name this module exports itself shadows every `export *`; when `declared_here` does not
         // accept that local export, the search ends here.
         if exports_locally(ast, &imported) {
-            return (false, None, Vec::new());
+            return ExportStep::default();
         }
         let names = NameTable::for_hook(ast);
         let records = ast.import_records.as_slice();
@@ -3215,36 +3336,8 @@ fn find_export(
                 }
             }
         }
-        (false, step, stars)
-    });
-    if declared {
-        return Some((path, imported));
-    }
-    if let Some((spec, original)) = step {
-        if original == "*" {
-            return None;
-        }
-        let to = crate::analyze::modules::resolve_module(&path, &spec, opts)?;
-        return find_export(opts, to, original, depth + 1, seen, last, declared_here);
-    }
-    for spec in stars {
-        let Some(to) = crate::analyze::modules::resolve_module(&path, &spec, opts) else {
-            continue;
-        };
-        let mut probe = last.clone();
-        if let Some(found) = find_export(
-            opts,
-            to,
-            imported.clone(),
-            depth + 1,
-            seen,
-            &mut probe,
-            declared_here,
-        ) {
-            return Some(found);
-        }
-    }
-    None
+        ExportStep { step, stars }
+    })
 }
 
 /// Whether `ast` exports `export` from its own scope: an exported declaration (`export const|let|var|function|class`), an
@@ -4824,10 +4917,7 @@ fn is_scope_hook_call(m: Module<'_, '_>, names: &NameTable<'_>, call: &js_ast::E
                 return false;
             };
             let (path, imported) = follow_reexports(opts, path, imported);
-            let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
-                return false;
-            };
-            let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
+            let Ok(parsed) = crate::parse::parse_file(&opts.root, &path) else {
                 return false;
             };
             parsed.with_ast(|ast| {

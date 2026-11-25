@@ -25,8 +25,8 @@ const SHAPE: &str = include_str!("radix_id.shape.js");
 
 /// Whether `export` of the module at `path` (relative to the root) is Radix's `useId`.
 pub fn is_radix_use_id(path: &str, export: &str, opts: &AnalyzeOptions) -> bool {
-    match std::fs::read(opts.root.join(path)) {
-        Ok(bytes) => is_radix_use_id_source(path, bytes, export),
+    match crate::parse::parse_file(&opts.root, path) {
+        Ok(parsed) => is_radix_use_id_parsed(path, &parsed, export),
         Err(_) => false,
     }
 }
@@ -36,6 +36,10 @@ pub fn is_radix_use_id_source(path: &str, bytes: Vec<u8>, export: &str) -> bool 
     let Ok(parsed) = crate::parse::parse_cached(path, bytes) else {
         return false;
     };
+    is_radix_use_id_parsed(path, &parsed, export)
+}
+
+fn is_radix_use_id_parsed(path: &str, parsed: &crate::parse::Parsed, export: &str) -> bool {
     parsed.with_ast(|ast| {
         if exported_local(ast, export).as_deref() != Some("useId") {
             return false;
@@ -67,7 +71,7 @@ pub fn is_radix_use_id_source(path: &str, bytes: Vec<u8>, export: &str) -> bool 
                 if matches!(stmt.data, S::SImport(_) | S::SExportClause(_)) {
                     continue;
                 }
-                printed.push_str(&print_js(&parsed, ast, Js::Stmt(stmt)));
+                printed.push_str(&print_js(parsed, ast, Js::Stmt(stmt)));
                 printed.push('\n');
             }
         }

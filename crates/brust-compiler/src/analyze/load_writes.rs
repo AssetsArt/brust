@@ -193,20 +193,18 @@ pub fn scan_for(
     browser: Option<&HashSet<String>>,
 ) -> LoadWrites {
     let _aliases = crate::analyze::aliases::Scope::enter(&opts.root, &opts.path_aliases);
+    // F619: every module the scan reads (its own loop, the folder, the effect and export questions) is read and parsed
+    // once. Declared after the alias scope, so it closes first (as in `analyze_with`).
+    let _parses = crate::parse::ParseCache::enter();
     let mut scanned = Vec::new();
     let mut parsed_all: HashMap<String, std::rc::Rc<crate::parse::Parsed>> = HashMap::new();
     let mut readable = Vec::new();
     let mut unreadable: Vec<String> = Vec::new();
     for path in paths {
-        let Ok(source) = std::fs::read(opts.root.join(path)) else {
+        let Ok(parsed) = crate::parse::parse_file(&opts.root, path) else {
             unreadable.push(path.clone());
             continue;
         };
-        let Ok(parsed) = crate::parse::parse_tsx(path, source) else {
-            unreadable.push(path.clone());
-            continue;
-        };
-        let parsed = std::rc::Rc::new(parsed);
         scanned.push(parsed.with_ast(|ast| scan_module(path, ast, opts)));
         parsed_all.insert(path.clone(), parsed);
         readable.push(path.clone());
@@ -293,11 +291,7 @@ fn escaped_exports(
             continue;
         }
         let free: Vec<&Vec<Seg>> = uses.iter().map(|(p, _)| p).collect();
-        let Ok(bytes) = std::fs::read(opts.root.join(&module)) else {
-            out.escaped.insert(key);
-            continue;
-        };
-        let Ok(parsed) = crate::parse::parse_cached(&module, bytes) else {
+        let Ok(parsed) = crate::parse::parse_file(&opts.root, &module) else {
             out.escaped.insert(key);
             continue;
         };
@@ -830,10 +824,7 @@ fn free_reaches_no_container(
     let [(module, export)] = decl.as_slice() else {
         return false;
     };
-    let Ok(bytes) = std::fs::read(opts.root.join(module)) else {
-        return false;
-    };
-    let Ok(parsed) = crate::parse::parse_cached(module, bytes) else {
+    let Ok(parsed) = crate::parse::parse_file(&opts.root, module) else {
         return false;
     };
     parsed.with_ast(|ast| {

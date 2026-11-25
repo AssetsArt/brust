@@ -740,14 +740,14 @@ fn module_holds_element(
     opts: &crate::analyze::component::AnalyzeOptions,
     depth: u8,
 ) -> bool {
-    let Ok(bytes) = std::fs::read(opts.root.join(path)) else {
+    let Ok(bytes) = crate::parse::read_source(&opts.root, path) else {
         return true;
     };
     let text = String::from_utf8_lossy(&bytes);
     if text.contains("createElement") || text.contains("cloneElement") {
         return true;
     }
-    let Ok(parsed) = crate::parse::parse_cached(path, bytes.clone()) else {
+    let Ok(parsed) = crate::parse::parse_file(&opts.root, path) else {
         return true;
     };
     // JSX lowers to `jsx(…)` calls marked as elements; a hand-written runtime call imports `react/jsx-runtime`.
@@ -780,8 +780,7 @@ fn follow_reexports(
     opts: &crate::analyze::component::AnalyzeOptions,
     depth: u8,
 ) -> Option<(String, String)> {
-    let bytes = std::fs::read(opts.root.join(path)).ok()?;
-    let parsed = crate::parse::parse_cached(path, bytes).ok()?;
+    let parsed = crate::parse::parse_file(&opts.root, path).ok()?;
     // Ok(None): declared here; Ok(Some(spec, original)): a named re-export; Err: anything else.
     let step = parsed.with_ast(|ast| {
         let dummy = js_ast::G::Fn::default();
@@ -870,10 +869,7 @@ pub fn imported_plain_fn(
         (entry, imported.to_string())
     };
     let imported = imported.as_str();
-    let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
-        return false;
-    };
-    let Ok(parsed) = crate::parse::parse_cached(&path, bytes) else {
+    let Ok(parsed) = crate::parse::parse_file(&opts.root, &path) else {
         return false;
     };
     parsed.with_ast(|ast| {
