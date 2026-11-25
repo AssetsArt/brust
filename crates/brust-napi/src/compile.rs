@@ -166,28 +166,22 @@ pub(crate) fn compile_trees_impl(
         order,
         |i| compile_with(&paths[i], None, &opts, runtime_import),
     );
-    // N3: failures in entry order, as one call per tree met them: `compileApp` reads the trees in this order and stops at
-    // the first error, so a panic counts only when no earlier tree failed (the trees after a failed one are never read).
-    let mut out = Vec::with_capacity(results.len());
-    let mut failed = false;
-    for r in results {
-        match r {
-            Ok(t) => {
-                failed |= t.error.is_some()
-                    || t.components
-                        .iter()
-                        .any(|c| c.diagnostics.iter().any(|d| d.class == "error"));
-                out.push(t);
-            }
-            Err(panic) if !failed => std::panic::resume_unwind(panic),
-            Err(_) => out.push(CompiledTree {
-                components: vec![],
-                facts: None,
-                error: None,
-            }),
-        }
-    }
-    out
+    // N3: the failure one call per tree in entry order met first: `compileApp` reads the trees in this order and stops
+    // at the first error (a tree error or an error diagnostic); a panic counts only when no earlier tree failed.
+    brust_compiler::parse::in_entry_order(
+        results,
+        |t: &CompiledTree| {
+            t.error.is_some()
+                || t.components
+                    .iter()
+                    .any(|c| c.diagnostics.iter().any(|d| d.class == "error"))
+        },
+        || CompiledTree {
+            components: vec![],
+            facts: None,
+            error: None,
+        },
+    )
 }
 
 /// The analysis options of the inputs, and the root file's text when given; `Err` names the input that is not the JSON

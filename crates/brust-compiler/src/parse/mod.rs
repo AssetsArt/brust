@@ -369,6 +369,30 @@ pub fn run_on_pool_caught<T: Send>(
         .collect()
 }
 
+/// F622 D3 (N3, lead ruling): the outcome one thread compiling the entries in index order reports: the results up to and
+/// including the first entry that failed (`failed`, or a panic). A panic is re-raised only when it is that first failure:
+/// a later entry's panic never replaces an earlier entry's error, and an entry after the first failure (one thread would
+/// never have reached it) comes back as `unreached()`, which the caller does not read.
+pub fn in_entry_order<T>(
+    results: Vec<std::thread::Result<T>>,
+    failed: impl Fn(&T) -> bool,
+    unreached: impl Fn() -> T,
+) -> Vec<T> {
+    let mut out = Vec::with_capacity(results.len());
+    let mut stopped = false;
+    for r in results {
+        match r {
+            _ if stopped => out.push(unreached()),
+            Ok(v) => {
+                stopped = failed(&v);
+                out.push(v);
+            }
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+    out
+}
+
 /// F621 D1: opens the process-wide compiler session (idempotent), with [`pool_size`] threads.
 pub fn open_session() {
     let mut s = SESSION.write().unwrap_or_else(|e| e.into_inner());

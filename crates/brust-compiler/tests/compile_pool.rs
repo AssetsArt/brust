@@ -3,7 +3,9 @@
 //! without a compiler session.
 use brust_compiler::analyze::aliases::PathAlias;
 use brust_compiler::analyze::component::AnalyzeOptions;
-use brust_compiler::parse::{close_session, open_session, run_on_pool, run_on_pool_caught};
+use brust_compiler::parse::{
+    close_session, in_entry_order, open_session, run_on_pool, run_on_pool_caught,
+};
 use brust_compiler::pipeline::compile_tree;
 use std::path::{Path, PathBuf};
 
@@ -148,4 +150,60 @@ fn every_entry_runs_and_keeps_its_own_failure() {
             }
         }
     }
+}
+
+/// What the caller of a pool sees for `kinds` (one per entry: "ok", "error", "panic") at `threads`: the entries up to the
+/// first failure, or the panic message when the first failure is a panic.
+fn outcome(kinds: &[&str], threads: usize) -> Result<Vec<String>, String> {
+    let order = (0..kinds.len())
+        .map(|i| ((kinds.len() - i) as u64, i))
+        .collect();
+    let results = run_on_pool_caught(threads, kinds.len(), order, |i| {
+        if kinds[i] == "panic" {
+            // A later entry takes longer, so at 8 threads it fails before an earlier one is done.
+            panic!("compiler panic in entry {i}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            20 * (kinds.len() - i) as u64,
+        ));
+        format!("{} {i}", kinds[i])
+    });
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        in_entry_order(
+            results,
+            |t: &String| t.starts_with("error"),
+            || "unreached".to_string(),
+        )
+    }))
+    .map_err(|p| p.downcast_ref::<String>().cloned().unwrap_or_default())
+}
+
+#[test]
+fn the_first_failing_entry_by_index_wins_at_any_number_of_threads() {
+    // [ok, BuildError, panic]: the error of entry 1, never the later panic; [ok, panic, error]: the panic of entry 1.
+    for kinds in [
+        &["ok", "error", "panic"][..],
+        &["ok", "panic", "error"],
+        &["panic", "ok", "panic", "error"],
+        &["ok", "ok", "error", "ok", "panic", "panic"],
+        &["ok", "ok", "ok"],
+    ] {
+        let one = outcome(kinds, 1);
+        for _ in 0..10 {
+            assert_eq!(outcome(kinds, 8), one, "{kinds:?}");
+        }
+    }
+    assert_eq!(
+        outcome(&["ok", "error", "panic"], 8),
+        Ok(vec![
+            "ok 0".to_string(),
+            "error 1".to_string(),
+            "unreached".to_string()
+        ])
+    );
+    // A lone panic comes back with its own message, as it left the compile.
+    assert_eq!(
+        outcome(&["ok", "panic", "error"], 8),
+        Err("compiler panic in entry 1".to_string())
+    );
 }
