@@ -5,7 +5,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, sep } from 'node:path'
 import { nativeOf, relPosix } from './posix'
-import { type CompiledComponent, type CompiledTree, compileSource, compileTree, scanLoadWrites } from '../../native/index.js'
+import { type CompiledComponent, type CompiledTree, closeCompilerSession, compileSource, compileTree, openCompilerSession, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
 import { checkAliasAgreement, readPathAliases } from './tsconfig-paths'
@@ -122,6 +122,9 @@ export function replaces(kept: Seen, next: Seen): boolean {
   }
   return next.role > kept.role
 }
+
+/** F621: the compiler session `runBuild` holds from the first scan to the last compile (`native` `openCompilerSession`). */
+export { closeCompilerSession, openCompilerSession }
 
 /**
  * F230 (closes F219): scans the app's modules once for writes into another app module's exports (`LABELS.a = …`,

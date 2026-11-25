@@ -26,6 +26,9 @@ pub struct Parsed {
     arena: Box<bun_alloc::Arena>,
     _text: Box<[u8]>,
     _path: Box<[u8]>,
+    /// F621 D3: the `tsconfig` `paths` targets the parse looked for, and whether each was a file: a later epoch reuses
+    /// the parse only while every answer is the same.
+    alias_probes: Vec<(std::path::PathBuf, bool)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -133,6 +136,14 @@ const COMPILER_STACK: usize = 256 << 20;
 /// The thread is scoped, so `f` may borrow from the caller. A panic in `f` is
 /// re-raised on the calling thread.
 pub fn run_on_compiler_thread<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    // F621: while a compiler session is open, the call runs on its thread (and its cache). A call made ON that thread
+    // runs as without a session (a thread of its own).
+    if !IN_SESSION.get() {
+        let session = SESSION.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = session.as_ref() {
+            return s.run(f);
+        }
+    }
     std::thread::scope(|s| {
         std::thread::Builder::new()
             .name("brust-compiler".into())
@@ -146,6 +157,114 @@ pub fn run_on_compiler_thread<T: Send>(f: impl FnOnce() -> T + Send) -> T {
             .join()
             .unwrap_or_else(|e| std::panic::resume_unwind(e))
     })
+}
+
+thread_local!(static IN_SESSION: core::cell::Cell<bool> = const { core::cell::Cell::new(false) });
+
+/// F621 D1: one compiler thread (and its parse cache: sources, parses, F620's module memos) for every native call of a
+/// build, while open. Process-wide; the build opens it before its first scan and closes it when it is done.
+static SESSION: std::sync::RwLock<Option<Session>> = std::sync::RwLock::new(None);
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+struct Session {
+    jobs: std::sync::mpsc::Sender<Job>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl Session {
+    fn start() -> Session {
+        let (jobs, inbox) = std::sync::mpsc::channel::<Job>();
+        let thread = std::thread::Builder::new()
+            .name("brust-compiler-session".into())
+            .stack_size(COMPILER_STACK)
+            .spawn(move || {
+                #[cfg(feature = "bun-stubs")]
+                ensure_stack_limit();
+                IN_SESSION.set(true);
+                // Open for the session: every `ParseCache::enter` of a call nests in it.
+                let _cache = ParseCache::enter();
+                for job in inbox {
+                    job();
+                }
+            })
+            .expect("spawn the compiler session thread");
+        Session { jobs, thread }
+    }
+
+    /// Runs `f` on the session thread as a new epoch and waits for its result; a panic is re-raised here.
+    fn run<T: Send>(&self, f: impl FnOnce() -> T + Send) -> T {
+        let (done, result) = std::sync::mpsc::sync_channel::<std::thread::Result<T>>(1);
+        let job: Box<dyn FnOnce() + Send + '_> = Box::new(move || {
+            begin_epoch();
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            if r.is_err() {
+                // Whatever the call left half done is not reused.
+                reset_cache();
+            }
+            let _ = done.send(r);
+        });
+        // SAFETY: the job may borrow from this frame. It is run (or dropped) on the session thread, and this frame does
+        // not return before the job has sent its result or been dropped (`recv` fails only once `done` is gone, i.e.
+        // after the job and everything it captured were dropped). The read lock held by the caller keeps the session
+        // (and its thread) alive meanwhile.
+        let job: Job = unsafe { std::mem::transmute::<Box<dyn FnOnce() + Send + '_>, Job>(job) };
+        self.jobs
+            .send(job)
+            .unwrap_or_else(|_| panic!("the compiler session thread is gone"));
+        match result.recv() {
+            Ok(Ok(v)) => v,
+            Ok(Err(panic)) => std::panic::resume_unwind(panic),
+            Err(_) => panic!("the compiler session thread is gone"),
+        }
+    }
+}
+
+/// F621 D1: opens the process-wide compiler session (idempotent).
+pub fn open_session() {
+    let mut s = SESSION.write().unwrap_or_else(|e| e.into_inner());
+    if s.is_none() {
+        *s = Some(Session::start());
+    }
+}
+
+/// F621 D1: closes the compiler session (idempotent): its thread ends and everything it cached is dropped. Waits for a
+/// call running on it.
+pub fn close_session() {
+    let s = SESSION.write().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(Session { jobs, thread }) = s {
+        drop(jobs);
+        let _ = thread.join();
+    }
+}
+
+/// Whether a compiler session is open.
+pub fn session_open() -> bool {
+    SESSION.read().unwrap_or_else(|e| e.into_inner()).is_some()
+}
+
+/// F621 D3: a native call on the session thread starts a new epoch. What depends on more than one file or on the call's
+/// options (`may_hold`, the text-keyed `parses`) and every "cannot read" are dropped; sources and parses kept are
+/// checked at their first use. The thread's other per-call state starts as on a fresh thread.
+fn begin_epoch() {
+    let dropped = CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        let m = c.as_mut()?;
+        m.epoch += 1;
+        m.may_hold.clear();
+        let parses = std::mem::take(&mut m.parses);
+        m.sources.retain(|_, s| s.bytes.is_ok());
+        Some(parses)
+    });
+    drop(dropped);
+    crate::analyze::expr::take_printer_panic();
+    crate::lower::server_expr::reset_ordered_objects();
+    crate::stats::reset();
+}
+
+fn reset_cache() {
+    let old = CACHE.with(|c| c.borrow_mut().as_mut().map(std::mem::take));
+    drop(old);
 }
 
 /// Parses one module: `.tsx` (and any other name) as TSX, `.ts` / `.mts` / `.cts` as TypeScript. Call it inside [`run_on_compiler_thread`].
@@ -204,10 +323,13 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
     // `tsconfig` `paths`: an alias specifier becomes the relative one of the file it names, so every later stage
     // reads an ordinary relative import. The new text lives in `_alias_text` (boxes never move).
     let mut alias_imports = Vec::new();
+    let mut alias_probes = Vec::new();
     let mut alias_text: Vec<Box<[u8]>> = Vec::new();
     for r in ast.import_records.as_mut_slice() {
         let spec = String::from_utf8_lossy(r.path.text).into_owned();
-        if let Some((rel, target)) = crate::analyze::aliases::rewrite(path, &spec) {
+        if let Some((rel, target)) =
+            crate::analyze::aliases::rewrite_probed(path, &spec, &mut alias_probes)
+        {
             alias_text.push(rel.into_bytes().into_boxed_slice());
             // SAFETY: the box is moved into `Parsed` (`_alias_text`), never mutated, and dropped after `ast`.
             r.path.text = unsafe { boxed(&**alias_text.last().expect("just pushed")) };
@@ -238,6 +360,7 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
         arena,
         _text: text,
         _path: path_box,
+        alias_probes,
     })
 }
 
@@ -251,12 +374,37 @@ struct Cache {
     may_hold: std::collections::HashMap<(u64, String, u8), bool>,
     /// F620 D1: what this run read of each file (`root.join(path)`): its bytes, or why it cannot be read. A run is one
     /// native call and nothing writes app files during one, so a file is read once per run.
-    sources: std::collections::HashMap<std::path::PathBuf, Result<std::rc::Rc<[u8]>, ReadError>>,
+    sources: std::collections::HashMap<std::path::PathBuf, Source>,
     /// F620 D1: the parse of each file [`parse_file`] read, by (alias scope, root, path): a hit needs no text compare
     /// (the bytes are `sources`'s).
-    files: std::collections::HashMap<(u64, std::path::PathBuf, String), std::rc::Rc<Parsed>>,
+    files: std::collections::HashMap<(u64, std::path::PathBuf, String), FileParse>,
     /// F620 D2: what is derived from one module alone ([`memo`]), by (kind, alias scope, root, path, question).
     memos: std::collections::HashMap<MemoKey, Box<dyn std::any::Any>>,
+    /// F621 D3: the native call this cache serves now. A compiler session keeps the cache across calls; each call is a
+    /// new epoch, and a source or parse kept from an earlier one is checked before its first use in this one.
+    epoch: u64,
+}
+
+/// F621 D3: what a file was when it was read: its length and modification time.
+type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
+
+fn stamp(full: &std::path::Path) -> Stamp {
+    std::fs::metadata(full)
+        .ok()
+        .map(|m| (m.len(), m.modified().ok()))
+}
+
+struct Source {
+    bytes: Result<std::rc::Rc<[u8]>, ReadError>,
+    /// Taken before the read.
+    stamp: Stamp,
+    /// The epoch it was read or last checked in.
+    epoch: u64,
+}
+
+struct FileParse {
+    parsed: std::rc::Rc<Parsed>,
+    epoch: u64,
 }
 
 type MemoKey = (&'static str, u64, std::path::PathBuf, String, String);
@@ -289,7 +437,9 @@ fn cache_open() -> bool {
 }
 
 /// F620 D1: the bytes of the file `root / path`, read once per run while a [`ParseCache`] is open (a file that cannot
-/// be read stays so for the run); without an open cache it reads every time.
+/// be read stays so for the run); without an open cache it reads every time. F621 D3: a source kept from an earlier
+/// epoch is used again only while the file's length and modification time are unchanged; otherwise it, and every parse
+/// and memo of the file, is dropped and the file read again.
 pub fn read_source(root: &std::path::Path, path: &str) -> Result<std::rc::Rc<[u8]>, ReadError> {
     let full = root.join(path);
     if !cache_open() {
@@ -297,27 +447,86 @@ pub fn read_source(root: &std::path::Path, path: &str) -> Result<std::rc::Rc<[u8
             .map(std::rc::Rc::from)
             .map_err(|e| ReadError(std::rc::Rc::new(e)));
     }
-    if let Some(r) = CACHE.with(|c| {
-        c.borrow()
-            .as_ref()
-            .and_then(|m| m.sources.get(&full).cloned())
-    }) {
-        return r;
+    let kept = CACHE.with(|c| {
+        let c = c.borrow();
+        let m = c.as_ref()?;
+        let s = m.sources.get(&full)?;
+        Some((s.bytes.clone(), s.stamp, s.epoch == m.epoch))
+    });
+    if let Some((bytes, was, current)) = kept {
+        if current {
+            return bytes;
+        }
+        // An earlier epoch's source (only a readable one is kept across epochs).
+        let now = stamp(&full);
+        if now.is_some() && now == was {
+            CACHE.with(|c| {
+                if let Some(m) = c.borrow_mut().as_mut()
+                    && let Some(s) = m.sources.get_mut(&full)
+                {
+                    s.epoch = m.epoch;
+                }
+            });
+            return bytes;
+        }
+        forget_file(&full, true);
     }
-    let r = std::fs::read(&full)
+    let was = stamp(&full);
+    let bytes = std::fs::read(&full)
         .map(std::rc::Rc::from)
         .map_err(|e| ReadError(std::rc::Rc::new(e)));
     CACHE.with(|c| {
         if let Some(m) = c.borrow_mut().as_mut() {
-            m.sources.insert(full, r.clone());
+            let epoch = m.epoch;
+            m.sources.insert(
+                full,
+                Source {
+                    bytes: bytes.clone(),
+                    stamp: was,
+                    epoch,
+                },
+            );
         }
     });
-    r
+    bytes
+}
+
+/// F621 D3: drops what the cache derived from the file `full` (its parses and memos), and its source with `source`.
+/// Taken out of the cache before they drop: a `Parsed` dropping never runs with the cache borrowed.
+fn forget_file(full: &std::path::Path, source: bool) {
+    let dropped = CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        let Some(m) = c.as_mut() else {
+            return (Vec::new(), Vec::new());
+        };
+        if source {
+            m.sources.remove(full);
+        }
+        let files: Vec<_> = m
+            .files
+            .keys()
+            .filter(|k| k.1.join(&k.2) == full)
+            .cloned()
+            .collect();
+        let files: Vec<FileParse> = files.iter().filter_map(|k| m.files.remove(k)).collect();
+        let memos: Vec<_> = m
+            .memos
+            .keys()
+            .filter(|k| k.2.join(&k.3) == full)
+            .cloned()
+            .collect();
+        let memos: Vec<Box<dyn std::any::Any>> =
+            memos.iter().filter_map(|k| m.memos.remove(k)).collect();
+        (files, memos)
+    });
+    drop(dropped);
 }
 
 /// F620 D1: the module at `root / path`, read through [`read_source`] and parsed through the run's cache: one read and
 /// one parse per file and alias scope per run. Without an open cache it reads and parses every time (as
-/// `std::fs::read` + [`parse_cached`] did). A parse error is not kept.
+/// `std::fs::read` + [`parse_cached`] did). A parse error is not kept. F621 D3: a parse kept from an earlier epoch is
+/// used again only while its source is (see [`read_source`]) and every `tsconfig` `paths` target its parse looked for
+/// still exists, or still does not.
 pub fn parse_file(root: &std::path::Path, path: &str) -> Result<std::rc::Rc<Parsed>, FileError> {
     if !cache_open() {
         let bytes = std::fs::read(root.join(path))
@@ -331,15 +540,58 @@ pub fn parse_file(root: &std::path::Path, path: &str) -> Result<std::rc::Rc<Pars
         root.to_path_buf(),
         path.to_string(),
     );
-    if let Some(p) = CACHE.with(|c| c.borrow().as_ref().and_then(|m| m.files.get(&key).cloned())) {
-        return Ok(p);
+    let kept = |key: &(u64, std::path::PathBuf, String)| {
+        CACHE.with(|c| {
+            let c = c.borrow();
+            let m = c.as_ref()?;
+            let f = m.files.get(key)?;
+            Some((f.parsed.clone(), f.epoch == m.epoch))
+        })
+    };
+    if let Some((p, current)) = kept(&key) {
+        if current {
+            return Ok(p);
+        }
+        // An earlier epoch's parse: its source first (a changed file drops the parse), then the alias targets.
+        let bytes = read_source(root, path).map_err(FileError::Read)?;
+        if let Some((p, _)) = kept(&key) {
+            if p.alias_probes.iter().all(|(t, was)| t.is_file() == *was) {
+                CACHE.with(|c| {
+                    if let Some(m) = c.borrow_mut().as_mut() {
+                        let epoch = m.epoch;
+                        if let Some(f) = m.files.get_mut(&key) {
+                            f.epoch = epoch;
+                        }
+                    }
+                });
+                return Ok(p);
+            }
+            drop(p);
+            forget_file(&root.join(path), false);
+        }
+        return parse_new(key, path, bytes);
     }
     let bytes = read_source(root, path).map_err(FileError::Read)?;
+    parse_new(key, path, bytes)
+}
+
+fn parse_new(
+    key: (u64, std::path::PathBuf, String),
+    path: &str,
+    bytes: std::rc::Rc<[u8]>,
+) -> Result<std::rc::Rc<Parsed>, FileError> {
     // Through `parse_cached`: a module the run was GIVEN with the same text (the entry of `compile_source`) is shared.
     let p = parse_cached(path, bytes.to_vec()).map_err(FileError::Parse)?;
     CACHE.with(|c| {
         if let Some(m) = c.borrow_mut().as_mut() {
-            m.files.insert(key, p.clone());
+            let epoch = m.epoch;
+            m.files.insert(
+                key,
+                FileParse {
+                    parsed: p.clone(),
+                    epoch,
+                },
+            );
         }
     });
     Ok(p)

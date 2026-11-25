@@ -16,7 +16,7 @@ import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflar
 import { renderIcons } from './build-icons'
 import { evaluateBuildSlots } from './build-eval'
 import { preparePackageSources } from './pkg-src'
-import { type Compiled, compileApp as compileAppOnce, scanAppWrites } from './compile'
+import { type Compiled, closeCompilerSession, compileApp as compileAppOnce, openCompilerSession, scanAppWrites } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
@@ -219,6 +219,8 @@ export async function runBuild(opts: {
   } catch (e) {
     rmSync(tmp, { recursive: true, force: true })
     throw e
+  } finally {
+    closeCompilerSession() // idempotent: `buildInto` closes it after the last compile
   }
 }
 
@@ -294,6 +296,9 @@ async function buildInto(
   const runtime = await buildRuntime(out, ctx)
   const runtimeUrls = { core: `${brustRoot(ctx)}/${runtime.core}`, store: `${brustRoot(ctx)}/${runtime.store}` }
   // F230: one scan per build for load-time writes into another app module's exports; every compile reads it.
+  // F621: one compiler session (thread and parse cache) from the first scan to the last compile: the three compiles
+  // reuse the scan's reads and parses. Closed before bundling: what it keeps would only add to the bundler's memory.
+  openCompilerSession()
   const loadWrites = scanAppWrites(appRoot, o.appModules, o.log, o.sourceRoots)
   // Where a React island renders, the load-time writers run first: every one in the SSR jobs bundle (server code the
   // worker runs anyway); in an island's browser chunk only a writer of a module that island's code imports (Mellow F1:
@@ -376,6 +381,7 @@ async function buildInto(
     if (!hasIcons) firstLog.forEach((l) => o.log(l))
     ;({ compiled, routeComponent } = compileApp({ ...compileOpts, packages, iconSvgs, iconsFinal: hasIcons, slotValues, log: hasIcons ? o.log : () => {} }))
   } else firstLog.forEach((l) => o.log(l))
+  closeCompilerSession()
 
   // F577: `--update-tiers` rewrites the snapshot; with none configured it has nothing to do, and says so.
   if (o.updateTiers && o.tiers?.snapshot === undefined) o.log('tiers: --update-tiers has no effect: no [tiers] snapshot is configured')

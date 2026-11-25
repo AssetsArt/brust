@@ -139,6 +139,11 @@ thread_local! {
     static ORDERED_OBJECTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// F621: a call on the compiler session's thread starts with object literals printing as on a fresh thread.
+pub(crate) fn reset_ordered_objects() {
+    ORDERED_OBJECTS.set(false);
+}
+
 /// Runs `f` with object literals printing in source order (`obj_lit`), for a `style` value.
 pub fn with_ordered_objects<T>(f: impl FnOnce() -> T) -> T {
     let before = ORDERED_OBJECTS.replace(true);
