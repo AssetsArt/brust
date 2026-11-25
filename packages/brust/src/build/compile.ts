@@ -5,7 +5,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, sep } from 'node:path'
 import { nativeOf, relPosix } from './posix'
-import { type CompiledComponent, type CompiledTree, closeCompilerSession, compileSource, compileTrees, openCompilerSession, scanLoadWrites } from '../../native/index.js'
+import { type CompiledComponent, type CompiledTree, closeCompilerSession, compileSource, compileTrees as nativeCompileTrees, openCompilerSession, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
 import { checkAliasAgreement, readPathAliases } from './tsconfig-paths'
@@ -181,6 +181,8 @@ export function compileApp(opts: {
   loadWrites?: string
   /** F548 `[build] islands` (`path#Export`): compiled as roots, so each gets its island chunk and manifest entry. */
   islands?: string[]
+  /** F622: the native `compileTrees` (tests watch which entries it is handed). */
+  compileTrees?: typeof nativeCompileTrees
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
   const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
@@ -214,7 +216,7 @@ export function compileApp(opts: {
   }
   const treeRels = treeFiles.map((f) => relPosix(appRoot, f)) // G5: the Rust resolver assumes `/`
   const trees =
-    treeRels.length > 0 ? compileTrees(treeRels, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, sourceRoots, opts.loadWrites) : []
+    treeRels.length > 0 ? (opts.compileTrees ?? nativeCompileTrees)(treeRels, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, sourceRoots, opts.loadWrites) : []
   for (const [routeId, route] of nodes) {
     const file = componentFile.get(route.Component!)
     if (!file)
