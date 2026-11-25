@@ -5,7 +5,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, sep } from 'node:path'
 import { nativeOf, relPosix } from './posix'
-import { type CompiledComponent, type CompiledTree, compileSource, compileTree, scanLoadWrites } from '../../native/index.js'
+import { type CompiledComponent, type CompiledTree, closeCompilerSession, compileSource, compileTree, openCompilerSession, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
 import { checkAliasAgreement, readPathAliases } from './tsconfig-paths'
@@ -121,6 +121,19 @@ export function replaces(kept: Seen, next: Seen): boolean {
       )
   }
   return next.role > kept.role
+}
+
+/**
+ * F621: runs `f` with a compiler session open: every scan and compile of the build runs on one compiler thread that keeps
+ * what it read and parsed (a file the build writes between two calls is read again). Closed when `f` settles.
+ */
+export async function withCompilerSession<T>(f: () => Promise<T>): Promise<T> {
+  openCompilerSession()
+  try {
+    return await f()
+  } finally {
+    closeCompilerSession()
+  }
 }
 
 /**

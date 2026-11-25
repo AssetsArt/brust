@@ -16,7 +16,7 @@ import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflar
 import { renderIcons } from './build-icons'
 import { evaluateBuildSlots } from './build-eval'
 import { preparePackageSources } from './pkg-src'
-import { type Compiled, compileApp as compileAppOnce, scanAppWrites } from './compile'
+import { type Compiled, compileApp as compileAppOnce, scanAppWrites, withCompilerSession } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
@@ -206,7 +206,8 @@ export async function runBuild(opts: {
   // F569 (D5): the tier snapshot is written once the whole build succeeded.
   const tierCheck: { done?: TierCheck } = {}
   try {
-    await buildInto(tmp, { tiers, templateMaxBytes, updateTiers: opts.updateTiers === true, tierCheck, target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, componentScripts, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    // F621: one compiler session (thread and cache) for every scan and compile of this build.
+    await withCompilerSession(() => buildInto(tmp, { tiers, templateMaxBytes, updateTiers: opts.updateTiers === true, tierCheck, target: opts.target, dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, expose, exposeIsolated, islands, basePath, trailingSlash, componentScripts, actionsRemote: remote?.prefix ?? null, log: opts.log }))
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version

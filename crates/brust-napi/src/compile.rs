@@ -362,6 +362,20 @@ pub fn scan_load_writes(
     })
 }
 
+/// F621 D1: opens the process-wide compiler session (idempotent): until [`close_compiler_session`], `compileTree`,
+/// `compileSource` and `scanLoadWrites` run on one compiler thread that keeps what it read and parsed across calls (a
+/// file changed between two calls is read again). `brust build` holds one for the whole build; nothing else opens one.
+#[napi]
+pub fn open_compiler_session() {
+    brust_compiler::parse::open_session();
+}
+
+/// F621 D1: closes the compiler session (idempotent) and drops everything it kept.
+#[napi]
+pub fn close_compiler_session() {
+    brust_compiler::parse::close_session();
+}
+
 /// F496: the first route pattern the server's router refuses (a conflict such as `/{*rest}` next to `/{slug}`, or an
 /// invalid pattern), or `None`. `brust build` runs it over the flattened patterns (catch-all `*` routes left out, as
 /// the server does) so the failure shows at build, with the router's own message. Needs no running server.

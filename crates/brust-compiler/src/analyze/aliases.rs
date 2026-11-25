@@ -29,7 +29,8 @@ pub struct AliasImport {
 
 #[derive(Default)]
 struct Active {
-    /// F535: distinct per scope entered on this thread, so a parse cache never mixes two alias configurations.
+    /// F535: distinct per alias configuration entered on this thread (F621: the same configuration, the same id), so a
+    /// parse cache never mixes two configurations.
     id: u64,
     root: PathBuf,
     aliases: Vec<PathAlias>,
@@ -37,7 +38,9 @@ struct Active {
 
 thread_local! {
     static ACTIVE: RefCell<Option<Rc<Active>>> = const { RefCell::new(None) };
-    static NEXT_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    /// F621: the id of each alias configuration (root and aliases) entered on this thread, so a compiler session's
+    /// cache, kept across native calls, finds what an earlier call parsed under the same configuration.
+    static IDS: RefCell<std::collections::HashMap<String, u64>> = RefCell::new(std::collections::HashMap::new());
 }
 
 /// The alias scope parses on this thread run under now: 0 when none is in force (F535).
@@ -52,10 +55,10 @@ impl Scope {
     pub fn enter(root: &Path, aliases: &[PathAlias]) -> Scope {
         let next = (!aliases.is_empty()).then(|| {
             Rc::new(Active {
-                id: NEXT_ID.with(|n| {
-                    let id = n.get();
-                    n.set(id + 1);
-                    id
+                id: IDS.with(|ids| {
+                    let mut ids = ids.borrow_mut();
+                    let next = ids.len() as u64 + 1;
+                    *ids.entry(format!("{root:?}\0{aliases:?}")).or_insert(next)
                 }),
                 root: root.to_path_buf(),
                 aliases: aliases.to_vec(),
@@ -87,6 +90,16 @@ fn captured<'a>(pattern: &str, spec: &'a str) -> Option<Option<&'a str>> {
 /// The rewrite of `spec` written in `parent` (a root-relative module path): `(relative specifier, target)`.
 /// `None` for a relative import, a package, or an alias that names no file of the app.
 pub fn rewrite(parent: &str, spec: &str) -> Option<(String, String)> {
+    rewrite_probed(parent, spec, &mut Vec::new())
+}
+
+/// [`rewrite`], recording in `probes` every file it looked for and whether it was one (F621 D3: a parse kept across
+/// native calls is reused only while every answer is the same).
+pub fn rewrite_probed(
+    parent: &str,
+    spec: &str,
+    probes: &mut Vec<(PathBuf, bool)>,
+) -> Option<(String, String)> {
     if spec.starts_with('.') || spec.starts_with('/') {
         return None;
     }
@@ -143,7 +156,10 @@ pub fn rewrite(parent: &str, spec: &str) -> Option<(String, String)> {
                     return None;
                 }
                 let c = format!("{target}{e}");
-                active.root.join(&c).is_file().then_some(c)
+                let full = active.root.join(&c);
+                let is = full.is_file();
+                probes.push((full, is));
+                is.then_some(c)
             });
             if let Some(found) = found {
                 return Some((relative(&parent, &found), found));
