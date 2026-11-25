@@ -123,18 +123,8 @@ export function replaces(kept: Seen, next: Seen): boolean {
   return next.role > kept.role
 }
 
-/**
- * F621: runs `f` with a compiler session open: every scan and compile of the build runs on one compiler thread that keeps
- * what it read and parsed (a file the build writes between two calls is read again). Closed when `f` settles.
- */
-export async function withCompilerSession<T>(f: () => Promise<T>): Promise<T> {
-  openCompilerSession()
-  try {
-    return await f()
-  } finally {
-    closeCompilerSession()
-  }
-}
+/** F621: the compiler session `runBuild` holds from the first scan to the last compile (`native` `openCompilerSession`). */
+export { closeCompilerSession, openCompilerSession }
 
 /**
  * F230 (closes F219): scans the app's modules once for writes into another app module's exports (`LABELS.a = …`,
