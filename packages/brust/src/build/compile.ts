@@ -5,7 +5,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, sep } from 'node:path'
 import { nativeOf, relPosix } from './posix'
-import { type CompiledComponent, type CompiledTree, closeCompilerSession, compileSource, compileTree, openCompilerSession, scanLoadWrites } from '../../native/index.js'
+import { type CompiledComponent, type CompiledTree, closeCompilerSession, compileSource, compileTrees, openCompilerSession, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
 import { checkAliasAgreement, readPathAliases } from './tsconfig-paths'
@@ -204,6 +204,16 @@ export function compileApp(opts: {
   const rootRel = (f: string) => relative(appRoot, f).split(sep).join('/')
   const routeRoots = [...new Set([...nodes.values()].flatMap((r) => componentFile.get(r.Component!) ?? []).flatMap((f) => [rootRel(f), relative(realpathSync(appRoot), realpathSync(f)).split(sep).join('/')]))]
 
+  // F622: every route tree in one native call, compiled on a pool of compiler threads; the results are merged below in
+  // route order exactly as one call per tree was (the first error, the first diagnostics, the kept components).
+  const treeFiles: string[] = []
+  for (const route of nodes.values()) {
+    const file = componentFile.get(route.Component!)
+    if (file && !treeFiles.includes(file)) treeFiles.push(file)
+  }
+  const treeRels = treeFiles.map((f) => relPosix(appRoot, f)) // G5: the Rust resolver assumes `/`
+  const trees =
+    treeRels.length > 0 ? compileTrees(treeRels, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, sourceRoots, opts.loadWrites) : []
   for (const [routeId, route] of nodes) {
     const file = componentFile.get(route.Component!)
     if (!file)
@@ -213,8 +223,9 @@ export function compileApp(opts: {
       )
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
-      const rel = relPosix(appRoot, file) // G5: the Rust resolver assumes `/`
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, sourceRoots, opts.loadWrites)
+      const at = treeFiles.indexOf(file)
+      const rel = treeRels[at]!
+      const tree = trees[at]!
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).
