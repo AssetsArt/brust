@@ -163,8 +163,7 @@ impl Module<'_> {
 /// The package member that the export `export` of the project module at `path` is an alias of
 /// (`export { Root }` after `const Root = Dialog.Root`), if it is one.
 pub fn package_member(path: &str, export: &Export, opts: &AnalyzeOptions) -> Option<MemberRef> {
-    let bytes = std::fs::read(opts.root.join(path)).ok()?;
-    let parsed = crate::parse::parse_cached(path, bytes).ok()?;
+    let parsed = crate::parse::parse_file(&opts.root, path).ok()?;
     let name = match export {
         Export::Default => "default",
         Export::Named(n) => n,
@@ -192,8 +191,7 @@ fn follow(
     if depth > MAX_DEPTH {
         return None;
     }
-    let bytes = std::fs::read(opts.root.join(path)).ok()?;
-    let parsed = crate::parse::parse_cached(path, bytes).ok()?;
+    let parsed = crate::parse::parse_file(&opts.root, path).ok()?;
     let name = match export {
         Export::Default => "default",
         Export::Named(n) => n,
@@ -243,8 +241,7 @@ pub fn declared_member(
         let Some((first, tail)) = rest.split_first() else {
             return Some(path);
         };
-        let bytes = std::fs::read(opts.root.join(&path.0)).ok()?;
-        let parsed = crate::parse::parse_cached(&path.0, bytes).ok()?;
+        let parsed = crate::parse::parse_file(&opts.root, &path.0).ok()?;
         let name = match &path.1 {
             Export::Default => "default".to_string(),
             Export::Named(n) => n.clone(),

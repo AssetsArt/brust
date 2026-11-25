@@ -163,10 +163,10 @@ pub fn compile_specialised(
         return Ok(ir.clone());
     }
     let path = &normalize(path);
-    let source =
-        std::fs::read(opts.root.join(path)).map_err(|e| format!("cannot read {path}: {e}"))?;
-    let parsed =
-        crate::parse::parse_cached(path, source).map_err(|e| format!("{path}: {}", e.message))?;
+    let parsed = crate::parse::parse_file(&opts.root, path).map_err(|e| match e {
+        crate::parse::FileError::Read(e) => format!("cannot read {path}: {e}"),
+        crate::parse::FileError::Parse(e) => format!("{path}: {}", e.message),
+    })?;
     let mut ir = match export {
         Export::Default => analyze_component_in(&parsed, Some(opts)).map_err(|d| d.message)?,
         Export::Named(name) => {
@@ -208,25 +208,27 @@ fn compile_uncached(
     opts: &AnalyzeOptions,
     modules: &RefCell<ModuleCache>,
 ) -> Result<ComponentIR, Diagnostic> {
-    let source = match source {
-        Some(s) => s,
-        None => std::fs::read(opts.root.join(path)).map_err(|e| {
-            Diagnostic::error(
-                "unresolved-import",
-                format!("cannot read {path}: {e}"),
-                0,
-                "check the import path",
-            )
-        })?,
-    };
-    let parsed = crate::parse::parse_cached(path, source).map_err(|e| {
+    let parse_error = |e: crate::parse::ParseError| {
         Diagnostic::error(
             "parse",
             format!("{path}: {} at {}:{}", e.message, e.line, e.column),
             0,
             "fix the syntax error",
         )
-    })?;
+    };
+    let parsed = match source {
+        // Text the caller was given (the entry of `compile_source`): parsed as given.
+        Some(s) => crate::parse::parse_cached(path, s).map_err(parse_error)?,
+        None => crate::parse::parse_file(&opts.root, path).map_err(|e| match e {
+            crate::parse::FileError::Read(e) => Diagnostic::error(
+                "unresolved-import",
+                format!("cannot read {path}: {e}"),
+                0,
+                "check the import path",
+            ),
+            crate::parse::FileError::Parse(e) => parse_error(e),
+        })?,
+    };
     let mut ir = match export {
         Export::Default => analyze_component_in(&parsed, Some(opts))?,
         Export::Named(name) => {

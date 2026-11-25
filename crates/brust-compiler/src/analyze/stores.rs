@@ -83,52 +83,15 @@ fn export_names(
     if depth > MAX_DEPTH || !visited.insert(path.to_string()) {
         return;
     }
-    let Ok(bytes) = std::fs::read(opts.root.join(path)) else {
+    let Ok(parsed) = crate::parse::parse_file(&opts.root, path) else {
         return;
     };
-    let Ok(parsed) = crate::parse::parse_cached(path, bytes) else {
-        return;
-    };
-    let stars = parsed.with_ast(|ast| {
-        let m = Module::new(ast);
-        let records = ast.import_records.as_slice();
-        let mut stars = Vec::new();
-        for part in ast.parts.iter() {
-            for stmt in part.stmts.slice() {
-                match &stmt.data {
-                    S::SLocal(l) if l.is_export => {
-                        for d in l.decls.iter() {
-                            if let B::BIdentifier(id) = d.binding.data {
-                                out.insert(m.name(id.r#ref));
-                            }
-                        }
-                    }
-                    S::SExportDefault(_) => {
-                        out.insert("default".into());
-                    }
-                    S::SExportClause(c) => out.extend(
-                        c.items
-                            .slice()
-                            .iter()
-                            .map(|i| String::from_utf8_lossy(i.alias.slice()).into_owned()),
-                    ),
-                    S::SExportFrom(f) => out.extend(
-                        f.items
-                            .slice()
-                            .iter()
-                            .map(|i| String::from_utf8_lossy(i.alias.slice()).into_owned()),
-                    ),
-                    S::SExportStar(st) if st.alias.is_none() => stars.extend(
-                        records
-                            .get(st.import_record_index as usize)
-                            .map(|r| String::from_utf8_lossy(r.path.text).into_owned()),
-                    ),
-                    _ => {}
-                }
-            }
-        }
-        stars
+    // F620 D2: what the module exports by name and its `export *` specifiers, once per module per run.
+    let listed = crate::parse::memo("stores-export-names", &opts.root, path, "", || {
+        std::rc::Rc::new(parsed.with_ast(module_export_names))
     });
+    out.extend(listed.0.iter().cloned());
+    let stars = listed.1.clone();
     for spec in stars {
         if super::modules::is_relative_spec(&spec)
             && let Some(p) = resolve(path, &spec, opts)
@@ -138,7 +101,51 @@ fn export_names(
     }
 }
 
+/// The names a module exports itself (declared, `default`, clauses, `export … from`) and its `export *` specifiers.
+fn module_export_names(ast: &js_ast::Ast<'_>) -> (Vec<String>, Vec<String>) {
+    let mut out = Vec::new();
+    let m = Module::new(ast);
+    let records = ast.import_records.as_slice();
+    let mut stars = Vec::new();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            match &stmt.data {
+                S::SLocal(l) if l.is_export => {
+                    for d in l.decls.iter() {
+                        if let B::BIdentifier(id) = d.binding.data {
+                            out.push(m.name(id.r#ref));
+                        }
+                    }
+                }
+                S::SExportDefault(_) => {
+                    out.push("default".into());
+                }
+                S::SExportClause(c) => out.extend(
+                    c.items
+                        .slice()
+                        .iter()
+                        .map(|i| String::from_utf8_lossy(i.alias.slice()).into_owned()),
+                ),
+                S::SExportFrom(f) => out.extend(
+                    f.items
+                        .slice()
+                        .iter()
+                        .map(|i| String::from_utf8_lossy(i.alias.slice()).into_owned()),
+                ),
+                S::SExportStar(st) if st.alias.is_none() => stars.extend(
+                    records
+                        .get(st.import_record_index as usize)
+                        .map(|r| String::from_utf8_lossy(r.path.text).into_owned()),
+                ),
+                _ => {}
+            }
+        }
+    }
+    (out, stars)
+}
+
 /// What one module says about an export.
+#[derive(Clone)]
 enum Found {
     Store(StoreRef),
     /// Re-exported from another module: (specifier, export there).
@@ -164,11 +171,11 @@ fn read_export(
             "`{export}` is re-exported in a cycle through {path}"
         ));
     }
-    let bytes =
-        std::fs::read(opts.root.join(path)).map_err(|e| format!("cannot read {path}: {e}"))?;
-    let parsed = crate::parse::parse_cached(path, bytes)
-        .map_err(|e| format!("cannot parse {path}: {}", e.message))?;
-    let found = parsed.with_ast(|ast| find_export(ast, path, export))?;
+    let parsed = crate::parse::parse_file(&opts.root, path).map_err(|e| match e {
+        crate::parse::FileError::Read(e) => format!("cannot read {path}: {e}"),
+        crate::parse::FileError::Parse(e) => format!("cannot parse {path}: {}", e.message),
+    })?;
+    let found = module_step(opts, path, &parsed, export)?;
     let follow = |spec: &str| -> Result<String, String> {
         if !super::modules::is_relative_spec(spec) {
             return Err(format!(
@@ -196,6 +203,44 @@ fn read_export(
             Err(reason.unwrap_or_else(|| format!("{path} has no export `{export}`")))
         }
     }
+}
+
+/// F620 D2: [`find_export`] of the module `path` (read through the run's cache), memoised for the run: a pure function
+/// of the module and the export name. A name no export statement of the module spells is answered from the module's
+/// index (its `export *` specifiers) without walking it again.
+fn module_step(
+    opts: &AnalyzeOptions,
+    path: &str,
+    parsed: &crate::parse::Parsed,
+    export: &str,
+) -> Result<Found, String> {
+    let index = crate::parse::memo("stores-export-index", &opts.root, path, "", || {
+        std::rc::Rc::new(parsed.with_ast(|ast| {
+            let (names, stars) = module_export_names(ast);
+            let mut named: HashSet<String> = names.into_iter().collect();
+            for part in ast.parts.iter() {
+                for stmt in part.stmts.slice() {
+                    if let S::SExportStar(st) = &stmt.data
+                        && let Some(a) = &st.alias
+                    {
+                        named.insert(String::from_utf8_lossy(a.original_name.slice()).into_owned());
+                    }
+                }
+            }
+            (named, stars)
+        }))
+    });
+    if !index.0.contains(export) {
+        // What `find_export` answers when no statement names `export`.
+        return if index.1.is_empty() {
+            Err(format!("{path} has no export `{export}`"))
+        } else {
+            Ok(Found::Stars(index.1.clone()))
+        };
+    }
+    crate::parse::memo("stores-export-step", &opts.root, path, export, || {
+        parsed.with_ast(|ast| find_export(ast, path, export))
+    })
 }
 
 /// What a module-level binding is.
