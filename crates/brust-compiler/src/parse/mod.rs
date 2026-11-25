@@ -227,8 +227,11 @@ impl Worker {
 
 /// One native call's work on a session thread: a new epoch, `f`, and a cache that is not reused after a panic.
 fn in_epoch<T>(f: impl FnOnce() -> T) -> std::thread::Result<T> {
-    begin_epoch();
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    // Inside the catch too: nothing between receiving the job and sending its result can unwind past the sender.
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        begin_epoch();
+        f()
+    }));
     if r.is_err() {
         // Whatever the call left half done is not reused.
         reset_cache();
@@ -735,7 +738,9 @@ fn parse_new(
 
 /// F620 D2: `f()`, memoised for the run by (`kind`, alias scope, `root`, `path`, `question`) while a [`ParseCache`] is
 /// open; without one it runs every time. RULE: the value must be a pure function of the text of the module `path`
-/// (read through [`parse_file`]), the alias scope and `question`, nothing else of the run's options.
+/// (read through [`parse_file`]), the alias scope and `question`, nothing else of the run's options. The caller calls
+/// [`parse_file`] on the same `root` and `path` first, in the same call: that is what checks a memo kept from an earlier
+/// epoch (F621 D3) against the file, and drops it with the file's parse when the file changed.
 pub(crate) fn memo<T: Clone + 'static>(
     kind: &'static str,
     root: &std::path::Path,
