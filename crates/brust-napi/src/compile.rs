@@ -122,6 +122,74 @@ pub(crate) fn compile_tree_impl(
     runtime_import: &str,
     inputs: CompileInputs,
 ) -> CompiledTree {
+    let (opts, source) = match options_of(root, inputs) {
+        Ok(v) => v,
+        Err(e) => return *e,
+    };
+    // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
+    brust_compiler::parse::run_on_compiler_thread(|| {
+        compile_with(path, source, &opts, runtime_import)
+    })
+}
+
+/// F622 D1: `compile_tree_impl` for every entry of `paths` (one route tree each, the same inputs), on the compiler
+/// pool; the results in the order of `paths`.
+pub(crate) fn compile_trees_impl(
+    paths: &[String],
+    root: &str,
+    runtime_import: &str,
+    inputs: CompileInputs,
+) -> Vec<CompiledTree> {
+    let (opts, _) = match options_of(root, inputs) {
+        Ok(v) => v,
+        Err(e) => {
+            return paths
+                .iter()
+                .map(|_| CompiledTree {
+                    components: vec![],
+                    facts: None,
+                    error: e.error.clone(),
+                })
+                .collect();
+        }
+    };
+    // Largest file first: the longest compiles start first (F622 D2).
+    let size = |p: &String| std::fs::metadata(opts.root.join(p)).map_or(0, |m| m.len());
+    let order: Vec<(u64, usize)> = paths
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (size(p), i))
+        .collect();
+    let results = brust_compiler::parse::run_on_pool_caught(
+        brust_compiler::parse::pool_size(),
+        paths.len(),
+        order,
+        |i| compile_with(&paths[i], None, &opts, runtime_import),
+    );
+    // N3: the failure one call per tree in entry order met first: `compileApp` reads the trees in this order and stops
+    // at the first error (a tree error or an error diagnostic); a panic counts only when no earlier tree failed.
+    brust_compiler::parse::in_entry_order(
+        results,
+        |t: &CompiledTree| {
+            t.error.is_some()
+                || t.components
+                    .iter()
+                    .any(|c| c.diagnostics.iter().any(|d| d.class == "error"))
+        },
+        || CompiledTree {
+            components: vec![],
+            facts: None,
+            error: None,
+        },
+    )
+}
+
+/// The analysis options of the inputs, and the root file's text when given; `Err` names the input that is not the JSON
+/// it takes.
+fn options_of(
+    root: &str,
+    inputs: CompileInputs,
+) -> Result<(AnalyzeOptions, Option<String>), Box<CompiledTree>> {
     let CompileInputs {
         server_only,
         slot_values,
@@ -136,23 +204,15 @@ pub(crate) fn compile_tree_impl(
         client_only,
     } = inputs;
     // F230: the exports another app module writes, scanned once per build (`scan_load_writes`).
-    let load_writes = match json_input("loadWrites", load_writes, |s| {
+    let load_writes = json_input("loadWrites", load_writes, |s| {
         brust_compiler::analyze::load_writes::LoadWrites::from_json(s).map(Some)
-    }) {
-        Ok(v) => v.map(std::sync::Arc::new),
-        Err(e) => return *e,
-    };
+    })?
+    .map(std::sync::Arc::new);
     // F153c: `{ "scopes": …, "refused": … }`, the package sources the build wrote (`pkg-src.ts`).
-    let packages = match json_input("packages", packages, |s| serde_json::from_str(s)) {
-        Ok(v) => v,
-        Err(e) => return *e,
-    };
+    let packages = json_input("packages", packages, |s| serde_json::from_str(s))?;
     // `[{ "pattern": "@/*", "targets": ["./*"] }]`: `tsconfig` `paths` (R34.76).
     let path_aliases: Vec<brust_compiler::analyze::aliases::PathAlias> =
-        match json_input("pathAliases", path_aliases, |s| serde_json::from_str(s)) {
-            Ok(v) => v,
-            Err(e) => return *e,
-        };
+        json_input("pathAliases", path_aliases, |s| serde_json::from_str(s))?;
     // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
     let (icon_svgs, icons_final): (
         std::collections::HashMap<String, brust_compiler::analyze::component::IconMarkup>,
@@ -188,8 +248,17 @@ pub(crate) fn compile_tree_impl(
         load_writes,
         client_only: client_only.into_iter().collect(),
     };
-    // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
-    brust_compiler::parse::run_on_compiler_thread(|| {
+    Ok((opts, source))
+}
+
+/// One route tree, on a compiler thread.
+fn compile_with(
+    path: &str,
+    source: Option<String>,
+    opts: &AnalyzeOptions,
+    runtime_import: &str,
+) -> CompiledTree {
+    {
         // F520: the facts come first and on their own parse: a source that parses has them even when it does not compile.
         let facts = source.as_ref().and_then(|text| {
             brust_compiler::analyze::facts::read_source(path, text.clone().into_bytes())
@@ -198,7 +267,7 @@ pub(crate) fn compile_tree_impl(
         match brust_compiler::pipeline::compile_tree(
             path,
             source.map(String::into_bytes),
-            &opts,
+            opts,
             runtime_import,
         ) {
             Err(d) => CompiledTree {
@@ -241,7 +310,7 @@ pub(crate) fn compile_tree_impl(
                     .collect(),
             },
         }
-    })
+    }
 }
 
 /// Compiles `path` (relative to `root`) and every child it reaches through lowering. `css_modules` (L20): the class
@@ -270,6 +339,48 @@ pub fn compile_tree(
     crate::init_tracing();
     compile_tree_impl(
         &path,
+        &root,
+        &runtime_import,
+        CompileInputs {
+            server_only,
+            slot_values,
+            css_modules: css_modules.unwrap_or_default(),
+            icon_svgs,
+            route_roots: route_roots.unwrap_or_default(),
+            path_aliases,
+            packages,
+            source_roots: source_roots.unwrap_or_default(),
+            load_writes,
+            source: None,
+            client_only: Vec::new(),
+        },
+    )
+}
+
+/// F622 D1: [`compile_tree`] for every entry of `paths` (the route trees of one `compileApp`, all with the same
+/// options), compiled on a pool of compiler threads (`BRUST_COMPILE_THREADS`, default the cores up to 4); the results in
+/// the order of `paths`, each byte-identical to `compileTree` of that entry.
+#[allow(clippy::too_many_arguments)]
+#[napi]
+pub fn compile_trees(
+    paths: Vec<String>,
+    root: String,
+    runtime_import: String,
+    server_only: Vec<String>,
+    slot_values: Option<String>,
+    css_modules: Option<
+        std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    >,
+    icon_svgs: Option<String>,
+    route_roots: Option<Vec<String>>,
+    path_aliases: Option<String>,
+    packages: Option<String>,
+    source_roots: Option<Vec<String>>,
+    load_writes: Option<String>,
+) -> Vec<CompiledTree> {
+    crate::init_tracing();
+    compile_trees_impl(
+        &paths,
         &root,
         &runtime_import,
         CompileInputs {

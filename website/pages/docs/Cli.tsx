@@ -91,6 +91,10 @@ export default function Cli({ blocks, panels }: CliData) {
         <li>
           <code>dist/jinja/</code> holds one template per page and layout. A component placed inside a page is printed in that page&rsquo;s template and gets no file of its own. Set <code>BRUST_BUILD_ALL_TEMPLATES=1</code> to also write every component&rsquo;s template when you want to read what one compiles to; the server ignores the extra files.
         </li>
+        {/* source: crates/brust-compiler/src/parse/mod.rs (pool_size, run_on_pool), crates/brust-napi/src/compile.rs (compile_trees), packages/brust/src/build/compile.ts (compileApp) */}
+        <li>
+          Compiles the pages and layouts on up to 4 compiler threads (fewer when the machine has fewer cores or the app fewer route files). Each thread keeps its own copy of the modules it reads, so a build takes more memory than on one thread. Set <code>BRUST_COMPILE_THREADS</code> to choose the number; <code>BRUST_COMPILE_THREADS=1</code> compiles on one thread and gives that memory back. The output is the same at any number.
+        </li>
         <li>
           Refuses an out dir that is not empty and was not made by brust, unless you pass <code>--force</code>, and never writes to the app root, your home or a folder with sources (<code>out-dir-unsafe</code>).
         </li>

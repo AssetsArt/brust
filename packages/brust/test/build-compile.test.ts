@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CompiledComponent } from '../native/index.js'
+import { type CompiledComponent, compileTree, compileTrees } from '../native/index.js'
 import { runBuild } from '../src/build'
 import { type Compiled, compileApp, ROLE, type Role, replaces, type Seen } from '../src/build/compile'
 import { scanRoutes } from '../src/build/scan'
@@ -236,4 +236,42 @@ test('F395: a lowering warning in an inlined component names that component\'s f
   const { compiled } = await buildFixture(join(import.meta.dir, 'fixtures/diag-file'))
   const found = [...compiled.values()].flatMap((c) => c.diagnostics ?? []).filter((d) => d.rule === 'reserved-attr')
   expect(found.map((d) => [d.file, d.line, d.col])).toEqual([['components/Card.tsx', 3, 5]])
+})
+
+// F622 (N3, lead ruling): routes [file, fileless, file]. One call per tree compiled the first tree and threw
+// `component-source` at the fileless route, never compiling the third; the pool is handed only the trees before it and
+// the build throws the same error.
+test('F622: compileTrees gets only the trees before the first route with no file, and the same error is thrown', async () => {
+  const { routes, componentFile, componentIssue } = await scanRoutes(join(app, 'routes.tsx'), app)
+  const leaves = flattenRoutes(routes).leaves
+  // Route order: AppLayout (r0), HomePage, ItemPage. HomePage loses its file.
+  const home = leaves.flatMap((l) => l.chain).find((r) => componentFile.get(r.Component!)?.endsWith('HomePage.tsx'))!.Component!
+  const files = new Map(componentFile)
+  files.delete(home)
+  const run = (trees: typeof compileTrees) => {
+    try {
+      compileApp({ appRoot: app, leaves, componentFile: files, componentIssue, runtimeImport: '/_brust/client/runtime-test.js', serverOnly: [], log: () => {}, compileTrees: trees })
+      return 'no error'
+    } catch (e) {
+      const err = e as { rule?: string; message: string }
+      return `${err.rule} ${err.message}`
+    }
+  }
+  const handed: string[][] = []
+  const pooled = run((paths, ...rest) => {
+    handed.push(paths)
+    return compileTrees(paths, ...rest)
+  })
+  // The old loop: one `compileTree` per entry, in order.
+  const oneByOne = run((paths, ...rest) => paths.map((p) => compileTree(p, ...rest)))
+  expect(handed).toEqual([['AppLayout.tsx']])
+  expect(pooled).toBe(oneByOne)
+  expect(pooled).toMatch(/^component-source .*\(route r\d+\)$/)
+  // The first tree fails itself: its error is thrown, not the fileless route's.
+  const failing = run((paths, ...rest) =>
+    compileTrees(paths, ...rest).map((t, i) =>
+      i === 0 ? { ...t, components: [], error: { class: 'error', rule: 'test-tree-error', message: 'boom', line: 0, col: 0, remediation: '' } } : t,
+    ),
+  )
+  expect(failing).toBe('test-tree-error AppLayout.tsx:0:0 boom')
 })

@@ -162,21 +162,42 @@ pub fn run_on_compiler_thread<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 thread_local!(static IN_SESSION: core::cell::Cell<bool> = const { core::cell::Cell::new(false) });
 
 /// F621 D1: one compiler thread (and its parse cache: sources, parses, F620's module memos) for every native call of a
-/// build, while open. Process-wide; the build opens it before its first scan and closes it when it is done.
+/// build, while open. Process-wide; the build opens it before its first scan and closes it when it is done. F622 D2: the
+/// session is a pool of such threads, each with its own cache (`Parsed` is `!Send`: nothing parsed crosses threads);
+/// single calls run on thread 0, [`run_on_pool`] spreads entries over all of them.
 static SESSION: std::sync::RwLock<Option<Session>> = std::sync::RwLock::new(None);
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
-struct Session {
+struct Worker {
     jobs: std::sync::mpsc::Sender<Job>,
     thread: std::thread::JoinHandle<()>,
 }
 
-impl Session {
-    fn start() -> Session {
+struct Session {
+    workers: Vec<Worker>,
+}
+
+/// F622 D2 (Amendment 2: cap 4, measured faster and lighter than 8): the compiler threads of a pool:
+/// `BRUST_COMPILE_THREADS` when set (any number; 1 = one thread, today's order and memory), else the available cores, at
+/// most 4.
+pub fn pool_size() -> usize {
+    std::env::var("BRUST_COMPILE_THREADS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map_or(1, |n| n.get())
+                .min(4)
+        })
+}
+
+impl Worker {
+    fn start(i: usize) -> Worker {
         let (jobs, inbox) = std::sync::mpsc::channel::<Job>();
         let thread = std::thread::Builder::new()
-            .name("brust-compiler-session".into())
+            .name(format!("brust-compiler-session-{i}"))
             .stack_size(COMPILER_STACK)
             .spawn(move || {
                 #[cfg(feature = "bun-stubs")]
@@ -188,30 +209,53 @@ impl Session {
                     job();
                 }
             })
-            .expect("spawn the compiler session thread");
-        Session { jobs, thread }
+            .expect("spawn a compiler session thread");
+        Worker { jobs, thread }
     }
 
-    /// Runs `f` on the session thread as a new epoch and waits for its result; a panic is re-raised here.
-    fn run<T: Send>(&self, f: impl FnOnce() -> T + Send) -> T {
-        let (done, result) = std::sync::mpsc::sync_channel::<std::thread::Result<T>>(1);
-        let job: Box<dyn FnOnce() + Send + '_> = Box::new(move || {
-            begin_epoch();
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-            if r.is_err() {
-                // Whatever the call left half done is not reused.
-                reset_cache();
-            }
-            let _ = done.send(r);
-        });
-        // SAFETY: the job may borrow from this frame. It is run (or dropped) on the session thread, and this frame does
-        // not return before the job has sent its result or been dropped (`recv` fails only once `done` is gone, i.e.
-        // after the job and everything it captured were dropped). The read lock held by the caller keeps the session
-        // (and its thread) alive meanwhile.
-        let job: Job = unsafe { std::mem::transmute::<Box<dyn FnOnce() + Send + '_>, Job>(job) };
+    /// Hands `job` (which may borrow from the caller's frame) to this worker.
+    ///
+    /// SAFETY: the caller must not return before the job has run to its end or been dropped. Every caller here waits on
+    /// a channel whose sender the job owns: `recv` returns only after the job sent (its last act) or was dropped.
+    unsafe fn send<'a>(&self, job: Box<dyn FnOnce() + Send + 'a>) {
+        let job: Job = unsafe { std::mem::transmute::<Box<dyn FnOnce() + Send + 'a>, Job>(job) };
         self.jobs
             .send(job)
             .unwrap_or_else(|_| panic!("the compiler session thread is gone"));
+    }
+}
+
+/// One native call's work on a session thread: a new epoch, `f`, and a cache that is not reused after a panic.
+fn in_epoch<T>(f: impl FnOnce() -> T) -> std::thread::Result<T> {
+    // Inside the catch too: nothing between receiving the job and sending its result can unwind past the sender.
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        begin_epoch();
+        f()
+    }));
+    if r.is_err() {
+        // Whatever the call left half done is not reused.
+        reset_cache();
+    }
+    r
+}
+
+impl Session {
+    fn start(threads: usize) -> Session {
+        Session {
+            workers: (0..threads.max(1)).map(Worker::start).collect(),
+        }
+    }
+
+    /// Runs `f` on thread 0 as a new epoch and waits for its result; a panic is re-raised here.
+    fn run<T: Send>(&self, f: impl FnOnce() -> T + Send) -> T {
+        let (done, result) = std::sync::mpsc::sync_channel::<std::thread::Result<T>>(1);
+        // SAFETY: this frame waits on `result` below (see `Worker::send`); the read lock the caller holds keeps the
+        // session and its threads alive meanwhile.
+        unsafe {
+            self.workers[0].send(Box::new(move || {
+                let _ = done.send(in_epoch(f));
+            }))
+        };
         match result.recv() {
             Ok(Ok(v)) => v,
             Ok(Err(panic)) => std::panic::resume_unwind(panic),
@@ -220,21 +264,152 @@ impl Session {
     }
 }
 
-/// F621 D1: opens the process-wide compiler session (idempotent).
+/// F622 D1: `f(i)` for every entry `i` of `0..n`, on up to `threads` compiler threads (the session's while one is open,
+/// else threads of this call; callers pass [`pool_size`]), each thread taking the next entry from one queue in `order` (`(weight, index)`,
+/// heaviest first; at one thread, index order). Every thread starts a new epoch of its own cache. The results come back
+/// in index order, whatever thread computed them and when; a panic is re-raised here (the lowest entry's first). Use
+/// [`run_on_pool_caught`] to judge each entry's panic in order.
+pub fn run_on_pool<T: Send>(
+    threads: usize,
+    n: usize,
+    order: Vec<(u64, usize)>,
+    f: impl Fn(usize) -> T + Sync,
+) -> Vec<T> {
+    run_on_pool_caught(threads, n, order, f)
+        .into_iter()
+        .map(|r| r.unwrap_or_else(|p| std::panic::resume_unwind(p)))
+        .collect()
+}
+
+/// [`run_on_pool`] with each entry's own result: `Err` holds the panic of that entry (every entry runs, whatever another
+/// entry did).
+pub fn run_on_pool_caught<T: Send>(
+    threads: usize,
+    n: usize,
+    order: Vec<(u64, usize)>,
+    f: impl Fn(usize) -> T + Sync,
+) -> Vec<std::thread::Result<T>> {
+    let session = SESSION.read().unwrap_or_else(|e| e.into_inner());
+    let open = session.as_ref().filter(|_| !IN_SESSION.get());
+    let threads = open
+        .map_or(threads, |s| threads.min(s.workers.len()))
+        .min(n)
+        .max(1);
+    let mut order = order;
+    if threads == 1 {
+        order.sort_by_key(|(_, i)| *i);
+    } else {
+        order.sort_by_key(|(w, i)| (std::cmp::Reverse(*w), *i));
+    }
+    let queue = std::sync::Mutex::new(
+        order
+            .into_iter()
+            .map(|(_, i)| i)
+            .collect::<std::collections::VecDeque<_>>(),
+    );
+    let results: std::sync::Mutex<Vec<Option<std::thread::Result<T>>>> =
+        std::sync::Mutex::new((0..n).map(|_| None).collect());
+    let work = || {
+        loop {
+            let Some(i) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() else {
+                break;
+            };
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(i)));
+            let failed = r.is_err();
+            results.lock().unwrap_or_else(|e| e.into_inner())[i] = Some(r);
+            if failed {
+                // Whatever the entry left half done is not reused; the thread goes on with the next entry, so every
+                // entry has its own result (N3: the caller reports failures in entry order, not by thread).
+                reset_cache();
+            }
+        }
+    };
+    match open {
+        Some(s) => {
+            let (done, finished) = std::sync::mpsc::channel::<std::thread::Result<()>>();
+            for w in &s.workers[..threads] {
+                let done = done.clone();
+                let work = &work;
+                // SAFETY: this frame waits below until every job sent its result or was dropped (`done` clones).
+                unsafe {
+                    w.send(Box::new(move || {
+                        let _ = done.send(in_epoch(work));
+                    }))
+                };
+            }
+            drop(done);
+            for r in finished.iter() {
+                if let Err(p) = r {
+                    std::panic::resume_unwind(p);
+                }
+            }
+        }
+        None => std::thread::scope(|sc| {
+            for i in 0..threads {
+                std::thread::Builder::new()
+                    .name(format!("brust-compiler-{i}"))
+                    .stack_size(COMPILER_STACK)
+                    .spawn_scoped(sc, || {
+                        #[cfg(feature = "bun-stubs")]
+                        ensure_stack_limit();
+                        // One cache per thread for the whole call (one epoch: nothing writes app files during a call).
+                        let _cache = ParseCache::enter();
+                        work();
+                    })
+                    .expect("spawn a compiler thread");
+            }
+        }),
+    }
+    drop(session);
+    results
+        .into_inner()
+        .unwrap_or_else(|e| e.into_inner())
+        .into_iter()
+        .map(|r| r.expect("every pool entry runs: a thread goes on after an entry's panic"))
+        .collect()
+}
+
+/// F622 D3 (N3, lead ruling): the outcome one thread compiling the entries in index order reports: the results up to and
+/// including the first entry that failed (`failed`, or a panic). A panic is re-raised only when it is that first failure:
+/// a later entry's panic never replaces an earlier entry's error, and an entry after the first failure (one thread would
+/// never have reached it) comes back as `unreached()`, which the caller does not read.
+pub fn in_entry_order<T>(
+    results: Vec<std::thread::Result<T>>,
+    failed: impl Fn(&T) -> bool,
+    unreached: impl Fn() -> T,
+) -> Vec<T> {
+    let mut out = Vec::with_capacity(results.len());
+    let mut stopped = false;
+    for r in results {
+        match r {
+            _ if stopped => out.push(unreached()),
+            Ok(v) => {
+                stopped = failed(&v);
+                out.push(v);
+            }
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+    out
+}
+
+/// F621 D1: opens the process-wide compiler session (idempotent), with [`pool_size`] threads.
 pub fn open_session() {
     let mut s = SESSION.write().unwrap_or_else(|e| e.into_inner());
     if s.is_none() {
-        *s = Some(Session::start());
+        *s = Some(Session::start(pool_size()));
     }
 }
 
-/// F621 D1: closes the compiler session (idempotent): its thread ends and everything it cached is dropped. Waits for a
-/// call running on it.
+/// F621 D1: closes the compiler session (idempotent): its threads end and everything they cached is dropped. Waits for
+/// a call running on it.
 pub fn close_session() {
     let s = SESSION.write().unwrap_or_else(|e| e.into_inner()).take();
-    if let Some(Session { jobs, thread }) = s {
-        drop(jobs);
-        let _ = thread.join();
+    if let Some(Session { workers }) = s {
+        for Worker { jobs, thread } in workers {
+            drop(jobs);
+            let _ = thread.join();
+        }
     }
 }
 
@@ -599,7 +774,9 @@ fn parse_new(
 
 /// F620 D2: `f()`, memoised for the run by (`kind`, alias scope, `root`, `path`, `question`) while a [`ParseCache`] is
 /// open; without one it runs every time. RULE: the value must be a pure function of the text of the module `path`
-/// (read through [`parse_file`]), the alias scope and `question`, nothing else of the run's options.
+/// (read through [`parse_file`]), the alias scope and `question`, nothing else of the run's options. The caller calls
+/// [`parse_file`] on the same `root` and `path` first, in the same call: that is what checks a memo kept from an earlier
+/// epoch (F621 D3) against the file, and drops it with the file's parse when the file changed.
 pub(crate) fn memo<T: Clone + 'static>(
     kind: &'static str,
     root: &std::path::Path,
