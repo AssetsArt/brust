@@ -25,6 +25,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-66', title: '2.0.0-alpha.66' },
       { id: 'alpha-65', title: '2.0.0-alpha.65' },
       { id: 'alpha-64', title: '2.0.0-alpha.64' },
       { id: 'alpha-63', title: '2.0.0-alpha.63' },
@@ -96,6 +97,34 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-66">2.0.0-alpha.66 · 25 November 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.65: #552–#554 (ledger F619–F622) */}
+      <p>This version makes <code>brust build</code> and the first build of <code>brust dev</code> faster on a large app. On the 771-module app we measured, a development build went from about 57 seconds to about 12.5. What the build writes is the same, byte for byte. A build now takes more memory by default; the item under Changes says how much and how to turn that off.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #554 (F622); packages/brust/src/build/compile.ts (compileApp hands the route files to one native call); crates/brust-napi/src/compile.rs; crates/brust-compiler/tests/compile_pool.rs; website/pages/docs/Cli.tsx (the BRUST_COMPILE_THREADS paragraph). Numbers: the two tables of the PR, Linux x86_64, 12 cores */}
+        <li>
+          <strong>Pages and layouts compile on up to 4 threads, and a build takes more memory for it (#554).</strong> Until this version the compiler used one core. It now uses up to 4 threads, fewer when the machine has fewer cores or the app fewer route files. Each thread keeps its own copy of the modules it reads, so peak memory of the build rises: in our runs to between 1.4 and 1.65 times that of one thread on the 771-module app (2.76 GB on one thread), and to about 2 times on a 316-module app (1.45 GB on one thread). The memory is returned before bundling starts. If a machine or a CI runner is short of memory, set <code>BRUST_COMPILE_THREADS=1</code>: the build then compiles on one thread with the memory it took before. Any other number sets that many threads; in our runs 8 threads were slower than 4 and took 0.9 GB more. The output is the same at any number, and so is the error a failing build reports.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #552 (F619, F620); crates/brust-compiler/src/parse/mod.rs (read_source, parse_file: one read and one parse of a module per run); crates/brust-compiler/src/parse/run_cache_tests.rs. Numbers: the table of the PR, Linux x86_64, 3 runs each */}
+        <li>
+          <strong>A build of a large app no longer reads and parses the same modules again and again (#552).</strong> The step that looks for modules written at load time parsed every module on each of its two runs without keeping anything, and each question the compiler asked about an imported module read that file again. On a 771-module app this was most of the build: the two scans took about 10.7 seconds each and each of the three compiles about 10.8. A module is now read and parsed once per run, and what it exports is worked out once. On that app the scans take under 2 seconds each and a compile about 7.2, and the whole development build went from about 57 seconds to about 28.
+        </li>
+        {/* source: PR #553 (F621); crates/brust-napi/src/compile.rs (openCompilerSession, closeCompilerSession); packages/brust/src/build/index.ts; crates/brust-compiler/tests/compile_session.rs. Numbers: the table of the PR */}
+        <li>
+          <strong>The compiles of one build share what the first step already parsed (#553).</strong> A build runs the compiler several times, and each run used to start with nothing. They now share one session, so a module that has not changed on disk is not parsed again; a file that changed, appeared or went away between two steps is read again. On the same app each compile dropped from about 7.2 to about 5.9 seconds on one thread, and peak memory stayed within 2% of what it was.
+        </li>
+        {/* source: PR #552; packages/brust/src/build/index.ts (the BRUST_BUILD_TIMINGS lines) */}
+        <li>
+          <strong><code>BRUST_BUILD_TIMINGS=1</code> shows where a build spends its time (#552).</strong> With this variable set, <code>brust build</code> prints the time of each stage, now with one line per compile and one for bundling. Without it nothing extra is printed.
+        </li>
+      </ul>
 
       <h2 id="alpha-65">2.0.0-alpha.65 · 22 November 2026</h2>
       {/* source: the pull request merged after v2.0.0-alpha.64: #550 (ledger F615) */}
