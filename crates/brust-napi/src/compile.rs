@@ -342,7 +342,7 @@ pub fn compile_tree(
 }
 
 /// F622 D1: [`compile_tree`] for every entry of `paths` (the route trees of one `compileApp`, all with the same
-/// options), compiled on a pool of compiler threads (`BRUST_COMPILE_THREADS`, default the cores up to 8); the results in
+/// options), compiled on a pool of compiler threads (`BRUST_COMPILE_THREADS`, default the cores up to 4); the results in
 /// the order of `paths`, each byte-identical to `compileTree` of that entry.
 #[allow(clippy::too_many_arguments)]
 #[napi]

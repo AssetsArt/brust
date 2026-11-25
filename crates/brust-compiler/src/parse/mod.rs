@@ -178,8 +178,9 @@ struct Session {
     workers: Vec<Worker>,
 }
 
-/// F622 D2: the compiler threads of a pool: `BRUST_COMPILE_THREADS` when set (1 = one thread, today's order), else the
-/// available cores, at most 8.
+/// F622 D2 (Amendment 2: cap 4, measured faster and lighter than 8): the compiler threads of a pool:
+/// `BRUST_COMPILE_THREADS` when set (any number; 1 = one thread, today's order and memory), else the available cores, at
+/// most 4.
 pub fn pool_size() -> usize {
     std::env::var("BRUST_COMPILE_THREADS")
         .ok()
@@ -188,7 +189,7 @@ pub fn pool_size() -> usize {
         .unwrap_or_else(|| {
             std::thread::available_parallelism()
                 .map_or(1, |n| n.get())
-                .min(8)
+                .min(4)
         })
 }
 
