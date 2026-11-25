@@ -267,13 +267,28 @@ impl Session {
 /// F622 D1: `f(i)` for every entry `i` of `0..n`, on up to `threads` compiler threads (the session's while one is open,
 /// else threads of this call; callers pass [`pool_size`]), each thread taking the next entry from one queue in `order` (`(weight, index)`,
 /// heaviest first; at one thread, index order). Every thread starts a new epoch of its own cache. The results come back
-/// in index order, whatever thread computed them and when; a panic is re-raised here (the lowest entry's first).
+/// in index order, whatever thread computed them and when; a panic is re-raised here (the lowest entry's first). Use
+/// [`run_on_pool_caught`] to judge each entry's panic in order.
 pub fn run_on_pool<T: Send>(
     threads: usize,
     n: usize,
     order: Vec<(u64, usize)>,
     f: impl Fn(usize) -> T + Sync,
 ) -> Vec<T> {
+    run_on_pool_caught(threads, n, order, f)
+        .into_iter()
+        .map(|r| r.unwrap_or_else(|p| std::panic::resume_unwind(p)))
+        .collect()
+}
+
+/// [`run_on_pool`] with each entry's own result: `Err` holds the panic of that entry (every entry runs, whatever another
+/// entry did).
+pub fn run_on_pool_caught<T: Send>(
+    threads: usize,
+    n: usize,
+    order: Vec<(u64, usize)>,
+    f: impl Fn(usize) -> T + Sync,
+) -> Vec<std::thread::Result<T>> {
     let session = SESSION.read().unwrap_or_else(|e| e.into_inner());
     let open = session.as_ref().filter(|_| !IN_SESSION.get());
     let threads = open
@@ -303,9 +318,9 @@ pub fn run_on_pool<T: Send>(
             let failed = r.is_err();
             results.lock().unwrap_or_else(|e| e.into_inner())[i] = Some(r);
             if failed {
-                // Whatever the entry left half done is not reused.
+                // Whatever the entry left half done is not reused; the thread goes on with the next entry, so every
+                // entry has its own result (N3: the caller reports failures in entry order, not by thread).
                 reset_cache();
-                break;
             }
         }
     };
@@ -346,15 +361,12 @@ pub fn run_on_pool<T: Send>(
         }),
     }
     drop(session);
-    let mut out = Vec::with_capacity(n);
-    for r in results.into_inner().unwrap_or_else(|e| e.into_inner()) {
-        match r {
-            Some(Ok(v)) => out.push(v),
-            Some(Err(p)) => std::panic::resume_unwind(p),
-            None => panic!("a compiler pool entry was not run"),
-        }
-    }
-    out
+    results
+        .into_inner()
+        .unwrap_or_else(|e| e.into_inner())
+        .into_iter()
+        .map(|r| r.expect("every pool entry runs: a thread goes on after an entry's panic"))
+        .collect()
 }
 
 /// F621 D1: opens the process-wide compiler session (idempotent), with [`pool_size`] threads.

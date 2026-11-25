@@ -209,7 +209,8 @@ export function compileApp(opts: {
   const treeFiles: string[] = []
   for (const route of nodes.values()) {
     const file = componentFile.get(route.Component!)
-    if (file && !treeFiles.includes(file)) treeFiles.push(file)
+    if (!file) break // the loop below throws `component-source` here: no tree after it was ever compiled
+    if (!treeFiles.includes(file)) treeFiles.push(file)
   }
   const treeRels = treeFiles.map((f) => relPosix(appRoot, f)) // G5: the Rust resolver assumes `/`
   const trees =

@@ -3,7 +3,7 @@
 //! without a compiler session.
 use brust_compiler::analyze::aliases::PathAlias;
 use brust_compiler::analyze::component::AnalyzeOptions;
-use brust_compiler::parse::{close_session, open_session, run_on_pool};
+use brust_compiler::parse::{close_session, open_session, run_on_pool, run_on_pool_caught};
 use brust_compiler::pipeline::compile_tree;
 use std::path::{Path, PathBuf};
 
@@ -123,4 +123,29 @@ fn every_entry_compiles_the_same_at_one_and_at_eight_threads() {
     }
     close_session();
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn every_entry_runs_and_keeps_its_own_failure() {
+    // N3: an entry's panic is that entry's result; the thread goes on, so no entry is left without one.
+    let order = (0..12).map(|i| (0, i)).collect();
+    let results = run_on_pool_caught(4, 12, order, |i| {
+        if i == 5 || i == 9 {
+            panic!("entry {i}");
+        }
+        i * 10
+    });
+    assert_eq!(results.len(), 12);
+    for (i, r) in results.into_iter().enumerate() {
+        match r {
+            Ok(v) => assert_eq!(v, i * 10),
+            Err(p) => {
+                assert!(i == 5 || i == 9, "entry {i} panicked");
+                assert_eq!(
+                    p.downcast_ref::<String>().map(String::as_str),
+                    Some(format!("entry {i}").as_str())
+                );
+            }
+        }
+    }
 }
